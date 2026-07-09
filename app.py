@@ -7,6 +7,7 @@ from config import BASE, DB, SECRET_KEY, DIVISIONES
 def create_app():
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+    init_db()
     app.config['DIVISIONES'] = DIVISIONES
     app.config['DB'] = DB
 
@@ -65,6 +66,7 @@ def create_app():
 
 def init_db():
     from werkzeug.security import generate_password_hash
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
     conn = sqlite3.connect(DB)
     conn.execute("PRAGMA journal_mode=WAL")
     schema_path = os.path.join(BASE, 'schema.sql')
