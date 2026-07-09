@@ -1,0 +1,765 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO V
+##
+##                       CAPÍTULO 43
+##
+##                            POST
+##
+################################################################################
+################################################################################
+
+"POST es el mensajero silencioso que entrega su carga sin que nadie más vea su
+contenido." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido de vuelta, maestro del envío de datos! En el capítulo anterior
+exploramos GET y su transparencia en la URL. Ahora es momento de adentrarnos
+en POST, el método que trabaja entre bastidores.
+
+POST es el método preferido para cualquier operación que modifique datos en el
+servidor: registros de usuario, inicios de sesión, comentarios, compras, subida
+de archivos. A diferencia de GET, los datos viajan en el cuerpo de la petición
+HTTP, invisibles para el ojo casual.
+
+En este capítulo dominarás la superglobal $_POST, aprenderás cuándo es
+obligatorio usar POST, cómo procesar formularios complejos y cómo proteger los
+datos durante la transmisión.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Lo que no se ve en la URL, se protege en el cuerpo; esa es la esencia de POST."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender la superglobal $_POST y su funcionamiento interno.
+✓ Acceder y procesar datos enviados por formularios con method POST.
+✓ Diferenciar los escenarios donde POST es obligatorio frente a GET.
+✓ Implementar el patrón Post-Redirect-Get (PRG) para evitar reenvíos.
+✓ Manejar formularios con campos múltiples y checkboxes.
+✓ Conocer las limitaciones de seguridad de POST.
+✓ Implementar protección CSRF en formularios POST.
+
+===============================================================================
+1. LA SUPER GLOBAL $_POST
+===============================================================================
+
+$_POST es un arreglo asociativo nativo de PHP que contiene los datos enviados
+en el cuerpo de una petición HTTP con method POST.
+
+Cuando un formulario se envía con method="POST", el navegador empaqueta los
+datos en el cuerpo de la petición y los envía al servidor. PHP los decodifica
+y los coloca en $_POST.
+
+Estructura básica de recepción:
+
+```php
+<?php
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $nombre = $_POST['nombre'] ?? '';
+    $email  = $_POST['email'] ?? '';
+
+    echo "Nombre recibido: " . htmlspecialchars($nombre) . "<br>";
+    echo "Email recibido: " . htmlspecialchars($email) . "<br>";
+}
+?>
+```
+
+El formulario HTML correspondiente:
+
+```html
+<form method="POST" action="procesar.php">
+    <label for="nombre">Nombre:</label>
+    <input type="text" id="nombre" name="nombre">
+
+    <label for="email">Email:</label>
+    <input type="email" id="email" name="email">
+
+    <button type="submit">Enviar</button>
+</form>
+```
+
+A diferencia de GET, los datos no aparecen en la URL. El usuario ve la misma
+URL, pero el servidor recibe los datos en el cuerpo.
+
+$_POST está disponible en todos los ámbitos (es una superglobal) y solo se
+puebla cuando el método HTTP es POST.
+
+Puedes verificar el método de la petición con $_SERVER['REQUEST_METHOD']:
+
+```php
+<?php
+$metodo = $_SERVER['REQUEST_METHOD'];
+echo "Esta petición se hizo por: $metodo";
+// "Esta petición se hizo por: POST"
+?>
+```
+
+Siempre verifica el método antes de procesar $_POST. Esto evita que el script
+se ejecute cuando alguien visita la página directamente por GET.
+
+===============================================================================
+2. ESTRUCTURA DE UNA PETICIÓN POST
+===============================================================================
+
+Cuando el navegador envía un formulario POST, la petición HTTP tiene esta
+estructura:
+
+```
+POST /procesar.php HTTP/1.1
+Host: ejemplo.com
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 27
+
+nombre=Juan&email=juan%40mail.com
+```
+
+Partes importantes:
+
+  - POST: Método HTTP.
+  - /procesar.php: Ruta del script.
+  - Content-Type: Tipo de contenido (application/x-www-form-urlencoded).
+  - Content-Length: Tamaño del cuerpo en bytes.
+  - Cuerpo: Los datos codificados como pares clave=valor.
+
+Cuando el formulario incluye archivos (enctype="multipart/form-data"), el
+Content-Type cambia:
+
+```
+POST /subir.php HTTP/1.1
+Host: ejemplo.com
+Content-Type: multipart/form-data; boundary=----FormBoundary7MA4YWxkTrZu0gW
+Content-Length: 345
+
+------FormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="archivo"; filename="foto.jpg"
+Content-Type: image/jpeg
+
+[datos binarios...]
+------FormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="nombre"
+
+Juan
+------FormBoundary7MA4YWxkTrZu0gW--
+```
+
+PHP maneja automáticamente ambos casos. Los datos de formulario van a $_POST y
+los archivos a $_FILES. No necesitas analizar manualmente los boundaries.
+
+Para enviar datos POST sin formulario HTML (por ejemplo, desde una API o script
+de consola), puedes usar curl:
+
+```bash
+curl -X POST https://ejemplo.com/api.php \
+  -d "nombre=Juan" \
+  -d "email=juan@mail.com"
+```
+
+O con PHP:
+
+```php
+<?php
+$datos = [
+    'nombre' => 'Juan',
+    'email'  => 'juan@mail.com'
+];
+
+$opciones = [
+    'http' => [
+        'method' => 'POST',
+        'header' => 'Content-Type: application/x-www-form-urlencoded',
+        'content' => http_build_query($datos)
+    ]
+];
+
+$contexto = stream_context_create($opciones);
+$resultado = file_get_contents('https://ejemplo.com/api.php', false, $contexto);
+echo $resultado;
+?>
+```
+
+===============================================================================
+3. PROCESAMIENTO DE FORMULARIOS POST
+===============================================================================
+
+El flujo típico de un formulario POST incluye: mostrar formulario, validar,
+procesar y responder.
+
+Ejemplo completo: registro de usuario en la misma página.
+
+```php
+<?php
+$errores = [];
+$exito   = false;
+$nombre  = '';
+$email   = '';
+$password = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $nombre   = trim($_POST['nombre'] ?? '');
+    $email    = trim($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $confirmar = $_POST['confirmar'] ?? '';
+
+    // Validaciones
+    if ($nombre === '') {
+        $errores[] = 'El nombre es obligatorio.';
+    }
+
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errores[] = 'Ingrese un correo electrónico válido.';
+    }
+
+    if ($password === '') {
+        $errores[] = 'La contraseña es obligatoria.';
+    } elseif (strlen($password) < 6) {
+        $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
+    }
+
+    if ($password !== $confirmar) {
+        $errores[] = 'Las contraseñas no coinciden.';
+    }
+
+    if (empty($errores)) {
+        // Hash de la contraseña y guardar en BD
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $exito = true;
+        // Redirigir (PRG)
+        header('Location: exito.php');
+        exit;
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Registro de Usuario</title>
+</head>
+<body>
+    <h1>Crear cuenta</h1>
+
+    <?php if (!empty($errores)): ?>
+        <div style="color: red; border: 1px solid red; padding: 10px;">
+            <ul>
+                <?php foreach ($errores as $error): ?>
+                    <li><?= htmlspecialchars($error) ?></li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    <?php endif; ?>
+
+    <form method="POST">
+        <p>
+            <label for="nombre">Nombre:</label>
+            <input type="text" id="nombre" name="nombre"
+                   value="<?= htmlspecialchars($nombre) ?>">
+        </p>
+        <p>
+            <label for="email">Email:</label>
+            <input type="email" id="email" name="email"
+                   value="<?= htmlspecialchars($email) ?>">
+        </p>
+        <p>
+            <label for="password">Contraseña:</label>
+            <input type="password" id="password" name="password">
+        </p>
+        <p>
+            <label for="confirmar">Confirmar contraseña:</label>
+            <input type="password" id="confirmar" name="confirmar">
+        </p>
+        <p>
+            <button type="submit">Registrarse</button>
+        </p>
+    </form>
+</body>
+</html>
+```
+
+Puntos clave:
+
+  - Trim() elimina espacios al inicio y final.
+  - Verificamos si hay errores antes de procesar.
+  - Los valores ingresados se preservan en los inputs.
+  - htmlspecialchars() en todas las salidas.
+  - password_hash() para almacenar contraseñas.
+
+===============================================================================
+4. POST CON CHECKBOXES Y CAMPOS MÚLTIPLES
+===============================================================================
+
+Los checkboxes requieren tratamiento especial porque solo se envían si están
+marcados.
+
+Checkbox individual:
+
+```html
+<input type="checkbox" name="suscripcion" value="1" checked>
+```
+
+```php
+<?php
+$suscripcion = isset($_POST['suscripcion']);
+// true si está marcado, false si no
+?>
+```
+
+Checkbox múltiple con arreglo:
+
+```html
+<input type="checkbox" name="intereses[]" value="php"> PHP
+<input type="checkbox" name="intereses[]" value="js"> JavaScript
+<input type="checkbox" name="intereses[]" value="python"> Python
+```
+
+```php
+<?php
+$intereses = $_POST['intereses'] ?? [];
+// $intereses es un array con los valores seleccionados
+
+if (in_array('php', $intereses)) {
+    echo "Seleccionaste PHP";
+}
+
+echo "Seleccionaste: " . implode(', ', array_map('htmlspecialchars', $intereses));
+?>
+```
+
+Los botones de radio (radio) envían solo el valor del seleccionado:
+
+```html
+<input type="radio" name="genero" value="masculino"> Masculino
+<input type="radio" name="genero" value="femenino"> Femenino
+<input type="radio" name="genero" value="otro"> Otro
+```
+
+```php
+<?php
+$genero = $_POST['genero'] ?? '';
+echo "Género: " . htmlspecialchars($genero);
+?>
+```
+
+Select múltiple:
+
+```html
+<select name="idiomas[]" multiple>
+    <option value="es">Español</option>
+    <option value="en">Inglés</option>
+    <option value="fr">Francés</option>
+</select>
+```
+
+```php
+<?php
+$idiomas = $_POST['idiomas'] ?? [];
+// Array con los idiomas seleccionados
+?>
+```
+
+Para select múltiple, el atributo name debe terminar en [] para que PHP reciba
+un arreglo. Sin los corchetes, solo recibiría el último valor seleccionado.
+
+===============================================================================
+5. POST-REDIRECT-GET (PRG)
+===============================================================================
+
+El patrón PRG es una técnica para evitar el reenvío accidental de formularios
+cuando el usuario recarga la página.
+
+Sin PRG:
+
+  1. Usuario llena formulario y hace clic en Enviar (POST).
+  2. PHP procesa y guarda en BD.
+  3. PHP muestra mensaje de éxito.
+  4. Usuario recarga la página (F5).
+  5. Navegador pregunta: "¿Reenviar formulario?"
+  6. Si el usuario confirma, los datos se guardan otra vez.
+
+Con PRG:
+
+  1. Usuario llena formulario y hace clic en Enviar (POST).
+  2. PHP procesa y guarda en BD.
+  3. PHP responde con un header Location (redirect) a una página GET.
+  4. Navegador hace una petición GET a la página de éxito.
+  5. Usuario recarga la página.
+  6. Solo se repite la petición GET (inofensiva).
+
+Implementación:
+
+```php
+<?php
+// formulario.php
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validar y guardar en BD...
+    $idGuardado = 42; // Ejemplo
+
+    // PRG: redirigir a página de éxito
+    header('Location: exito.php?id=' . $idGuardado);
+    exit;
+}
+?>
+```
+
+```php
+<?php
+// exito.php (GET)
+$id = (int)($_GET['id'] ?? 0);
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Registro Exitoso</title>
+</head>
+<body>
+    <h1>¡Registro completado con éxito!</h1>
+    <p>ID de registro: <?= $id ?></p>
+    <a href="formulario.php">Volver al formulario</a>
+</body>
+</html>
+```
+
+El patrón PRG también mejora la experiencia de usuario porque elimina la
+molesta advertencia de "Reenviar formulario".
+
+Importante: Después de header('Location: ...'), siempre usa exit para detener
+la ejecución. De lo contrario, el script podría seguir ejecutándose y enviar
+más salida al navegador.
+
+===============================================================================
+6. POST vs GET: CUÁNDO USAR CADA UNO
+===============================================================================
+
+Usa POST cuando:
+
+  - El formulario modifica datos en el servidor (INSERT, UPDATE, DELETE).
+  - Los datos son sensibles (contraseñas, tokens, datos personales).
+  - El formulario incluye archivos (enctype="multipart/form-data").
+  - La cantidad de datos supera los 2048 caracteres.
+  - La operación no debe ser cacheada ni marcada como favorito.
+  - Quieres evitar que el usuario comparta accidentalmente los datos por URL.
+
+Usa GET cuando:
+
+  - La operación es de solo lectura (búsqueda, filtros, consultas).
+  - Quieres que los parámetros sean bookmarkables.
+  - El usuario debe poder compartir la URL.
+  - Los datos son cortos y no sensibles.
+  - Estás implementando paginación o navegación.
+
+Regla práctica: Si el formulario cambia algo en el servidor, usa POST. Si solo
+consulta información, usa GET.
+
+Ejemplos:
+
+  - Login: POST (crea sesión, modifica estado)
+  - Registro: POST (inserta en BD)
+  - Comentario: POST (inserta en BD)
+  - Búsqueda: GET (solo consulta)
+  - Filtro de productos: GET (solo consulta)
+  - Pago: POST (modifica saldo, crea orden)
+  - Eliminar cuenta: POST (DELETE)
+  - Editar perfil: POST (UPDATE)
+
+===============================================================================
+7. SEGURIDAD EN POST
+===============================================================================
+
+Aunque POST oculta los datos de la URL, no es inherentemente seguro. Los datos
+viajan en texto plano a menos que uses HTTPS.
+
+Limitaciones de seguridad de POST:
+
+  1. Sin HTTPS, los datos son interceptables.
+     - Un atacante en la misma red puede capturar el cuerpo de la petición.
+     - Solución: siempre usa HTTPS.
+
+  2. El usuario puede modificar los datos antes de enviarlos.
+     - Herramientas como Burp Suite o el inspector del navegador permiten
+       alterar los valores POST.
+     - Solución: valida todo en el servidor.
+
+  3. CSRF (Cross-Site Request Forgery).
+     - Un sitio malicioso puede enviar un formulario POST en nombre del usuario.
+     - Solución: tokens CSRF.
+
+  4. Inyección de datos.
+     - Los valores POST pueden contener código malicioso.
+     - Solución: sanitiza y valida siempre.
+
+  5. Los datos POST quedan en los logs del servidor.
+     - Algunos servidores registran el cuerpo de las peticiones.
+     - Solución: no envíes datos extremadamente sensibles sin cifrado adicional.
+
+Implementación de token CSRF:
+
+```php
+<?php
+session_start();
+
+// Generar token si no existe
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Verificar token CSRF
+    $tokenEnviado = $_POST['csrf_token'] ?? '';
+    if (!hash_equals($_SESSION['csrf_token'], $tokenEnviado)) {
+        die('Error de validación CSRF. Intente nuevamente.');
+    }
+
+    // Procesar formulario...
+    $nombre = $_POST['nombre'] ?? '';
+    echo "Formulario válido. Hola, " . htmlspecialchars($nombre);
+
+    // Regenerar token después del uso exitoso
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+?>
+```
+
+```html
+<form method="POST">
+    <input type="hidden" name="csrf_token"
+           value="<?= $_SESSION['csrf_token'] ?>">
+    <input type="text" name="nombre" required>
+    <button type="submit">Enviar</button>
+</form>
+```
+
+La función hash_equals() compara dos strings en tiempo constante, evitando
+ataques de timing que podrían vulnerar comparaciones con == o ===.
+
+Los tokens CSRF deben ser:
+
+  - Únicos por sesión o por formulario.
+  - Impredecibles (generados con random_bytes()).
+  - Asociados a una sesión de usuario.
+  - Regenerados después de cada uso exitoso.
+
+===============================================================================
+8. POST CON ARCHIVOS
+===============================================================================
+
+Cuando el formulario incluye archivos, se requiere enctype="multipart/form-data"
+y method="POST".
+
+```html
+<form action="subir.php" method="POST" enctype="multipart/form-data">
+    <label for="avatar">Foto de perfil:</label>
+    <input type="file" id="avatar" name="avatar" accept="image/*">
+
+    <label for="nombre">Nombre:</label>
+    <input type="text" id="nombre" name="nombre">
+
+    <button type="submit">Guardar perfil</button>
+</form>
+```
+
+Procesamiento en PHP:
+
+```php
+<?php
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $nombre = $_POST['nombre'] ?? '';
+
+    if (isset($_FILES['avatar']) && $_FILES['avatar']['error'] === UPLOAD_ERR_OK) {
+        $archivo = $_FILES['avatar'];
+        $extension = pathinfo($archivo['name'], PATHINFO_EXTENSION);
+        $nombreUnico = uniqid('avatar_') . '.' . $extension;
+        $rutaDestino = 'uploads/' . $nombreUnico;
+
+        // Validar tipo MIME
+        $tiposPermitidos = ['image/jpeg', 'image/png', 'image/gif'];
+        $tipoReal = mime_content_type($archivo['tmp_name']);
+
+        if (!in_array($tipoReal, $tiposPermitidos)) {
+            echo "Error: Solo se permiten imágenes JPEG, PNG o GIF.";
+        } elseif ($archivo['size'] > 2 * 1024 * 1024) {
+            echo "Error: La imagen no debe superar 2 MB.";
+        } elseif (move_uploaded_file($archivo['tmp_name'], $rutaDestino)) {
+            echo "Archivo subido: <img src='$rutaDestino' width='200'>";
+        } else {
+            echo "Error al mover el archivo.";
+        }
+    } else {
+        echo "No se recibió ningún archivo.";
+    }
+}
+?>
+```
+
+Puntos importantes:
+
+  - mime_content_type() verifica el tipo real del archivo, no confía en la
+    extensión ni en el tipo declarado por el navegador.
+  - uniqid() genera un nombre único para evitar colisiones y sobrescrituras.
+  - pathinfo() extrae la extensión del nombre original.
+  - move_uploaded_file() es la única forma segura de mover archivos subidos.
+  - El límite de tamaño se verifica con $archivo['size'] en bytes.
+
+Para subir múltiples archivos:
+
+```html
+<input type="file" name="fotos[]" multiple accept="image/*">
+```
+
+```php
+<?php
+if (isset($_FILES['fotos'])) {
+    $archivos = $_FILES['fotos'];
+    $total = count($archivos['name']);
+
+    for ($i = 0; $i < $total; $i++) {
+        if ($archivos['error'][$i] === UPLOAD_ERR_OK) {
+            $nombreTemp = $archivos['tmp_name'][$i];
+            $nombreOriginal = $archivos['name'][$i];
+            // procesar cada archivo...
+        }
+    }
+}
+?>
+```
+
+Cuando se usa el formato name="fotos[]" con multiple, $_FILES tiene una
+estructura anidada donde cada propiedad (name, tmp_name, error, etc.) es un
+arreglo indexado numéricamente.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- $_POST contiene los datos enviados en el cuerpo de una petición POST.
+- POST no muestra los datos en la URL, pero no cifra el contenido por sí mismo.
+- Usa POST para operaciones que modifican datos: registros, login, pagos.
+- Siempre verifica $_SERVER['REQUEST_METHOD'] antes de procesar $_POST.
+- Los checkboxes no enviados no aparecen en $_POST; usa isset() para detectarlos.
+- El patrón PRG (Post-Redirect-Get) evita el reenvío accidental de formularios.
+- Los tokens CSRF protegen contra falsificación de peticiones entre sitios.
+- Para archivos, usa enctype="multipart/form-data" y $_FILES.
+- POST no es inherentemente seguro; los datos viajan en texto plano sin HTTPS.
+- La validación del servidor es obligatoria incluso con POST.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un formulario de inicio de sesión con campos usuario
+y contraseña. Procesa con POST y muestra si las credenciales son correctas
+(usa credenciales fijas para probar).
+
+🧩 **Ejercicio 2:** Implementa el patrón PRG en un formulario de registro.
+Después del POST exitoso, redirige a una página de bienvenida que muestre un
+mensaje de éxito.
+
+🧩 **Ejercicio 3:** Diseña un formulario de encuesta con checkboxes múltiples
+y radios. Procesa con POST y muestra los resultados en una tabla HTML.
+
+🧩 **Ejercicio 4:** Crea un formulario que permita subir un archivo PDF.
+Valida que sea tipo application/pdf y que no supere 5 MB.
+
+🧩 **Ejercicio 5:** Implementa protección CSRF en un formulario POST. Genera
+el token en la sesión, inclúyelo como campo oculto y verifícalo en el
+procesamiento.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿POST es más seguro que GET?** POST oculta los datos de la URL, pero si no
+usas HTTPS, los datos viajan en texto plano. Ninguno es seguro sin cifrado.
+
+❓ **¿Puedo enviar GET y POST en la misma petición?** Sí, $_GET tendrá los
+parámetros de la URL y $_POST los del cuerpo. $_REQUEST combina ambos.
+
+❓ **¿Qué pasa si envío un formulario POST sin action?** Se envía a la misma
+URL de la página actual, igual que con action vacío.
+
+❓ **¿Cómo veo los datos POST en el navegador?** Usa las herramientas de
+desarrollador (F12 > Red > Nombre del archivo > Encabezados/Carga útil).
+
+❓ **¿Puedo enviar JSON por POST?** Sí, pero necesitas JavaScript (fetch o
+XMLHttpRequest) porque los formularios HTML estándar no envían JSON.
+
+❓ **¿$_POST tiene límite de tamaño?** Depende de la configuración de PHP:
+upload_max_filesize, post_max_size y max_input_vars en php.ini.
+
+❓ **¿Por qué mi $_POST está vacío si envié datos?** Posibles causas: el
+formulario usa GET y no POST, falta el atributo name en los inputs, o el
+formulario tiene enctype incorrecto.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Gestión de Tareas con Prioridades, Archivos y PRG**
+
+Construye un sistema completo de gestión de tareas personales con las
+siguientes características:
+
+  1. Formulario de creación de tareas con los campos:
+     - Título (text, requerido, máximo 100 caracteres).
+     - Descripción (textarea, opcional).
+     - Prioridad (select: Alta, Media, Baja).
+     - Categoría (radio: Trabajo, Personal, Estudio, Salud).
+     - Fecha límite (date, opcional).
+     - Etiquetas (checkbox múltiple: Urgente, Importante, Seguimiento, Idea).
+     - Archivo adjunto (file, opcional, máximo 3 MB, tipo PDF o imagen).
+
+  2. Validación completa del lado del servidor:
+     - Todos los campos requeridos deben estar presentes.
+     - El título no debe exceder 100 caracteres.
+     - La fecha límite debe ser hoy o futura.
+     - El archivo debe ser del tipo permitido y tamaño correcto.
+
+  3. Implementación de PRG:
+     - Después de una creación exitosa, redirigir a listado.php con mensaje de éxito.
+     - Después de una eliminación exitosa, redirigir a listado.php con mensaje.
+
+  4. Protección CSRF en todos los formularios POST del sistema.
+
+  5. Una página de listado (listado.php) que muestre todas las tareas creadas
+     durante la sesión (usa $_SESSION para almacenar las tareas).
+
+  6. Cada tarea debe tener un enlace o botón para eliminarla (POST) que pida
+     confirmación (JavaScript confirm()) y redirija de vuelta al listado.
+
+  7. Las tareas deben mostrarse en una tabla con diseño responsivo:
+     - Color de fondo según prioridad (rojo = Alta, amarillo = Media, verde = Baja).
+     - Indicador visual de tareas vencidas.
+     - Fecha formateada en español.
+     - Enlace al archivo adjunto si existe.
+
+  Criterios de evaluación:
+  - Correcta implementación de PRG sin reenvíos duplicados.
+  - Validación exhaustiva con mensajes de error claros.
+  - Protección CSRF en todas las operaciones POST.
+  - Manejo correcto de archivos (validación, almacenamiento, visualización).
+  - Código limpio, modular y seguro (htmlspecialchars en todas las salidas).
+
+===============================================================================
+FIN DEL CAPÍTULO 43
+===============================================================================
+
+"POST es el método del cambio: con cada envío, el servidor se transforma."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+44_CAPITULO_44_VALIDACIONES.txt
+===============================================================================

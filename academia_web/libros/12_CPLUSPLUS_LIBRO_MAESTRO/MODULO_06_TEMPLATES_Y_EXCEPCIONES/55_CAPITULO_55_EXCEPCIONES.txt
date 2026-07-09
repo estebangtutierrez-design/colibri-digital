@@ -1,0 +1,1130 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 55: EXCEPCIONES (TRY, CATCH, THROW)
+================================================================================
+
+  "Las excepciones son el mecanismo de C++ para decir: 'algo salió mal,
+   pero tengo un plan para manejarlo'."
+                                                   — Herb Sutter
+
+================================================================================
+
+BIENVENIDA
+----------
+
+Bienvenido al fascinante mundo del manejo de excepciones en C++. Hasta
+ahora hemos asumido que todo funciona correctamente: los archivos existen,
+la memoria está disponible, los índices son válidos. Pero en el mundo
+real, las cosas fallan.
+
+Las excepciones son el mecanismo de C++ para manejar errores y situaciones
+excepcionales de forma estructurada. A diferencia de los códigos de error
+(al estilo C), las excepciones separan la lógica normal del manejo de
+errores, permitiendo escribir código más limpio y seguro.
+
+En este capítulo aprenderemos los fundamentos: try, catch, throw, el
+desenrollado de la pila (stack unwinding), la captura de cualquier
+excepción con catch(...), el re-lanzamiento, y la especificación noexcept.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "Las excepciones no son para control de flujo; son para situaciones
+   excepcionales. Úsalas con sabiduría."
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+
+  1. Comprender la sintaxis de try, catch, y throw.
+  2. Entender el proceso de stack unwinding (desenrollado de pila).
+  3. Aprender a capturar cualquier excepción con catch(...).
+  4. Dominar el re-lanzamiento de excepciones (throw; vacío).
+  5. Conocer la especificación noexcept y cuándo usarla.
+  6. Entender la propagación de excepciones.
+  7. Aprender las mejores prácticas para el manejo de excepciones.
+  8. Diferenciar entre errores y situaciones excepcionales.
+  9. Conocer la jerarquía de excepciones estándar.
+  10. Implementar un manejo de errores robusto.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+1. SINTAXIS BÁSICA DE TRY/CATCH/THROW
+---------------------------------------
+
+  try {
+      // Código que puede lanzar una excepción
+      throw std::runtime_error("Algo salio mal");
+  }
+  catch (const std::runtime_error& e) {
+      // Manejar la excepción
+      std::cerr << "Error: " << e.what() << "\n";
+  }
+
+  // throw: lanza una excepción
+  // try: define un bloque donde se capturarán excepciones
+  // catch: captura y maneja una excepción de un tipo específico
+
+2. STACK UNWINDING (DESENROLLADO DE LA PILA)
+---------------------------------------------
+
+Cuando se lanza una excepción, el compilador "desenrolla" la pila de
+llamadas: destruye todos los objetos automáticos (locales) en orden
+inverso al que fueron construidos, buscando un catch que maneje la
+excepción. Si no encuentra ninguno, llama a std::terminate().
+
+Esto garantiza que los destructores se ejecuten, permitiendo la
+liberación correcta de recursos (RAII).
+
+  void funcA() {
+      Objeto a;
+      funcB();  // Si funcB lanza, 'a' se destruye automáticamente
+  }
+
+  void funcB() {
+      Objeto b;
+      throw std::runtime_error("error");
+      // 'b' se destruye durante el stack unwinding
+  }
+
+3. CAPTURA DE MÚLTIPLES TIPOS
+-------------------------------
+
+Puedes tener múltiples bloques catch para diferentes tipos:
+
+  try {
+      // ...
+  }
+  catch (const std::runtime_error& e) {
+      // Error de runtime
+  }
+  catch (const std::logic_error& e) {
+      // Error de lógica
+  }
+  catch (const std::exception& e) {
+      // Cualquier otra excepción derivada de std::exception
+  }
+  catch (...) {
+      // Cualquier excepción (incluyendo las que no heredan de exception)
+  }
+
+Los catch se evalúan en orden. Pon los más específicos primero.
+
+4. CATCH(...) - CAPTURAR CUALQUIER EXCEPCIÓN
+---------------------------------------------
+
+  try {
+      // ...
+  }
+  catch (...) {
+      // Captura TODAS las excepciones (incluyendo int, char*, etc.)
+      std::cerr << "Excepcion desconocida capturada\n";
+      throw;  // Re-lanza para que otro la maneje
+  }
+
+Útil como "catch-all" en niveles superiores para logging o limpieza.
+
+5. RE-LANZAMIENTO (RE-THROWING)
+---------------------------------
+
+Para re-lanzar la misma excepción después de procesarla parcialmente:
+
+  try {
+      // ...
+  }
+  catch (const std::exception& e) {
+      std::cerr << "Log: " << e.what() << "\n";
+      throw;  // Re-lanza la misma excepción (no se pierde el tipo)
+  }
+
+throw; sin argumentos re-lanza la excepción actual. No pierdes el tipo
+original, a diferencia de throw e; (que corta el tipo).
+
+6. ESPECIFICACIÓN NOEXCEPT (C++11)
+-----------------------------------
+
+Indica que una función NO lanza excepciones:
+
+  void func() noexcept;             // No lanza excepciones
+  void func() noexcept(false);      // Puede lanzar excepciones (default)
+  void func() noexcept(true);       // No lanza excepciones
+
+Si una función noexcept lanza, se llama a std::terminate() en lugar
+de desenrollar la pila. Esto permite optimizaciones al compilador.
+
+  // Operador noexcept en tiempo de compilación:
+  static_assert(noexcept(func()));  // Verifica si func es noexcept
+
+7. std::terminate Y std::unexpected
+------------------------------------
+
+  std::terminate(): Se llama cuando:
+    - Una excepción no se captura y se sale de main()
+    - Una función noexcept lanza una excepción
+    - Un destructor lanza durante stack unwinding
+    - Se lanzan dos excepciones simultáneamente
+    - Se llama a terminate() directamente
+
+  Puedes personalizar el manejador:
+      std::set_terminate([]() {
+          std::cerr << "Terminacion inesperada\n";
+          std::abort();
+      });
+
+8. EXCEPCIONES EN CONSTRUCTORES Y DESTRUCTORES
+-----------------------------------------------
+
+  Constructor: puede lanzar excepciones. El objeto no se considera
+  construido y su destructor no se llamará.
+
+  Destructor: NO debe lanzar excepciones. Si un destructor lanza
+  durante stack unwinding (cuando ya hay una excepción activa), se
+  llama a std::terminate(). Marca los destructores como noexcept.
+
+9. PROPAGACIÓN DE EXCEPCIONES
+------------------------------
+
+Las excepciones se propagan hacia arriba en la pila de llamadas:
+
+  main() -> funcA() -> funcB() -> funcC()
+                                   ^
+                                   | throws
+  Stack unwinding: funcC -> funcB -> funcA -> main (catch)
+
+En cada nivel se destruyen los objetos locales y se busca un catch.
+
+10. BUENAS PRÁCTICAS
+---------------------
+
+  - Lanza por valor, captura por referencia (const).
+  - No uses excepciones para control de flujo normal.
+  - Usa RAII para evitar fugas de recursos.
+  - Los destructores deben ser noexcept.
+  - Especifica noexcept en funciones que no lanzan.
+  - Captura las excepciones más específicas primero.
+  - No tragues excepciones sin manejarlas.
+  - Documenta qué excepciones lanza cada función.
+
+================================================================================
+  CÓDIGO DE EJEMPLO
+================================================================================
+
+```cpp
+//==============================================================================
+// EJEMPLO 1: Sintaxis básica de try/catch/throw
+//==============================================================================
+#include <iostream>
+#include <string>
+#include <stdexcept>
+
+double dividir(double a, double b) {
+    if (b == 0.0) {
+        throw std::runtime_error("Division por cero");
+    }
+    return a / b;
+}
+
+int main() {
+    try {
+        double r1 = dividir(10.0, 2.0);
+        std::cout << "10 / 2 = " << r1 << "\n";
+
+        double r2 = dividir(10.0, 0.0);
+        std::cout << "Esto no se ejecuta\n";
+    }
+    catch (const std::runtime_error& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "El programa continua...\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 2: Stack unwinding - Destructores en acción
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+
+struct Tracker {
+    std::string nombre;
+    Tracker(const std::string& n) : nombre(n) {
+        std::cout << "  Construyendo: " << nombre << "\n";
+    }
+    ~Tracker() {
+        std::cout << "  Destruyendo: " << nombre << "\n";
+    }
+};
+
+void funcC() {
+    Tracker c("C");
+    std::cout << "  funcC lanza excepcion\n";
+    throw std::runtime_error("Error en C");
+}
+
+void funcB() {
+    Tracker b("B");
+    funcC();
+    std::cout << "  Esto no se ejecuta\n";
+}
+
+void funcA() {
+    Tracker a("A");
+    try {
+        funcB();
+    }
+    catch (const std::runtime_error& e) {
+        std::cout << "  Capturado en A: " << e.what() << "\n";
+    }
+    std::cout << "  funcA continua normalmente\n";
+}
+
+int main() {
+    std::cout << "Inicio de main\n";
+    funcA();
+    std::cout << "Fin de main\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 3: Múltiples catch y captura por referencia
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+void lanzarSegunTipo(int tipo) {
+    switch (tipo) {
+        case 1:
+            throw std::runtime_error("Error de runtime");
+        case 2:
+            throw std::logic_error("Error de logica");
+        case 3:
+            throw std::out_of_range("Fuera de rango");
+        case 4:
+            throw 42;  // Excepción de tipo int (no recomendado)
+        case 5:
+            throw "Mensaje de error C-style";
+        default:
+            throw std::invalid_argument("Tipo no valido");
+    }
+}
+
+int main() {
+    for (int i = 1; i <= 6; ++i) {
+        std::cout << "\n--- Lanzando tipo " << i << " ---\n";
+        try {
+            lanzarSegunTipo(i);
+        }
+        catch (const std::out_of_range& e) {
+            std::cout << "catch out_of_range: " << e.what() << "\n";
+        }
+        catch (const std::runtime_error& e) {
+            std::cout << "catch runtime_error: " << e.what() << "\n";
+        }
+        catch (const std::logic_error& e) {
+            std::cout << "catch logic_error: " << e.what() << "\n";
+        }
+        catch (const std::exception& e) {
+            std::cout << "catch exception: " << e.what() << "\n";
+        }
+        catch (int e) {
+            std::cout << "catch int: " << e << "\n";
+        }
+        catch (const char* e) {
+            std::cout << "catch const char*: " << e << "\n";
+        }
+        catch (...) {
+            std::cout << "catch ... (desconocido)\n";
+        }
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 4: catch(...) y re-lanzamiento
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <exception>
+
+// Función de logging que captura todo y re-lanza
+void operacionRiesgosa() {
+    try {
+        // Simular varias operaciones
+        std::cout << "  Operacion riesgosa...\n";
+
+        srand(time(nullptr));
+        if (rand() % 2 == 0) {
+            throw std::runtime_error("Error de runtime aleatorio");
+        } else {
+            throw 3.14;  // Excepción double (no estándar)
+        }
+    }
+    catch (const std::exception& e) {
+        std::cout << "  [LOG] Excepcion estandar: " << e.what() << "\n";
+        throw;  // Re-lanza manteniendo el tipo original
+    }
+    catch (...) {
+        std::cout << "  [LOG] Excepcion desconocida capturada\n";
+        throw;  // Re-lanza
+    }
+}
+
+int main() {
+    try {
+        operacionRiesgosa();
+    }
+    catch (const std::exception& e) {
+        std::cout << "Main capturo: " << e.what() << "\n";
+    }
+    catch (...) {
+        std::cout << "Main capturo excepcion desconocida\n";
+    }
+
+    std::cout << "Programa finalizado correctamente\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 5: noexcept - funciones que no lanzan excepciones
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+
+// Funciones noexcept
+int sumar(int a, int b) noexcept {
+    return a + b;
+}
+
+void procesar() noexcept {
+    // Si esto lanzara, se llamaría a terminate()
+    std::cout << "Procesando...\n";
+}
+
+// Función condicionalmente noexcept
+template <typename T>
+void intercambiar(T& a, T& b) noexcept(std::is_nothrow_swappable_v<T>) {
+    using std::swap;
+    swap(a, b);
+}
+
+// Clase con operaciones noexcept
+class ObjetoSeguro {
+public:
+    ObjetoSeguro() noexcept = default;
+    ~ObjetoSeguro() noexcept = default;
+
+    void operacion() noexcept {
+        std::cout << "Operacion segura\n";
+    }
+
+    int getValor() const noexcept {
+        return valor;
+    }
+
+private:
+    int valor = 42;
+};
+
+int main() {
+    std::cout << "sumar es noexcept? "
+              << noexcept(sumar(1, 2)) << "\n";
+
+    std::cout << "procesar es noexcept? "
+              << noexcept(procesar()) << "\n";
+
+    // Verificar en compilación
+    static_assert(noexcept(sumar(1, 2)),
+                  "sumar debe ser noexcept");
+
+    ObjetoSeguro obj;
+    std::cout << "Valor: " << obj.getValor() << "\n";
+
+    int x = 10, y = 20;
+    std::cout << "intercambiar(x,y) es noexcept? "
+              << noexcept(intercambiar(x, y)) << "\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 6: Excepciones en constructores y destructores
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+class Recurso {
+    std::string nombre;
+public:
+    Recurso(const std::string& n) : nombre(n) {
+        std::cout << "  Recurso adquirido: " << nombre << "\n";
+        if (nombre == "fallar") {
+            std::cout << "  LANZANDO excepcion en constructor!\n";
+            throw std::runtime_error("Fallo al adquirir recurso: " + nombre);
+        }
+    }
+
+    ~Recurso() noexcept {
+        std::cout << "  Recurso liberado: " << nombre << "\n";
+    }
+};
+
+class Gestor {
+    Recurso r1;
+    Recurso r2;
+public:
+    Gestor(const std::string& a, const std::string& b)
+        : r1(a), r2(b) {
+        std::cout << "  Gestor construido\n";
+    }
+
+    ~Gestor() noexcept {
+        std::cout << "  Gestor destruido\n";
+    }
+};
+
+int main() {
+    try {
+        std::cout << "Creando Gestor ok:\n";
+        Gestor g1("ok1", "ok2");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n\n";
+    }
+
+    try {
+        std::cout << "Creando Gestor con fallo:\n";
+        Gestor g2("ok1", "fallar");
+        // r1 se construye bien, r2 falla → r1 se destruye (stack unwinding)
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "\nDemostrando que destructor noexcept es importante:\n";
+    struct DestructorPeligroso {
+        ~DestructorPeligroso() noexcept(false) {
+            throw std::runtime_error("Error en destructor");
+        }
+    };
+
+    try {
+        DestructorPeligroso d;
+        throw std::runtime_error("Error normal");
+        // DESTRUCTOR lanza mientras hay excepción → terminate()!
+    }
+    catch (...) {
+        std::cout << "Nunca llega aqui (terminate se llama antes)\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 7: Propagación de excepciones a través de niveles
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <fstream>
+#include <string>
+
+// Nivel 3: Función de bajo nivel que lanza
+int leerEnteroDeArchivo(const std::string& archivo) {
+    std::ifstream file(archivo);
+    if (!file.is_open()) {
+        throw std::runtime_error("No se pudo abrir: " + archivo);
+    }
+
+    int valor;
+    if (!(file >> valor)) {
+        throw std::invalid_argument("Formato invalido en: " + archivo);
+    }
+
+    return valor;
+}
+
+// Nivel 2: Función de proceso que propaga (no captura)
+int procesarArchivo(const std::string& archivo) {
+    std::cout << "  Procesando: " << archivo << "\n";
+    int valor = leerEnteroDeArchivo(archivo);
+    return valor * 2;
+}
+
+// Nivel 1: Función de negocio que transforma
+std::string generarReporte(const std::string& archivo) {
+    try {
+        int dato = procesarArchivo(archivo);
+        return "Resultado: " + std::to_string(dato);
+    }
+    catch (const std::runtime_error& e) {
+        // Propaga con más contexto
+        throw std::runtime_error(
+            std::string("Error generando reporte: ") + e.what());
+    }
+}
+
+int main() {
+    // Archivo inexistente
+    try {
+        std::string reporte = generarReporte("no_existe.txt");
+        std::cout << reporte << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error final: " << e.what() << "\n";
+    }
+
+    std::cout << "\n---\n\n";
+
+    // Archivo con formato inválido
+    try {
+        std::string reporte = generarReporte("Makefile");
+        std::cout << reporte << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error final: " << e.what() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 8: RAII y excepciones - Seguridad básica
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+#include <memory>
+
+class Buffer {
+    int* datos;
+    size_t tam;
+
+public:
+    Buffer(size_t n) : datos(new int[n]()), tam(n) {
+        std::cout << "Buffer de " << tam << " enteros asignado\n";
+    }
+
+    ~Buffer() noexcept {
+        delete[] datos;
+        std::cout << "Buffer liberado\n";
+    }
+
+    void llenar() {
+        for (size_t i = 0; i < tam; ++i) {
+            datos[i] = static_cast<int>(i * 10);
+        }
+    }
+
+    void imprimir() const {
+        for (size_t i = 0; i < tam; ++i) {
+            std::cout << datos[i] << " ";
+        }
+        std::cout << "\n";
+    }
+
+    // Prohibir copia
+    Buffer(const Buffer&) = delete;
+    Buffer& operator=(const Buffer&) = delete;
+
+    // Permitir movimiento
+    Buffer(Buffer&& otro) noexcept : datos(otro.datos), tam(otro.tam) {
+        otro.datos = nullptr;
+        otro.tam = 0;
+    }
+};
+
+class OperacionArriesgada {
+    Buffer buffer;
+public:
+    OperacionArriesgada(size_t n) : buffer(n) {
+        buffer.llenar();
+    }
+
+    void ejecutar() {
+        buffer.imprimir();
+
+        // Simular error
+        if (buffer.tam > 5) {
+            throw std::runtime_error("Buffer demasiado grande");
+        }
+
+        std::cout << "Operacion completada\n";
+    }
+};
+
+int main() {
+    try {
+        OperacionArriesgada op1(3);
+        op1.ejecutar();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "\n---\n";
+
+    try {
+        OperacionArriesgada op2(10);
+        op2.ejecutar();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "Programa finalizado sin fugas de memoria\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 9: Excepciones en funciones anidadas y templates
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+template <typename T>
+T promedio(const std::vector<T>& datos) {
+    if (datos.empty()) {
+        throw std::invalid_argument("Vector vacio en promedio()");
+    }
+
+    T suma = T{};
+    for (const auto& valor : datos) {
+        suma += valor;
+    }
+
+    return suma / static_cast<T>(datos.size());
+}
+
+template <typename T>
+T desviacionEstandar(const std::vector<T>& datos) {
+    T media = promedio(datos);  // Puede lanzar
+
+    T suma = T{};
+    for (const auto& valor : datos) {
+        T diff = valor - media;
+        suma += diff * diff;
+    }
+
+    return sqrt(suma / static_cast<T>(datos.size()));
+}
+
+int main() {
+    // Vector con datos
+    try {
+        std::vector<double> datos = {1.0, 2.0, 3.0, 4.0, 5.0};
+        double p = promedio(datos);
+        double d = desviacionEstandar(datos);
+        std::cout << "Promedio: " << p << "\n";
+        std::cout << "Desv. Estandar: " << d << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    // Vector vacío
+    try {
+        std::vector<int> vacio;
+        int p = promedio(vacio);
+        std::cout << "Promedio: " << p << "\n";
+    }
+    catch (const std::invalid_argument& e) {
+        std::cerr << "Error esperado: " << e.what() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 10: Noexcept y optimizaciones del compilador
+//==============================================================================
+#include <iostream>
+#include <vector>
+#include <chrono>
+
+// Con noexcept, el compilador puede optimizar mejor
+void operacionNoexcept() noexcept {
+    volatile int x = 0;
+    for (int i = 0; i < 1000; ++i) {
+        x += i;
+    }
+}
+
+// Sin noexcept, se genera código de soporte para excepciones
+void operacionConExcepciones() {
+    volatile int x = 0;
+    for (int i = 0; i < 1000; ++i) {
+        x += i;
+    }
+}
+
+// noexcept movible: optimización en std::vector
+struct MovibleNoexcept {
+    int* datos;
+    MovibleNoexcept() : datos(new int[100]) {}
+    ~MovibleNoexcept() noexcept { delete[] datos; }
+
+    MovibleNoexcept(MovibleNoexcept&& otro) noexcept
+        : datos(otro.datos) {
+        otro.datos = nullptr;
+    }
+
+    MovibleNoexcept& operator=(MovibleNoexcept&& otro) noexcept {
+        if (this != &otro) {
+            delete[] datos;
+            datos = otro.datos;
+            otro.datos = nullptr;
+        }
+        return *this;
+    }
+
+    MovibleNoexcept(const MovibleNoexcept&) : datos(new int[100]) {}
+    MovibleNoexcept& operator=(const MovibleNoexcept&) {
+        return *this;
+    }
+};
+
+struct MovibleLanzador {
+    int* datos;
+    MovibleLanzador() : datos(new int[100]) {}
+    ~MovibleLanzador() noexcept { delete[] datos; }
+
+    MovibleLanzador(MovibleLanzador&& otro) : datos(otro.datos) {
+        otro.datos = nullptr;
+    }
+
+    MovibleLanzador& operator=(MovibleLanzador&& otro) {
+        if (this != &otro) {
+            delete[] datos;
+            datos = otro.datos;
+            otro.datos = nullptr;
+        }
+        return *this;
+    }
+
+    MovibleLanzador(const MovibleLanzador&) : datos(new int[100]) {}
+    MovibleLanzador& operator=(const MovibleLanzador&) {
+        return *this;
+    }
+};
+
+int main() {
+    // noexcept permite a std::vector usar move en lugar de copy
+    std::vector<MovibleNoexcept> vecNoexcept;
+    vecNoexcept.reserve(1);
+    std::cout << "MovibleNoexcept es noexcept? "
+              << std::is_nothrow_move_constructible_v<MovibleNoexcept> << "\n";
+
+    std::vector<MovibleLanzador> vecLanzador;
+    vecLanzador.reserve(1);
+    std::cout << "MovibleLanzador es noexcept? "
+              << std::is_nothrow_move_constructible_v<MovibleLanzador> << "\n";
+
+    // Con noexcept, vector usará move (rápido) al redimensionar
+    // Sin noexcept, vector usará copy (lento) por seguridad
+
+    std::cout << "\nImportancia de noexcept para el rendimiento:\n";
+    std::cout << "- noexcept(true): permite movimiento en reallocaciones\n";
+    std::cout << "- noexcept(false): fuerza copia (mas lento)\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 11: Patrón "Resource Acquisition Is Initialization" + excepciones
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <fstream>
+#include <mutex>
+#include <thread>
+
+class ArchivoSeguro {
+    std::ofstream archivo;
+
+public:
+    ArchivoSeguro(const std::string& nombre) : archivo(nombre) {
+        if (!archivo.is_open()) {
+            throw std::runtime_error(
+                "No se pudo abrir: " + nombre);
+        }
+        std::cout << "Archivo abierto: " << nombre << "\n";
+    }
+
+    void escribir(const std::string& texto) {
+        if (!(archivo << texto << "\n")) {
+            throw std::runtime_error("Error al escribir");
+        }
+    }
+
+    // El destructor cierra automáticamente
+    ~ArchivoSeguro() noexcept {
+        if (archivo.is_open()) {
+            archivo.close();
+            std::cout << "Archivo cerrado automaticamente\n";
+        }
+    }
+};
+
+void procesarConArchivo(const std::string& nombre) {
+    ArchivoSeguro archivo(nombre);
+    archivo.escribir("Linea 1");
+    archivo.escribir("Linea 2");
+
+    // Simular error
+    if (nombre.find("malo") != std::string::npos) {
+        throw std::runtime_error("Error durante el procesamiento");
+    }
+
+    archivo.escribir("Linea 3");
+    std::cout << "Procesamiento completado\n";
+    // archivo se cierra automáticamente aquí (o durante stack unwinding)
+}
+
+int main() {
+    try {
+        procesarConArchivo("datos.txt");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "\n---\n";
+
+    try {
+        procesarConArchivo("archivo_malo.txt");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "Archivos cerrados correctamente (RAII)\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 12: Captura por valor vs referencia - Diferencia crucial
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+
+// Demostración de captura por valor vs referencia
+class ExcepcionPersonalizada : public std::exception {
+    std::string mensaje;
+    int id;
+
+public:
+    ExcepcionPersonalizada(const std::string& msg, int id_)
+        : mensaje(msg), id(id_) {
+        std::cout << "  Constructor Excepcion(" << id << ")\n";
+    }
+
+    ExcepcionPersonalizada(const ExcepcionPersonalizada& otra)
+        : mensaje(otra.mensaje), id(otra.id) {
+        std::cout << "  Copia Excepcion(" << id << ")\n";
+    }
+
+    ExcepcionPersonalizada(ExcepcionPersonalizada&& otra) noexcept
+        : mensaje(std::move(otra.mensaje)), id(otra.id) {
+        std::cout << "  Movimiento Excepcion(" << id << ")\n";
+    }
+
+    ~ExcepcionPersonalizada() noexcept {
+        std::cout << "  Destructor Excepcion(" << id << ")\n";
+    }
+
+    const char* what() const noexcept override {
+        return mensaje.c_str();
+    }
+
+    int getId() const { return id; }
+};
+
+void lanzarExcepcion() {
+    throw ExcepcionPersonalizada("Error grave", 42);
+}
+
+int main() {
+    std::cout << "--- Captura por valor (MAL) ---\n";
+    try {
+        lanzarExcepcion();
+    }
+    catch (ExcepcionPersonalizada e) {  // Por valor: HACE COPIA!
+        std::cout << "  Capturado (por valor): " << e.what()
+                  << " id=" << e.getId() << "\n";
+        // e es una COPIA de la excepción original
+    }
+    std::cout << "  (se destruye la copia al salir del catch)\n\n";
+
+    std::cout << "--- Captura por referencia (BIEN) ---\n";
+    try {
+        lanzarExcepcion();
+    }
+    catch (const ExcepcionPersonalizada& e) {  // Por referencia: SIN copia
+        std::cout << "  Capturado (por ref): " << e.what()
+                  << " id=" << e.getId() << "\n";
+    }
+    std::cout << "  (sin copia extra, mas eficiente)\n\n";
+
+    std::cout << "--- Captura por referencia polimórfica ---\n";
+    try {
+        lanzarExcepcion();
+    }
+    catch (const std::exception& e) {
+        // Captura cualquier excepción derivada de std::exception
+        std::cout << "  Capturado polimorfico: " << e.what() << "\n";
+        // dynamic_cast<const ExcepcionPersonalizada&>(e) para acceso específico
+    }
+
+    return 0;
+}
+```
+
+RESUMEN DEL CAPÍTULO
+--------------------
+
+En este capítulo hemos aprendido:
+
+  1. Sintaxis de try/catch/throw para manejo estructurado de errores.
+  2. Stack unwinding: desenrollado de pila con destrucción automática.
+  3. Múltiples catch blocks y catch(...) para cualquier excepción.
+  4. Re-lanzamiento con throw; (mantiene el tipo original).
+  5. noexcept para especificar que una función no lanza excepciones.
+  6. std::terminate y cuándo se llama.
+  7. Excepciones en constructores y destructores.
+  8. Propagación de excepciones a través de niveles de abstracción.
+  9. RAII como mecanismo de seguridad frente a excepciones.
+  10. Captura por referencia vs por valor (siempre por referencia).
+
+EJERCICIOS PROPUESTOS
+---------------------
+
+  EJERCICIO 1: Crea una función `leerNumero` que lea un entero desde
+  un string y lance `std::invalid_argument` si el formato es inválido
+  y `std::out_of_range` si está fuera del rango de int.
+
+  EJERCICIO 2: Implementa una jerarquía de excepciones para un banco:
+  SaldoInsuficiente, CuentaBloqueada, CuentaNoEncontrada, MontoInvalido.
+
+  EJERCICIO 3: Escribe un programa que demuestre el stack unwinding
+  con al menos 4 niveles de anidamiento y objetos RAII.
+
+  EJERCICIO 4: Crea una función `noexcept` que calcule el factorial
+  de un entero (sin lanzar excepciones).
+
+  EJERCICIO 5: Implementa un gestor de base de datos simple que use
+  RAII para conexiones y maneje excepciones correctamente.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿Debo usar excepciones o códigos de error?
+  R: En C++ moderno, prefiere excepciones para errores que no se pueden
+  manejar en el punto donde ocurren. Usa códigos de error solo en
+  contextos donde las excepciones no están disponibles (embedded, o
+  interfaces con C).
+
+  P: ¿Por qué capturar por referencia const?
+  R: Para evitar slicing (pérdida del tipo derivado) y copias
+  innecesarias. Capturar por valor hace una copia y pierde información
+  del tipo original.
+
+  P: ¿Qué significa noexcept(false)?
+  R: Es el comportamiento por defecto. Indica que la función PUEDE
+  lanzar excepciones. Es equivalente a no escribir noexcept.
+
+  P: ¿Qué sucede si un destructor lanza una excepción?
+  R: Si lanza durante stack unwinding (mientras otra excepción está
+  activa), se llama a std::terminate(). Los destructores deben ser
+  noexcept.
+
+  P: ¿Puedo lanzar cualquier tipo de dato?
+  R: Técnicamente sí (int, char*, etc.), pero debes lanzar objetos
+  derivados de std::exception para que sean manejables de forma
+  uniforme.
+
+  P: ¿Qué es el coste de las excepciones?
+  R: Hay un pequeño overhead en tiempo de ejecución incluso cuando no
+  se lanzan excepciones (código de desenrollado). En C++ moderno, este
+  overhead es mínimo si usas la flag -fno-exceptions para deshabilitar.
+
+  P: ¿std::set_terminate para qué sirve?
+  R: Para establecer una función personalizada que se ejecute cuando
+  se llama a std::terminate(), permitiendo logging o limpieza final.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Implementa un "TransactionManager" que maneje operaciones críticas
+  con soporte completo de excepciones.
+
+  Requisitos:
+    - Template TransactionManager<T> que maneje objetos T.
+    - Método begin() inicia una transacción.
+    - Método commit() confirma los cambios.
+    - Método rollback() revierte los cambios.
+    - Si commit() falla, hace rollback automático.
+    - Si cualquier operación lanza, la transacción se revierte.
+    - Debe proporcionar strong exception safety guarantee.
+    - Debe registrar todas las operaciones para poder revertirlas.
+
+  Pistas:
+    - Guarda una copia del estado inicial antes de cada operación.
+    - Usa std::function<void()> para las operaciones de rollback.
+    - Si commit lanza, ejecuta todos los rollbacks en orden inverso.
+    - noexcept para operaciones que no deben fallar.
+    - RAII para asegurar rollback en destructor si no hay commit.
+
+CIERRE DEL CAPÍTULO
+-------------------
+
+El manejo de excepciones es fundamental para escribir software robusto.
+Hemos visto cómo try/catch/throw nos permite separar la lógica normal
+del manejo de errores, cómo el stack unwinding garantiza la limpieza
+automática, y cómo noexcept permite optimizaciones y contratos claros.
+
+Recuerda las reglas de oro: lanza solo en situaciones excepcionales,
+captura por referencia const, y combina siempre con RAII para evitar
+fugas de recursos.
+
+En el próximo capítulo, exploraremos los tipos de excepciones estándar
+y cómo crear nuestras propias jerarquías de excepciones.
+
+  "Un programa que maneja bien las excepciones no es aquel que nunca
+   falla, sino aquel que falla con dignidad."
+
+================================================================================
+  FIN DEL CAPÍTULO 55
+================================================================================

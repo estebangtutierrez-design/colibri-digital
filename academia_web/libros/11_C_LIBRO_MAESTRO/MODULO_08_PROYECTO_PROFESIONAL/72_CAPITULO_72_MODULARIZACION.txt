@@ -1,0 +1,1249 @@
+================================================================================
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 72: MODULARIZACIÓN
+================================================================================
+
+________________________________________________________________________________
+  BIENVENIDA
+________________________________________________________________________________
+
+Bienvenido al Capítulo 72. En el capítulo anterior estudiamos la
+arquitectura de software en C como disciplina de organización. Ahora
+vamos a poner esa teoría en práctica mediante la modularización.
+
+La modularización es el arte de dividir un programa en componentes
+independientes que se comunican a través de interfaces bien definidas.
+En C, esto se logra mediante la separación en archivos .h y .c, el
+uso de la palabra clave static para ocultar información, y el diseño
+cuidadoso de APIs.
+
+Este capítulo te dará las herramientas prácticas para transformar
+cualquier programa monolítico en un sistema modular profesional.
+
+________________________________________________________________________________
+  FRASE DEL CAPÍTULO
+________________________________________________________________________________
+
+"Un módulo debe tener una sola razón para cambiar. Si encuentras más
+de una, no es un módulo: es un vertedero." — Lucas Ega
+
+________________________________________________________________________________
+  OBJETIVOS DEL CAPÍTULO
+________________________________________________________________________________
+
+  ✅ Dominar la separación en archivos .h y .c en proyectos reales.
+  ✅ Aprender a diseñar APIs limpias y consistentes.
+  ✅ Implementar ocultamiento de información con static.
+  ✅ Manejar dependencias entre módulos correctamente.
+  ✅ Crear sistemas de compilación para proyectos modulares.
+
+________________________________________________________________________________
+  CONTENIDO
+________________________________________________________________________________
+
+=== 1. FUNDAMENTOS DE LA MODULARIZACIÓN ===
+
+La modularización en C se basa en tres conceptos fundamentales:
+
+  1. UNIDAD DE TRADUCCIÓN: Cada archivo .c es una unidad de traducción
+     independiente que se compila por separado.
+  2. VISIBILIDAD: static limita la visibilidad a la unidad de traducción.
+  3. INTERFAZ: El archivo .h define el contrato público del módulo.
+
+Beneficios de la modularización:
+
+  - COMPILACIÓN POR SEPARADO: Solo se recompila lo que cambia.
+  - REUTILIZACIÓN: Los módulos pueden usarse en múltiples proyectos.
+  - MANTENIBILIDAD: Cada módulo se puede entender y modificar
+    de forma aislada.
+  - TRABAJO EN EQUIPO: Varios desarrolladores trabajan en paralelo.
+  - PRUEBAS: Cada módulo se prueba independientemente.
+
+=== 2. SEPARACIÓN .H / .C: REGLAS FUNDAMENTALES ===
+
+REGLAS DE ORO:
+
+  1. EN EL .H SOLO DECLARACIONES, NUNCA DEFINICIONES.
+  2. EL .H DEFINE EL CONTRATO, EL .C LA IMPLEMENTACIÓN.
+  3. CADA .C INCLUYE SU PROPIO .H.
+  4. NUNCA INCLUYAS .c, SOLO .h.
+  5. USA GUARDAS DE INCLUSIÓN (#ifndef / #define / #endif).
+
+```c
+// modulo.h - INTERFAZ
+#ifndef MODULO_H
+#define MODULO_H
+
+#include <stddef.h>
+
+// Tipos opacos (solo declaración forward)
+typedef struct ModuloContexto ModuloContexto;
+
+// Constantes públicas
+#define MODULO_VERSION "1.0.0"
+#define MODULO_MAX_ELEMENTOS 1024
+
+// Funciones públicas
+ModuloContexto* modulo_crear(size_t capacidad);
+void            modulo_destruir(ModuloContexto* ctx);
+int             modulo_procesar(ModuloContexto* ctx, const int* datos, size_t n);
+const char*     modulo_ultimo_error(const ModuloContexto* ctx);
+
+#endif /* MODULO_H */
+```
+
+```c
+// modulo.c - IMPLEMENTACIÓN
+#include "modulo.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+// Tipos privados (definición completa aquí, oculta al usuario)
+struct ModuloContexto {
+    int*   buffer;
+    size_t capacidad;
+    size_t count;
+    char   ultimo_error[256];
+};
+
+// Función privada (static = invisible fuera de este archivo)
+static void modulo_set_error(ModuloContexto* ctx, const char* msg) {
+    if (ctx) {
+        strncpy(ctx->ultimo_error, msg, sizeof(ctx->ultimo_error) - 1);
+        ctx->ultimo_error[sizeof(ctx->ultimo_error) - 1] = '\0';
+    }
+}
+
+// Implementaciones públicas
+ModuloContexto* modulo_crear(size_t capacidad) {
+    if (capacidad == 0 || capacidad > MODULO_MAX_ELEMENTOS) return NULL;
+
+    ModuloContexto* ctx = malloc(sizeof(ModuloContexto));
+    if (!ctx) return NULL;
+
+    ctx->buffer = malloc(capacidad * sizeof(int));
+    if (!ctx->buffer) {
+        free(ctx);
+        return NULL;
+    }
+
+    ctx->capacidad = capacidad;
+    ctx->count = 0;
+    ctx->ultimo_error[0] = '\0';
+    return ctx;
+}
+
+void modulo_destruir(ModuloContexto* ctx) {
+    if (!ctx) return;
+    free(ctx->buffer);
+    free(ctx);
+}
+
+int modulo_procesar(ModuloContexto* ctx, const int* datos, size_t n) {
+    if (!ctx || !datos) {
+        modulo_set_error(ctx, "Parámetros inválidos");
+        return -1;
+    }
+
+    if (n > ctx->capacidad) {
+        modulo_set_error(ctx, "Datos exceden la capacidad del módulo");
+        return -1;
+    }
+
+    memcpy(ctx->buffer, datos, n * sizeof(int));
+    ctx->count = n;
+
+    // Procesar (ejemplo: ordenar)
+    for (size_t i = 0; i < ctx->count; i++) {
+        for (size_t j = 0; j < ctx->count - i - 1; j++) {
+            if (ctx->buffer[j] > ctx->buffer[j + 1]) {
+                int tmp = ctx->buffer[j];
+                ctx->buffer[j] = ctx->buffer[j + 1];
+                ctx->buffer[j + 1] = tmp;
+            }
+        }
+    }
+
+    return 0;
+}
+
+const char* modulo_ultimo_error(const ModuloContexto* ctx) {
+    return ctx ? ctx->ultimo_error : "Contexto nulo";
+}
+```
+
+=== 3. INFORMACIÓN OCULTA (INFORMATION HIDING) ===
+
+El principio de información oculta establece que los detalles de
+implementación de un módulo deben ser inaccesibles para sus usuarios.
+En C, logramos esto con:
+
+  1. TIPOS OPACOS: Declaración forward del struct en el .h,
+     definición completa en el .c.
+  2. FUNCIONES STATIC: Solo visibles dentro de su unidad de traducción.
+  3. VARIABLES STATIC: Globales pero limitadas al archivo.
+  4. MACROS INTERNAS: Definidas en el .c, no en el .h.
+
+```c
+// tipos_opacos.h
+#ifndef TIPOS_OPACOS_H
+#define TIPOS_OPACOS_H
+
+// El usuario solo ve esto:
+typedef struct ListaEnlazada ListaEnlazada;
+
+ListaEnlazada* lista_crear(void);
+void           lista_insertar(ListaEnlazada* l, void* dato);
+void*          lista_eliminar(ListaEnlazada* l, size_t indice);
+void           lista_destruir(ListaEnlazada* l);
+
+#endif
+```
+
+```c
+// tipos_opacos.c
+#include "tipos_opacos.h"
+#include <stdlib.h>
+
+// El detalle está aquí, oculto del usuario
+typedef struct Nodo {
+    void*        dato;
+    struct Nodo* siguiente;
+} Nodo;
+
+struct ListaEnlazada {
+    Nodo* cabeza;
+    Nodo* cola;
+    size_t count;
+};
+
+// Variable static: solo visible en este archivo
+static size_t memoria_total_usada = 0;
+
+static Nodo* nodo_crear(void* dato) {
+    Nodo* n = malloc(sizeof(Nodo));
+    if (!n) return NULL;
+    n->dato = dato;
+    n->siguiente = NULL;
+    memoria_total_usada += sizeof(Nodo);
+    return n;
+}
+
+ListaEnlazada* lista_crear(void) {
+    ListaEnlazada* l = malloc(sizeof(ListaEnlazada));
+    if (!l) return NULL;
+    l->cabeza = NULL;
+    l->cola = NULL;
+    l->count = 0;
+    return l;
+}
+
+void lista_insertar(ListaEnlazada* l, void* dato) {
+    if (!l) return;
+    Nodo* n = nodo_crear(dato);
+    if (!n) return;
+    if (l->cola) {
+        l->cola->siguiente = n;
+    } else {
+        l->cabeza = n;
+    }
+    l->cola = n;
+    l->count++;
+}
+
+void* lista_eliminar(ListaEnlazada* l, size_t indice) {
+    if (!l || indice >= l->count) return NULL;
+
+    Nodo* actual = l->cabeza;
+    Nodo* anterior = NULL;
+
+    for (size_t i = 0; i < indice; i++) {
+        anterior = actual;
+        actual = actual->siguiente;
+    }
+
+    if (anterior) {
+        anterior->siguiente = actual->siguiente;
+    } else {
+        l->cabeza = actual->siguiente;
+    }
+
+    if (actual == l->cola) {
+        l->cola = anterior;
+    }
+
+    void* dato = actual->dato;
+    free(actual);
+    l->count--;
+    return dato;
+}
+
+void lista_destruir(ListaEnlazada* l) {
+    if (!l) return;
+    Nodo* actual = l->cabeza;
+    while (actual) {
+        Nodo* siguiente = actual->siguiente;
+        free(actual);
+        actual = siguiente;
+    }
+    free(l);
+}
+```
+
+=== 4. DISEÑO DE APIs PROFESIONALES ===
+
+Una API (Application Programming Interface) es la cara visible de
+tu módulo. Un buen diseño de API determina la calidad de tu software.
+
+PRINCIPIOS PARA DISEÑAR GRANDES APIs:
+
+  1. CONSISTENCIA: Misma convención de nombres, mismo patrón para
+     funciones similares.
+  2. SIMETRÍA: Si hay crear(), debe haber destruir(). Si hay abrir(),
+     debe haber cerrar().
+  3. COMPLETITUD: La API debe cubrir todos los casos de uso previstos.
+  4. MINIMALISMO: Cada función debe ser esencial. No agregues
+     funciones "por si acaso".
+  5. SEGURIDAD POR DEFECTO: Las funciones deben ser seguras incluso
+     si se usan incorrectamente.
+
+Convenciones de nomenclatura:
+
+```c
+// PREFIJO DEL MÓDULO + VERBO + SUSTANTIVO (opcional)
+
+// Módulo: config
+Config*     config_crear(const char* ruta);
+void        config_destruir(Config* cfg);
+int         config_get_int(const Config* cfg, const char* clave, int def);
+const char* config_get_str(const Config* cfg, const char* clave, const char* def);
+int         config_set_int(Config* cfg, const char* clave, int valor);
+
+// Módulo: socket
+Socket*     socket_crear(int dominio, int tipo, int protocolo);
+int         socket_conectar(Socket* s, const char* host, int puerto);
+int         socket_enviar(Socket* s, const void* datos, size_t len);
+int         socket_recibir(Socket* s, void* buffer, size_t len);
+void        socket_cerrar(Socket* s);
+```
+
+=== 5. MODULARIZACIÓN DE PROYECTOS REALES ===
+
+Veamos un ejemplo completo de cómo modularizar un proyecto real: un
+conversor de temperaturas que soporta múltiples escalas.
+
+ESTRUCTURA DEL PROYECTO:
+
+```
+conversor/
+├── include/
+│   ├── conversor/
+│   │   ├── api.h
+│   │   ├── escalas.h
+│   │   └── errores.h
+├── src/
+│   ├── main.c
+│   ├── conversor.c
+│   ├── escalas.c
+│   └── errores.c
+├── test/
+│   ├── test_conversor.c
+│   └── test_escalas.c
+├── Makefile
+└── README.md
+```
+
+```c
+// include/conversor/errores.h
+#ifndef ERRORES_H
+#define ERRORES_H
+
+typedef enum {
+    CONV_OK            = 0,
+    CONV_ERR_PARAM     = -1,
+    CONV_ERR_ESCALA    = -2,
+    CONV_ERR_RANGO     = -3,
+    CONV_ERR_MEMORIA   = -4
+} ErrorConv;
+
+const char* conv_error_str(ErrorConv err);
+
+#endif
+```
+
+```c
+// src/errores.c
+#include "conversor/errores.h"
+
+static const char* mensajes[] = {
+    [CONV_OK]          = "Operación exitosa",
+    [CONV_ERR_PARAM]   = "Parámetro inválido",
+    [CONV_ERR_ESCALA]  = "Escala no soportada",
+    [CONV_ERR_RANGO]   = "Valor fuera de rango",
+    [CONV_ERR_MEMORIA] = "Error de memoria",
+};
+
+const char* conv_error_str(ErrorConv err) {
+    int idx = -err;
+    if (idx < 0 || idx >= (int)(sizeof(mensajes)/sizeof(mensajes[0])))
+        return "Error desconocido";
+    const char* msg = mensajes[idx];
+    return msg ? msg : "Error desconocido";
+}
+```
+
+```c
+// include/conversor/escalas.h
+#ifndef ESCALAS_H
+#define ESCALAS_H
+
+typedef enum {
+    ESCALA_CELSIUS,
+    ESCALA_FAHRENHEIT,
+    ESCALA_KELVIN,
+    ESCALA_RANKINE,
+    ESCALA_REAUMUR,
+    ESCALA_COUNT
+} EscalaTermica;
+
+const char* escala_nombre(EscalaTermica e);
+double      escala_a_celsius(EscalaTermica origen, double valor);
+double      escala_desde_celsius(EscalaTermica destino, double celsius);
+bool        escala_es_valida(EscalaTermica e);
+
+#endif
+```
+
+```c
+// src/escalas.c
+#include "conversor/escalas.h"
+#include <string.h>
+#include <stdbool.h>
+
+static const char* nombres[] = {
+    "Celsius",
+    "Fahrenheit",
+    "Kelvin",
+    "Rankine",
+    "Réaumur"
+};
+
+const char* escala_nombre(EscalaTermica e) {
+    if (e < 0 || e >= ESCALA_COUNT) return NULL;
+    return nombres[e];
+}
+
+double escala_a_celsius(EscalaTermica origen, double valor) {
+    switch (origen) {
+        case ESCALA_CELSIUS:    return valor;
+        case ESCALA_FAHRENHEIT: return (valor - 32.0) / 1.8;
+        case ESCALA_KELVIN:     return valor - 273.15;
+        case ESCALA_RANKINE:    return (valor - 491.67) / 1.8;
+        case ESCALA_REAUMUR:    return valor * 1.25;
+        default:                return 0.0;
+    }
+}
+
+double escala_desde_celsius(EscalaTermica destino, double celsius) {
+    switch (destino) {
+        case ESCALA_CELSIUS:    return celsius;
+        case ESCALA_FAHRENHEIT: return celsius * 1.8 + 32.0;
+        case ESCALA_KELVIN:     return celsius + 273.15;
+        case ESCALA_RANKINE:    return (celsius + 273.15) * 1.8;
+        case ESCALA_REAUMUR:    return celsius / 1.25;
+        default:                return 0.0;
+    }
+}
+
+bool escala_es_valida(EscalaTermica e) {
+    return e >= 0 && e < ESCALA_COUNT;
+}
+```
+
+```c
+// include/conversor/api.h
+#ifndef API_CONVERSOR_H
+#define API_CONVERSOR_H
+
+#include "conversor/escalas.h"
+#include "conversor/errores.h"
+
+typedef struct {
+    double      valor;
+    EscalaTermica origen;
+    EscalaTermica destino;
+} SolicitudConversion;
+
+typedef struct {
+    double      valor;
+    EscalaTermica escala;
+    bool        exito;
+    ErrorConv   error;
+} ResultadoConversion;
+
+ErrorConv conversor_convertir(SolicitudConversion solicitud,
+                               ResultadoConversion* resultado);
+
+#endif
+```
+
+```c
+// src/conversor.c
+#include "conversor/api.h"
+
+ErrorConv conversor_convertir(SolicitudConversion sol,
+                               ResultadoConversion* res) {
+    if (!res) return CONV_ERR_PARAM;
+
+    res->exito = false;
+    res->error = CONV_OK;
+
+    if (!escala_es_valida(sol.origen) || !escala_es_valida(sol.destino)) {
+        res->error = CONV_ERR_ESCALA;
+        return CONV_ERR_ESCALA;
+    }
+
+    double celsius = escala_a_celsius(sol.origen, sol.valor);
+
+    // Verificar límites físicos
+    if (celsius < -273.15) {
+        res->error = CONV_ERR_RANGO;
+        return CONV_ERR_RANGO;
+    }
+
+    res->valor = escala_desde_celsius(sol.destino, celsius);
+    res->escala = sol.destino;
+    res->exito = true;
+    return CONV_OK;
+}
+```
+
+```c
+// src/main.c
+#include <stdio.h>
+#include "conversor/api.h"
+
+int main(void) {
+    SolicitudConversion sol = {
+        .valor = 100.0,
+        .origen = ESCALA_CELSIUS,
+        .destino = ESCALA_FAHRENHEIT
+    };
+    ResultadoConversion res;
+
+    ErrorConv err = conversor_convertir(sol, &res);
+    if (err != CONV_OK) {
+        fprintf(stderr, "Error: %s\n", conv_error_str(err));
+        return 1;
+    }
+
+    printf("%.2f °C = %.2f °F\n",
+           sol.valor, res.valor);
+
+    return 0;
+}
+```
+
+=== 6. SISTEMA DE COMPILACIÓN MODULAR (MAKEFILE) ===
+
+```makefile
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -Iinclude
+LDFLAGS =
+AR = ar
+
+SRCDIR = src
+INCDIR = include
+BUILDDIR = build
+BINDIR = bin
+TESTDIR = test
+
+SRCS = $(wildcard $(SRCDIR)/*.c)
+OBJS = $(patsubst $(SRCDIR)/%.c, $(BUILDDIR)/%.o, $(SRCS))
+MAIN = $(BUILDDIR)/main.o
+
+TARGET = $(BINDIR)/conversor
+LIB = $(BINDIR)/libconversor.a
+
+.PHONY: all clean test lib
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	@mkdir -p $(BINDIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c
+	@mkdir -p $(BUILDDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+lib: $(OBJS)
+	@mkdir -p $(BINDIR)
+	$(AR) rcs $(LIB) $(filter-out $(MAIN), $(OBJS))
+
+test: $(TESTDIR)/test_escalas.c $(BUILDDIR)/escalas.o
+	$(CC) $(CFLAGS) -o $(BINDIR)/test_escalas $^
+	./$(BINDIR)/test_escalas
+
+clean:
+	rm -rf $(BUILDDIR) $(BINDIR)
+```
+
+=== 7. MODULARIZACIÓN CON CALLBACKS ===
+
+Los callbacks permiten que un módulo llame a funciones definidas
+en otros módulos sin crear dependencias directas. Esto es esencial
+para lograr bajo acoplamiento.
+
+```c
+// ordenamiento.h
+#ifndef ORDENAMIENTO_H
+#define ORDENAMIENTO_H
+
+#include <stddef.h>
+
+// Callback de comparación
+typedef int (*Comparador)(const void* a, const void* b);
+
+// Callback de notificación
+typedef void (*Notificador)(const char* mensaje);
+
+// Configuración del módulo
+typedef struct {
+    Comparador  comparar;
+    Notificador notificar;
+} ConfigOrdenamiento;
+
+void ordenar(int* arr, size_t n, ConfigOrdenamiento cfg);
+
+#endif
+```
+
+```c
+// ordenamiento.c
+#include "ordenamiento.h"
+#include <string.h>
+
+void ordenar(int* arr, size_t n, ConfigOrdenamiento cfg) {
+    if (!arr || !cfg.comparar) return;
+
+    if (cfg.notificar) {
+        cfg.notificar("Iniciando ordenamiento...");
+    }
+
+    // QuickSort usando el comparador proporcionado
+    // (implementación simplificada)
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n - i - 1; j++) {
+            if (cfg.comparar(&arr[j], &arr[j + 1]) > 0) {
+                int tmp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+        }
+    }
+
+    if (cfg.notificar) {
+        cfg.notificar("Ordenamiento completado.");
+    }
+}
+```
+
+```c
+// main.c
+#include <stdio.h>
+#include "ordenamiento.h"
+
+static int comparar_asc(const void* a, const void* b) {
+    return (*(int*)a - *(int*)b);
+}
+
+static void notificar(const char* msg) {
+    printf("[LOG] %s\n", msg);
+}
+
+int main(void) {
+    int datos[] = {5, 3, 1, 4, 2};
+    size_t n = 5;
+
+    ConfigOrdenamiento cfg = {
+        .comparar = comparar_asc,
+        .notificar = notificar
+    };
+
+    ordenar(datos, n, cfg);
+
+    for (size_t i = 0; i < n; i++) {
+        printf("%d ", datos[i]);
+    }
+    printf("\n");
+    return 0;
+}
+```
+
+=== 8. MÓDULOS CON ESTADO INTERNO ===
+
+Algunos módulos necesitan mantener estado interno. La mejor práctica
+es encapsular ese estado en un struct y devolver un puntero opaco.
+
+```c
+// contador.h
+#ifndef CONTADOR_H
+#define CONTADOR_H
+
+#include <stddef.h>
+
+typedef struct Contador Contador;
+
+Contador* contador_crear(int valor_inicial);
+void      contador_incrementar(Contador* c, int paso);
+void      contador_decrementar(Contador* c, int paso);
+int       contador_valor(const Contador* c);
+void      contador_resetear(Contador* c, int nuevo_valor);
+void      contador_destruir(Contador* c);
+
+#endif
+```
+
+```c
+// contador.c
+#include "contador.h"
+#include <stdlib.h>
+
+struct Contador {
+    int valor;
+    int minimo;
+    int maximo;
+};
+
+Contador* contador_crear(int valor_inicial) {
+    Contador* c = malloc(sizeof(Contador));
+    if (!c) return NULL;
+    c->valor = valor_inicial;
+    c->minimo = -2147483647 - 1;
+    c->maximo = 2147483647;
+    return c;
+}
+
+void contador_incrementar(Contador* c, int paso) {
+    if (!c) return;
+    if (paso > 0 && c->valor > c->maximo - paso) {
+        c->valor = c->maximo;
+        return;
+    }
+    if (paso < 0 && c->valor < c->minimo - paso) {
+        c->valor = c->minimo;
+        return;
+    }
+    c->valor += paso;
+}
+
+void contador_decrementar(Contador* c, int paso) {
+    contador_incrementar(c, -paso);
+}
+
+int contador_valor(const Contador* c) {
+    return c ? c->valor : 0;
+}
+
+void contador_resetear(Contador* c, int nuevo_valor) {
+    if (c) c->valor = nuevo_valor;
+}
+
+void contador_destruir(Contador* c) {
+    free(c);
+}
+```
+
+=== 9. PRUEBAS UNITARIAS DE MÓDULOS ===
+
+Cada módulo debe tener pruebas unitarias que verifiquen su
+comportamiento. Un framework simple de pruebas:
+
+```c
+// minunit.h - Framework minimalista de pruebas
+#ifndef MINUNIT_H
+#define MINUNIT_H
+
+#include <stdio.h>
+
+static int pruebas_pasadas = 0;
+static int pruebas_fallidas = 0;
+
+#define ASSERT(cond, msg) do { \
+    if (!(cond)) { \
+        printf("FALLÓ: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
+        pruebas_fallidas++; \
+    } else { \
+        pruebas_pasadas++; \
+    } \
+} while(0)
+
+#define ASSERT_EQ(a, b, msg) ASSERT((a) == (b), msg)
+#define ASSERT_NE(a, b, msg) ASSERT((a) != (b), msg)
+#define ASSERT_NULL(p, msg)  ASSERT((p) == NULL, msg)
+#define ASSERT_NOT_NULL(p, msg) ASSERT((p) != NULL, msg)
+
+#define RESULTADO() printf("\nTotal: %d pasadas, %d fallidas\n", \
+                           pruebas_pasadas, pruebas_fallidas)
+
+#endif
+```
+
+```c
+// test_contador.c
+#include "minunit.h"
+#include "contador.h"
+
+int main(void) {
+    // Prueba 1: Creación
+    Contador* c = contador_crear(0);
+    ASSERT_NOT_NULL(c, "Crear contador con valor 0");
+    ASSERT_EQ(contador_valor(c), 0, "Valor inicial debe ser 0");
+
+    // Prueba 2: Incremento
+    contador_incrementar(c, 5);
+    ASSERT_EQ(contador_valor(c), 5, "Incrementar en 5 debe dar 5");
+
+    contador_incrementar(c, 3);
+    ASSERT_EQ(contador_valor(c), 8, "Incrementar en 3 debe dar 8");
+
+    // Prueba 3: Decremento
+    contador_decrementar(c, 2);
+    ASSERT_EQ(contador_valor(c), 6, "Decrementar en 2 debe dar 6");
+
+    // Prueba 4: Reset
+    contador_resetear(c, 100);
+    ASSERT_EQ(contador_valor(c), 100, "Reset a 100 debe dar 100");
+
+    // Prueba 5: Parámetros nulos
+    ASSERT_EQ(contador_valor(NULL), 0, "Valor de contador nulo debe ser 0");
+
+    // Limpieza
+    contador_destruir(c);
+    RESULTADO();
+    return pruebas_fallidas > 0 ? 1 : 0;
+}
+```
+
+=== 10. MODULARIZACIÓN AVANZADA: PLUGINS ===
+
+Un sistema de plugins permite extender la funcionalidad en tiempo
+de ejecución. En C, los plugins son bibliotecas compartidas (.so)
+que se cargan dinámicamente.
+
+```c
+// plugin.h
+#ifndef PLUGIN_H
+#define PLUGIN_H
+
+#include <stddef.h>
+
+typedef struct Plugin Plugin;
+typedef int (*PluginFuncion)(int a, int b);
+
+Plugin* plugin_cargar(const char* ruta_so);
+void    plugin_descargar(Plugin* p);
+int     plugin_ejecutar(Plugin* p, const char* funcion, int a, int b);
+const char* plugin_error(const Plugin* p);
+
+#endif
+```
+
+```c
+// plugin.c
+#include "plugin.h"
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+
+struct Plugin {
+    void*       handle;
+    char        error[256];
+};
+
+Plugin* plugin_cargar(const char* ruta_so) {
+    Plugin* p = malloc(sizeof(Plugin));
+    if (!p) return NULL;
+
+    p->handle = dlopen(ruta_so, RTLD_LAZY);
+    if (!p->handle) {
+        strncpy(p->error, dlerror(), sizeof(p->error) - 1);
+        free(p);
+        return NULL;
+    }
+
+    p->error[0] = '\0';
+    return p;
+}
+
+int plugin_ejecutar(Plugin* p, const char* nombre_funcion, int a, int b) {
+    if (!p || !p->handle) return 0;
+
+    // Limpiar errores anteriores
+    dlerror();
+
+    PluginFuncion func = (PluginFuncion)dlsym(p->handle, nombre_funcion);
+    const char* dlsym_error = dlerror();
+    if (dlsym_error) {
+        strncpy(p->error, dlsym_error, sizeof(p->error) - 1);
+        return 0;
+    }
+
+    return func(a, b);
+}
+
+const char* plugin_error(const Plugin* p) {
+    return p ? p->error : "Plugin nulo";
+}
+
+void plugin_descargar(Plugin* p) {
+    if (!p) return;
+    if (p->handle) dlclose(p->handle);
+    free(p);
+}
+```
+
+```c
+// plugin_multiplicar.c (compilar como .so)
+#include "plugin.h"
+
+int multiplicar(int a, int b) {
+    return a * b;
+}
+```
+
+=== 11. MÓDULOS Y CONCURRENCIA ===
+
+Cuando los módulos se usan en entornos concurrentes, cada módulo
+debe ser thread-safe o documentar claramente que no lo es.
+
+```c
+// buffer_circular.h - Thread-safe con mutex
+#ifndef BUFFER_CIRCULAR_H
+#define BUFFER_CIRCULAR_H
+
+#include <stddef.h>
+#include <stdbool.h>
+
+typedef struct BufferCircular BufferCircular;
+
+BufferCircular* bc_crear(size_t capacidad);
+void            bc_destruir(BufferCircular* bc);
+bool            bc_escribir(BufferCircular* bc, const void* dato, size_t tam);
+bool            bc_leer(BufferCircular* bc, void* dato, size_t tam);
+size_t          bc_datos_disponibles(const BufferCircular* bc);
+size_t          bc_espacio_disponible(const BufferCircular* bc);
+
+#endif
+```
+
+```c
+// buffer_circular.c
+#include "buffer_circular.h"
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+
+struct BufferCircular {
+    void*   buffer;
+    size_t  capacidad;
+    size_t  tam_elemento;
+    size_t  escritura;
+    size_t  lectura;
+    size_t  count;
+    pthread_mutex_t mutex;
+};
+
+BufferCircular* bc_crear(size_t capacidad) {
+    BufferCircular* bc = malloc(sizeof(BufferCircular));
+    if (!bc) return NULL;
+
+    bc->buffer = malloc(capacidad);
+    if (!bc->buffer) { free(bc); return NULL; }
+
+    bc->capacidad = capacidad;
+    bc->tam_elemento = 1;
+    bc->escritura = 0;
+    bc->lectura = 0;
+    bc->count = 0;
+
+    pthread_mutex_init(&bc->mutex, NULL);
+    return bc;
+}
+
+bool bc_escribir(BufferCircular* bc, const void* dato, size_t tam) {
+    if (!bc || !dato || tam == 0) return false;
+
+    pthread_mutex_lock(&bc->mutex);
+
+    if (bc->count + tam > bc->capacidad) {
+        pthread_mutex_unlock(&bc->mutex);
+        return false;
+    }
+
+    // Escritura circular
+    for (size_t i = 0; i < tam; i++) {
+        ((unsigned char*)bc->buffer)[bc->escritura] =
+            ((const unsigned char*)dato)[i];
+        bc->escritura = (bc->escritura + 1) % bc->capacidad;
+    }
+    bc->count += tam;
+
+    pthread_mutex_unlock(&bc->mutex);
+    return true;
+}
+
+bool bc_leer(BufferCircular* bc, void* dato, size_t tam) {
+    if (!bc || !dato || tam == 0) return false;
+
+    pthread_mutex_lock(&bc->mutex);
+
+    if (bc->count < tam) {
+        pthread_mutex_unlock(&bc->mutex);
+        return false;
+    }
+
+    for (size_t i = 0; i < tam; i++) {
+        ((unsigned char*)dato)[i] =
+            ((unsigned char*)bc->buffer)[bc->lectura];
+        bc->lectura = (bc->lectura + 1) % bc->capacidad;
+    }
+    bc->count -= tam;
+
+    pthread_mutex_unlock(&bc->mutex);
+    return true;
+}
+
+size_t bc_datos_disponibles(const BufferCircular* bc) {
+    return bc ? bc->count : 0;
+}
+
+size_t bc_espacio_disponible(const BufferCircular* bc) {
+    return bc ? (bc->capacidad - bc->count) : 0;
+}
+
+void bc_destruir(BufferCircular* bc) {
+    if (!bc) return;
+    pthread_mutex_destroy(&bc->mutex);
+    free(bc->buffer);
+    free(bc);
+}
+```
+
+=== 12. DOCUMENTACIÓN DE MÓDULOS ===
+
+Cada módulo debe incluir documentación que explique:
+
+  1. PROPÓSITO: ¿Qué hace este módulo?
+  2. USO: ¿Cómo se usa? (con ejemplos)
+  3. DEPENDENCIAS: ¿De qué otros módulos depende?
+  4. ESTADO: ¿Es thread-safe? ¿Tiene estado global?
+
+Ejemplo de documentación completa de módulo:
+
+```c
+/**
+ * @defgroup json JSON Parser
+ * @brief Parser de JSON liviano para sistemas embebidos.
+ *
+ * Este módulo implementa un parser de JSON completo sin
+ * asignación dinámica de memoria. Ideal para sistemas con
+ * recursos limitados.
+ *
+ * @par Ejemplo de uso:
+ * @code
+ * // Parsear un JSON simple
+ * const char* json = "{\"nombre\":\"Juan\",\"edad\":30}";
+ * JSONDoc doc;
+ *
+ * if (json_parsear(&doc, json, strlen(json)) == JSON_OK) {
+ *     const char* nombre = json_get_str(&doc, "nombre");
+ *     int edad = json_get_int(&doc, "edad", 0);
+ *     printf("%s tiene %d años\n", nombre, edad);
+ * }
+ * @endcode
+ *
+ * @par Dependencias:
+ * - Ninguna (stdlib-free)
+ *
+ * @par Thread-safety:
+ * - No thread-safe. Cada documento debe usarse en un solo hilo.
+ *
+ * @par Memoria:
+ * - El buffer de entrada debe persistir mientras se accede al documento.
+ */
+
+/** @{ */
+
+/** Códigos de error del parser */
+typedef enum {
+    JSON_OK = 0,
+    JSON_ERR_SINTAXIS,
+    JSON_ERR_ANIDAMIENTO,
+    JSON_ERR_BUFFER
+} JSONError;
+
+/** @} */
+```
+
+________________________________________________________________________________
+  RESUMEN
+________________________________________________________________________________
+
+En este capítulo hemos aprendido:
+
+  ✅ La separación .h/.c es el mecanismo fundamental de modularización.
+  ✅ Los tipos opacos ocultan la implementación del usuario.
+  ✅ static limita la visibilidad al archivo actual.
+  ✅ Una API bien diseñada es consistente, simétrica y minimalista.
+  ✅ Los callbacks permiten comunicación entre módulos sin acoplamiento.
+  ✅ Las pruebas unitarias verifican cada módulo independientemente.
+  ✅ Los plugins permiten extensibilidad dinámica.
+
+La modularización no es una opción: es una necesidad para proyectos
+profesionales. Invierte tiempo en diseñar bien tus módulos y tu
+código será más fácil de mantener, probar y extender.
+
+________________________________________________________________________________
+  EJERCICIOS
+________________________________________________________________________________
+
+1. EJERCICIO BÁSICO: Toma un programa C que hayas escrito antes y
+   modularízalo. Divide el código en al menos 3 módulos con sus
+   respectivos .h y .c. Asegúrate de usar tipos opacos y static.
+
+2. EJERCICIO PRÁCTICO: Diseña e implementa un módulo de caché KV
+   (clave-valor) con las siguientes funciones:
+   - cache_crear(capacidad)
+   - cache_put(cache, clave, valor)
+   - cache_get(cache, clave)
+   - cache_eliminar(cache, clave)
+   - cache_destruir(cache)
+   La implementación debe usar un tipo opaco.
+
+3. EJERCICIO AVANZADO: Implementa un sistema de logging modular
+   que soporte múltiples destinos (archivo, consola, red). Usa
+   callbacks para que el módulo de logging pueda enviar mensajes
+   a cualquier destino sin conocer los detalles de implementación.
+
+4. EJERCICIO DE ANÁLISIS: Revisa el siguiente código y señala todos
+   los problemas de modularización:
+
+```c
+// archivo completo: 2000 líneas
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+int verbose = 1;
+char buffer[65536];
+struct sockaddr_in server_addr;
+
+void log_msg(const char* msg) { if (verbose) printf("%s\n", msg); }
+
+void process_http(int sock) {
+    // 300 líneas
+}
+
+void process_ftp(int sock) {
+    // 300 líneas
+}
+
+int main() {
+    // 400 líneas de inicialización, servidores, etc.
+    return 0;
+}
+```
+
+5. EJERCICIO CREATIVO: Diseña e implementa un sistema de módulos
+   para un reproductor de audio por línea de comandos. Debe incluir
+   módulos para: decodificación de formatos (MP3, WAV, FLAC),
+   salida de audio, control de reproducción, lista de reproducción
+   e interfaz de usuario por terminal.
+
+________________________________________________________________________________
+  PREGUNTAS FRECUENTES
+________________________________________________________________________________
+
+P: ¿Puedo tener múltiples .c para un solo .h?
+R: Sí, aunque no es común. A veces un módulo grande se divide en
+varios .c que comparten el mismo .h. En ese caso, los detalles
+internos se comunican mediante .h privados (en una carpeta internal/).
+
+P: ¿Qué hago si dos módulos necesitan compartir tipos?
+R: Crea un módulo de "tipos comunes" (tipos.h) que declare las
+estructuras compartidas. Ambos módulos incluyen ese header.
+
+P: ¿Cómo evito que el usuario de mi módulo acceda a los campos
+internos del struct?
+R: Usa tipos opacos. Declara el struct como typedef incompleto en
+el .h y define los campos solo en el .c.
+
+P: ¿Es malo tener funciones públicas que no están en el .h?
+R: Sí. Si una función no está declarada en el .h, el compilador
+asumirá que devuelve int, lo que puede causar errores difíciles
+de encontrar. Toda función pública debe estar en el .h.
+
+P: ¿Debo usar una convención de nombres específica?
+R: Sí, elige una y sé consistente. La convención más común en C
+es: modulo_funcion(). Por ejemplo: json_parse(), json_get_str().
+
+________________________________________________________________________________
+  DESAFÍO DEL ARQUITECTO
+________________________________________________________________________________
+
+Diseña e implementa un sistema completo de base de datos clave-valor
+modular con las siguientes características:
+
+  - Módulo de almacenamiento: responsable de leer/escribir datos
+    en disco con formato binario eficiente.
+  - Módulo de índice: mantiene un índice en memoria para búsquedas
+    rápidas (puede ser un hash table o árbol AVL).
+  - Módulo de caché: almacena en memoria los datos más usados
+    para acelerar el acceso.
+  - Módulo de API: expone las funciones públicas (get, put, delete).
+  - Módulo de logging: registra todas las operaciones.
+
+Requisitos:
+  - Todos los módulos deben usar tipos opacos.
+  - El módulo de API debe ser el único punto de entrada público.
+  - Cada módulo debe tener pruebas unitarias.
+  - El sistema debe manejar al menos 100,000 registros.
+  - Incluye un Makefile que compile todo el proyecto.
+
+Este desafío integra todos los conceptos de modularización y te
+preparará para construir sistemas grandes y mantenibles en C.
+
+________________________________________________________________________________
+  CIERRE DEL CAPÍTULO
+________________________________________________________________________________
+
+La modularización es la herramienta más poderosa que tienes como
+programador de C para manejar la complejidad. Cada vez que divides
+un problema en módulos bien definidos, estás aplicando la misma
+estrategia que usan los ingenieros para construir puentes, aviones
+y rascacielos: divide y vencerás.
+
+Recuerda que un buen módulo:
+  - Hace una sola cosa y la hace bien.
+  - Oculta sus detalles internos.
+  - Expone una interfaz clara y minimalista.
+  - Puede probarse de forma aislada.
+  - Puede reutilizarse en otros proyectos.
+
+En el próximo capítulo aprenderemos una habilidad igualmente
+crucial: la depuración con GDB. Porque no importa qué tan bien
+modularices tu código, eventualmente tendrás que encontrar y
+corregir bugs.
+
+¡Nos vemos en el Capítulo 73, donde nos convertiremos en
+detectives de código con GDB!
+
+================================================================================
+  FIN DEL CAPÍTULO 72
+================================================================================

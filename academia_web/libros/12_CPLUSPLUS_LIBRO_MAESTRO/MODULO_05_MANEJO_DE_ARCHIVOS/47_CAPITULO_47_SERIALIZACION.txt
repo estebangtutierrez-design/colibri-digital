@@ -1,0 +1,1136 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 47: SERIALIZACIÓN
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo de serialización. Serializar es el arte de convertir
+objetos en memoria a un formato que pueda ser almacenado o transmitido, y
+deserializar es el proceso inverso. Aquí aprenderemos desde técnicas básicas
+con structs POD hasta sistemas de serialización con versionado, herencia y
+objetos complejos.
+
+FRASE
+-----
+"Serializar es darle al objeto una segunda vida más allá de la memoria RAM."
+— Anónimo
+
+OBJETIVOS
+---------
+• Serializar y deserializar structs POD a binario y texto.
+• Implementar versionado de formatos de serialización.
+• Manejar objetos con punteros, strings y contenedores STL.
+• Serializar jerarquías de clases con herencia.
+• Implementar serialización portable (endianness, tamaño fijo).
+• Diseñar sistemas de serialización extensibles.
+
+CONTENIDO
+---------
+
+1. ¿QUÉ ES SERIALIZACIÓN?
+
+Serialización: convertir un objeto en una secuencia de bytes (o texto) para
+almacenamiento o transmisión.
+
+Deserialización: reconstruir el objeto desde la secuencia de bytes.
+
+2. FORMATOS DE SERIALIZACIÓN
+
+  ┌─────────────────────────────────────────────────────┐
+  │  Binario: compacto, rápido, no legible.             │
+  │  Texto (CSV, JSON, XML): legible, portátil, más lento. │
+  │  Mixto: cabecera binaria + datos de texto.          │
+  └─────────────────────────────────────────────────────┘
+
+3. DESAFÍOS DE LA SERIALIZACIÓN
+
+  - Versionado: el formato cambia con el tiempo.
+  - Endianness: portabilidad entre plataformas.
+  - Punteros: no se pueden serializar direcciones de memoria.
+  - Herencia: cómo serializar la parte de la clase base.
+  - Ciclos: objetos que se referencian mutuamente.
+
+4. VERSIONADO
+
+Siempre incluir un número de versión al serializar. Permite que versiones
+antiguas del software lean datos escritos por versiones nuevas y viceversa.
+
+================================================================================
+CÓDIGO DE EJEMPLO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <map>
+#include <cstring>
+#include <cstdint>
+
+using namespace std;
+
+//==============================================================================
+// EJEMPLO 1: SERIALIZACIÓN BINARIA DE POD
+//==============================================================================
+
+struct Punto
+{
+    int32_t x;
+    int32_t y;
+    int32_t z;
+};
+
+void ejemplo_pod_binario()
+{
+    cout << "\n--- EJEMPLO 1: POD binario ---\n";
+
+    Punto p1 = {10, 20, 30};
+    Punto p2 = {-5, 15, 100};
+
+    ofstream archivo("puntos.bin", ios::binary);
+
+    archivo.write(reinterpret_cast<char*>(&p1), sizeof(Punto));
+    archivo.write(reinterpret_cast<char*>(&p2), sizeof(Punto));
+    archivo.close();
+
+    Punto q1, q2;
+    ifstream archivo_in("puntos.bin", ios::binary);
+
+    archivo_in.read(reinterpret_cast<char*>(&q1), sizeof(Punto));
+    archivo_in.read(reinterpret_cast<char*>(&q2), sizeof(Punto));
+
+    cout << "  P1: (" << q1.x << "," << q1.y << "," << q1.z << ")\n";
+    cout << "  P2: (" << q2.x << "," << q2.y << "," << q2.z << ")\n";
+}
+
+//==============================================================================
+// EJEMPLO 2: SERIALIZACIÓN CON VERSIONADO
+//==============================================================================
+
+struct HeaderV1_2
+{
+    uint32_t magic;
+    uint32_t version;
+    uint64_t timestamp;
+};
+
+struct PersonaV1
+{
+    char nombre[64];
+    int edad;
+};
+
+struct PersonaV2
+{
+    char nombre[64];
+    int edad;
+    double altura;
+    double peso;
+};
+
+void ejemplo_versionado()
+{
+    cout << "\n--- EJEMPLO 2: Versionado ---\n";
+
+    // Escribir V2
+    ofstream out("persona_v2.bin", ios::binary);
+
+    HeaderV1_2 h;
+    h.magic = 0x50545241;
+    h.version = 2;
+    h.timestamp = 1721234567;
+    out.write(reinterpret_cast<char*>(&h), sizeof(HeaderV1_2));
+
+    PersonaV2 p2 = {"Ana López", 28, 1.68, 60.5};
+    out.write(reinterpret_cast<char*>(&p2), sizeof(PersonaV2));
+    out.close();
+
+    // Leer detectando versión
+    ifstream in("persona_v2.bin", ios::binary);
+
+    HeaderV1_2 h_leido;
+    in.read(reinterpret_cast<char*>(&h_leido), sizeof(HeaderV1_2));
+
+    if (h_leido.magic != 0x50545241)
+    {
+        cerr << "  Magic number inválido.\n";
+        return;
+    }
+
+    cout << "  Versión detectada: " << h_leido.version << "\n";
+
+    if (h_leido.version == 1)
+    {
+        PersonaV1 p1;
+        in.read(reinterpret_cast<char*>(&p1), sizeof(PersonaV1));
+        cout << "  Nombre: " << p1.nombre << ", Edad: " << p1.edad << "\n";
+    }
+    else if (h_leido.version == 2)
+    {
+        PersonaV2 pv2;
+        in.read(reinterpret_cast<char*>(&pv2), sizeof(PersonaV2));
+        cout << "  Nombre: " << pv2.nombre
+             << ", Edad: " << pv2.edad
+             << ", Altura: " << pv2.altura
+             << ", Peso: " << pv2.peso << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 3: SERIALIZACIÓN DE STRING (TAMAÑO VARIABLE)
+//==============================================================================
+void serializar_string(ofstream& out, const string& s)
+{
+    uint32_t len = s.size();
+    out.write(reinterpret_cast<char*>(&len), sizeof(len));
+    out.write(s.data(), len);
+}
+
+string deserializar_string(ifstream& in)
+{
+    uint32_t len;
+    in.read(reinterpret_cast<char*>(&len), sizeof(len));
+    string s(len, '\0');
+    in.read(&s[0], len);
+    return s;
+}
+
+void ejemplo_serializar_string()
+{
+    cout << "\n--- EJEMPLO 3: Serialización de strings ---\n";
+
+    vector<string> nombres = {"Juan Pérez", "María García", "Carlos López"};
+
+    ofstream out("nombres.bin", ios::binary);
+    uint32_t n = nombres.size();
+    out.write(reinterpret_cast<char*>(&n), sizeof(n));
+    for (const auto& s : nombres)
+        serializar_string(out, s);
+    out.close();
+
+    ifstream in("nombres.bin", ios::binary);
+    uint32_t n2;
+    in.read(reinterpret_cast<char*>(&n2), sizeof(n2));
+
+    cout << "  Nombres (" << n2 << "):\n";
+    for (uint32_t i = 0; i < n2; ++i)
+    {
+        string s = deserializar_string(in);
+        cout << "    [" << i << "] " << s << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 4: SERIALIZACIÓN DE VECTOR
+//==============================================================================
+template<typename T>
+void serializar_vector(ofstream& out, const vector<T>& v)
+{
+    uint64_t n = v.size();
+    out.write(reinterpret_cast<char*>(&n), sizeof(n));
+    out.write(reinterpret_cast<const char*>(v.data()), n * sizeof(T));
+}
+
+template<typename T>
+vector<T> deserializar_vector(ifstream& in)
+{
+    uint64_t n;
+    in.read(reinterpret_cast<char*>(&n), sizeof(n));
+    vector<T> v(n);
+    in.read(reinterpret_cast<char*>(v.data()), n * sizeof(T));
+    return v;
+}
+
+void ejemplo_vector()
+{
+    cout << "\n--- EJEMPLO 4: Serialización de vector ---\n";
+
+    vector<int> original = {5, 10, 15, 20, 25, 30};
+
+    ofstream out("vector.bin", ios::binary);
+    serializar_vector(out, original);
+    out.close();
+
+    auto leido = deserializar_vector<int>(ifstream("vector.bin", ios::binary));
+
+    cout << "  Vector leído:";
+    for (int v : leido)
+        cout << " " << v;
+    cout << " (" << leido.size() << " elementos)\n";
+}
+
+//==============================================================================
+// EJEMPLO 5: SERIALIZACIÓN DE MAPA
+//==============================================================================
+void serializar_mapa(ofstream& out, const map<string, int>& m)
+{
+    uint64_t n = m.size();
+    out.write(reinterpret_cast<char*>(&n), sizeof(n));
+    for (const auto& [key, val] : m)
+    {
+        serializar_string(out, key);
+        out.write(reinterpret_cast<const char*>(&val), sizeof(val));
+    }
+}
+
+map<string, int> deserializar_mapa(ifstream& in)
+{
+    uint64_t n;
+    in.read(reinterpret_cast<char*>(&n), sizeof(n));
+    map<string, int> m;
+    for (uint64_t i = 0; i < n; ++i)
+    {
+        string key = deserializar_string(in);
+        int val;
+        in.read(reinterpret_cast<char*>(&val), sizeof(val));
+        m[key] = val;
+    }
+    return m;
+}
+
+void ejemplo_mapa()
+{
+    cout << "\n--- EJEMPLO 5: Serialización de mapa ---\n";
+
+    map<string, int> edades = {
+        {"Ana", 25}, {"Luis", 30}, {"Carlos", 22}, {"María", 35}
+    };
+
+    ofstream out("mapa.bin", ios::binary);
+    serializar_mapa(out, edades);
+    out.close();
+
+    auto leido = deserializar_mapa(ifstream("mapa.bin", ios::binary));
+
+    cout << "  Mapa leído:\n";
+    for (const auto& [k, v] : leido)
+        cout << "    " << k << "  " << v << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 6: SERIALIZACIÓN CON HERENCIA
+//==============================================================================
+
+struct SerialBase
+{
+    virtual ~SerialBase() = default;
+    virtual void serializar(ofstream& out) const
+    {
+        uint32_t tipo = 0;
+        out.write(reinterpret_cast<char*>(&tipo), sizeof(tipo));
+        out.write(reinterpret_cast<const char*>(&id), sizeof(id));
+    }
+    virtual void deserializar(ifstream& in)
+    {
+        in.read(reinterpret_cast<char*>(&id), sizeof(id));
+    }
+    int id;
+};
+
+struct SerialDerivada : SerialBase
+{
+    void serializar(ofstream& out) const override
+    {
+        uint32_t tipo = 1;
+        out.write(reinterpret_cast<char*>(&tipo), sizeof(tipo));
+        SerialBase::serializar(out);
+        uint32_t len = nombre.size();
+        out.write(reinterpret_cast<char*>(&len), sizeof(len));
+        out.write(nombre.data(), len);
+    }
+
+    void deserializar(ifstream& in) override
+    {
+        SerialBase::deserializar(in);
+        uint32_t len;
+        in.read(reinterpret_cast<char*>(&len), sizeof(len));
+        nombre.resize(len);
+        in.read(&nombre[0], len);
+    }
+
+    string nombre;
+};
+
+void ejemplo_herencia()
+{
+    cout << "\n--- EJEMPLO 6: Herencia ---\n";
+
+    SerialDerivada obj;
+    obj.id = 42;
+    obj.nombre = "Objeto derivado";
+
+    ofstream out("herencia.bin", ios::binary);
+    obj.serializar(out);
+    out.close();
+
+    ifstream in("herencia.bin", ios::binary);
+
+    uint32_t tipo;
+    in.read(reinterpret_cast<char*>(&tipo), sizeof(tipo));
+
+    if (tipo == 0)
+    {
+        SerialBase base;
+        base.deserializar(in);
+        cout << "  Tipo base: id=" << base.id << "\n";
+    }
+    else if (tipo == 1)
+    {
+        SerialDerivada deriv;
+        deriv.deserializar(in);
+        cout << "  Tipo derivado: id=" << deriv.id
+             << ", nombre=" << deriv.nombre << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 7: SERIALIZACIÓN A TEXTO (CSV)
+//==============================================================================
+struct Producto
+{
+    int id;
+    string nombre;
+    double precio;
+    int stock;
+
+    string toCSV() const
+    {
+        ostringstream ss;
+        ss << id << "," << nombre << "," << precio << "," << stock;
+        return ss.str();
+    }
+
+    static Producto fromCSV(const string& linea)
+    {
+        istringstream ss(linea);
+        Producto p;
+        string campo;
+
+        getline(ss, campo, ','); p.id = stoi(campo);
+        getline(ss, p.nombre, ',');
+        getline(ss, campo, ','); p.precio = stod(campo);
+        getline(ss, campo, ','); p.stock = stoi(campo);
+
+        return p;
+    }
+};
+
+void ejemplo_csv()
+{
+    cout << "\n--- EJEMPLO 7: Serialización CSV ---\n";
+
+    vector<Producto> productos =
+    {
+        {1, "Laptop", 1200.00, 15},
+        {2, "Teclado", 89.99, 30},
+        {3, "Mouse", 49.99, 45}
+    };
+
+    ofstream out("productos.csv");
+    out << "ID,Nombre,Precio,Stock\n";
+    for (const auto& p : productos)
+        out << p.toCSV() << "\n";
+    out.close();
+
+    ifstream in("productos.csv");
+    string linea;
+    getline(in, linea); // cabecera
+
+    cout << "  Productos desde CSV:\n";
+    while (getline(in, linea))
+    {
+        Producto p = Producto::fromCSV(linea);
+        cout << "    " << p.id << " | " << p.nombre
+             << " | $" << p.precio << " | " << p.stock << " uds\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 8: SERIALIZACIÓN CON CRC32
+//==============================================================================
+uint32_t crc32_simple(const char* data, size_t size)
+{
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < size; ++i)
+    {
+        crc ^= static_cast<unsigned char>(data[i]);
+        for (int j = 0; j < 8; ++j)
+        {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc >>= 1;
+        }
+    }
+    return ~crc;
+}
+
+template<typename T>
+void serializar_con_crc(ofstream& out, const T& valor)
+{
+    uint32_t crc = crc32_simple(reinterpret_cast<const char*>(&valor), sizeof(T));
+    out.write(reinterpret_cast<const char*>(&crc), sizeof(crc));
+    out.write(reinterpret_cast<const char*>(&valor), sizeof(T));
+}
+
+template<typename T>
+bool deserializar_con_crc(ifstream& in, T& valor)
+{
+    uint32_t crc_leido;
+    in.read(reinterpret_cast<char*>(&crc_leido), sizeof(crc_leido));
+    in.read(reinterpret_cast<char*>(&valor), sizeof(T));
+
+    uint32_t crc_calc = crc32_simple(reinterpret_cast<const char*>(&valor), sizeof(T));
+    return crc_leido == crc_calc;
+}
+
+void ejemplo_crc()
+{
+    cout << "\n--- EJEMPLO 8: Serialización con CRC ---\n";
+
+    ofstream out("crc.bin", ios::binary);
+    serializar_con_crc(out, 12345);
+    serializar_con_crc(out, 3.14159);
+    out.close();
+
+    ifstream in("crc.bin", ios::binary);
+    int entero;
+    double real;
+
+    if (deserializar_con_crc(in, entero))
+        cout << "  Entero válido: " << entero << "\n";
+    else
+        cout << "  Entero corrupto!\n";
+
+    if (deserializar_con_crc(in, real))
+        cout << "  Double válido: " << real << "\n";
+    else
+        cout << "  Double corrupto!\n";
+}
+
+//==============================================================================
+// EJEMPLO 9: SERIALIZACIÓN DE OBJETO ANIDADO
+//==============================================================================
+struct Direccion
+{
+    string calle;
+    string ciudad;
+    int codigo_postal;
+
+    void serializar(ofstream& out) const
+    {
+        serializar_string(out, calle);
+        serializar_string(out, ciudad);
+        out.write(reinterpret_cast<const char*>(&codigo_postal), sizeof(codigo_postal));
+    }
+
+    void deserializar(ifstream& in)
+    {
+        calle = deserializar_string(in);
+        ciudad = deserializar_string(in);
+        in.read(reinterpret_cast<char*>(&codigo_postal), sizeof(codigo_postal));
+    }
+};
+
+struct Cliente
+{
+    int id;
+    string nombre;
+    Direccion direccion;
+    vector<string> telefonos;
+
+    void serializar(ofstream& out) const
+    {
+        out.write(reinterpret_cast<const char*>(&id), sizeof(id));
+        serializar_string(out, nombre);
+        direccion.serializar(out);
+        uint64_t n = telefonos.size();
+        out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+        for (const auto& t : telefonos)
+            serializar_string(out, t);
+    }
+
+    void deserializar(ifstream& in)
+    {
+        in.read(reinterpret_cast<char*>(&id), sizeof(id));
+        nombre = deserializar_string(in);
+        direccion.deserializar(in);
+        uint64_t n;
+        in.read(reinterpret_cast<char*>(&n), sizeof(n));
+        telefonos.resize(n);
+        for (auto& t : telefonos)
+            t = deserializar_string(in);
+    }
+};
+
+void ejemplo_anidado()
+{
+    cout << "\n--- EJEMPLO 9: Objeto anidado ---\n";
+
+    Cliente c;
+    c.id = 1;
+    c.nombre = "Empresa XYZ";
+    c.direccion = {"Av. Siempre Viva 742", "Springfield", 12345};
+    c.telefonos = {"555-0100", "555-0199", "555-0200"};
+
+    ofstream out("cliente.bin", ios::binary);
+    c.serializar(out);
+    out.close();
+
+    Cliente d;
+    ifstream in("cliente.bin", ios::binary);
+    d.deserializar(in);
+
+    cout << "  ID: " << d.id << "\n";
+    cout << "  Nombre: " << d.nombre << "\n";
+    cout << "  Dirección: " << d.direccion.calle
+         << ", " << d.direccion.ciudad
+         << " CP:" << d.direccion.codigo_postal << "\n";
+    cout << "  Teléfonos:";
+    for (const auto& t : d.telefonos)
+        cout << " " << t;
+    cout << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 10: SERIALIZACIÓN CON POLIMORFISMO
+//==============================================================================
+enum class TipoFigura : uint32_t { Circulo = 0, Rectangulo = 1 };
+
+struct Figura
+{
+    virtual ~Figura() = default;
+    virtual TipoFigura tipo() const = 0;
+    virtual void serializar(ofstream& out) const = 0;
+    virtual void deserializar(ifstream& in) = 0;
+};
+
+struct Circulo : Figura
+{
+    double radio;
+    TipoFigura tipo() const override { return TipoFigura::Circulo; }
+
+    void serializar(ofstream& out) const override
+    {
+        uint32_t t = static_cast<uint32_t>(TipoFigura::Circulo);
+        out.write(reinterpret_cast<char*>(&t), sizeof(t));
+        out.write(reinterpret_cast<const char*>(&radio), sizeof(radio));
+    }
+
+    void deserializar(ifstream& in) override
+    {
+        in.read(reinterpret_cast<char*>(&radio), sizeof(radio));
+    }
+};
+
+struct Rectangulo : Figura
+{
+    double ancho, alto;
+
+    TipoFigura tipo() const override { return TipoFigura::Rectangulo; }
+
+    void serializar(ofstream& out) const override
+    {
+        uint32_t t = static_cast<uint32_t>(TipoFigura::Rectangulo);
+        out.write(reinterpret_cast<char*>(&t), sizeof(t));
+        out.write(reinterpret_cast<const char*>(&ancho), sizeof(ancho));
+        out.write(reinterpret_cast<const char*>(&alto), sizeof(alto));
+    }
+
+    void deserializar(ifstream& in) override
+    {
+        in.read(reinterpret_cast<char*>(&ancho), sizeof(ancho));
+        in.read(reinterpret_cast<char*>(&alto), sizeof(alto));
+    }
+};
+
+unique_ptr<Figura> crear_figura(ifstream& in)
+{
+    uint32_t t;
+    in.read(reinterpret_cast<char*>(&t), sizeof(t));
+    TipoFigura tipo = static_cast<TipoFigura>(t);
+
+    unique_ptr<Figura> fig;
+    if (tipo == TipoFigura::Circulo)
+        fig = make_unique<Circulo>();
+    else if (tipo == TipoFigura::Rectangulo)
+        fig = make_unique<Rectangulo>();
+
+    if (fig) fig->deserializar(in);
+    return fig;
+}
+
+void ejemplo_polimorfismo()
+{
+    cout << "\n--- EJEMPLO 10: Polimorfismo ---\n";
+
+    // Serializar
+    ofstream out("figuras.bin", ios::binary);
+
+    Circulo c; c.radio = 5.0;
+    Rectangulo r; r.ancho = 4.0; r.alto = 3.0;
+
+    c.serializar(out);
+    r.serializar(out);
+    out.close();
+
+    // Deserializar
+    ifstream in("figuras.bin", ios::binary);
+
+    auto fig1 = crear_figura(in);
+    auto fig2 = crear_figura(in);
+
+    if (fig1 && fig1->tipo() == TipoFigura::Circulo)
+        cout << "  Círculo: radio=" << dynamic_cast<Circulo*>(fig1.get())->radio << "\n";
+
+    if (fig2 && fig2->tipo() == TipoFigura::Rectangulo)
+    {
+        auto* rect = dynamic_cast<Rectangulo*>(fig2.get());
+        cout << "  Rectángulo: " << rect->ancho << "x" << rect->alto
+             << " área=" << (rect->ancho * rect->alto) << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 11: SERIALIZACIÓN PORTABLE (ENDIANNESS)
+//==============================================================================
+void escribir_big_endian(ofstream& out, uint32_t valor)
+{
+    uint32_t net = ((valor & 0xFF000000) >> 24) |
+                   ((valor & 0x00FF0000) >> 8)  |
+                   ((valor & 0x0000FF00) << 8)  |
+                   ((valor & 0x000000FF) << 24);
+    out.write(reinterpret_cast<char*>(&net), sizeof(net));
+}
+
+uint32_t leer_big_endian(ifstream& in)
+{
+    uint32_t net;
+    in.read(reinterpret_cast<char*>(&net), sizeof(net));
+    return ((net & 0xFF000000) >> 24) |
+           ((net & 0x00FF0000) >> 8)  |
+           ((net & 0x0000FF00) << 8)  |
+           ((net & 0x000000FF) << 24);
+}
+
+void ejemplo_portable()
+{
+    cout << "\n--- EJEMPLO 11: Serialización portable ---\n";
+
+    uint32_t original = 0x12345678;
+
+    ofstream out("portable.bin", ios::binary);
+    escribir_big_endian(out, original);
+    out.close();
+
+    uint32_t leido = leer_big_endian(ifstream("portable.bin", ios::binary));
+
+    cout << "  Original: 0x" << hex << original << "\n";
+    cout << "  Leído:    0x" << hex << leido << dec << "\n";
+    cout << "  Coinciden: " << (original == leido ? "sí" : "no") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 12: SERIALIZACIÓN JSON MANUAL
+//==============================================================================
+string json_escape(const string& s)
+{
+    ostringstream ss;
+    for (char c : s)
+    {
+        switch (c)
+        {
+            case '"': ss << "\\\""; break;
+            case '\\': ss << "\\\\"; break;
+            case '\n': ss << "\\n"; break;
+            case '\t': ss << "\\t"; break;
+            default: ss << c;
+        }
+    }
+    return ss.str();
+}
+
+void ejemplo_json_manual()
+{
+    cout << "\n--- EJEMPLO 12: Serialización JSON ---\n";
+
+    struct Item
+    {
+        string nombre;
+        double precio;
+        bool disponible;
+    };
+
+    vector<Item> items =
+    {
+        {"Laptop Gamer", 1200.50, true},
+        {"Teclado RGB", 89.99, true},
+        {"Mouse Pad", 19.99, false}
+    };
+
+    ofstream out("inventario.json");
+
+    out << "{\n";
+    out << "  \"fecha\": \"2026-07-02\",\n";
+    out << "  \"items\": [\n";
+
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        out << "    {\n";
+        out << "      \"nombre\": \"" << json_escape(items[i].nombre) << "\",\n";
+        out << "      \"precio\": " << fixed << setprecision(2) << items[i].precio << ",\n";
+        out << "      \"disponible\": " << (items[i].disponible ? "true" : "false") << "\n";
+        out << "    }";
+        if (i < items.size() - 1) out << ",";
+        out << "\n";
+    }
+
+    out << "  ]\n";
+    out << "}\n";
+    out.close();
+
+    cout << "  JSON generado en inventario.json\n";
+}
+
+//==============================================================================
+// EJEMPLO 13: SERIALIZACIÓN CON TAMAÑO DINÁMICO (REGISTROS VARIABLES)
+//==============================================================================
+void ejemplo_registros_variables()
+{
+    cout << "\n--- EJEMPLO 13: Registros variables ---\n";
+
+    ofstream out("variables.bin", ios::binary);
+
+    struct VarRecord { int id; double valor; string etiqueta; };
+
+    vector<VarRecord> datos =
+    {
+        {1, 3.14, "pi"},
+        {2, 2.71, "e"},
+        {3, 1.41, "sqrt2"},
+        {4, 1.61, "phi"}
+    };
+
+    uint32_t n = datos.size();
+    out.write(reinterpret_cast<char*>(&n), sizeof(n));
+
+    for (const auto& d : datos)
+    {
+        out.write(reinterpret_cast<const char*>(&d.id), sizeof(d.id));
+        out.write(reinterpret_cast<const char*>(&d.valor), sizeof(d.valor));
+
+        uint32_t len = d.etiqueta.size();
+        out.write(reinterpret_cast<char*>(&len), sizeof(len));
+        out.write(d.etiqueta.data(), len);
+    }
+    out.close();
+
+    ifstream in("variables.bin", ios::binary);
+    uint32_t n2;
+    in.read(reinterpret_cast<char*>(&n2), sizeof(n2));
+
+    cout << "  Registros variables (" << n2 << "):\n";
+    for (uint32_t i = 0; i < n2; ++i)
+    {
+        VarRecord d;
+        in.read(reinterpret_cast<char*>(&d.id), sizeof(d.id));
+        in.read(reinterpret_cast<char*>(&d.valor), sizeof(d.valor));
+        uint32_t len;
+        in.read(reinterpret_cast<char*>(&len), sizeof(len));
+        d.etiqueta.resize(len);
+        in.read(&d.etiqueta[0], len);
+        cout << "    ID=" << d.id << " valor=" << d.valor
+             << " etiqueta=" << d.etiqueta << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 14: SERIALIZACIÓN DE OBJETOS CON PUNTEROS
+//==============================================================================
+/*
+  Los punteros deben serializarse como relaciones (índices) no como direcciones.
+*/
+struct Nodo
+{
+    int valor;
+    int indice_hijo_izq;
+    int indice_hijo_der;
+};
+
+void ejemplo_arbol()
+{
+    cout << "\n--- EJEMPLO 14: Árbol con índices ---\n";
+
+    vector<Nodo> arbol =
+    {
+        {10, 1, 2},  // raíz (índice 0)
+        {5, -1, -1},  // hijo izquierdo (índice 1, hoja)
+        {15, 3, -1}, // hijo derecho (índice 2)
+        {12, -1, -1} // hoja (índice 3)
+    };
+
+    ofstream out("arbol.bin", ios::binary);
+    uint64_t n = arbol.size();
+    out.write(reinterpret_cast<char*>(&n), sizeof(n));
+    out.write(reinterpret_cast<char*>(arbol.data()), n * sizeof(Nodo));
+    out.close();
+
+    ifstream in("arbol.bin", ios::binary);
+    uint64_t n2;
+    in.read(reinterpret_cast<char*>(&n2), sizeof(n2));
+
+    vector<Nodo> leido(n2);
+    in.read(reinterpret_cast<char*>(leido.data()), n2 * sizeof(Nodo));
+
+    cout << "  Árbol (" << n2 << " nodos):\n";
+    for (const auto& nodo : leido)
+    {
+        cout << "    valor=" << nodo.valor
+             << " izq=" << nodo.indice_hijo_izq
+             << " der=" << nodo.indice_hijo_der << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 15: FACTORY DE DESERIALIZACIÓN
+//==============================================================================
+enum class TipoObjeto : uint32_t
+{
+    Persona = 1,
+    Empresa = 2,
+    Producto_ = 3
+};
+
+struct ObjetoBase
+{
+    virtual ~ObjetoBase() = default;
+    virtual TipoObjeto getTipo() const = 0;
+    virtual void mostrar() const = 0;
+};
+
+struct PersonaObj : ObjetoBase
+{
+    string nombre;
+    int edad;
+
+    TipoObjeto getTipo() const override { return TipoObjeto::Persona; }
+    void mostrar() const override
+    {
+        cout << "    Persona: " << nombre << ", " << edad << " años\n";
+    }
+};
+
+struct EmpresaObj : ObjetoBase
+{
+    string razon_social;
+    string rut;
+
+    TipoObjeto getTipo() const override { return TipoObjeto::Empresa; }
+    void mostrar() const override
+    {
+        cout << "    Empresa: " << razon_social << " RUT: " << rut << "\n";
+    }
+};
+
+unique_ptr<ObjetoBase> fabricar(TipoObjeto tipo)
+{
+    switch (tipo)
+    {
+        case TipoObjeto::Persona: return make_unique<PersonaObj>();
+        case TipoObjeto::Empresa: return make_unique<EmpresaObj>();
+        default: return nullptr;
+    }
+}
+
+void ejemplo_factory()
+{
+    cout << "\n--- EJEMPLO 15: Factory de deserialización ---\n";
+
+    ofstream out("objetos.bin", ios::binary);
+
+    PersonaObj p; p.nombre = "Ana"; p.edad = 30;
+    EmpresaObj e; e.razon_social = "Tech Corp"; e.rut = "76.123.456-7";
+
+    auto serializar_obj = [&](const ObjetoBase& obj)
+    {
+        uint32_t t = static_cast<uint32_t>(obj.getTipo());
+        out.write(reinterpret_cast<char*>(&t), sizeof(t));
+
+        if (auto* ptr = dynamic_cast<const PersonaObj*>(&obj))
+        {
+            serializar_string(out, ptr->nombre);
+            out.write(reinterpret_cast<const char*>(&ptr->edad), sizeof(ptr->edad));
+        }
+        else if (auto* ptr = dynamic_cast<const EmpresaObj*>(&obj))
+        {
+            serializar_string(out, ptr->razon_social);
+            serializar_string(out, ptr->rut);
+        }
+    };
+
+    serializar_obj(p);
+    serializar_obj(e);
+    out.close();
+
+    ifstream in("objetos.bin", ios::binary);
+    cout << "  Objetos deserializados:\n";
+
+    while (in.peek() != EOF)
+    {
+        uint32_t t;
+        in.read(reinterpret_cast<char*>(&t), sizeof(t));
+        if (in.eof()) break;
+
+        auto obj = fabricar(static_cast<TipoObjeto>(t));
+
+        if (auto* ptr = dynamic_cast<PersonaObj*>(obj.get()))
+        {
+            ptr->nombre = deserializar_string(in);
+            in.read(reinterpret_cast<char*>(&ptr->edad), sizeof(ptr->edad));
+        }
+        else if (auto* ptr = dynamic_cast<EmpresaObj*>(obj.get()))
+        {
+            ptr->razon_social = deserializar_string(in);
+            ptr->rut = deserializar_string(in);
+        }
+
+        if (obj) obj->mostrar();
+    }
+}
+
+//==============================================================================
+// MAIN
+//==============================================================================
+int main()
+{
+    cout << "=============================================\n";
+    cout << "  C++ MASTER BOOK  CAPÍTULO 47: SERIALIZACIÓN\n";
+    cout << "=============================================\n";
+
+    ejemplo_pod_binario();
+    ejemplo_versionado();
+    ejemplo_serializar_string();
+    ejemplo_vector();
+    ejemplo_mapa();
+    ejemplo_herencia();
+    ejemplo_csv();
+    ejemplo_crc();
+    ejemplo_anidado();
+    ejemplo_polimorfismo();
+    ejemplo_portable();
+    ejemplo_json_manual();
+    ejemplo_registros_variables();
+    ejemplo_arbol();
+    ejemplo_factory();
+
+    cout << "\n=============================================\n";
+    cout << "  Fin del capítulo 47.\n";
+    cout << "=============================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN
+-------
+La serialización es una habilidad esencial para cualquier programador de C++.
+En este capítulo cubrimos desde la serialización básica de structs POD hasta
+sistemas complejos con herencia, polimorfismo y fábricas de deserialización.
+Aprendimos a incluir versionado para compatibilidad hacia atrás, a manejar
+strings y contenedores STL, a usar CRCs para verificar integridad, y a diseñar
+formatos portables considerando endianness. También exploramos la
+serialización a texto (CSV, JSON) como alternativa legible y portable.
+
+EJERCICIOS
+----------
+1. Serializa un struct "Libro" (titulo[128], autor[64], anio, paginas) a
+   binario y texto. Compara los tamaños.
+
+2. Añade una tercera versión al ejemplo de versionado que incluya un campo
+   "email". El lector debe ser capaz de leer las tres versiones.
+
+3. Implementa serialización para un grafo dirigido representado como
+   lista de adyacencia (vector<vector<int>>).
+
+4. Crea un sistema de serialización que use un mapa de tipos (type registry)
+   para registrar clases y sus fábricas de deserialización.
+
+5. Añade compresión simple (RLE: Run-Length Encoding) a un serializador
+   binario para datos repetitivos.
+
+6. Implementa un serializador que soporte la opción de incluir o no
+   checksum por registro, controlado por un flag en la cabecera.
+
+7. Diseña un formato de serialización autodescriptivo que incluya los
+   nombres de los campos junto con sus valores.
+
+8. Crea un conversor entre formatos: lee un archivo CSV y genera un
+   archivo binario con los mismos datos (y viceversa).
+
+9. Implementa un serializador que maneje punteros compartidos (shared_ptr)
+   detectando referencias múltiples al mismo objeto.
+
+10. (Avanzado) Diseña un "Serializador Reflexivo" que use templates y
+    macros para generar automáticamente el código de serialización de
+    cualquier struct, sin necesidad de escribir las funciones manualmente.
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: Por qué no puedo serializar un puntero directamente?
+R: Porque el puntero contiene una dirección de memoria que es válida solo
+   durante la ejecución actual. Al deserializar, esa dirección ya no existe.
+   Debes serializar el contenido apuntado, no el puntero.
+
+P: Cómo manejo objetos que se refieren mutuamente?
+R: Usa un sistema de IDs: asigna un ID único a cada objeto y serializa
+   referencias como IDs. Mantén un mapa de objetos durante la deserialización.
+
+P: Qué es mejor, binario o texto?
+R: Binario: compacto, rápido, pero no portable (endianness, tamaños de tipos).
+   Texto (JSON, CSV): portable, legible, pero más lento y ocupa más espacio.
+
+P: Cómo hago serialización portable entre Windows y Linux?
+R: Usa tipos de tamaño fijo (int32_t, uint64_t), define endianness fijo
+   (preferiblemente big-endian), y no serialices objetos con padding variable.
+
+P: Debo incluir siempre un número de versión?
+R: Sí. Siempre. Es la forma más barata de garantizar compatibilidad futura.
+
+P: Cómo serializo objetos con vtable (polimórficos)?
+R: Incluye un tipo discriminante (entero o enum) al inicio, seguido de los
+   datos de la clase derivada. Usa una función factory para reconstruir.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+Implementa un "Sistema de Serialización Universal" (USS) que:
+  - Use un registro central de tipos donde cada clase se registra con un ID.
+  - Soporte versionado: cada clase tiene su propio número de versión.
+  - Maneje objetos simples, anidados y polimórficos.
+  - Incluya un mecanismo de "migración" que transforme datos de versiones
+    antiguas a nuevas automáticamente.
+  - Ofrezca serialización en múltiples formatos: binario, JSON, BSON.
+  - Sea extensible: nuevas clases se registran sin modificar el núcleo.
+  - Implemente compresión opcional (zlib) y checksum (CRC32).
+  - Soporte serialización parcial: solo ciertos campos.
+  - Incluya herramientas de diagnóstico: mostrar estructura, validar integridad.
+
+Este desafío integra todos los conceptos del capítulo: versionado, polimorfismo,
+fábricas, portabilidad, y múltiples formatos de serialización.
+
+CIERRE
+------
+La serialización es el puente entre la memoria volátil y el almacenamiento
+persistente. Con las técnicas de este capítulo puedes guardar y recuperar
+objetos de cualquier complejidad. En el próximo capítulo exploraremos un
+formato específico de serialización: los archivos de configuración.
+
+PRÓXIMO CAPÍTULO
+----------------
+Capítulo 48: ARCHIVOS DE CONFIGURACIÓN  formato INI, key=value, parseo JSON,
+y gestión de configuraciones.
+
+================================================================================
+  FIN DEL CAPÍTULO 47  C++ MASTER BOOK
+================================================================================

@@ -1,0 +1,1028 @@
+===============================================================================
+  GO MASTER BOOK — MODULO IV: POO EN GO
+  CAPITULO 39: PANIC Y RECOVER
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capitulo 39. En el capitulo anterior aprendiste que los
+errores son valores que se retornan. Pero hay situaciones donde ocurre
+algo verdaderamente excepcional: un nil pointer dereference, un indice
+fuera de rango, una assertion de tipo fallida.
+
+En esos casos, Go PANIQUEA.
+
+Panic es el mecanismo de Go para errores irrecuperables. Pero Go
+tambien ofrece recover, una forma de capturar el panic y restaurar
+el control.
+
+A diferencia de try/catch de otros lenguajes, recover SOLO funciona
+dentro de una funcion diferida (defer). Esto obliga a pensar bien
+donde y como capturar panics.
+
+En este capitulo veras cuando usar panic (casi nunca), como capturarlo
+cuando sea necesario, y los patrones de la stdlib.
+
+Vamos a controlar el caos!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"Panic no es una excepcion: es un grito de auxilio del programa.
+Escuchalo solo cuando sea necesario, y solo rescata lo rescatable."
+
+  - E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Entender que es panic y cuando ocurre automaticamente.
+  * Usar panic para errores de programador (precondiciones).
+  * Usar recover dentro de defer para capturar panics.
+  * Conocer los patrones de la stdlib con panic/recover.
+  * Diferenciar entre error normal y panic.
+  * Aplicar buenas practicas para no abusar de panic.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPITULO
+--------------------------------------------------------------------------------
+
+--- 1. QUE ES PANIC? ---------------------------------------------------------
+
+Panic es una funcion incorporada que detiene el flujo normal del
+programa y comienza a "desenrollar" la pila de llamadas (stack
+unwinding), ejecutando los defers en el camino.
+
+Cuando panic llega al tope de la gorutina, el programa termina con
+un mensaje de error y la traza de la pila.
+
+Sintaxis:
+
+    panic("algo terrible sucedio")
+    panic(fmt.Errorf("error fatal: %w", err))
+    panic(42) // cualquier tipo
+
+--- 2. CAUSAS COMUNES DE PANIC ----------------------------------------------
+
+1. Nil pointer dereference:
+    var p *int
+    fmt.Println(*p) // panic
+
+2. Index out of range:
+    s := []int{1, 2, 3}
+    fmt.Println(s[10]) // panic
+
+3. Type assertion fallida (sin comma ok):
+    var v any = "texto"
+    n := v.(int) // panic
+
+4. Division por cero en enteros:
+    x := 1 / 0 // panic (en enteros; float64 da Inf)
+
+5. Cerrar canal nil:
+    var ch chan int
+    close(ch) // panic
+
+6. Enviar a canal cerrado:
+    ch := make(chan int)
+    close(ch)
+    ch <- 1 // panic
+
+7. Llamar a close en canal no inicializado.
+
+--- 3. PANIC CON DEFER -------------------------------------------------------
+
+Cuando panic ocurre, todos los defers pendientes se ejecutan antes
+de que el programa termine:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    defer fmt.Println("Primer defer")
+    defer fmt.Println("Segundo defer")
+    defer fmt.Println("Tercer defer")
+
+    fmt.Println("Antes del panic")
+    panic("ALGO SALIO MAL")
+    fmt.Println("Esto nunca se ejecuta")
+}
+--------------------------------------------------------------------------------
+
+Salida:
+
+    Antes del panic
+    Tercer defer
+    Segundo defer
+    Primer defer
+    panic: ALGO SALIO MAL
+
+    goroutine 1 [running]:
+    ...
+
+--- 4. RECOVER: CAPTURANDO EL PANIC ------------------------------------------
+
+Recover es una funcion que permite recuperar el control despues
+de un panic. Solo funciona dentro de un defer.
+
+Si llamas a recover() fuera de un defer, retorna nil.
+
+Cuando se ejecuta recover() dentro de un defer durante un panic,
+detiene el unwinding y retorna el valor pasado a panic.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Recuperado del panic:", r)
+        }
+    }()
+
+    fmt.Println("Antes del panic")
+    panic("ALGO SALIO MAL")
+    fmt.Println("Esto no se ejecuta")
+}
+--------------------------------------------------------------------------------
+
+Salida:
+
+    Antes del panic
+    Recuperado del panic: ALGO SALIO MAL
+
+--- 5. RECOVER DEVUELVE EL VALOR DE PANIC ------------------------------------
+
+El valor que pasaste a panic() es el que recupera recover():
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type ErrorFatal struct {
+    Codigo  int
+    Mensaje string
+}
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            switch v := r.(type) {
+            case string:
+                fmt.Println("Panic con string:", v)
+            case error:
+                fmt.Println("Panic con error:", v.Error())
+            case ErrorFatal:
+                fmt.Printf("Panic fatal: codigo=%d, msg=%s\n", v.Codigo, v.Mensaje)
+            default:
+                fmt.Printf("Panic con tipo %T: %v\n", v, v)
+            }
+        }
+    }()
+
+    panic(ErrorFatal{Codigo: 500, Mensaje: "fallo interno"})
+}
+--------------------------------------------------------------------------------
+
+--- 6. RECOVER SOLO EN DEFER -------------------------------------------------
+
+ERROR: recover fuera de defer:
+
+    func main() {
+        r := recover() // retorna nil, no funciona
+        fmt.Println(r)
+    }
+
+BIEN: recover dentro de defer:
+
+    defer func() {
+        recover() // funciona
+    }()
+
+--- 7. PATRON: GORUTINA SEGURA ----------------------------------------------
+
+Proteger gorutinas de panics es esencial:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func GorutinaSegura(id int, fn func()) {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Printf("Gorutina %d panic recover: %v\n", id, r)
+        }
+    }()
+    fn()
+}
+
+func main() {
+    for i := 1; i <= 5; i++ {
+        id := i
+        go GorutinaSegura(id, func() {
+            // Simular trabajo que podria panic
+            if id%3 == 0 {
+                panic(fmt.Sprintf("error en gorutina %d", id))
+            }
+            fmt.Printf("Gorutina %d completada\n", id)
+        })
+    }
+
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println("Programa finalizado sin panics no capturados")
+}
+--------------------------------------------------------------------------------
+
+--- 8. PATRON: PANIC COMO SEÑAL DE ERROR DE PROGRAMADOR ----------------------
+
+En la stdlib, panic se usa para senalar errores de programador
+(precondiciones violadas):
+
+  * json: llamar a Marshal con tipos incorrectos
+  * regexp: compilar una expresion regular invalida con MustCompile
+  * template: Must() que panic si la plantilla es invalida
+  * testing: t.FatalNow() internamente llama a runtime.Goexit
+
+Ejemplo: MustCompile de regexp:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "regexp"
+)
+
+// Version "Must" que paniquea si la regex es invalida
+func MustCompile(patron string) *regexp.Regexp {
+    re, err := regexp.Compile(patron)
+    if err != nil {
+        panic(fmt.Sprintf("regexp invalida: %s", err))
+    }
+    return re
+}
+
+func main() {
+    // Si la regex es valida, funciona normalmente
+    re := MustCompile(`^[a-z]+$`)
+    fmt.Println(re.MatchString("hola"))
+
+    // Si la regex es invalida, panic (y podemos capturarlo)
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Error capturado:", r)
+        }
+    }()
+
+    MustCompile(`[`) // regex invalida
+}
+--------------------------------------------------------------------------------
+
+--- 9. PATRON: MUST COMO CONSTRUCTOR -----------------------------------------
+
+El patron Must es comun en Go para constructores que no deberian fallar:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "net/url"
+)
+
+type Config struct {
+    URL *url.URL
+}
+
+func NewConfig(urlStr string) *Config {
+    u, err := url.Parse(urlStr)
+    if err != nil {
+        panic(fmt.Sprintf("URL invalida en configuracion: %s", err))
+    }
+    return &Config{URL: u}
+}
+
+func MustNewConfig(urlStr string) *Config {
+    // Version Must que panic si la URL es invalida
+    return &Config{URL: MustParseURL(urlStr)}
+}
+
+func MustParseURL(rawURL string) *url.URL {
+    u, err := url.Parse(rawURL)
+    if err != nil {
+        panic(err)
+    }
+    return u
+}
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Error de configuracion:", r)
+        }
+    }()
+
+    // Esto paniquea
+    cfg := MustNewConfig("http://[::1]:badport")
+    fmt.Println(cfg.URL)
+}
+--------------------------------------------------------------------------------
+
+--- 10. RECOVER Y STACK TRACE ------------------------------------------------
+
+Puedes obtener la traza de pila dentro de recover:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "runtime"
+)
+
+func StackTrace() string {
+    buf := make([]byte, 1024)
+    for {
+        n := runtime.Stack(buf, false)
+        if n < len(buf) {
+            return string(buf[:n])
+        }
+        buf = make([]byte, 2*len(buf))
+    }
+}
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Printf("PANIC: %v\n", r)
+            fmt.Println("Stack trace:")
+            fmt.Println(StackTrace())
+        }
+    }()
+
+    funcionQuePaniquea()
+}
+
+func funcionQuePaniquea() {
+    functionB()
+}
+
+func functionB() {
+    panic("algo exploto")
+}
+--------------------------------------------------------------------------------
+
+--- 11. DEFER + RECOVER + ERROR ----------------------------------------------
+
+Patron completo: convertir panic en error:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+)
+
+type DivisorSeguro struct{}
+
+func (d *DivisorSeguro) Dividir(a, b int) (resultado int, err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = fmt.Errorf("panic en division: %v", r)
+        }
+    }()
+    resultado = a / b
+    return resultado, nil
+}
+
+func main() {
+    d := &DivisorSeguro{}
+
+    // Caso normal
+    r, err := d.Dividir(10, 2)
+    fmt.Printf("10/2 = %d, err=%v\n", r, err)
+
+    // Caso con panic (division por cero en enteros)
+    r, err = d.Dividir(10, 0)
+    fmt.Printf("10/0 = %d, err=%v\n", r, err)
+}
+--------------------------------------------------------------------------------
+
+--- 12. PANIC EN API PUBLICA -------------------------------------------------
+
+Cuando disenas una API, decide:
+
+  * Errores retornables (normales): retorna error.
+  * Errores de programador (no deberian ocurrir): panic.
+
+Ejemplo de la stdlib:
+
+  * database/sql: Open retorna error (la BD puede no estar disponible)
+  * regexp: Compile retorna error (regex invalida es normal)
+  * regexp: MustCompile panic (es para casos donde la regex es
+    conocida en compilacion)
+
+--- 13. PANIC Y CICLO DE VIDA DEL SERVIDOR -----------------------------------
+
+En servidores HTTP, es recomendable capturar panics en cada request
+para no derribar el servidor:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func RecoveryMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if rec := recover(); rec != nil {
+                http.Error(w, "Error interno del servidor",
+                    http.StatusInternalServerError)
+                fmt.Printf("PANIC capturado: %v\n", rec)
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
+}
+
+func main() {
+    mux := http.NewServeMux()
+    mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintln(w, "Bienvenido!")
+    })
+    mux.HandleFunc("/panic", func(w http.ResponseWriter, r *http.Request) {
+        panic("error inesperado!")
+    })
+
+    handler := RecoveryMiddleware(mux)
+    fmt.Println("Servidor en :8080")
+    http.ListenAndServe(":8080", handler)
+}
+--------------------------------------------------------------------------------
+
+--- 14. EJEMPLO COMPLETO: SERVIDOR CON RECUPERACION DE PANICS ----------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "log"
+    "net/http"
+    "runtime/debug"
+    "time"
+)
+
+type ErrorResponse struct {
+    Error   string `json:"error"`
+    Codigo  int    `json:"codigo"`
+    Traza   string `json:"traza,omitempty"`
+}
+
+type Servidor struct {
+    Nombre    string
+    Puerto    int
+    DebugMode bool
+}
+
+func (s *Servidor) ManejadorSeguro(fn http.HandlerFunc) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if rec := recover(); rec != nil {
+                log.Printf("PANIC capturado: %v\n%s", rec, debug.Stack())
+
+                codigo := http.StatusInternalServerError
+                msg := "Error interno del servidor"
+
+                if s.DebugMode {
+                    msg = fmt.Sprintf("Panic: %v", rec)
+                }
+
+                resp := ErrorResponse{
+                    Error:  msg,
+                    Codigo: codigo,
+                }
+
+                if s.DebugMode {
+                    resp.Traza = string(debug.Stack())
+                }
+
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(codigo)
+                json.NewEncoder(w).Encode(resp)
+            }
+        }()
+        fn(w, r)
+    }
+}
+
+func (s *Servidor) RutaSalud(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "%s funcionando en puerto %d", s.Nombre, s.Puerto)
+}
+
+func (s *Servidor) RutaPanic(w http.ResponseWriter, r *http.Request) {
+    panic("fallo interno del sistema")
+}
+
+func (s *Servidor) RutaDivision(w http.ResponseWriter, r *http.Request) {
+    // Simular division que puede panic
+    a := 10
+    b := 0
+    _ = a / b // panic
+}
+
+func (s *Servidor) Iniciar() {
+    mux := http.NewServeMux()
+    mux.HandleFunc("/salud", s.ManejadorSeguro(s.RutaSalud))
+    mux.HandleFunc("/panic", s.ManejadorSeguro(s.RutaPanic))
+    mux.HandleFunc("/division", s.ManejadorSeguro(s.RutaDivision))
+
+    addr := fmt.Sprintf(":%d", s.Puerto)
+    log.Printf("Servidor %s iniciado en %s", s.Nombre, addr)
+
+    server := &http.Server{
+        Addr:         addr,
+        Handler:      mux,
+        ReadTimeout:  10 * time.Second,
+        WriteTimeout: 10 * time.Second,
+    }
+
+    if err := server.ListenAndServe(); err != nil {
+        log.Fatalf("Error al iniciar servidor: %v", err)
+    }
+}
+
+func main() {
+    svr := &Servidor{
+        Nombre:    "GoMasterServer",
+        Puerto:    8080,
+        DebugMode: true,
+    }
+
+    svr.Iniciar()
+}
+--------------------------------------------------------------------------------
+
+--- 15. DIFERENCIA ENTRE PANIC Y ERROR ---------------------------------------
+
++------------------+--------------------------------+--------------------------------+
+| Aspecto          | error                          | panic                          |
++------------------+--------------------------------+--------------------------------+
+| Naturaleza       | Valor                          | Mecanismo de control           |
+| Uso              | Errores esperados              | Errores inesperados            |
+| Flujo            | Retorno explicito              | Interrupcion de pila           |
+| Recuperacion     | if err != nil                  | defer + recover                |
+| Stack trace      | Opcional (fmt.Printf+%+v)      | Automatico                     |
+| Testing          | Facil                          | Dificil                        |
+| Rendimiento      | Minimo                         | Costoso (unwinding)            |
+| Cuando usar      | Siempre (por defecto)          | Solo precondiciones violadas   |
++------------------+--------------------------------+--------------------------------+
+
+--- 16. PATRON: ASSERT (PANIC CON CONDICION) ---------------------------------
+
+En Go no hay assert() como en otros lenguajes, pero puedes simularlo:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func Assert(condicion bool, mensaje string) {
+    if !condicion {
+        panic(fmt.Sprintf("ASSERTION FAILED: %s", mensaje))
+    }
+}
+
+type Cuenta struct {
+    Saldo float64
+}
+
+func (c *Cuenta) Retirar(monto float64) {
+    Assert(monto > 0, "monto debe ser positivo")
+    Assert(c.Saldo >= monto, "saldo insuficiente")
+    c.Saldo -= monto
+}
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Error:", r)
+        }
+    }()
+
+    c := &Cuenta{Saldo: 100}
+    c.Retirar(50)
+    fmt.Println("Saldo:", c.Saldo)
+    c.Retirar(200) // assertion panic
+}
+--------------------------------------------------------------------------------
+
+--- 17. SINTAXIS: DEFER MULTIPLE CON PANIC -----------------------------------
+
+Cuando hay defer + panic, el orden es:
+
+  1. Se ejecutan los defers en orden LIFO (ultimo en entrar, primero en salir).
+  2. Si un defer llama a recover(), se detiene el panic.
+  3. Si no se recupera, el programa termina.
+
+Solo el ULTIMO recover() cuenta. Si hay recover en defer anidados:
+
+    defer func() {
+        defer func() {
+            recover() // este captura
+        }()
+    }()
+    panic("x")
+
+--- 18. RECOVER EN LIBRERIAS -------------------------------------------------
+
+Si escribes una libreria, NO DEJES que los panics salgan de ella.
+Convierte panics internos en errores:
+
+    func (s *Servicio) HacerAlgo() (err error) {
+        defer func() {
+            if r := recover(); r != nil {
+                err = fmt.Errorf("panic interno: %v", r)
+            }
+        }()
+        // codigo que podria panic
+        return nil
+    }
+
+--- 19. PANIC EN PRUEBAS ----------------------------------------------------
+
+En tests, puedes esperar panics:
+
+    func TestPanico(t *testing.T) {
+        defer func() {
+            if r := recover(); r == nil {
+                t.Error("se esperaba un panic")
+            }
+        }()
+        funcionQuePaniquea()
+    }
+
+O usar testing/quick o helpers de terceros.
+
+--- 20. EXPORTAR FUNCIONES MUST (CONVENCION) ---------------------------------
+
+Convencion en Go: las funciones con prefijo "Must" paniquean si fallan.
+Ejemplos de stdlib: regexp.MustCompile, template.Must, MustParse...
+
+    func MustParseTiempo(valor string) time.Time {
+        t, err := time.Parse(time.RFC3339, valor)
+        if err != nil {
+            panic(err)
+        }
+        return t
+    }
+
+Estas funciones son para usar en init() o con valores hardcodeados.
+
+--- 21. PAQUETE testing: t.Fatal Y t.Error --------------------------------
+
+En testing, t.Fatal internamente llama a runtime.Goexit (similar a panic
+pero solo termina la gorutina actual, no todo el programa).
+
+    func TestX(t *testing.T) {
+        if algoMal {
+            t.Fatal("error fatal") // termina este test
+        }
+        t.Error("error no fatal") // continua pero marca fallo
+    }
+
+--- 22. RE-PANIC DESPUES DE LOG -------------------------------------------------
+
+A veces quieres loggear y repanic:
+
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("PANIC: %v", r)
+            panic(r) // re-panic
+        }
+    }()
+
+Esto permite loggear sin silenciar el error.
+
+--- 23. EJEMPLO: CACHE CON PANIC EN CONSTRUCTOR -----------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type CacheConfig struct {
+    Tamano      int
+    TTL         time.Duration
+    LimpiezaAutomatica bool
+}
+
+type Cache struct {
+    config CacheConfig
+    datos   map[string]any
+}
+
+func NewCache(config CacheConfig) *Cache {
+    if config.Tamano <= 0 {
+        panic(fmt.Errorf("CacheConfig.Tamano debe ser positivo: %d", config.Tamano))
+    }
+    if config.TTL <= 0 {
+        panic(fmt.Errorf("CacheConfig.TTL debe ser positivo: %v", config.TTL))
+    }
+
+    return &Cache{
+        config: config,
+        datos:  make(map[string]any, config.Tamano),
+    }
+}
+
+func MustNewCache(tamano int, ttl time.Duration) *Cache {
+    cfg := CacheConfig{
+        Tamano: tamano,
+        TTL:    ttl,
+    }
+    return NewCache(cfg)
+}
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Error creando cache:", r)
+        }
+    }()
+
+    // Esto funciona
+    c1 := MustNewCache(100, 5*time.Minute)
+    fmt.Println("Cache creado:", c1 != nil)
+
+    // Esto paniquea (tamano invalido)
+    c2 := MustNewCache(-1, 5*time.Minute)
+    fmt.Println(c2)
+}
+--------------------------------------------------------------------------------
+
+--- 24. RECOVER Y EL CICLO FOR -------------------------------------------------
+
+Si tienes panic dentro de un for, recover lo captura y el for continua:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    for i := 0; i < 5; i++ {
+        func() {
+            defer func() {
+                if r := recover(); r != nil {
+                    fmt.Printf("Error en iteracion %d: %v\n", i, r)
+                }
+            }()
+
+            if i == 3 {
+                panic("fallo en iteracion 3")
+            }
+            fmt.Printf("Iteracion %d OK\n", i)
+        }()
+    }
+    fmt.Println("Bucle completado")
+}
+--------------------------------------------------------------------------------
+
+--- 25. BUENAS PRACTICAS ------------------------------------------------------
+
+1. No uses panic como sustituto de error. Los errores se retornan.
+2. Usa panic SOLO para errores de programador (precondiciones).
+3. Siempre captura panics en gorutinas con defer+recover.
+4. En librerias, no dejes que panics salgan de la API publica.
+5. Documenta si tu funcion puede panic (nombre Must*).
+6. Prefiere errors.New/fmt.Errorf sobre panic.
+7. recover solo dentro de defer.
+8. No abuses de panic para control de flujo (es 1000x mas lento).
+
+--- 26. COMPARACION: PANIC VS OS.EXIT ---------------------------------------
+
+  * panic: desenrolla la pila, ejecuta defers, termina la gorutina.
+  * os.Exit: termina el proceso inmediatamente SIN ejecutar defers.
+
+Para errores graves de inicializacion, usa log.Fatal (que llama os.Exit).
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * panic detiene el flujo normal y desenrolla la pila.
+  * recover captura el panic y restaura el control.
+  * recover SOLO funciona dentro de un defer.
+  * Usa panic para errores de programador (precondiciones violadas).
+  * No uses panic como sustituto de error.
+  * Captura panics en gorutinas con defer+recover.
+  * En librerias, convierte panics internos en errores.
+  * El patron Must* indica funciones que paniquean si fallan.
+  * defer se ejecuta en orden LIFO durante panic.
+
+--------------------------------------------------------------------------------
+  EJERCICIOS
+--------------------------------------------------------------------------------
+
+--- Ejercicio 1: Panic basico ---
+
+Escribe una funcion que acceda a un indice de slice fuera de rango.
+Captura el panic con defer+recover.
+
+--- Ejercicio 2: Recover con tipo ---
+
+Crea una funcion que haga panic con diferentes tipos (string, int, error).
+En el recover, usa type switch para manejar cada tipo.
+
+--- Ejercicio 3: Gorutina segura ---
+
+Lanza 10 gorutinas. 3 de ellas deben panic (simulado).
+Implementa un mecanismo que capture los panics y los reporte
+sin detener las demas gorutinas.
+
+--- Ejercicio 4: Must function ---
+
+Crea MustParseInt(s string) int que convierta string a int
+y panique si falla. Crea tambien la version normal que retorna error.
+
+--- Ejercicio 5: Defer + recover + error ---
+
+Crea un tipo ServicioHTTP con metodo HacerRequest(url string) (resp string, err error)
+que capture panics internos y los convierta en errores.
+
+--- Ejercicio 6: Assertion personalizada ---
+
+Implementa una funcion AssertEqual(esperado, obtenido any) que panique
+si son diferentes. Usala en un test simple.
+
+--- Ejercicio 7: Stack trace personalizado ---
+
+En un recover, imprime la traza de pila usando debug.Stack()
+y tambien el numero de linea usando runtime.Caller.
+
+--- Ejercicio 8: Panic en middleware ---
+
+Crea un middleware HTTP que capture panics y retorne JSON
+con codigo 500 y el mensaje del panic.
+
+--- Ejercicio 9: Cache con Must constructor ---
+
+Crea un tipo PoolConexiones con MustNewPool que panique
+si los parametros son invalidos (maxConexiones <= 0).
+
+--- Ejercicio 10: Re-panic condicional ---
+
+Crea un recover que loggee el panic y luego lo repita SOLO
+si es de tipo ErrorCritico (no si es ErrorRecuperable).
+
+--------------------------------------------------------------------------------
+  FAQ - PREGUNTAS FRECUENTES
+--------------------------------------------------------------------------------
+
+P: Por que recover solo funciona en defer?
+R: Por diseno. Go quiere que la captura de panics sea explicita y
+   localizada, no un try/catch generico.
+
+P: Puedo hacer recover fuera de una gorutina?
+R: recover captura el panic de la gorutina actual. No puede capturar
+   panics de otras gorutinas.
+
+P: Que pasa si hago recover() y no hay panic?
+R: Retorna nil.
+
+P: Debo usar panic en mi libreria?
+R: Solo para Must* functions. Para todo lo demas, retorna error.
+
+P: Como debugging un panic?
+R: La traza de pila (stack trace) muestra la linea exacta. Usa
+   debug.PrintStack() o runtime.Stack().
+
+P: Es panic lo mismo que throw en Java?
+R: No exactamente. throw permite excepciones controladas. panic es
+   para errores de programador, no para flujo normal.
+
+P: Como evitar panic por nil pointer?
+R: Verifica si el puntero es nil antes de usarlo. Usa zero values.
+
+P: panic afecta el rendimiento?
+R: Si, porque requiere stack unwinding. No lo uses en caminos calientes.
+
+P: Por que la stdlib usa Must*?
+R: Para simplificar el uso cuando los argumentos son conocidos en
+   compilacion (ej: regexp.MustCompile("^[a-z]+$")).
+
+--------------------------------------------------------------------------------
+  DESAFIO DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+Sistema de Procesamiento por Lotes con Recuperacion:
+
+Construye un procesador de lotes que ejecute trabajos y se recupere
+de panics de forma inteligente.
+
+  type Trabajo struct {
+      ID     int
+      Nombre string
+      Fn     func() (any, error)
+  }
+
+  type ResultadoTrabajo struct {
+      ID     int
+      Valor  any
+      Error  error
+      Panic  bool
+      Traza  string
+  }
+
+  type ProcesadorLotes struct {
+      trabajos       []Trabajo
+      maxReintentos  int
+      detenerEnPanic bool
+      timeout        time.Duration
+  }
+
+  Metodos:
+    - Agregar(trabajo ...Trabajo) *ProcesadorLotes
+    - Ejecutar() []ResultadoTrabajo
+    - EjecutarConcurrente(maxGorutinas int) []ResultadoTrabajo
+
+  Comportamiento:
+    1. Cada trabajo se ejecuta en un contexto seguro con defer+recover.
+    2. Si un trabajo paniquea, se captura y se registra en ResultadoTrabajo.
+    3. Si detenerEnPanic es true, detiene la ejecucion de trabajos
+       restantes.
+    4. Si un trabajo retorna error, se puede reintentar hasta
+       maxReintentos veces.
+    5. EjecutarConcurrente ejecuta hasta maxGorutinas trabajos en paralelo.
+
+  Trabajos de ejemplo:
+    - TrabajoMatematico: hace divisiones (algunas por cero -> panic)
+    - TrabajoAccesoSlice: accede a indices (algunos fuera de rango -> panic)
+    - TrabajoJSON: parsea JSON (algunos invalidos -> error normal)
+    - TrabajoRed: simula request (timeouts simulados -> error normal)
+
+  Requisitos:
+    1. Captura TODOS los panics y conviertelos en ResultadoTrabajo.
+    2. Incluye la traza de pila cuando ocurra panic.
+    3. Los reintentos solo aplican para errores normales, no panics.
+    4. El procesador no debe panic bajo ninguna circunstancia.
+    5. Implementa un callback OnTrabajoCompletado func(ResultadoTrabajo).
+
+  Extra:
+    - Implementa un timeout por trabajo (si excede, se cancela).
+    - Implementa "circuit breaker": si hay muchos panics, detiene
+      el procesador automaticamente.
+    - Crea un reporte final con estadisticas.
+
+Este desafio integra panic, recover, gorutinas, canales y diseno
+de sistemas robustos.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL CAPITULO
+--------------------------------------------------------------------------------
+
+Has dominado panic y recover. Ahora sabes que panic es para
+situaciones excepcionales (errores de programador) y que recover
+es el mecanismo para capturarlas.
+
+Recuerda: en Go, la norma es retornar errores. Panic es la excepcion.
+Usalo con sabiduria.
+
+En el proximo y ultimo capitulo de este modulo pondremos en practica
+TODO lo aprendido con un proyecto integrador.
+
+Nos vemos en el capitulo 40: PROYECTO MODULO IV.
+
+--------------------------------------------------------------------------------
+  PROXIMO CAPITULO
+--------------------------------------------------------------------------------
+
+  CAPITULO 40: PROYECTO MODULO IV
+    -> Proyecto integrador: jerarquia de interfaces Forma,
+      sistema de figuras geometricas con metodo, Stringer,
+      errores personalizados y manejo de panics.
+
+===============================================================================
+  FIN DEL CAPITULO 39 - PANIC Y RECOVER
+===============================================================================

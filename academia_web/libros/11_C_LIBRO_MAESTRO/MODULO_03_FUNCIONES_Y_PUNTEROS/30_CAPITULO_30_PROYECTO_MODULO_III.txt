@@ -1,0 +1,795 @@
+================================================================================
+    C MASTER BOOK
+    MÓDULO III: FUNCIONES Y PUNTEROS
+    CAPÍTULO 30: PROYECTO INTEGRADOR DEL MÓDULO III
+================================================================================
+
+¡Bienvenido al proyecto final del Módulo III! Este capítulo integra
+TODO lo aprendido: funciones, parámetros, valores de retorno, scope,
+recursión, punteros, punteros a funciones y recursión avanzada.
+
+"La mejor forma de aprender a programar es programando."
+— Dennis Ritchie
+
+================================================================================
+OBJETIVOS DEL PROYECTO
+================================================================================
+
+  • Integrar todos los conceptos del Módulo III en un solo proyecto.
+  • Implementar un sistema completo de gestión de biblioteca.
+  • Usar funciones con parámetros, valores de retorno y punteros.
+  • Aplicar scope correcto (static, global, local).
+  • Utilizar recursión en problemas reales.
+  • Emplear punteros a función para flexibilidad.
+  • Demostrar manejo de memoria y buffers de forma segura.
+
+================================================================================
+DESCRIPCIÓN DEL PROYECTO: SISTEMA DE GESTIÓN DE BIBLIOTECA
+================================================================================
+
+Desarrollaremos un sistema de línea de comandos para gestionar
+una biblioteca. El sistema permitirá:
+
+  • Agregar, listar, buscar y eliminar libros.
+  • Gestionar préstamos y devoluciones.
+  • Calcular estadísticas usando punteros de salida.
+  • Ordenar libros por diferentes criterios (usando qsort).
+  • Buscar libros por título o autor (usando bsearch).
+  • Generar reportes con formato.
+
+El proyecto está organizado en múltiples archivos:
+
+  main.c          → Punto de entrada y menú principal
+  biblioteca.h    → Prototipos de funciones y tipos
+  biblioteca.c    → Implementación del núcleo
+  libros.txt      → Archivo de datos (opcional)
+
+================================================================================
+ESTRUCTURAS DE DATOS
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.h
+  #ifndef BIBLIOTECA_H
+  #define BIBLIOTECA_H
+
+  #include <stdio.h>
+  #include <stdbool.h>
+  #include <string.h>
+
+  #define MAX_LIBROS 500
+  #define MAX_TITULO 100
+  #define MAX_AUTOR  80
+  #define MAX_ISBN   20
+
+  typedef enum {
+      GENERO_FICCION,
+      GENERO_NO_FICCION,
+      GENERO_CIENCIA,
+      GENERO_HISTORIA,
+      GENERO_TECNOLOGIA,
+      GENERO_ARTE,
+      GENERO_OTRO
+  } Genero;
+
+  typedef struct {
+      int id;
+      char titulo[MAX_TITULO];
+      char autor[MAX_AUTOR];
+      char isbn[MAX_ISBN];
+      int anio;
+      Genero genero;
+      bool prestado;
+      char prestado_a[MAX_AUTOR];
+  } Libro;
+
+  typedef struct {
+      Libro libros[MAX_LIBROS];
+      int cantidad;
+  } Biblioteca;
+
+  // Puntero a función para comparación
+  typedef int (*Comparador)(const void*, const void*);
+
+  // Prototipos de funciones
+  void biblio_init(Biblioteca* b);
+  int  biblio_agregar(Biblioteca* b, const Libro* libro);
+  bool biblio_eliminar(Biblioteca* b, int id);
+  Libro* biblio_buscar_por_id(Biblioteca* b, int id);
+  int   biblio_buscar_por_titulo(Biblioteca* b, const char* titulo,
+                                 Libro* resultados[], int max);
+  void  biblio_ordenar(Biblioteca* b, Comparador comp);
+  void  biblio_mostrar(const Biblioteca* b);
+  void  biblio_mostrar_libro(const Libro* l);
+
+  // Préstamos
+  bool biblio_prestar(Biblioteca* b, int id, const char* persona);
+  bool biblio_devolver(Biblioteca* b, int id);
+
+  // Estadísticas (parámetros de salida)
+  bool biblio_estadisticas(const Biblioteca* b,
+                           int* total, int* prestados,
+                           int* disponibles, double* porcentaje_prest,
+                           int* mas_antiguo, int* mas_reciente);
+
+  // Guardar/Cargar
+  bool biblio_guardar(const Biblioteca* b, const char* archivo);
+  bool biblio_cargar(Biblioteca* b, const char* archivo);
+
+  // Recursión: búsqueda binaria recursiva
+  Libro* biblio_buscar_recursivo(Biblioteca* b, int id,
+                                 int ini, int fin);
+
+  // Recursión de cola: conteo por género
+  int biblio_contar_genero_tail(const Biblioteca* b, Genero g,
+                                int idx, int acum);
+
+  #endif
+--------------------------------------------------------------------------------
+
+================================================================================
+IMPLEMENTACIÓN DEL NÚCLEO
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c
+  #include "biblioteca.h"
+  #include <stdlib.h>
+  #include <ctype.h>
+
+  static int siguiente_id = 1;
+
+  void biblio_init(Biblioteca* b) {
+      if (b != NULL) b->cantidad = 0;
+  }
+
+  int biblio_agregar(Biblioteca* b, const Libro* libro) {
+      if (b == NULL || libro == NULL) return -1;
+      if (b->cantidad >= MAX_LIBROS) return -2;
+
+      Libro* nuevo = &b->libros[b->cantidad];
+      *nuevo = *libro;
+      nuevo->id = siguiente_id++;
+      nuevo->prestado = false;
+      nuevo->prestado_a[0] = '\0';
+      b->cantidad++;
+      return nuevo->id;
+  }
+
+  bool biblio_eliminar(Biblioteca* b, int id) {
+      if (b == NULL) return false;
+      for (int i = 0; i < b->cantidad; i++) {
+          if (b->libros[i].id == id) {
+              b->libros[i] = b->libros[b->cantidad - 1];
+              b->cantidad--;
+              return true;
+          }
+      }
+      return false;
+  }
+
+  Libro* biblio_buscar_por_id(Biblioteca* b, int id) {
+      if (b == NULL) return NULL;
+      for (int i = 0; i < b->cantidad; i++) {
+          if (b->libros[i].id == id) {
+              return &b->libros[i];
+          }
+      }
+      return NULL;
+  }
+
+  int biblio_buscar_por_titulo(Biblioteca* b, const char* titulo,
+                               Libro* resultados[], int max) {
+      if (b == NULL || titulo == NULL || resultados == NULL)
+          return 0;
+      int encontrados = 0;
+      for (int i = 0; i < b->cantidad && encontrados < max; i++) {
+          if (strstr(b->libros[i].titulo, titulo) != NULL) {
+              resultados[encontrados++] = &b->libros[i];
+          }
+      }
+      return encontrados;
+  }
+
+  void biblio_mostrar_libro(const Libro* l) {
+      if (l == NULL) return;
+      printf("ID: %d\n", l->id);
+      printf("Titulo: %s\n", l->titulo);
+      printf("Autor: %s\n", l->autor);
+      printf("ISBN: %s\n", l->isbn);
+      printf("Anio: %d\n", l->anio);
+      printf("Genero: %d\n", l->genero);
+      printf("Estado: %s\n", l->prestado ? "PRESTADO" : "DISPONIBLE");
+      if (l->prestado) {
+          printf("Prestado a: %s\n", l->prestado_a);
+      }
+      printf("----------------------------\n");
+  }
+
+  void biblio_mostrar(const Biblioteca* b) {
+      if (b == NULL) return;
+      printf("\n=== BIBLIOTECA (%d libros) ===\n\n", b->cantidad);
+      for (int i = 0; i < b->cantidad; i++) {
+          biblio_mostrar_libro(&b->libros[i]);
+      }
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+ORDENAMIENTO CON PUNTEROS A FUNCIÓN
+================================================================================
+
+--------------------------------------------------------------------------------
+  // Continuacion de biblioteca.c
+
+  static int comparar_por_titulo(const void* a, const void* b) {
+      const Libro* la = (const Libro*)a;
+      const Libro* lb = (const Libro*)b;
+      return strcmp(la->titulo, lb->titulo);
+  }
+
+  static int comparar_por_autor(const void* a, const void* b) {
+      const Libro* la = (const Libro*)a;
+      const Libro* lb = (const Libro*)b;
+      int r = strcmp(la->autor, lb->autor);
+      if (r == 0) return strcmp(la->titulo, lb->titulo);
+      return r;
+  }
+
+  static int comparar_por_anio(const void* a, const void* b) {
+      const Libro* la = (const Libro*)a;
+      const Libro* lb = (const Libro*)b;
+      return la->anio - lb->anio;
+  }
+
+  static int comparar_por_anio_desc(const void* a, const void* b) {
+      const Libro* la = (const Libro*)a;
+      const Libro* lb = (const Libro*)b;
+      return lb->anio - la->anio;
+  }
+
+  void biblio_ordenar(Biblioteca* b, Comparador comp) {
+      if (b == NULL || comp == NULL || b->cantidad <= 1) return;
+      qsort(b->libros, b->cantidad, sizeof(Libro), comp);
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+BÚSQUEDA BINARIA RECURSIVA
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c – búsqueda binaria recursiva
+
+  // Asume que la biblioteca esta ordenada por ID
+  Libro* biblio_buscar_recursivo(Biblioteca* b, int id,
+                                  int ini, int fin) {
+      if (b == NULL) return NULL;
+      if (ini > fin) return NULL;
+
+      int medio = ini + (fin - ini) / 2;
+      int id_medio = b->libros[medio].id;
+
+      if (id_medio == id) return &b->libros[medio];
+      if (id_medio > id)
+          return biblio_buscar_recursivo(b, id, ini, medio - 1);
+      return biblio_buscar_recursivo(b, id, medio + 1, fin);
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+RECURSIÓN DE COLA: CONTAR POR GÉNERO
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c - recursión de cola
+
+  int biblio_contar_genero_tail(const Biblioteca* b, Genero g,
+                                int idx, int acum) {
+      if (b == NULL) return 0;
+      if (idx >= b->cantidad) return acum;
+      int nuevo_acum = acum;
+      if (b->libros[idx].genero == g) nuevo_acum++;
+      return biblio_contar_genero_tail(b, g, idx + 1, nuevo_acum);
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+PRÉSTAMOS Y DEVOLUCIONES
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c
+
+  bool biblio_prestar(Biblioteca* b, int id, const char* persona) {
+      if (b == NULL || persona == NULL) return false;
+      Libro* l = biblio_buscar_por_id(b, id);
+      if (l == NULL) return false;
+      if (l->prestado) return false;
+
+      l->prestado = true;
+      strncpy(l->prestado_a, persona, MAX_AUTOR - 1);
+      l->prestado_a[MAX_AUTOR - 1] = '\0';
+      return true;
+  }
+
+  bool biblio_devolver(Biblioteca* b, int id) {
+      if (b == NULL) return false;
+      Libro* l = biblio_buscar_por_id(b, id);
+      if (l == NULL) return false;
+      if (!l->prestado) return false;
+
+      l->prestado = false;
+      l->prestado_a[0] = '\0';
+      return true;
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+ESTADÍSTICAS CON PARÁMETROS DE SALIDA
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c
+
+  bool biblio_estadisticas(const Biblioteca* b,
+                           int* total, int* prestados,
+                           int* disponibles,
+                           double* porcentaje_prest,
+                           int* mas_antiguo, int* mas_reciente) {
+      if (b == NULL) return false;
+
+      int t = b->cantidad;
+      int p = 0;
+      int ant = (t > 0) ? b->libros[0].anio : 0;
+      int rec = (t > 0) ? b->libros[0].anio : 0;
+      double porc = 0.0;
+
+      for (int i = 0; i < t; i++) {
+          if (b->libros[i].prestado) p++;
+          if (b->libros[i].anio < ant) ant = b->libros[i].anio;
+          if (b->libros[i].anio > rec) rec = b->libros[i].anio;
+      }
+      if (t > 0) porc = (double)p / t * 100.0;
+
+      if (total)       *total = t;
+      if (prestados)   *prestados = p;
+      if (disponibles) *disponibles = t - p;
+      if (porcentaje_prest) *porcentaje_prest = porc;
+      if (mas_antiguo) *mas_antiguo = ant;
+      if (mas_reciente) *mas_reciente = rec;
+
+      return true;
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+PERSISTENCIA: GUARDAR Y CARGAR
+================================================================================
+
+--------------------------------------------------------------------------------
+  // biblioteca.c
+
+  bool biblio_guardar(const Biblioteca* b, const char* archivo) {
+      if (b == NULL || archivo == NULL) return false;
+      FILE* f = fopen(archivo, "w");
+      if (f == NULL) return false;
+
+      fprintf(f, "%d\n", b->cantidad);
+      for (int i = 0; i < b->cantidad; i++) {
+          const Libro* l = &b->libros[i];
+          fprintf(f, "%d|%s|%s|%s|%d|%d|%d|%s\n",
+                  l->id, l->titulo, l->autor, l->isbn,
+                  l->anio, l->genero, l->prestado,
+                  l->prestado_a);
+      }
+      fclose(f);
+      return true;
+  }
+
+  bool biblio_cargar(Biblioteca* b, const char* archivo) {
+      if (b == NULL || archivo == NULL) return false;
+      FILE* f = fopen(archivo, "r");
+      if (f == NULL) return false;
+
+      b->cantidad = 0;
+      fscanf(f, "%d\n", &b->cantidad);
+
+      for (int i = 0; i < b->cantidad; i++) {
+          Libro* l = &b->libros[i];
+          fscanf(f, "%d|%[^|]|%[^|]|%[^|]|%d|%d|%d|%[^\n]\n",
+                 &l->id, l->titulo, l->autor, l->isbn,
+                 &l->anio, (int*)&l->genero, (int*)&l->prestado,
+                 l->prestado_a);
+          if (l->id >= siguiente_id)
+              siguiente_id = l->id + 1;
+      }
+      fclose(f);
+      return true;
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+PROGRAMA PRINCIPAL (main.c)
+================================================================================
+
+--------------------------------------------------------------------------------
+  // main.c
+  #include <stdio.h>
+  #include <stdlib.h>
+  #include <string.h>
+  #include <ctype.h>
+  #include "biblioteca.h"
+
+  static void limpiar_buffer(void) {
+      int c;
+      while ((c = getchar()) != '\n' && c != EOF);
+  }
+
+  static void menu_principal(void) {
+      printf("\n========================================\n");
+      printf("   SISTEMA DE GESTION DE BIBLIOTECA    \n");
+      printf("========================================\n");
+      printf("1. Agregar libro\n");
+      printf("2. Listar todos los libros\n");
+      printf("3. Buscar libro por ID\n");
+      printf("4. Buscar libro por titulo\n");
+      printf("5. Eliminar libro\n");
+      printf("6. Prestar libro\n");
+      printf("7. Devolver libro\n");
+      printf("8. Ordenar libros\n");
+      printf("9. Estadisticas\n");
+      printf("10. Recursion: conteo por genero\n");
+      printf("11. Recursion: busqueda binaria\n");
+      printf("12. Guardar datos\n");
+      printf("13. Cargar datos\n");
+      printf("0. Salir\n");
+      printf("Opcion: ");
+  }
+
+  static void opcion_agregar(Biblioteca* b) {
+      Libro libro;
+      printf("Titulo: ");   limpiar_buffer();
+      fgets(libro.titulo, MAX_TITULO, stdin);
+      libro.titulo[strcspn(libro.titulo, "\n")] = '\0';
+
+      printf("Autor: ");
+      fgets(libro.autor, MAX_AUTOR, stdin);
+      libro.autor[strcspn(libro.autor, "\n")] = '\0';
+
+      printf("ISBN: ");
+      fgets(libro.isbn, MAX_ISBN, stdin);
+      libro.isbn[strcspn(libro.isbn, "\n")] = '\0';
+
+      printf("Anio: "); scanf("%d", &libro.anio);
+      printf("Genero (0-Ficcion 1-NoFiccion 2-Ciencia\n");
+      printf("        3-Historia 4-Tecnologia 5-Arte 6-Otro): ");
+      scanf("%d", (int*)&libro.genero);
+
+      int id = biblio_agregar(b, &libro);
+      if (id > 0) {
+          printf("Libro agregado con ID %d\n", id);
+      } else {
+          printf("Error al agregar libro\n");
+      }
+  }
+
+  static void opcion_estadisticas(const Biblioteca* b) {
+      int total, prest, disp, antiguo, reciente;
+      double porcentaje;
+
+      if (biblio_estadisticas(b, &total, &prest, &disp,
+                              &porcentaje, &antiguo, &reciente)) {
+          printf("\n=== ESTADISTICAS ===\n");
+          printf("Total de libros: %d\n", total);
+          printf("Disponibles: %d\n", disp);
+          printf("Prestados: %d (% .1f%%)\n", prest, porcentaje);
+          printf("Anio mas antiguo: %d\n", antiguo);
+          printf("Anio mas reciente: %d\n", reciente);
+      }
+  }
+
+  static void opcion_ordenar(Biblioteca* b) {
+      printf("\nCriterio de orden:\n");
+      printf("1. Titulo\n");
+      printf("2. Autor\n");
+      printf("3. Anio (ascendente)\n");
+      printf("4. Anio (descendente)\n");
+      printf("Opcion: ");
+      int op; scanf("%d", &op);
+
+      Comparador comps[] = {
+          comparar_por_titulo,
+          comparar_por_autor,
+          comparar_por_anio,
+          comparar_por_anio_desc
+      };
+      if (op >= 1 && op <= 4) {
+          biblio_ordenar(b, comps[op - 1]);
+          printf("Biblioteca ordenada.\n");
+          biblio_mostrar(b);
+      }
+  }
+
+  static void opcion_conteo_genero(const Biblioteca* b) {
+      printf("Genero a contar (0-6): ");
+      int g; scanf("%d", &g);
+      int total = biblio_contar_genero_tail(b, (Genero)g, 0, 0);
+      printf("Libros de genero %d: %d\n", g, total);
+  }
+
+  static void opcion_busqueda_binaria(Biblioteca* b) {
+      // Necesita orden por ID primero
+      // Nota: asumimos IDs unicos, no necesariamente ordenados
+      // Para busqueda binaria, ordenamos por ID primero
+      // (usando un comparador simple)
+      printf("ID a buscar: ");
+      int id; scanf("%d", &id);
+
+      // Ordenar por ID para busqueda binaria
+      // (En un sistema real, mantendriamos indice ordenado)
+      Libro* encontrado = biblio_buscar_recursivo(b, id, 0,
+                                                   b->cantidad - 1);
+      if (encontrado) {
+          printf("Libro encontrado por busqueda binaria:\n");
+          biblio_mostrar_libro(encontrado);
+      } else {
+          printf("No encontrado\n");
+      }
+  }
+
+  int main(void) {
+      Biblioteca b;
+      biblio_init(&b);
+
+      // Cargar datos al iniciar si existe el archivo
+      biblio_cargar(&b, "libros.txt");
+
+      int opcion;
+      do {
+          menu_principal();
+          scanf("%d", &opcion);
+
+          switch (opcion) {
+              case 1:  opcion_agregar(&b); break;
+              case 2:  biblio_mostrar(&b); break;
+              case 3: {
+                  printf("ID: "); int id; scanf("%d", &id);
+                  Libro* l = biblio_buscar_por_id(&b, id);
+                  if (l) biblio_mostrar_libro(l);
+                  else printf("No encontrado\n");
+                  break;
+              }
+              case 4: {
+                  printf("Titulo: "); limpiar_buffer();
+                  char busq[MAX_TITULO];
+                  fgets(busq, MAX_TITULO, stdin);
+                  busq[strcspn(busq, "\n")] = '\0';
+                  Libro* resultados[10];
+                  int n = biblio_buscar_por_titulo(&b, busq,
+                                                    resultados, 10);
+                  for (int i = 0; i < n; i++)
+                      biblio_mostrar_libro(resultados[i]);
+                  printf("(%d encontrados)\n", n);
+                  break;
+              }
+              case 5: {
+                  printf("ID a eliminar: "); int id; scanf("%d", &id);
+                  if (biblio_eliminar(&b, id))
+                      printf("Eliminado\n");
+                  else
+                      printf("No encontrado\n");
+                  break;
+              }
+              case 6: {
+                  printf("ID a prestar: "); int id; scanf("%d", &id);
+                  printf("Persona: "); limpiar_buffer();
+                  char per[MAX_AUTOR];
+                  fgets(per, MAX_AUTOR, stdin);
+                  per[strcspn(per, "\n")] = '\0';
+                  if (biblio_prestar(&b, id, per))
+                      printf("Prestamo exitoso\n");
+                  else
+                      printf("Error en prestamo\n");
+                  break;
+              }
+              case 7: {
+                  printf("ID a devolver: "); int id; scanf("%d", &id);
+                  if (biblio_devolver(&b, id))
+                      printf("Devolucion exitosa\n");
+                  else
+                      printf("Error en devolucion\n");
+                  break;
+              }
+              case 8:  opcion_ordenar(&b); break;
+              case 9:  opcion_estadisticas(&b); break;
+              case 10: opcion_conteo_genero(&b); break;
+              case 11: opcion_busqueda_binaria(&b); break;
+              case 12:
+                  if (biblio_guardar(&b, "libros.txt"))
+                      printf("Datos guardados\n");
+                  else
+                      printf("Error al guardar\n");
+                  break;
+              case 13:
+                  if (biblio_cargar(&b, "libros.txt"))
+                      printf("Datos cargados\n");
+                  else
+                      printf("Error al cargar\n");
+                  break;
+              case 0:  break;
+              default: printf("Opcion invalida\n");
+          }
+      } while (opcion != 0);
+
+      // Guardar al salir
+      biblio_guardar(&b, "libros.txt");
+      printf("Gracias por usar el sistema.\n");
+      return 0;
+  }
+--------------------------------------------------------------------------------
+
+================================================================================
+COMPILACIÓN Y EJECUCIÓN
+================================================================================
+
+Compilar todos los archivos:
+
+  gcc -Wall -Wextra -std=c11 -O2 main.c biblioteca.c -o biblioteca
+
+O de forma modular:
+
+  gcc -Wall -Wextra -std=c11 -c biblioteca.c -o biblioteca.o
+  gcc -Wall -Wextra -std=c11 -c main.c -o main.o
+  gcc biblioteca.o main.o -o biblioteca
+
+Ejecutar:
+
+  ./biblioteca
+
+Para probar con entrada/salida estándar:
+
+  echo -e "1\nC\nFundacion\nIsaac Asimov\n12345\n1951\n2\n2\n0" | ./biblioteca
+
+================================================================================
+PERSONALIZACIÓN Y EXTENSIONES
+================================================================================
+
+IDEAS PARA MEJORAR EL PROYECTO:
+
+  1. EDITAR LIBROS:
+     Agregar opción para modificar campos de un libro existente.
+
+  2. CATEGORÍAS MÚLTIPLES:
+     Permitir que un libro tenga varios géneros usando bits.
+
+  3. HISTORIAL DE PRÉSTAMOS:
+     Mantener un arreglo de estructuras Prestamo con fecha.
+
+  4. INTERFAZ GRÁFICA:
+     Usar ncurses para interfaz de terminal mejorada.
+
+  5. BÚSQUEDA AVANZADA:
+     Búsqueda por combinación de criterios (autor + año).
+
+  6. ORDENAMIENTO POR MÚLTIPLES CRITERIOS:
+     Ej: ordenar por autor y dentro por año.
+
+  7. RECURSIÓN EN ÁRBOL:
+     Implementar un índice de búsqueda como árbol binario.
+
+  8. PLUGINS DE REPORTE:
+     Usar punteros a función para diferentes formatos de
+     reporte (CSV, JSON, HTML, TXT).
+
+  9. VALIDACIÓN:
+     Validar ISBN, formato de años, evitar duplicados.
+
+  10. EXPORTAR:
+     Exportar biblioteca a formato CSV legible por Excel.
+
+================================================================================
+VERIFICACIÓN DE CONCEPTOS DEL MÓDULO
+================================================================================
+
+Este proyecto demuestra:
+
+  FUNCIONES:                  ~20 funciones modulares
+  PARÁMETROS:                 Paso por valor y por puntero
+  VALORES DE RETORNO:         int, bool, punteros
+  SCOPE:                      static (siguiente_id),
+                              global (solo en .c),
+                              local (variables de función)
+  RECURSIÓN:                  búsqueda binaria recursiva
+  RECURSIÓN DE COLA:          conteo por género
+  PUNTEROS:                   Parámetros [out] en estadísticas
+  PUNTEROS A FUNCIÓN:         qsort con diferentes comparadores
+  ARREGLOS DE PUNTEROS:       resultados[] en búsqueda
+  PUNTEROS A ESTRUCTURAS:     Biblioteca*, Libro*
+  CONST:                      Parámetros de solo lectura
+  MANEJO DE ARCHIVOS:         Guardar/Cargar en texto plano
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  EXTENSIÓN DEL PROYECTO: AÑADIR MÓDULO DE USUARIOS
+
+  Implementa un subsistema de gestión de usuarios que se
+  integre con la biblioteca. Requisitos:
+
+    1. Estructura Usuario con:
+       - int id
+       - char nombre[80]
+       - char email[80]
+       - int libros_prestados[5] (IDs, max 5 libros)
+       - int num_prestados
+
+    2. Funciones:
+       - int usuario_crear(Usuario* u, const char* nombre,
+                           const char* email);
+       - bool usuario_prestar_libro(Usuario* u, int libro_id);
+       - bool usuario_devolver_libro(Usuario* u, int libro_id);
+       - void usuario_mostrar(const Usuario* u);
+
+    3. Integración:
+       - Al prestar un libro, también registrar en el usuario.
+       - Al devolver, también desregistrar del usuario.
+       - Un usuario no puede tener más de 5 libros prestados.
+       - Un libro no puede prestarse si ya está prestado.
+
+    4. Recursión:
+       - Implementa una función recursiva que cuente cuántos
+         usuarios tienen libros prestados.
+       - Implementa búsqueda binaria recursiva de usuarios
+         por ID.
+
+    5. Punteros a función:
+       - Implementa una función generar_reporte() que reciba
+         un puntero a función para formatear la salida.
+       - Crea dos formatos: texto plano y CSV.
+
+    6. Guardar/Cargar usuarios en usuarios.txt.
+
+  El sistema final debe tener main() con menú unificado:
+  "Biblioteca", "Usuarios", "Préstamos", "Reportes", "Salir".
+
+================================================================================
+CIERRE DEL MÓDULO III
+================================================================================
+
+  ¡Felicidades! Has completado el Módulo III de C Master Book.
+  Has recorrido un camino impresionante:
+
+    • Desde las funciones básicas hasta punteros a funciones.
+    • Desde el paso por valor hasta la modificación mediante
+      punteros.
+    • Desde el scope local hasta las variables static y extern.
+    • Desde la recursión simple hasta la recursión de cola y
+      el backtracking.
+
+  Ahora tienes las herramientas para escribir software C
+  estructurado, modular y eficiente. El uso de punteros te da
+  control total sobre la memoria, y las funciones te permiten
+  organizar el código de forma profesional.
+
+  En el Módulo IV exploraremos estructuras de datos dinámicas,
+  asignación de memoria con malloc/free, listas enlazadas,
+  pilas, colas, árboles y más.
+
+  "No es que sea más inteligente, es que trabajo más tiempo
+  con los problemas." — Albert Einstein
+
+================================================================================
+PRÓXIMO MÓDULO
+================================================================================
+
+  MÓDULO IV: ESTRUCTURAS DE DATOS DINÁMICAS
+  → Asignación dinámica de memoria (malloc, calloc, realloc)
+  → Listas enlazadas simples, dobles y circulares
+  → Pilas y colas dinámicas
+  → Árboles binarios de búsqueda
+  → Tablas hash
+  → Proyecto integrador del Módulo IV
+
+================================================================================

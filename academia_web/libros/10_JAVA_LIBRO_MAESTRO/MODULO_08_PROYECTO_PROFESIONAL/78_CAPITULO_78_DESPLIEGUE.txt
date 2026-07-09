@@ -1,0 +1,961 @@
+================================================================================
+  LUCAS EGA ACADEMY - JAVA MASTER BOOK
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 78: DESPLIEGUE (JAR, WAR, DOCKER)
+================================================================================
+
+  "El codigo no vale nada hasta que corre en produccion.
+   El despliegue no es el final del desarrollo: es el principio
+   de la operacion."
+                                        — Profesor Lucas Ega
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capitulo 78 del Java Master Book!
+
+Has disenado la arquitectura, escrito el codigo, configurado las dependecias,
+implementado los logs, construido la API REST. Ahora llega el momento de la
+verdad: desplegar tu aplicacion para que el mundo la use.
+
+El despliegue es una de las habilidades mas valoradas en el mercado laboral.
+No basta con escribir buen codigo: hay que saber llevarlo a produccion de
+forma segura, repetible y escalable.
+
+En este capitulo aprenderas:
+  - Construir artefactos JAR y WAR con Maven
+  - Ejecutar aplicaciones Spring Boot en produccion
+  - Crear imagenes Docker optimizadas
+  - Usar Docker Compose para entornos multi-servicio
+  - Desplegar en la nube (AWS, Azure, GCP)
+  - Implementar pipelines CI/CD
+  - Estrategias de despliegue (blue-green, canary, rolling)
+  - Monitoreo post-despliegue
+
+¡Prepárate para llevar tu código al mundo!
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+  "Desplegar no es copiar archivos: es liberar valor.
+   Un buen despliegue es invisible. Un mal despliegue,
+   inolvidable."
+                                        — Profesor Lucas Ega
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✓ Construir JAR ejecutable con Spring Boot Maven Plugin
+  ✓ Generar WAR para despliegue en servidores tradicionales
+  ✓ Configurar propiedades de produccion (SSL, puertos, logs)
+  ✓ Crear Dockerfile optimizado (multi-stage build)
+  ✓ Orquestar servicios con Docker Compose
+  ✓ Desplegar en plataformas cloud (AWS, Railway, Render)
+  ✓ Configurar pipelines CI/CD (GitHub Actions)
+  ✓ Implementar estrategias de despliegue (blue-green, canary)
+  ✓ Monitorear la aplicacion en produccion
+  ✓ Solucionar problemas comunes de despliegue
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+-------------------------------------------------------------------------------
+  78.1. CONSTRUCCIÓN DE ARTEFACTOS
+-------------------------------------------------------------------------------
+
+  78.1.1. JAR EJECUTABLE (Spring Boot)
+
+Spring Boot permite empaquetar toda la aplicacion en un unico JAR
+ejecutable que incluye el servidor embebido (Tomcat, Jetty, Undertow).
+
+```bash
+# Construir el JAR
+mvn clean package
+
+# El JAR se genera en: target/mi-app-1.0.0.jar
+
+# Ejecutar el JAR
+java -jar target/mi-app-1.0.0.jar
+
+# Ejecutar con perfil especifico
+java -jar target/mi-app-1.0.0.jar --spring.profiles.active=produccion
+
+# Ejecutar con propiedades personalizadas
+java -jar target/mi-app-1.0.0.jar \
+    --server.port=8080 \
+    --spring.datasource.url=jdbc:mysql://localhost:3306/miapp \
+    --logging.file.name=/var/log/mi-app/app.log
+```
+
+  CONFIGURACIÓN DEL PLUGIN MAVEN:
+
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+            <configuration>
+                <!-- Nombre del JAR final -->
+                <finalName>mi-app-${project.version}</finalName>
+                <!-- Clase principal (si no se detecta automaticamete) -->
+                <mainClass>com.lucasega.MiAplicacionApplication</mainClass>
+                <!-- Excluir dependencias opcionales -->
+                <excludes>
+                    <exclude>
+                        <groupId>org.projectlombok</groupId>
+                        <artifactId>lombok</artifactId>
+                    </exclude>
+                </excludes>
+                <!-- Capas para optimizar Docker -->
+                <layers>
+                    <enabled>true</enabled>
+                </layers>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+  78.1.2. JAR DELGADO (Thin JAR)
+
+Alternativa al fat JAR que excluye dependencias para reducir tamano:
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot.experimental</groupId>
+    <artifactId>spring-boot-thin-layout</artifactId>
+    <version>1.5.0</version>
+</dependency>
+```
+
+  78.1.3. WAR (Web Application Archive)
+
+Para desplegar en servidores externos (Tomcat, JBoss, WebLogic):
+
+```xml
+<!-- Cambiar packaging a war -->
+<packaging>war</packaging>
+
+<!-- Marcar el servidor embebido como provided -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-tomcat</artifactId>
+    <scope>provided</scope>
+</dependency>
+```
+
+```java
+// Modificar la clase principal para extender SpringBootServletInitializer
+package com.lucasega;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
+
+@SpringBootApplication
+public class MiAplicacionApplication extends SpringBootServletInitializer {
+
+    @Override
+    protected SpringApplicationBuilder configure(
+            SpringApplicationBuilder application) {
+        return application.sources(MiAplicacionApplication.class);
+    }
+
+    public static void main(String[] args) {
+        SpringApplication.run(MiAplicacionApplication.class, args);
+    }
+}
+```
+
+```bash
+# Construir WAR
+mvn clean package
+
+# Desplegar en Tomcat: copiar target/mi-app.war a webapps/
+# Acceder en: http://localhost:8080/mi-app
+```
+
+-------------------------------------------------------------------------------
+  78.2. CONFIGURACIÓN PARA PRODUCCIÓN
+-------------------------------------------------------------------------------
+
+  78.2.1. APPLICATION-PRODUCCION.PROPERTIES
+
+```properties
+# === SERVIDOR ===
+server.port=80
+server.servlet.context-path=/
+server.compression.enabled=true
+server.compression.mime-types=application/json,application/xml,text/html
+
+# === SSL (HTTPS) ===
+# server.ssl.key-store=file:/etc/ssl/miapp/keystore.p12
+# server.ssl.key-store-password=${SSL_KEY_PASSWORD}
+# server.ssl.key-store-type=PKCS12
+# server.ssl.key-alias=miapp
+
+# === BASE DE DATOS ===
+spring.datasource.url=jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=true
+spring.datasource.username=${DB_USER}
+spring.datasource.password=${DB_PASS}
+spring.datasource.hikari.maximum-pool-size=20
+spring.datasource.hikari.minimum-idle=5
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.idle-timeout=600000
+
+# === JPA ===
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+
+# === LOGGING ===
+logging.level.com.lucasega=WARN
+logging.level.org.springframework=WARN
+logging.level.org.hibernate=WARN
+logging.file.name=/var/log/mi-app/app.log
+logging.pattern.file=%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n
+logging.logback.rollingpolicy.max-file-size=50MB
+logging.logback.rollingpolicy.max-history=30
+
+# === ACTUATOR ===
+management.endpoints.web.exposure.include=health,info,metrics
+management.endpoint.health.show-details=when-authorized
+management.endpoint.health.probes.enabled=true
+
+# === RECURSOS ===
+spring.servlet.multipart.max-file-size=10MB
+spring.servlet.multipart.max-request-size=10MB
+```
+
+  78.2.2. VARIABLES DE ENTORNO
+
+```bash
+# Configuración sensible siempre como variables de entorno
+export DB_HOST=proddb.example.com
+export DB_PORT=3306
+export DB_NAME=miapp_produccion
+export DB_USER=admin
+export DB_PASS=secreto_super_seguro
+export SSL_KEY_PASSWORD=otro_secreto
+export JAVA_OPTS="-Xms512m -Xmx1024m -XX:+UseG1GC"
+
+# Ejecutar la app
+java $JAVA_OPTS -jar mi-app.jar
+```
+
+-------------------------------------------------------------------------------
+  78.3. DOCKER
+-------------------------------------------------------------------------------
+
+Docker permite empaquetar la aplicacion con todo su entorno en un
+contenedor ligero y portable.
+
+  78.3.1. DOCKERFILE OPTIMIZADO (MULTI-STAGE BUILD)
+
+```dockerfile
+# ===== ETAPA 1: Construcción =====
+FROM eclipse-temurin:17-jdk-alpine AS builder
+
+# Instalar Maven
+RUN apk add --no-cache maven
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Copiar POM y descargar dependencias (cache optimizado)
+COPY pom.xml ./
+RUN mvn dependency:go-offline -B
+
+# Copiar codigo fuente
+COPY src ./src
+
+# Construir la aplicacion
+RUN mvn clean package -DskipTests -B
+
+# ===== ETAPA 2: Ejecución =====
+FROM eclipse-temurin:17-jre-alpine
+
+# Crear usuario no-root
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# Crear directorios
+RUN mkdir -p /app /var/log/mi-app && \
+    chown -R appuser:appgroup /app /var/log/mi-app
+
+WORKDIR /app
+
+# Copiar JAR desde la etapa de construcción
+COPY --from=builder /app/target/*.jar app.jar
+
+# Puerto de la aplicacion
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+    CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+
+# Cambiar al usuario no-root
+USER appuser
+
+# Punto de entrada
+ENTRYPOINT ["java", \
+    "-XX:+UseG1GC", \
+    "-XX:+ExitOnOutOfMemoryError", \
+    "-jar", \
+    "app.jar"]
+```
+
+  78.3.2. DOCKERFILE CON SPRING BOOT LAYERS
+
+Spring Boot 2.3+ soporta empaquetado por capas para optimizar Docker:
+
+```xml
+<plugin>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-maven-plugin</artifactId>
+    <configuration>
+        <layers>
+            <enabled>true</enabled>
+        </layers>
+    </configuration>
+</plugin>
+```
+
+```dockerfile
+FROM eclipse-temurin:17-jre-alpine AS builder
+WORKDIR /app
+COPY target/*.jar app.jar
+RUN java -Djarmode=layertools -jar app.jar extract
+
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+
+# Copiar capas en orden de frecuencia de cambio (mejor cache)
+COPY --from=builder app/dependencies/ ./
+COPY --from=builder app/spring-boot-loader/ ./
+COPY --from=builder app/snapshot-dependencies/ ./
+COPY --from=builder app/application/ ./
+
+EXPOSE 8080
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+```
+
+  78.3.3. DOCKER-COMPOSE.YML
+
+```yaml
+version: '3.8'
+
+services:
+  # Aplicacion Spring Boot
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mi-app
+    ports:
+      - "80:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=produccion
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=miapp
+      - DB_USER=miapp_user
+      - DB_PASS=${DB_PASS}
+      - TZ=America/Lima
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app-logs:/var/log/mi-app
+    networks:
+      - mi-red
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Base de datos MySQL
+  db:
+    image: mysql:8.0
+    container_name: mi-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASS}
+      - MYSQL_DATABASE=miapp
+      - MYSQL_USER=miapp_user
+      - MYSQL_PASSWORD=${DB_PASS}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mi-red
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Cache Redis (opcional)
+  redis:
+    image: redis:7-alpine
+    container_name: mi-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - mi-red
+    restart: unless-stopped
+
+volumes:
+  app-logs:
+  db-data:
+
+networks:
+  mi-red:
+    driver: bridge
+```
+
+-------------------------------------------------------------------------------
+  78.4. DESPLIEGUE EN LA NUBE
+-------------------------------------------------------------------------------
+
+  78.4.1. RAILWAY (Plataforma simple)
+
+```bash
+# Instalar CLI de Railway
+npm install -g @railway/cli
+
+# Iniciar sesion
+railway login
+
+# Inicializar proyecto
+railway init
+
+# Desplegar
+railway up
+
+# Configurar variables de entorno
+railway variables set DB_HOST=...
+railway variables set DB_PASS=...
+```
+
+  78.4.2. AWS ELASTIC BEANSTALK
+
+```bash
+# Instalar AWS CLI y EB CLI
+pip install awscli awsebcli
+
+# Inicializar entorno Elastic Beanstalk
+eb init -p java mi-app --region us-east-1
+
+# Crear entorno
+eb create mi-app-prod
+
+# Desplegar
+eb deploy
+
+# Abrir en el navegador
+eb open
+```
+
+```yaml
+# .elasticbeanstalk/config.yml
+branch-defaults:
+  main:
+    environment: mi-app-prod
+global:
+  application_name: mi-app
+  default_platform: Corretto 17 running on 64bit Amazon Linux 2
+  default_region: us-east-1
+
+# Procfile
+web: java -jar app.jar --spring.profiles.active=produccion
+```
+
+  78.4.3. AZURE APP SERVICE
+
+```bash
+# Instalar Azure CLI
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+# Iniciar sesion
+az login
+
+# Crear App Service
+az webapp up \
+    --name mi-app \
+    --resource-group mi-rg \
+    --runtime "JAVA:17-java17" \
+    --sku B1
+
+# Configurar variables de entorno
+az webapp config appsettings set \
+    --name mi-app \
+    --resource-group mi-rg \
+    --settings SPRING_PROFILES_ACTIVE=produccion DB_HOST=...
+```
+
+  78.4.4. GOOGLE CLOUD RUN
+
+```bash
+# Configurar gcloud
+gcloud init
+
+# Construir y subir imagen
+gcloud builds submit --tag gcr.io/${PROJECT_ID}/mi-app
+
+# Desplegar en Cloud Run
+gcloud run deploy mi-app \
+    --image gcr.io/${PROJECT_ID}/mi-app \
+    --platform managed \
+    --region us-central1 \
+    --allow-unauthenticated \
+    --memory 512Mi \
+    --concurrency 80
+```
+
+-------------------------------------------------------------------------------
+  78.5. CI/CD CON GITHUB ACTIONS
+-------------------------------------------------------------------------------
+
+```yaml
+# .github/workflows/deploy.yml
+name: Build, Test and Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn clean test
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-report
+          path: target/surefire-reports/
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@v3
+        with:
+          name: app-jar
+          path: target/*.jar
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download JAR
+        uses: actions/download-artifact@v3
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Railway
+        run: |
+          npm install -g @railway/cli
+          railway up --service mi-app
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+```
+
+-------------------------------------------------------------------------------
+  78.6. ESTRATEGIAS DE DESPLIEGUE
+-------------------------------------------------------------------------------
+
+  78.6.1. BLUE-GREEN DEPLOYMENT
+
+  Mantiene dos entornos identicos (blue y green). Solo uno recibe trafico
+  a la vez. Para desplegar, cambia el trafico al otro entorno.
+
+  Ventajas: Rollback instantaneo, zero downtime
+  Desventajas: Duplica costos de infraestructura
+
+```yaml
+# docker-compose.blue-green.yml
+version: '3.8'
+services:
+  blue:
+    image: mi-app:1.0.0
+    ports:
+      - "8081:8080"
+    environment:
+      - ACTIVE=blue
+
+  green:
+    image: mi-app:2.0.0
+    ports:
+      - "8082:8080"
+    environment:
+      - ACTIVE=green
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+```
+
+  78.6.2. CANARY DEPLOYMENT
+
+  Despliega la nueva version a un pequeño porcentaje de usuarios
+  y gradualmente aumenta el trafico mientras monitorea errores.
+
+  Ventajas: Riesgo minimo, prueba en produccion con usuarios reales
+  Desventajas: Complejidad operativa
+
+  78.6.3. ROLLING DEPLOYMENT
+
+  Actualiza las instancias una por una, manteniendo la mayoria
+  de instancias funcionando durante el proceso.
+
+  Ventajas: Sin downtime, sin duplicar infraestructura
+  Desventajas: Rollback lento, posible degradacion parcial
+
+-------------------------------------------------------------------------------
+  78.7. HEALTH CHECKS Y PROBES
+-------------------------------------------------------------------------------
+
+```properties
+# Configuracion de health checks en Spring Boot
+management.endpoint.health.probes.enabled=true
+management.endpoint.health.show-details=always
+
+# Liveness probe: indica si la app esta viva
+# Kubernetes lo usa para reiniciar contenedores congelados
+# Spring Boot: /actuator/health/liveness
+
+# Readiness probe: indica si la app esta lista para recibir trafico
+# Kubernetes lo usa para enrutar trafico solo a pods listos
+# Spring Boot: /actuator/health/readiness
+```
+
+```yaml
+# Kubernetes deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mi-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mi-app
+  template:
+    metadata:
+      labels:
+        app: mi-app
+    spec:
+      containers:
+      - name: app
+        image: mi-app:latest
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+```
+
+-------------------------------------------------------------------------------
+  78.8. MONITOREO POST-DESPLIEGUE
+-------------------------------------------------------------------------------
+
+```bash
+# Verificar logs en produccion
+journalctl -u mi-app -f
+docker logs -f mi-app
+kubectl logs -f deployment/mi-app
+
+# Verificar health check
+curl http://localhost:8080/actuator/health
+curl http://localhost:8080/actuator/info
+curl http://localhost:8080/actuator/metrics
+
+# Verificar rendimiento
+curl http://localhost:8080/actuator/metrics/jvm.memory.used
+curl http://localhost:8080/actuator/metrics/http.server.requests
+
+# Verificar thread dump
+curl http://localhost:8080/actuator/threaddump > threaddump.txt
+
+# Verificar heap dump
+curl http://localhost:8080/actuator/heapdump > heapdump.hprof
+```
+
+-------------------------------------------------------------------------------
+  78.9. EJERCICIOS PRÁCTICOS
+-------------------------------------------------------------------------------
+
+  EJERCICIO 1: Construccion y ejecucion
+
+  a) Crea un proyecto Spring Boot simple
+  b) Construye el JAR con mvn clean package
+  c) Ejecuta el JAR con diferentes perfiles
+  d) Verifica que los health checks funcionen
+  e) Mide el tiempo de inicio y tamano del JAR
+
+  EJERCICIO 2: Dockerizacion
+
+  a) Crea un Dockerfile multi-stage optimizado
+  b) Construye la imagen: docker build -t mi-app .
+  c) Ejecuta el contenedor: docker run -p 8080:8080 mi-app
+  d) Verifica que la app responda
+  e) Optimiza la imagen (usa jlink para reducir tamano)
+
+  EJERCICIO 3: Docker Compose
+
+  a) Crea un docker-compose.yml con app + base de datos
+  b) Usa variables de entorno para configuracion
+  c) Agrega un volumen persistente para la DB
+  d) Agrega health checks
+  e) Prueba el escalado: docker compose up --scale app=3
+
+  EJERCICIO 4: CI/CD
+
+  a) Configura GitHub Actions para tu proyecto
+  b) El pipeline debe: compilar, testear, construir imagen Docker
+  c) Subir la imagen a GitHub Container Registry
+  d) Desplegar automaticamente al hacer push a main
+
+  EJERCICIO 5: Despliegue cloud
+
+  a) Despliega tu aplicacion en Railway (gratuito)
+  b) Configura variables de entorno para produccion
+  c) Configura un dominio personalizado
+  d) Habilita HTTPS
+  e) Verifica que los logs se capturen correctamente
+
+-------------------------------------------------------------------------------
+  RESUMEN DEL CAPÍTULO
+-------------------------------------------------------------------------------
+
+  • Spring Boot genera JARs ejecutables (fat JAR) que incluyen el
+    servidor embebido, facilitando el despliegue.
+
+  • Los WARs se usan para desplegar en servidores externos como
+    Tomcat, JBoss o WebLogic.
+
+  • Las propiedades de produccion se configuran en archivos
+    application-{perfil}.properties separados.
+
+  • Las variables de entorno son la forma segura de pasar
+    configuraciones sensibles (contrasenas, tokens, API keys).
+
+  • Docker permite empaquetar la aplicacion con su entorno en un
+    contenedor portable y reproducible.
+
+  • Los Dockerfiles multi-stage reducen drasticamente el tamano
+    de las imagenes (de ~300MB a ~100MB).
+
+  • Docker Compose orquesta multiples servicios (app, DB, cache,
+    cola de mensajes) en un solo comando.
+
+  • Las plataformas cloud (Railway, AWS, Azure, GCP) simplifican
+    el despliegue con integracion git push-to-deploy.
+
+  • Los pipelines CI/CD automatizan la construccion, prueba y
+    despliegue, garantizando repetibilidad.
+
+  • Las estrategias de despliegue (blue-green, canary, rolling)
+    minimizan el riesgo y el downtime.
+
+  • Los health checks (liveness, readiness) permiten a los
+    orquestadores (Kubernetes) gestionar los contenedores.
+
+  • El monitoreo post-despliegue con Actuator y logs es esencial
+    para detectar problemas temprano.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  ❓ ¿JAR o WAR? ¿Cual elegir?
+  R: JAR con servidor embebido es la opcion moderna y recomendada.
+     WAR solo si tienes requisitos especificos del servidor o
+     politicas empresariales.
+
+  ❓ ¿Por que mi JAR pesa tanto?
+  R: El fat JAR incluye todas las dependencias. Puedes reducirlo
+     con thin layout, jlink, o Docker multi-stage.
+
+  ❓ ¿Como paso variables de entorno a Spring Boot?
+  R: Spring Boot mapea automaticamente variables de entorno a
+     propiedades. DB_HOST → spring.datasource.url (con conversion).
+
+  ❓ ¿Que hago si la app no inicia en produccion?
+  R: Revisa los logs, verifica las variables de entorno, confirma
+     que la base de datos sea accesible, y que el puerto no este
+     ocupado.
+
+  ❓ ¿Docker o maquina virtual?
+  R: Docker es mas ligero, rapido de iniciar, y facil de
+     orquestar. Las VMs ofrecen mas aislamiento.
+
+  ❓ ¿Kubernetes es obligatorio?
+  R: No. Para proyectos pequenos/medios, Docker Compose o
+     plataformas como Railway son suficientes. Kubernetes es
+     para escala empresarial.
+
+  ❓ ¿Como hago rollback de un despliegue?
+  R: En Docker: docker compose up -d con la version anterior.
+     En Kubernetes: kubectl rollout undo deployment/mi-app.
+     Con blue-green: cambiar el trafico al entorno anterior.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  🏆 PLATAFORMA DE DESPLIEGUE AUTOMATIZADO
+
+  Disena e implementa una plataforma de despliegue completa:
+
+  1. Pipeline CI/CD completo:
+     - Build, test, security scan, publish
+     - Despliegue automatico a staging al hacer PR
+     - Despliegue a produccion al hacer merge a main
+     - Notificaciones a Slack/Discord
+
+  2. Infraestructura como codigo (IaC):
+     - Terraform para provisionar infraestructura cloud
+     - Ansible para configuracion de servidores
+     - Kubernetes manifests para orquestacion
+
+  3. Monitoreo y alertas:
+     - Prometheus para metricas
+     - Grafana para dashboards
+     - Alertmanager para notificaciones
+     - Elasticsearch + Kibana para logs
+
+  4. Auto-escalado y resiliencia:
+     - Horizontal Pod Autoscaler (HPA)
+     - Pod Disruption Budgets (PDB)
+     - Multi-AZ deployment
+     - Disaster recovery plan
+
+  💡 PISTA: Usa GitHub Actions + Terraform + Kubernetes.
+  El pipeline debe ser declarativo y reproducible.
+
+  ¡Este desafio te convertira en un DevOps Engineer completo!
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+  El despliegue es el puente entre el desarrollo y la operacion.
+  Un buen despliegue es invisible, confiable y repetible.
+
+  Has aprendido a:
+  - Construir artefactos JAR y WAR
+  - Dockerizar aplicaciones Java
+  - Desplegar en la nube
+  - Automatizar con CI/CD
+  - Monitorear en produccion
+
+  Recuerda: el viaje no termina cuando el codigo esta listo.
+  El viaje termina cuando la aplicacion corre en produccion
+  y los usuarios la usan felizmente.
+
+  En el proximo capitulo, pondremos a prueba todo lo aprendido
+  con el Examen Profesional Java, una evaluacion comprensiva
+  de todos los modulos del Java Master Book.
+
+  ¡Nos vemos en el Capitulo 79!
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  ⏩ CAPÍTULO 79: EXAMEN PROFESIONAL JAVA
+  Evaluacion comprensiva que cubre todos los modulos del Java Master
+  Book: fundamentos, POO, colecciones, streams, hilos, JDBC, JavaFX,
+  patrones, MVC, Maven, Spring, APIs REST y despliegue.
+
+================================================================================
+  © 2026 Lucas Ega Academy - Java Master Book
+  Todos los derechos reservados.
+================================================================================

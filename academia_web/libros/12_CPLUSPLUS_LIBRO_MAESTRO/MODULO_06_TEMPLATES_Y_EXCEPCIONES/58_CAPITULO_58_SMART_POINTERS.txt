@@ -1,0 +1,1244 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 58: SMART POINTERS (UNIQUE_PTR, SHARED_PTR)
+================================================================================
+
+  "Los smart pointers son la prueba de que RAII puede gestionar la memoria
+   tan eficientemente como new/delete, pero sin el riesgo de fugas."
+                                                   — Effective Modern C++
+
+================================================================================
+
+BIENVENIDA
+----------
+
+Bienvenido al capítulo sobre smart pointers. Si RAII es el principio,
+los smart pointers son su aplicación más importante. std::unique_ptr,
+std::shared_ptr, y std::weak_ptr son las herramientas que han eliminado
+las fugas de memoria en C++ moderno.
+
+Antes de C++11, la gestión manual de memoria con new/delete era la norma,
+y las fugas de memoria eran el error más común. Los smart pointers
+automatizan esta gestión: unique_ptr para propiedad exclusiva, shared_ptr
+para propiedad compartida con conteo de referencias, y weak_ptr para
+referencias débiles que rompen ciclos.
+
+En este capítulo aprenderemos a usar cada uno, cuándo elegir cada cual,
+y cómo make_unique y make_shared mejoran la seguridad y el rendimiento.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "unique_ptr te da propiedad exclusiva sin overhead. shared_ptr te da
+   propiedad compartida con conteo de referencias. weak_ptr rompe ciclos.
+   Elige sabiamente."
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+
+  1. Dominar std::unique_ptr para propiedad exclusiva.
+  2. Usar std::make_unique para creación eficiente y segura.
+  3. Entender std::shared_ptr y el conteo de referencias.
+  4. Usar std::make_shared para optimizar la asignación.
+  5. Conocer std::weak_ptr y cómo rompe ciclos de referencias.
+  6. Implementar custom deleters para smart pointers.
+  7. Entender el costo de cada smart pointer.
+  8. Diferenciar entre unique_ptr, shared_ptr, y raw pointers.
+  9. Aplicar smart pointers en contenedores y funciones.
+  10. Seguir las mejores prácticas de gestión de memoria.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+1. std::unique_ptr - PROPIEDAD EXCLUSIVA
+------------------------------------------
+
+Representa propiedad exclusiva de un recurso. No se puede copiar, solo
+mover. Es tan eficiente como un raw pointer (sin overhead).
+
+  std::unique_ptr<int> ptr = std::make_unique<int>(42);
+  *ptr = 100;
+
+  // std::unique_ptr<int> ptr2 = ptr;  // ERROR: no copia
+  std::unique_ptr<int> ptr2 = std::move(ptr);  // OK: transfiere propiedad
+
+  // Al salir del ámbito, el recurso se libera automáticamente
+
+Uso típico:
+  - Miembros de clase con propiedad exclusiva.
+  - Retorno de funciones de fábrica.
+  - Contenedores polimórficos.
+
+2. std::make_unique (C++14)
+----------------------------
+
+Crea un unique_ptr de forma eficiente y segura:
+
+  // MAL: new explícito
+  std::unique_ptr<Foo> ptr(new Foo(a, b));
+
+  // BIEN: make_unique
+  auto ptr = std::make_unique<Foo>(a, b);
+
+Ventajas:
+  - Evita fugas si el constructor lanza excepciones.
+  - Más conciso y legible.
+  - Elimina la necesidad de new explícito.
+
+3. std::shared_ptr - PROPIEDAD COMPARTIDA
+-------------------------------------------
+
+Representa propiedad compartida con conteo de referencias. El recurso se
+libera cuando el último shared_ptr que lo posee se destruye.
+
+  std::shared_ptr<int> p1 = std::make_shared<int>(42);
+  {
+      std::shared_ptr<int> p2 = p1;  // ref count = 2
+      std::shared_ptr<int> p3 = p2;  // ref count = 3
+  }  // p2, p3 destruidos: ref count = 1
+  // Cuando p1 se destruye, ref count = 0, recurso liberado
+
+Cada shared_ptr tiene:
+  - Puntero al objeto gestionado.
+  - Puntero al bloque de control (ref count, weak count, deleter).
+
+4. std::make_shared
+--------------------
+
+Crea un shared_ptr de forma eficiente:
+
+  // make_shared asigna el objeto y el bloque de control en UNA sola
+  // asignación de memoria (más eficiente).
+
+  auto ptr = std::make_shared<Foo>(a, b);
+
+  // vs
+  std::shared_ptr<Foo> ptr(new Foo(a, b));  // DOS asignaciones
+
+5. std::weak_ptr - REFERENCIAS DÉBILES
+----------------------------------------
+
+weak_ptr es un "observador" del shared_ptr. No incrementa el conteo de
+referencias. Útil para romper ciclos de shared_ptr.
+
+  std::shared_ptr<int> sp = std::make_shared<int>(42);
+  std::weak_ptr<int> wp = sp;
+
+  // Para acceder al valor, hay que "bloquear" el weak_ptr
+  if (auto locked = wp.lock()) {
+      // locked es un shared_ptr temporal
+      std::cout << *locked;
+  } else {
+      // El recurso ya fue liberado
+  }
+
+6. CUSTOM DELETERS
+-------------------
+
+Puedes proporcionar un deleter personalizado:
+
+  auto deleter = [](FILE* f) {
+      std::cout << "Cerrando archivo\n";
+      std::fclose(f);
+  };
+
+  std::unique_ptr<FILE, decltype(deleter)> ptr(
+      std::fopen("test.txt", "w"), deleter);
+
+  // Para shared_ptr:
+  std::shared_ptr<FILE> ptr(
+      std::fopen("test.txt", "w"),
+      [](FILE* f) { std::fclose(f); });
+
+7. COMPARACIÓN DE RENDIMIENTO
+------------------------------
+
+  unique_ptr:
+    - Sin overhead de tamaño (como un raw pointer).
+    - Sin overhead en tiempo de ejecución.
+    - Ideal para propiedad exclusiva.
+
+  shared_ptr:
+    - Overhead: bloque de control (2 words + deleter).
+    - Ref count: incremento/decremento atómico.
+    - make_shared reduce a una asignación.
+
+  weak_ptr:
+    - Similar a shared_ptr pero sin ref count.
+    - lock() requiere acceso atómico al bloque de control.
+
+8. CUÁNDO USAR CADA UNO
+-------------------------
+
+  Usa unique_ptr cuando:
+    - Un solo objeto posee el recurso.
+    - Necesitas un puntero polimórfico.
+    - Quieres mínimo overhead.
+    - El recurso tiene una jerarquía de propiedad clara.
+
+  Usa shared_ptr cuando:
+    - Múltiples objetos comparten el recurso.
+    - No sabes qué objeto vivirá más.
+    - Necesitas copiar el puntero.
+    - El recurso se comparte en cachés o grafos.
+
+  Usa weak_ptr cuando:
+    - Necesitas romper ciclos de shared_ptr.
+    - Implementas cachés con expiración.
+    - Observas un recurso sin impedir su liberación.
+
+9. SMART POINTERS Y CONTENEDORES
+----------------------------------
+
+  std::vector<std::unique_ptr<Foo>> vec;  // OK (move-only)
+  std::vector<std::shared_ptr<Foo>> vec;  // OK (copiable)
+
+  // Para polimorfismo en contenedores:
+  std::vector<std::unique_ptr<Animal>> animales;
+  animales.push_back(std::make_unique<Perro>());
+  animales.push_back(std::make_unique<Gato>());
+
+10. MEJORES PRÁCTICAS
+----------------------
+
+  - Siempre prefiere make_unique y make_shared sobre new.
+  - No mezcles raw pointers con smart pointers (a menos que sean
+    observadores no-propietarios).
+  - unique_ptr como tipo de retorno por defecto.
+  - shared_ptr solo cuando es necesario compartir.
+  - Usa .get() para obtener raw pointer solo para APIs legacy.
+  - No uses .release() a menos que sepas lo que haces.
+  - Prefiere weak_ptr::lock() sobre expired() + lock().
+
+================================================================================
+  CÓDIGO DE EJEMPLO
+================================================================================
+
+```cpp
+//==============================================================================
+// EJEMPLO 1: unique_ptr básico
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <vector>
+
+class Recurso {
+    int id;
+public:
+    Recurso(int i) : id(i) {
+        std::cout << "  Recurso(" << id << ") creado\n";
+    }
+    ~Recurso() noexcept {
+        std::cout << "  Recurso(" << id << ") destruido\n";
+    }
+    void usar() const {
+        std::cout << "  Usando recurso " << id << "\n";
+    }
+};
+
+std::unique_ptr<Recurso> crearRecurso(int id) {
+    return std::make_unique<Recurso>(id);
+}
+
+void procesar(std::unique_ptr<Recurso> ptr) {
+    ptr->usar();
+    // ptr se destruye aquí, liberando el recurso
+}
+
+int main() {
+    // Creación con make_unique
+    auto r1 = std::make_unique<Recurso>(1);
+    r1->usar();
+
+    // Transferencia de propiedad
+    auto r2 = std::move(r1);
+    if (!r1) std::cout << "  r1 ya no posee nada\n";
+    r2->usar();
+
+    // Paso a función (transfiere propiedad)
+    procesar(std::move(r2));
+
+    // Retorno de función
+    auto r3 = crearRecurso(3);
+    r3->usar();
+
+    // Vector de unique_ptr (polimorfismo)
+    std::vector<std::unique_ptr<Recurso>> vec;
+    vec.push_back(std::make_unique<Recurso>(10));
+    vec.push_back(std::make_unique<Recurso>(20));
+
+    for (const auto& r : vec) {
+        r->usar();
+    }
+
+    std::cout << "Fin de main (todos los recursos se liberan)\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 2: unique_ptr con arrays y custom deleters
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <cstdio>
+
+// unique_ptr para arrays
+void demoArray() {
+    // Para arrays, usa especialización:
+    std::unique_ptr<int[]> arr = std::make_unique<int[]>(5);
+
+    for (int i = 0; i < 5; ++i) {
+        arr[i] = i * 10;
+    }
+
+    for (int i = 0; i < 5; ++i) {
+        std::cout << arr[i] << " ";
+    }
+    std::cout << "\n";
+    // Se libera con delete[] automáticamente
+}
+
+// Custom deleter para archivos FILE*
+struct FileDeleter {
+    void operator()(FILE* f) const {
+        if (f) {
+            std::fclose(f);
+            std::cout << "  Archivo cerrado por custom deleter\n";
+        }
+    }
+};
+
+void demoCustomDeleter() {
+    // Método 1: Functor como deleter
+    std::unique_ptr<FILE, FileDeleter> ptr1(
+        std::fopen("test1.txt", "w"));
+    std::fputs("Hola\n", ptr1.get());
+
+    // Método 2: Lambda como deleter
+    auto deleter = [](FILE* f) {
+        if (f) {
+            std::fclose(f);
+            std::cout << "  Archivo cerrado por lambda deleter\n";
+        }
+    };
+    std::unique_ptr<FILE, decltype(deleter)> ptr2(
+        std::fopen("test2.txt", "w"), deleter);
+    std::fputs("Mundo\n", ptr2.get());
+
+    std::remove("test1.txt");
+    std::remove("test2.txt");
+}
+
+// unique_ptr con tipo base (polimorfismo)
+struct Base {
+    virtual void hablar() const = 0;
+    virtual ~Base() = default;
+};
+
+struct DerivadaA : Base {
+    void hablar() const override { std::cout << "Soy A\n"; }
+};
+
+struct DerivadaB : Base {
+    void hablar() const override { std::cout << "Soy B\n"; }
+};
+
+int main() {
+    std::cout << "=== Array ===\n";
+    demoArray();
+
+    std::cout << "\n=== Custom Deleter ===\n";
+    demoCustomDeleter();
+
+    std::cout << "\n=== Polimorfismo ===\n";
+    std::unique_ptr<Base> obj1 = std::make_unique<DerivadaA>();
+    std::unique_ptr<Base> obj2 = std::make_unique<DerivadaB>();
+    obj1->hablar();
+    obj2->hablar();
+
+    std::cout << "\nTodos los recursos liberados\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 3: shared_ptr básico y conteo de referencias
+//==============================================================================
+#include <iostream>
+#include <memory>
+
+class RecursoCompartido {
+    std::string nombre;
+public:
+    RecursoCompartido(const std::string& n) : nombre(n) {
+        std::cout << "  RC(" << nombre << ") creado\n";
+    }
+    ~RecursoCompartido() noexcept {
+        std::cout << "  RC(" << nombre << ") destruido\n";
+    }
+    void usar() const {
+        std::cout << "  Usando RC(" << nombre << ")\n";
+    }
+};
+
+void observar(RecursoCompartido* raw) {
+    if (raw) raw->usar();
+}
+
+void demoSharedPtr() {
+    // Creación
+    auto sp1 = std::make_shared<RecursoCompartido>("A");
+    std::cout << "  ref count: " << sp1.use_count() << "\n";
+
+    {
+        auto sp2 = sp1;  // Copia: incrementa ref count
+        auto sp3 = sp2;
+        std::cout << "  ref count (dentro bloque): "
+                  << sp1.use_count() << "\n";
+
+        sp1->usar();
+        sp2->usar();
+    }  // sp2, sp3 destruidos
+
+    std::cout << "  ref count (fuera bloque): "
+              << sp1.use_count() << "\n";
+
+    // Obtener raw pointer (solo para observar, no para gestionar)
+    RecursoCompartido* raw = sp1.get();
+    observar(raw);
+
+    // Reset: liberar la propiedad
+    sp1.reset();  // ref count = 0, recurso destruido
+    std::cout << "  sp1 es null: " << (sp1 ? "no" : "si") << "\n";
+
+    if (sp1) {
+        sp1->usar();  // No se ejecuta
+    }
+}
+
+int main() {
+    demoSharedPtr();
+    std::cout << "Fin de main\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 4: make_shared y eficiencia
+//==============================================================================
+#include <iostream>
+#include <memory>
+
+struct GranObjeto {
+    char datos[1024];
+    int id;
+    GranObjeto(int i) : id(i) {
+        std::cout << "  GranObjeto(" << id << ") creado\n";
+    }
+    ~GranObjeto() noexcept {
+        std::cout << "  GranObjeto(" << id << ") destruido\n";
+    }
+};
+
+void compararAsignaciones() {
+    std::cout << "--- new + shared_ptr (2 asignaciones) ---\n";
+    // Asignación 1: el objeto
+    // Asignación 2: el bloque de control
+    std::shared_ptr<GranObjeto> ptr1(new GranObjeto(1));
+
+    std::cout << "--- make_shared (1 asignacion) ---\n";
+    // Una sola asignación: objeto + bloque de control juntos
+    auto ptr2 = std::make_shared<GranObjeto>(2);
+
+    // make_shared es más eficiente en memoria y velocidad
+}
+
+// Aliasing constructor: shared_ptr que apunta a un sub-objeto
+struct Persona {
+    std::string nombre;
+    int edad;
+    Persona(const std::string& n, int e)
+        : nombre(n), edad(e) {}
+};
+
+void demoAliasing() {
+    auto p = std::make_shared<Persona>("Juan", 30);
+
+    // shared_ptr que apunta a nombre (sub-objeto)
+    std::shared_ptr<std::string> nombrePtr(p, &p->nombre);
+
+    std::cout << "Nombre: " << *nombrePtr << "\n";
+    std::cout << "Use count (p): " << p.use_count() << "\n";
+    std::cout << "Use count (nombrePtr): "
+              << nombrePtr.use_count() << "\n";
+    // Ambos comparten el mismo bloque de control
+}
+
+int main() {
+    compararAsignaciones();
+    std::cout << "\n";
+    demoAliasing();
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 5: weak_ptr - romper ciclos de referencias
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <vector>
+
+// EJEMPLO DE CICLO (memory leak con shared_ptr)
+struct Nodo {
+    std::string nombre;
+    std::shared_ptr<Nodo> siguiente;
+
+    explicit Nodo(const std::string& n) : nombre(n) {
+        std::cout << "  Nodo(" << nombre << ") creado\n";
+    }
+    ~Nodo() noexcept {
+        std::cout << "  Nodo(" << nombre << ") destruido\n";
+    }
+};
+
+void demoCycle() {
+    std::cout << "--- Ciclo con shared_ptr (FUGAS!) ---\n";
+    auto a = std::make_shared<Nodo>("A");
+    auto b = std::make_shared<Nodo>("B");
+
+    a->siguiente = b;
+    b->siguiente = a;  // Ciclo: a↔b, nunca se liberan
+
+    std::cout << "  a ref count: " << a.use_count() << "\n";
+    std::cout << "  b ref count: " << b.use_count() << "\n";
+    // Al salir, a y b NO se destruyen (fuga)
+}
+
+// SOLUCIÓN: usar weak_ptr para la referencia débil
+struct NodoSeguro {
+    std::string nombre;
+    std::shared_ptr<NodoSeguro> siguiente;
+    std::weak_ptr<NodoSeguro> anterior;  // Referencia débil
+
+    explicit NodoSeguro(const std::string& n) : nombre(n) {
+        std::cout << "  NodoSeguro(" << nombre << ") creado\n";
+    }
+    ~NodoSeguro() noexcept {
+        std::cout << "  NodoSeguro(" << nombre << ") destruido\n";
+    }
+
+    std::shared_ptr<NodoSeguro> getAnterior() const {
+        return anterior.lock();  // Convierte a shared_ptr temporal
+    }
+};
+
+void demoSinCiclo() {
+    std::cout << "\n--- Sin ciclo (weak_ptr rompe) ---\n";
+    auto a = std::make_shared<NodoSeguro>("X");
+    auto b = std::make_shared<NodoSeguro>("Y");
+
+    a->siguiente = b;
+    b->anterior = a;  // weak_ptr: no incrementa ref count
+
+    std::cout << "  a ref count: " << a.use_count() << "\n";
+    std::cout << "  b ref count: " << b.use_count() << "\n";
+    // Al salir, a y b SE destruyen correctamente
+
+    // Acceso seguro con lock()
+    if (auto ant = b->getAnterior()) {
+        std::cout << "  Anterior de Y: " << ant->nombre << "\n";
+    }
+}
+
+int main() {
+    demoCycle();
+    std::cout << "  (los nodos A y B NO se destruyeron!)\n";
+
+    demoSinCiclo();
+    std::cout << "  (los nodos X e Y se destruyeron correctamente)\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 6: weak_ptr como observador y caché
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <map>
+#include <string>
+
+// Caché con weak_ptr: los objetos se liberan cuando no se usan
+template <typename T>
+class CacheDebil {
+    std::map<int, std::weak_ptr<T>> cache;
+
+public:
+    std::shared_ptr<T> obtener(int id,
+        std::function<std::shared_ptr<T>()> factory) {
+
+        auto it = cache.find(id);
+        if (it != cache.end()) {
+            auto ptr = it->second.lock();
+            if (ptr) {
+                std::cout << "  Cache hit para id=" << id << "\n";
+                return ptr;
+            }
+            // Expiró: limpiar entrada
+            std::cout << "  Cache expired para id=" << id << "\n";
+            cache.erase(it);
+        }
+
+        auto ptr = factory();
+        cache[id] = ptr;
+        std::cout << "  Cache miss para id=" << id << "\n";
+        return ptr;
+    }
+
+    void limpiar() {
+        for (auto it = cache.begin(); it != cache.end();) {
+            if (it->second.expired()) {
+                it = cache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    size_t size() const { return cache.size(); }
+};
+
+struct Cliente {
+    int id;
+    std::string nombre;
+    Cliente(int i, const std::string& n) : id(i), nombre(n) {}
+    ~Cliente() noexcept {
+        std::cout << "  Cliente(" << id << ") destruido\n";
+    }
+};
+
+int main() {
+    CacheDebil<Cliente> cache;
+
+    auto factory = [](int id) {
+        return std::make_shared<Cliente>(
+            id, "Cliente-" + std::to_string(id));
+    };
+
+    // Primera vez: cache miss
+    auto c1 = cache.obtener(1, [&]() { return factory(1); });
+    std::cout << "  Obtenido: " << c1->nombre << "\n";
+
+    // Segunda vez: cache hit
+    auto c2 = cache.obtener(1, [&]() { return factory(1); });
+    std::cout << "  Obtenido: " << c2->nombre << "\n";
+
+    // Liberar todas las referencias
+    std::cout << "  Liberando referencias...\n";
+    c1.reset();
+    c2.reset();
+    std::cout << "  Cache size: " << cache.size() << "\n";
+    cache.limpiar();
+    std::cout << "  Cache size despues de limpiar: "
+              << cache.size() << "\n";
+
+    // Ahora cache miss otra vez (el objeto expiró)
+    auto c3 = cache.obtener(1, [&]() { return factory(1); });
+    std::cout << "  Obtenido: " << c3->nombre << "\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 7: enable_shared_from_this
+//==============================================================================
+#include <iostream>
+#include <memory>
+
+// enable_shared_from_this permite obtener un shared_ptr válido
+// desde un objeto que ya está gestionado por shared_ptr
+
+class Tarea : public std::enable_shared_from_this<Tarea> {
+    std::string nombre;
+
+public:
+    Tarea(const std::string& n) : nombre(n) {
+        std::cout << "  Tarea(" << nombre << ") creada\n";
+    }
+    ~Tarea() noexcept {
+        std::cout << "  Tarea(" << nombre << ") destruida\n";
+    }
+
+    std::shared_ptr<Tarea> compartir() {
+        // shared_from_this() solo funciona si el objeto
+        // ya está gestionado por un shared_ptr
+        return shared_from_this();
+    }
+
+    void ejecutar() {
+        std::cout << "  Ejecutando tarea: " << nombre << "\n";
+    }
+};
+
+class Procesador {
+public:
+    static void procesar(std::shared_ptr<Tarea> tarea) {
+        tarea->ejecutar();
+        std::cout << "  Use count: " << tarea.use_count() << "\n";
+    }
+};
+
+int main() {
+    // CORRECTO: crear con make_shared
+    auto t1 = std::make_shared<Tarea>("importante");
+    std::cout << "  ref count: " << t1.use_count() << "\n";
+
+    auto t2 = t1->compartir();
+    std::cout << "  ref count despues de compartir: "
+              << t1.use_count() << "\n";
+
+    Procesador::procesar(t1);
+
+    // INCORRECTO: esto lanza std::bad_weak_ptr
+    // Tarea t3("mala");
+    // auto sp = t3.shared_from_this();  // ERROR!
+
+    std::cout << "  Tareas completadas\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 8: Smart pointers como miembros de clase
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+class Engine {
+public:
+    void start() { std::cout << "  Engine started\n"; }
+    void stop() { std::cout << "  Engine stopped\n"; }
+};
+
+class Wheel {
+    int index;
+public:
+    Wheel(int i) : index(i) {}
+    void rotate() { std::cout << "  Wheel " << index << " rotating\n"; }
+};
+
+class Car {
+    // unique_ptr: propiedad exclusiva (el coche posee el motor)
+    std::unique_ptr<Engine> engine;
+
+    // shared_ptr: propiedad compartida (las ruedas pueden compartirse)
+    std::vector<std::shared_ptr<Wheel>> wheels;
+
+    // Raw pointer: observación no-propietaria
+    class Dashboard* dashboard;
+
+public:
+    Car() : engine(std::make_unique<Engine>()) {
+        for (int i = 0; i < 4; ++i) {
+            wheels.push_back(std::make_shared<Wheel>(i));
+        }
+        // dashboard = ... (asignado externamente)
+    }
+
+    // No necesitamos destructor explícito
+    // unique_ptr y shared_ptr se liberan automáticamente
+
+    void start() {
+        engine->start();
+        for (auto& w : wheels) {
+            w->rotate();
+        }
+    }
+
+    // Retornar shared_ptr (compartir propiedad)
+    std::shared_ptr<Wheel> getWheel(int i) {
+        if (i >= 0 && i < 4) return wheels[i];
+        return nullptr;
+    }
+
+    // Retornar raw pointer (solo observación)
+    Engine* getEngine() const {
+        return engine.get();
+    }
+};
+
+int main() {
+    Car coche;
+    coche.start();
+
+    // Compartir una rueda
+    auto rueda = coche.getWheel(0);
+    std::cout << "  Rueda compartida, use count: "
+              << rueda.use_count() << "\n";
+
+    // Observar el motor (sin propiedad)
+    Engine* motor = coche.getEngine();
+
+    std::cout << "  Coche destruyendose...\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 9: Unique_ptr en contenedores polimórficos
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <vector>
+
+class Forma {
+public:
+    virtual void dibujar() const = 0;
+    virtual ~Forma() = default;
+};
+
+class Circulo : public Forma {
+    double radio;
+public:
+    Circulo(double r) : radio(r) {}
+    void dibujar() const override {
+        std::cout << "  Circulo(radio=" << radio << ")\n";
+    }
+};
+
+class Rectangulo : public Forma {
+    double ancho, alto;
+public:
+    Rectangulo(double a, double h) : ancho(a), alto(h) {}
+    void dibujar() const override {
+        std::cout << "  Rectangulo(" << ancho << "x" << alto << ")\n";
+    }
+};
+
+class Triangulo : public Forma {
+    double base, altura;
+public:
+    Triangulo(double b, double h) : base(b), altura(h) {}
+    void dibujar() const override {
+        std::cout << "  Triangulo(base=" << base << ", altura="
+                  << altura << ")\n";
+    }
+};
+
+// Factoría que retorna unique_ptr
+std::unique_ptr<Forma> crearForma(const std::string& tipo) {
+    if (tipo == "circulo") return std::make_unique<Circulo>(5.0);
+    if (tipo == "rectangulo") return std::make_unique<Rectangulo>(3.0, 4.0);
+    if (tipo == "triangulo") return std::make_unique<Triangulo>(6.0, 8.0);
+    return nullptr;
+}
+
+int main() {
+    std::vector<std::unique_ptr<Forma>> formas;
+
+    formas.push_back(std::make_unique<Circulo>(2.5));
+    formas.push_back(std::make_unique<Rectangulo>(4.0, 5.0));
+    formas.push_back(crearForma("triangulo"));
+
+    std::cout << "Dibujando formas:\n";
+    for (const auto& f : formas) {
+        f->dibujar();
+    }
+
+    // También podemos tener shared_ptr en contenedores
+    std::vector<std::shared_ptr<Forma>> formasCompartidas;
+
+    auto formaComp = std::make_shared<Circulo>(10.0);
+    formasCompartidas.push_back(formaComp);
+    formasCompartidas.push_back(formaComp);  // Misma forma, dos veces
+
+    std::cout << "\nFormas compartidas:\n";
+    for (const auto& f : formasCompartidas) {
+        f->dibujar();
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 10: shared_ptr con custom deleter para recursos legacy
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <cstdio>
+#include <cstdlib>
+
+// shared_ptr con custom deleter para malloc/free
+struct MallocDeleter {
+    void operator()(void* ptr) const {
+        if (ptr) {
+            std::cout << "  free() llamado\n";
+            std::free(ptr);
+        }
+    }
+};
+
+void demoSheredMalloc() {
+    // Gestionar memoria de C con shared_ptr
+    int* datos = static_cast<int*>(std::malloc(10 * sizeof(int)));
+    std::shared_ptr<int> ptr(datos, MallocDeleter{});
+
+    for (int i = 0; i < 10; ++i) {
+        ptr.get()[i] = i * 10;
+    }
+
+    // Compartir la propiedad
+    std::shared_ptr<int> ptr2 = ptr;
+    std::cout << "  Use count: " << ptr.use_count() << "\n";
+    std::cout << "  ptr2[5] = " << ptr2.get()[5] << "\n";
+}
+
+// shared_ptr con lambda deleter para recursos GDI (Windows)
+void demoGDIResource() {
+    // Simular HDC (device context)
+    struct HDC__ { int id; } hdc{42};
+
+    std::shared_ptr<HDC__> hdcPtr(&hdc, [](HDC__* h) {
+        std::cout << "  ReleaseDC() llamado (hdc=" << h->id << ")\n";
+    });
+
+    std::cout << "  Usando HDC " << hdcPtr->id << "\n";
+}
+
+// shared_ptr para objetos opacos (void*)
+struct DatabaseHandle {
+    void* conexion;
+    DatabaseHandle() {
+        conexion = std::malloc(256);
+        std::cout << "  Database conexion abierta\n";
+    }
+    ~DatabaseHandle() noexcept {
+        std::free(conexion);
+        std::cout << "  Database conexion cerrada\n";
+    }
+};
+
+int main() {
+    std::cout << "=== shared_ptr con malloc ===\n";
+    demoSheredMalloc();
+
+    std::cout << "\n=== shared_ptr con recurso GDI ===\n";
+    demoGDIResource();
+
+    std::cout << "\n=== shared_ptr con DatabaseHandle ===\n";
+    auto db = std::make_shared<DatabaseHandle>();
+    std::cout << "  Base de datos operativa\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 11: unique_ptr como tipo de retorno de fábrica
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <string>
+
+struct Conexion {
+    std::string host;
+    int puerto;
+    Conexion(const std::string& h, int p) : host(h), puerto(p) {
+        std::cout << "  Conectando a " << host << ":" << puerto << "\n";
+    }
+    ~Conexion() noexcept {
+        std::cout << "  Desconectando de " << host << ":" << puerto << "\n";
+    }
+    void query(const std::string& sql) {
+        std::cout << "  [" << host << ":" << puerto << "] " << sql << "\n";
+    }
+};
+
+// Fábrica que retorna unique_ptr (propiedad exclusiva)
+std::unique_ptr<Conexion> crearConexion(
+    const std::string& host, int puerto) {
+    return std::make_unique<Conexion>(host, puerto);
+}
+
+// Pool de conexiones que retorna unique_ptr con custom deleter
+// que devuelve la conexión al pool en lugar de cerrarla
+class ConnectionPool {
+    std::string host;
+    int puerto;
+
+public:
+    ConnectionPool(const std::string& h, int p)
+        : host(h), puerto(p) {}
+
+    std::unique_ptr<Conexion, std::function<void(Conexion*)>>
+    obtenerConexion() {
+        auto conexion = new Conexion(host, puerto);
+        return std::unique_ptr<Conexion,
+            std::function<void(Conexion*)>>(
+            conexion,
+            [this](Conexion* c) {
+                std::cout << "  Devolviendo conexion al pool: "
+                          << c->host << "\n";
+                // Aquí devolverías al pool en lugar de cerrar
+                delete c;
+            }
+        );
+    }
+};
+
+// unique_ptr como miembro de clase (PIMPL idiom)
+class ClienteAPI {
+    class Impl;
+    std::unique_ptr<Impl> pImpl;
+public:
+    ClienteAPI();
+    ~ClienteAPI();
+    void ejecutar();
+};
+
+// Implementación PIMPL
+class ClienteAPI::Impl {
+public:
+    auto conexion = crearConexion("api.example.com", 443);
+    void ejecutar() {
+        conexion->query("GET /data");
+    }
+};
+
+ClienteAPI::ClienteAPI() : pImpl(std::make_unique<Impl>()) {}
+ClienteAPI::~ClienteAPI() = default;  // Necesario para unique_ptr con tipo incompleto
+
+void ClienteAPI::ejecutar() { pImpl->ejecutar(); }
+
+int main() {
+    std::cout << "=== Fábrica de conexiones ===\n";
+    auto conn = crearConexion("localhost", 3306);
+    conn->query("SELECT * FROM users");
+
+    std::cout << "\n=== Pool de conexiones ===\n";
+    ConnectionPool pool("db.example.com", 5432);
+    auto pooled = pool.obtenerConexion();
+    pooled->query("INSERT INTO logs VALUES ('ok')");
+
+    std::cout << "\n=== PIMPL idiom ===\n";
+    ClienteAPI cliente;
+    cliente.ejecutar();
+
+    std::cout << "\nCerrando todo...\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 12: Comparación de rendimiento y seguridad
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <chrono>
+#include <vector>
+
+struct Data {
+    int values[1024];
+    Data() {
+        for (int i = 0; i < 1024; ++i) values[i] = i;
+    }
+};
+
+void benchmark() {
+    constexpr int ITERACIONES = 100000;
+    constexpr int TAMANO = 100;
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // Raw pointer (manual)
+    for (int i = 0; i < ITERACIONES; ++i) {
+        Data* arr = new Data[TAMANO];
+        // ... usar ...
+        delete[] arr;
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto rawTime = std::chrono::duration_cast<
+        std::chrono::milliseconds>(end - start).count();
+
+    start = std::chrono::high_resolution_clock::now();
+
+    // unique_ptr (automático)
+    for (int i = 0; i < ITERACIONES; ++i) {
+        auto arr = std::make_unique<Data[]>(TAMANO);
+        // ... usar ...
+    }
+
+    end = std::chrono::high_resolution_clock::now();
+    auto uniqueTime = std::chrono::duration_cast<
+        std::chrono::milliseconds>(end - start).count();
+
+    std::cout << "Raw pointer: " << rawTime << "ms\n";
+    std::cout << "unique_ptr:  " << uniqueTime << "ms\n";
+    std::cout << "Diferencia:  "
+              << (rawTime - uniqueTime) << "ms ("
+              << (static_cast<double>(uniqueTime) / rawTime * 100)
+              << "%)\n";
+    std::cout << "Los smart pointers son competitivos en rendimiento\n";
+}
+
+void demoSeguridad() {
+    std::cout << "\n--- Seguridad contra excepciones ---\n";
+
+    auto ptr = std::make_unique<int>(42);
+
+    try {
+        // Simular error
+        throw std::runtime_error("Error inesperado");
+        delete ptr.get();  // Esto no se ejecuta
+    }
+    catch (...) {
+        std::cout << "  Excepcion capturada, ptr se libera solo\n";
+    }
+    // ptr se libera automáticamente durante stack unwinding
+}
+
+int main() {
+    std::cout << "=== Benchmark unique_ptr vs raw ===\n";
+    benchmark();
+
+    demoSeguridad();
+
+    std::cout << "\nRegla de oro:\n";
+    std::cout << "  - Usa unique_ptr por defecto\n";
+    std::cout << "  - Usa shared_ptr solo cuando necesites compartir\n";
+    std::cout << "  - Usa weak_ptr para romper ciclos\n";
+    std::cout << "  - Usa make_unique / make_shared siempre\n";
+
+    return 0;
+}
+```
+
+RESUMEN DEL CAPÍTULO
+--------------------
+
+En este capítulo hemos aprendido:
+
+  1. unique_ptr: propiedad exclusiva, sin overhead, move-only.
+  2. make_unique: creación segura y eficiente (C++14).
+  3. shared_ptr: propiedad compartida con conteo de referencias.
+  4. make_shared: asigna objeto y control block juntos.
+  5. weak_ptr: observador débil que no incrementa ref count.
+  6. Custom deleters para recursos no-memoria.
+  7. enable_shared_from_this para obtener shared_ptr desde this.
+  8. Uso de smart pointers en contenedores y como miembros.
+  9. PIMPL idiom con unique_ptr.
+  10. Buenas prácticas: unique_ptr por defecto, shared_ptr solo
+      cuando necesario, weak_ptr para ciclos.
+
+EJERCICIOS PROPUESTOS
+---------------------
+
+  EJERCICIO 1: Implementa una clase ÁrbolBinario<T> usando unique_ptr
+  para los hijos izquierdo y derecho.
+
+  EJERCICIO 2: Crea un sistema de "recursos gráficos" (texturas,
+  shaders, mallas) usando shared_ptr con caché y liberación automática.
+
+  EJERCICIO 3: Implementa un Observer pattern usando weak_ptr para
+  evitar que los sujetos mantengan vivos a los observadores.
+
+  EJERCICIO 4: Escribe una función que dado un unique_ptr<Base>,
+  lo convierta a shared_ptr<Base> y lo comparta entre varios hilos.
+
+  EJERCICIO 5: Implementa un pool de objetos que use unique_ptr con
+  custom deleter para devolver objetos al pool en lugar de destruirlos.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿Cuándo debo usar shared_ptr vs unique_ptr?
+  R: Por defecto, unique_ptr. shared_ptr solo cuando múltiples objetos
+  necesitan compartir la propiedad del recurso y no sabes cuál será el
+  último en destruirse.
+
+  P: ¿Es make_shared siempre mejor que new + shared_ptr?
+  R: Casi siempre. make_shared hace una sola asignación (objeto +
+  control block) y es exception-safe. La excepción: si tienes un
+  custom deleter o necesitas un weak_ptr que sobreviva al objeto.
+
+  P: ¿Qué es enable_shared_from_this?
+  R: Es una clase base que permite a un objeto gestionado por
+  shared_ptr obtener un shared_ptr válido a sí mismo. Sin esto,
+  crear un shared_ptr desde this sería incorrecto.
+
+  P: ¿Puedo tener un vector de unique_ptr?
+  R: Sí, pero no puedes copiar el vector (porque unique_ptr no es
+  copiable). Puedes moverlo o acceder por referencia.
+
+  P: ¿Cuándo debo usar un raw pointer en C++ moderno?
+  R: Raw pointers solo como observadores no-propietarios (non-owning
+  observers). Si no vas a liberar el recurso, un raw pointer está bien.
+
+  P: ¿Qué es el "control block" de shared_ptr?
+  R: Es una estructura interna que contiene el reference count, weak
+  count, y el deleter. make_shared lo asigna junto con el objeto.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Implementa un "Garbage Collector híbrido" que combine unique_ptr y
+  shared_ptr para gestión automática de memoria con un recolector de
+  objetos no referenciados.
+
+  Requisitos:
+    - Clase GCObject<T> que extienda enable_shared_from_this.
+    - Registro automático de objetos en el GC.
+    - El GC mantiene referencias débiles (weak_ptr) a todos los objetos.
+    - Método collectGarbage() que elimine objetos no referenciados.
+    - Método markAndSweep() para detección de ciclos.
+    - Estadísticas: objetos creados, vivos, recolectados.
+    - Integración con smart pointers estándar.
+
+  Pistas:
+    - Usa un singleton GarbageCollector.
+    - weak_ptr::lock() para verificar si el objeto sigue vivo.
+    - Almacena weak_ptr<void> borrando el tipo con type erasure.
+    - Para detectar ciclos, implementa un algoritmo de mark-and-sweep
+      basado en conteo de referencias desde raíces (GC roots).
+
+CIERRE DEL CAPÍTULO
+-------------------
+
+Los smart pointers han transformado la gestión de memoria en C++. Con
+unique_ptr, shared_ptr, y weak_ptr, podemos escribir código que es tan
+eficiente como la gestión manual pero sin las fugas de memoria.
+
+La regla es simple: usa unique_ptr por defecto, shared_ptr cuando
+necesites compartir, y weak_ptr para romper ciclos. Siempre con
+make_unique y make_shared para máxima seguridad y eficiencia.
+
+En el próximo capítulo, combinaremos todo lo aprendido (excepciones y
+RAII) para manejar archivos de forma segura.
+
+  "Los smart pointers no son solo punteros inteligentes; son la
+   declaración de intenciones sobre quién posee qué."
+
+================================================================================
+  FIN DEL CAPÍTULO 58
+================================================================================

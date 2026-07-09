@@ -1,0 +1,1110 @@
+================================================================================
+  CAPÍTULO 69: CONCURRENCIA
+  MÓDULO VII: C++ MODERNO
+  C++ MASTER BOOK
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo sobre concurrencia en C++ moderno. Desde C++11,
+el lenguaje incluye un modelo de concurrencia nativo con std::thread,
+std::mutex, std::future, y std::async. En este capítulo dominarás la
+programación concurrente y los patrones de sincronización.
+
+FRASE DEL CAPÍTULO
+------------------
+"La concurrencia es difícil de hacer bien. El soporte nativo de C++11
+para threads y sincronización hace que sea más seguro y portable."
+— Anthony Williams (autor de "C++ Concurrency in Action")
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Crear y gestionar hilos con std::thread.
+2. Sincronizar accesos con mutex, lock_guard, unique_lock.
+3. Usar std::async y std::future para tareas asíncronas.
+4. Comunicar entre hilos con std::promise y std::future.
+5. Coordinar hilos con std::condition_variable.
+6. Aplicar patrones de concurrencia seguros.
+7. Evitar deadlocks, data races y otros problemas.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--- 1. CREACIÓN DE HILOS CON STD::THREAD ---
+
+std::thread representa un hilo de ejecución.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <string>
+#include <vector>
+
+void funcionHilo(int id, const std::string& mensaje) {
+    std::cout << "Hilo " << id << ": " << mensaje << "\n";
+}
+
+class Trabajador {
+public:
+    void operator()(int id) const {
+        std::cout << "Trabajador " << id << " ejecutando\n";
+    }
+};
+
+int main() {
+    std::cout << "=== CREACION DE HILOS ===\n";
+    std::cout << "Hilo principal: " << std::this_thread::get_id() << "\n";
+
+    // Crear hilo con función
+    std::thread t1(funcionHilo, 1, "Hola desde hilo");
+
+    // Crear hilo con lambda
+    std::thread t2([](int n) {
+        std::cout << "Lambda hilo con valor " << n << "\n";
+    }, 42);
+
+    // Crear hilo con functor
+    Trabajador worker;
+    std::thread t3(worker, 3);
+
+    // Esperar que los hilos terminen
+    t1.join();
+    t2.join();
+    t3.join();
+
+    // std::thread con detach (hilo desligado)
+    std::thread t4([]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::cout << "Hilo detach ejecutado\n";
+    });
+    t4.detach();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::cout << "Hilos principales finalizados\n";
+
+    return 0;
+}
+```
+
+--- 2. MUTEX Y LOCK_GUARD ---
+
+Protección de datos compartidos.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <vector>
+#include <chrono>
+
+std::mutex mtx;
+int contador_global = 0;
+
+void incrementar() {
+    for (int i = 0; i < 100000; ++i) {
+        std::lock_guard<std::mutex> lock(mtx);
+        ++contador_global;
+    }
+}
+
+// Demostración de race condition sin mutex
+int contador_sin_proteger = 0;
+
+void incrementarInseguro() {
+    for (int i = 0; i < 100000; ++i) {
+        ++contador_sin_proteger;  // Data race!
+    }
+}
+
+int main() {
+    std::cout << "=== MUTEX Y LOCK_GUARD ===\n";
+
+    // Versión segura con mutex
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < 10; ++i) {
+        hilos.emplace_back(incrementar);
+    }
+    for (auto& t : hilos) t.join();
+    std::cout << "Contador con mutex: " << contador_global
+              << " (esperado: 1000000)\n";
+
+    // Versión insegura (race condition)
+    std::vector<std::thread> hilos2;
+    for (int i = 0; i < 10; ++i) {
+        hilos2.emplace_back(incrementarInseguro);
+    }
+    for (auto& t : hilos2) t.join();
+    std::cout << "Contador sin mutex: " << contador_sin_proteger
+              << " (probablemente incorrecto)\n";
+
+    return 0;
+}
+```
+
+--- 3. STD::UNIQUE_LOCK ---
+
+unique_lock ofrece más flexibilidad que lock_guard.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <vector>
+
+std::mutex mtx;
+
+void leer() {
+    std::unique_lock<std::mutex> lock(mtx);
+    std::cout << "Leyendo... (locked)\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    lock.unlock();
+    std::cout << "Lectura completada, lock liberado\n";
+
+    // Volver a lockear más tarde
+    lock.lock();
+    std::cout << "Lock adquirido de nuevo\n";
+}
+
+void leerDeferred() {
+    // Defer: no lockear inmediatamente
+    std::unique_lock<std::mutex> lock(mtx, std::defer_lock);
+    std::cout << "Preparado para leer, lock diferido\n";
+    lock.lock();
+    std::cout << "Lock adquirido, leyendo...\n";
+}
+
+void leerTryLock() {
+    std::unique_lock<std::mutex> lock(mtx, std::try_to_lock);
+    if (lock.owns_lock()) {
+        std::cout << "Lock adquirido con try_lock\n";
+    } else {
+        std::cout << "No se pudo adquirir el lock\n";
+    }
+}
+
+void leerAdoptLock() {
+    mtx.lock();
+    std::unique_lock<std::mutex> lock(mtx, std::adopt_lock);
+    std::cout << "Lock adoptado (ya estaba lockeado)\n";
+}
+
+int main() {
+    std::cout << "=== UNIQUE_LOCK ===\n";
+
+    std::thread t1(leer);
+    std::thread t2(leerDeferred);
+    std::thread t3(leerTryLock);
+
+    t1.join();
+    t2.join();
+    t3.join();
+
+    std::thread t4(leerAdoptLock);
+    t4.join();
+
+    return 0;
+}
+```
+
+--- 4. STD::ASYNC Y STD::FUTURE ---
+
+Ejecución asíncrona con futuros.
+
+```cpp
+#include <iostream>
+#include <future>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <vector>
+
+int tareaPesada(int id, int segundos) {
+    std::cout << "Tarea " << id << " iniciada (dormira "
+              << segundos << "s)\n";
+    std::this_thread::sleep_for(std::chrono::seconds(segundos));
+    std::cout << "Tarea " << id << " completada\n";
+    return id * 100;
+}
+
+int main() {
+    std::cout << "=== ASYNC Y FUTURE ===\n";
+
+    // std::async lanzamiento perezoso (default) o eager
+    auto f1 = std::async(std::launch::async, tareaPesada, 1, 2);
+    auto f2 = std::async(std::launch::async, tareaPesada, 2, 1);
+    auto f3 = std::async(tareaPesada, 3, 3);
+
+    // Hacer otras cosas mientras las tareas se ejecutan
+    std::cout << "Haciendo trabajo mientras las tareas se ejecutan...\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Obtener resultados (bloquea hasta que el futuro esté listo)
+    std::cout << "\nObteniendo resultados:\n";
+    int r1 = f1.get();
+    int r2 = f2.get();
+    int r3 = f3.get();
+
+    std::cout << "Resultados: " << r1 << ", " << r2 << ", " << r3 << "\n";
+
+    // Future con wait_for (timeout)
+    auto futuro = std::async(std::launch::async, []() {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        return 42;
+    });
+
+    auto status = futuro.wait_for(std::chrono::milliseconds(500));
+    if (status == std::future_status::ready) {
+        std::cout << "Futuro listo: " << futuro.get() << "\n";
+    } else if (status == std::future_status::timeout) {
+        std::cout << "Futuro no listo aun, esperando...\n";
+        std::cout << "Resultado final: " << futuro.get() << "\n";
+    }
+
+    return 0;
+}
+```
+
+--- 5. STD::PROMISE Y STD::FUTURE ---
+
+Comunicación entre hilos con promise/future.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <future>
+#include <chrono>
+#include <exception>
+#include <stdexcept>
+
+void productor(std::promise<int> prom) {
+    std::cout << "Productor: trabajando...\n";
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    try {
+        // Simular posible error
+        // throw std::runtime_error("Error en produccion");
+
+        int resultado = 42;
+        prom.set_value(resultado);
+        std::cout << "Productor: resultado enviado\n";
+    } catch (...) {
+        prom.set_exception(std::current_exception());
+    }
+}
+
+void consumidor(std::future<int> fut) {
+    std::cout << "Consumidor: esperando resultado...\n";
+
+    try {
+        int valor = fut.get();
+        std::cout << "Consumidor: recibido " << valor << "\n";
+    } catch (const std::exception& e) {
+        std::cout << "Consumidor: error - " << e.what() << "\n";
+    }
+}
+
+// Promise compartida entre múltiples consumidores
+void productorCompartido(std::shared_future<int> fut) {
+    try {
+        int valor = fut.get();
+        std::cout << "Hilo " << std::this_thread::get_id()
+                  << ": recibio " << valor << "\n";
+    } catch (...) {
+        std::cout << "Hilo " << std::this_thread::get_id()
+                  << ": error\n";
+    }
+}
+
+int main() {
+    std::cout << "=== PROMISE Y FUTURE ===\n";
+
+    // Promise individual
+    std::promise<int> prom;
+    std::future<int> fut = prom.get_future();
+
+    std::thread prod(productor, std::move(prom));
+    std::thread cons(consumidor, std::move(fut));
+
+    prod.join();
+    cons.join();
+
+    // Shared future (múltiples consumidores)
+    std::cout << "\n=== SHARED FUTURE ===\n";
+
+    std::promise<int> prom2;
+    std::shared_future<int> sfut = prom2.get_future();
+
+    std::vector<std::thread> consumidores;
+    for (int i = 0; i < 3; ++i) {
+        consumidores.emplace_back(productorCompartido, sfut);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    prom2.set_value(999);
+
+    for (auto& t : consumidores) t.join();
+
+    return 0;
+}
+```
+
+--- 6. CONDITION_VARIABLE ---
+
+Coordinación entre hilos con variables de condición.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <chrono>
+
+std::mutex mtx;
+std::condition_variable cv;
+std::queue<int> cola;
+bool terminado = false;
+
+void productor() {
+    for (int i = 0; i < 10; ++i) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            cola.push(i);
+            std::cout << "Producido: " << i << "\n";
+        }
+        cv.notify_one();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        terminado = true;
+    }
+    cv.notify_all();
+}
+
+void consumidor(int id) {
+    while (true) {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait(lock, []() {
+            return !cola.empty() || terminado;
+        });
+
+        while (!cola.empty()) {
+            int valor = cola.front();
+            cola.pop();
+            lock.unlock();
+            std::cout << "  Consumidor " << id << ": " << valor << "\n";
+            lock.lock();
+        }
+
+        if (terminado) break;
+    }
+    std::cout << "  Consumidor " << id << " terminado\n";
+}
+
+int main() {
+    std::cout << "=== CONDITION VARIABLE ===\n";
+
+    std::thread prod(productor);
+    std::vector<std::thread> consumidores;
+
+    for (int i = 1; i <= 3; ++i) {
+        consumidores.emplace_back(consumidor, i);
+    }
+
+    prod.join();
+    for (auto& t : consumidores) t.join();
+
+    return 0;
+}
+```
+
+--- 7. DEADLOCKS Y CÓMO EVITARLOS ---
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <chrono>
+
+std::mutex m1, m2;
+
+// ESTO CAUSA DEADLOCK
+void tareaDeadlock1() {
+    std::lock_guard<std::mutex> lock1(m1);
+    std::cout << "Hilo1: lock m1\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::lock_guard<std::mutex> lock2(m2);
+    std::cout << "Hilo1: lock m2\n";
+}
+
+void tareaDeadlock2() {
+    std::lock_guard<std::mutex> lock1(m2);  // Orden inverso!
+    std::cout << "Hilo2: lock m2\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::lock_guard<std::mutex> lock2(m1);  // Orden inverso!
+    std::cout << "Hilo2: lock m1\n";
+}
+
+// SOLUCIÓN: std::lock (lockear ambos atómicamente)
+void tareaSegura1() {
+    std::lock(m1, m2);  // Lockea ambos sin deadlock
+    std::lock_guard<std::mutex> lock1(m1, std::adopt_lock);
+    std::lock_guard<std::mutex> lock2(m2, std::adopt_lock);
+    std::cout << "Hilo1: locks seguros\n";
+}
+
+void tareaSegura2() {
+    std::lock(m1, m2);
+    std::lock_guard<std::mutex> lock1(m1, std::adopt_lock);
+    std::lock_guard<std::mutex> lock2(m2, std::adopt_lock);
+    std::cout << "Hilo2: locks seguros\n";
+}
+
+// Solución 2: scoped_lock (C++17)
+void tareaScopedLock() {
+    std::scoped_lock lock(m1, m2);  // Variádico, evita deadlock
+    std::cout << "Scoped lock adquirido\n";
+}
+
+int main() {
+    std::cout << "=== DEADLOCKS ===\n";
+
+    // Versión con deadlock (NO EJECUTAR)
+    // std::thread t1(tareaDeadlock1);
+    // std::thread t2(tareaDeadlock2);
+
+    // Versión segura con std::lock
+    std::cout << "\nVersion segura con std::lock:\n";
+    std::thread t3(tareaSegura1);
+    std::thread t4(tareaSegura2);
+    t3.join();
+    t4.join();
+
+    // Versión con scoped_lock (C++17)
+    std::cout << "\nVersion con scoped_lock:\n";
+    std::thread t5(tareaScopedLock);
+    std::thread t6(tareaScopedLock);
+    t5.join();
+    t6.join();
+
+    // Reglas para evitar deadlocks:
+    // 1. Adquirir locks siempre en el mismo orden
+    // 2. Usar std::lock o std::scoped_lock para múltiples locks
+    // 3. Usar lock_guard/unique_lock con RAII
+    // 4. Evitar locks anidados si es posible
+
+    return 0;
+}
+```
+
+--- 8. CALL_ONCE Y ONCE_FLAG ---
+
+Inicialización segura para una sola vez.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <vector>
+
+std::once_flag flag;
+
+void inicializarRecurso() {
+    std::cout << "Recurso global inicializado una sola vez\n";
+}
+
+void tarea(int id) {
+    std::cout << "Hilo " << id << " ejecutando\n";
+    std::call_once(flag, inicializarRecurso);
+    std::cout << "Hilo " << id << " continuando\n";
+}
+
+// Singleton thread-safe con call_once
+class Singleton {
+    Singleton() {
+        std::cout << "Singleton creado\n";
+    }
+public:
+    static Singleton& getInstance() {
+        static Singleton instance;
+        return instance;
+    }
+    void hacerAlgo() {
+        std::cout << "Singleton haciendo algo\n";
+    }
+};
+
+int main() {
+    std::cout << "=== CALL_ONCE ===\n";
+
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < 5; ++i) {
+        hilos.emplace_back(tarea, i);
+    }
+    for (auto& t : hilos) t.join();
+
+    // Singleton thread-safe
+    std::vector<std::thread> hilos2;
+    for (int i = 0; i < 3; ++i) {
+        hilos2.emplace_back([]() {
+            Singleton::getInstance().hacerAlgo();
+        });
+    }
+    for (auto& t : hilos2) t.join();
+
+    return 0;
+}
+```
+
+--- 9. BARRERAS Y LATCHES (C++20) ---
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <vector>
+#include <latch>
+#include <barrier>
+#include <chrono>
+
+// std::latch: barrera de un solo uso
+std::latch trabajo_listo(4);
+
+void trabajador_latch(int id) {
+    std::cout << "Trabajador " << id << " preparandose...\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100 * id));
+    trabajo_listo.count_down();
+    std::cout << "Trabajador " << id << " listo\n";
+    trabajo_listo.wait();
+    std::cout << "Trabajador " << id << " comienza trabajo!\n";
+}
+
+// std::barrier: barrera reutilizable
+std::barrier barrera(4, []() noexcept {
+    std::cout << "--- Fase completada ---\n";
+});
+
+void trabajador_barrier(int id) {
+    for (int fase = 0; fase < 3; ++fase) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50 * id));
+        std::cout << "Trabajador " << id << " completando fase "
+                  << fase << "\n";
+        barrera.arrive_and_wait();
+    }
+}
+
+int main() {
+    std::cout << "=== LATCH ===\n";
+
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < 4; ++i) {
+        hilos.emplace_back(trabajador_latch, i);
+    }
+    for (auto& t : hilos) t.join();
+
+    std::cout << "\n=== BARRIER ===\n";
+
+    std::vector<std::thread> hilos2;
+    for (int i = 0; i < 4; ++i) {
+        hilos2.emplace_back(trabajador_barrier, i);
+    }
+    for (auto& t : hilos2) t.join();
+
+    return 0;
+}
+```
+
+--- 10. THREAD_LOCAL STORAGE ---
+
+Almacenamiento local por hilo.
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <vector>
+
+thread_local int contador_local = 0;
+
+void incrementarLocal() {
+    for (int i = 0; i < 1000; ++i) {
+        ++contador_local;
+    }
+    std::cout << "Hilo " << std::this_thread::get_id()
+              << ": contador_local = " << contador_local << "\n";
+}
+
+struct ObjetoLocal {
+    thread_local static int contador;
+    int id;
+
+    ObjetoLocal(int i) : id(i) { ++contador; }
+    ~ObjetoLocal() { --contador; }
+
+    static void mostrar() {
+        std::cout << "Contador local: " << contador << "\n";
+    }
+};
+
+// thread_local en el hilo principal
+thread_local int principal_local = 0;
+
+int main() {
+    std::cout << "=== THREAD_LOCAL ===\n";
+
+    principal_local = 100;
+    std::cout << "Hilo principal: " << principal_local << "\n";
+
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < 3; ++i) {
+        hilos.emplace_back(incrementarLocal);
+    }
+    for (auto& t : hilos) t.join();
+
+    // Cada hilo tiene su propia copia de contador_local
+    // El hilo principal tiene su propia copia separada
+    std::cout << "Hilo principal contador_local: " << contador_local << "\n";
+
+    return 0;
+}
+```
+
+--- 11. PATRONES DE CONCURRENCIA ---
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <vector>
+#include <queue>
+#include <functional>
+#include <condition_variable>
+#include <chrono>
+#include <future>
+
+// Thread Pool simple
+class ThreadPool {
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queue_mutex;
+    std::condition_variable condition;
+    bool stop;
+
+public:
+    ThreadPool(size_t threads) : stop(false) {
+        for (size_t i = 0; i < threads; ++i) {
+            workers.emplace_back([this] {
+                while (true) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lock(this->queue_mutex);
+                        this->condition.wait(lock, [this] {
+                            return this->stop || !this->tasks.empty();
+                        });
+                        if (this->stop && this->tasks.empty())
+                            return;
+                        task = std::move(this->tasks.front());
+                        this->tasks.pop();
+                    }
+                    task();
+                }
+            });
+        }
+    }
+
+    template<typename F, typename... Args>
+    auto enqueue(F&& f, Args&&... args)
+        -> std::future<typename std::invoke_result_t<F, Args...>> {
+
+        using return_type = typename std::invoke_result_t<F, Args...>;
+
+        auto task = std::make_shared<std::packaged_task<return_type()>>(
+            std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        std::future<return_type> res = task->get_future();
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            if (stop) throw std::runtime_error("ThreadPool stopped");
+            tasks.emplace([task]() { (*task)(); });
+        }
+        condition.notify_one();
+        return res;
+    }
+
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            stop = true;
+        }
+        condition.notify_all();
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
+    }
+};
+
+// Productor-Consumidor con buffer acotado
+template<typename T>
+class BoundedBuffer {
+    std::queue<T> buffer;
+    std::mutex mtx;
+    std::condition_variable not_full;
+    std::condition_variable not_empty;
+    size_t max_size;
+
+public:
+    explicit BoundedBuffer(size_t max) : max_size(max) {}
+
+    void produce(T item) {
+        std::unique_lock<std::mutex> lock(mtx);
+        not_full.wait(lock, [this]() {
+            return buffer.size() < max_size;
+        });
+        buffer.push(std::move(item));
+        not_empty.notify_one();
+    }
+
+    T consume() {
+        std::unique_lock<std::mutex> lock(mtx);
+        not_empty.wait(lock, [this]() {
+            return !buffer.empty();
+        });
+        T item = std::move(buffer.front());
+        buffer.pop();
+        not_full.notify_one();
+        return item;
+    }
+};
+
+int main() {
+    std::cout << "=== THREAD POOL ===\n";
+
+    ThreadPool pool(4);
+
+    std::vector<std::future<int>> resultados;
+    for (int i = 0; i < 8; ++i) {
+        resultados.push_back(
+            pool.enqueue([i] {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(100));
+                return i * i;
+            })
+        );
+    }
+
+    for (auto& fut : resultados) {
+        std::cout << "Resultado: " << fut.get() << "\n";
+    }
+
+    std::cout << "\n=== BUFFER ACOTADO ===\n";
+
+    BoundedBuffer<int> buf(3);
+
+    // Productor
+    std::thread prod([&buf]() {
+        for (int i = 0; i < 10; ++i) {
+            buf.produce(i);
+            std::cout << "Producido: " << i << "\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
+    // Consumidor
+    std::thread cons([&buf]() {
+        for (int i = 0; i < 10; ++i) {
+            int val = buf.consume();
+            std::cout << "  Consumido: " << val << "\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    });
+
+    prod.join();
+    cons.join();
+
+    return 0;
+}
+```
+
+--- 12. EJEMPLO INTEGRADOR ---
+
+```cpp
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <vector>
+#include <queue>
+#include <functional>
+#include <chrono>
+#include <random>
+#include <atomic>
+#include <sstream>
+
+std::atomic<int> tareas_completadas{0};
+std::mutex log_mtx;
+
+void log(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(log_mtx);
+    std::cout << msg << "\n";
+}
+
+// Simulación de procesamiento de imágenes
+class ImageProcessor {
+    std::string nombre;
+    int carga;
+
+public:
+    ImageProcessor(std::string n, int c)
+        : nombre(std::move(n)), carga(c) {}
+
+    std::string procesar() {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(carga));
+        tareas_completadas.fetch_add(1);
+
+        std::ostringstream oss;
+        oss << "[" << std::this_thread::get_id() << "] "
+            << nombre << " procesada (" << carga << "ms)";
+        return oss.str();
+    }
+};
+
+// Sistema de procesamiento concurrente
+class ConcurrentProcessor {
+    std::vector<std::future<std::string>> futures;
+    std::vector<std::thread> workers;
+
+public:
+    template<typename... Args>
+    void agregarTarea(Args&&... args) {
+        futures.push_back(
+            std::async(std::launch::async, [args = std::forward<Args>(args)...]() {
+                ImageProcessor proc(args...);
+                return proc.procesar();
+            })
+        );
+    }
+
+    void procesarTodo() {
+        for (auto& fut : futures) {
+            std::string resultado = fut.get();
+            log(resultado);
+        }
+        log(std::to_string(tareas_completadas) +
+            " tareas completadas");
+    }
+};
+
+int main() {
+    std::cout << "=== SISTEMA DE PROCESAMIENTO CONCURRENTE ===\n";
+
+    ConcurrentProcessor processor;
+
+    // Agregar tareas con diferentes cargas
+    processor.agregarTarea("Imagen1.jpg", 300);
+    processor.agregarTarea("Imagen2.jpg", 100);
+    processor.agregarTarea("Imagen3.jpg", 200);
+    processor.agregarTarea("Imagen4.jpg", 400);
+    processor.agregarTarea("Imagen5.jpg", 150);
+
+    // Procesar concurrentemente
+    auto inicio = std::chrono::high_resolution_clock::now();
+    processor.procesarTodo();
+    auto fin = std::chrono::high_resolution_clock::now();
+
+    auto duracion = std::chrono::duration_cast<std::chrono::milliseconds>(
+        fin - inicio);
+
+    log("Tiempo total (concurrente): " +
+        std::to_string(duracion.count()) + "ms");
+    log("Tiempo secuencial estimado: ~1150ms");
+
+    return 0;
+}
+```
+
+--- 13. ATOMIC OPERATIONS ---
+
+Operaciones atómicas sin locks.
+
+```cpp
+#include <iostream>
+#include <atomic>
+#include <thread>
+#include <vector>
+
+std::atomic<int> contador_atomico{0};
+std::atomic<bool> listo{false};
+std::atomic<int> orden{0};
+
+void incrementarAtomico() {
+    for (int i = 0; i < 100000; ++i) {
+        contador_atomico.fetch_add(1);
+        // Equivalente a: contador_atomico++;
+    }
+}
+
+void productor_atomico() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    orden.store(42, std::memory_order_release);
+    listo.store(true, std::memory_order_release);
+}
+
+void consumidor_atomico() {
+    while (!listo.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    int valor = orden.load(std::memory_order_acquire);
+    std::cout << "Orden recibido: " << valor << "\n";
+}
+
+int main() {
+    std::cout << "=== ATOMIC OPERATIONS ===\n";
+
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < 10; ++i) {
+        hilos.emplace_back(incrementarAtomico);
+    }
+    for (auto& t : hilos) t.join();
+
+    std::cout << "Contador atomico: " << contador_atomico
+              << " (esperado: 1000000)\n";
+
+    // Memory ordering
+    std::cout << "\nMemory ordering (release/acquire):\n";
+    std::thread prod(productor_atomico);
+    std::thread cons(consumidor_atomico);
+    prod.join();
+    cons.join();
+
+    // Operaciones atómicas comunes
+    std::atomic<int> valor{10};
+
+    int prev = valor.exchange(20);
+    std::cout << "exchange: prev=" << prev << ", now=" << valor << "\n";
+
+    bool success = valor.compare_exchange_strong(prev, 30);
+    // Si valor == prev, actualiza a 30
+    std::cout << "CAS: success=" << success << ", valor=" << valor << "\n";
+
+    prev = 40;
+    success = valor.compare_exchange_strong(prev, 50);
+    std::cout << "CAS (fail): success=" << success
+              << ", prev actualizado a " << prev << "\n";
+
+    return 0;
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+La concurrencia en C++ moderno incluye:
+
+• std::thread: creación y gestión de hilos (join, detach).
+• std::mutex: exclusión mutua para proteger datos compartidos.
+• std::lock_guard: RAII lock (adquirir al crear, liberar al destruir).
+• std::unique_lock: lock flexible con defer/try/adopt.
+• std::scoped_lock (C++17): lock variádico que evita deadlocks.
+• std::async + std::future: ejecución asíncrona con resultados.
+• std::promise + std::future: comunicación entre hilos.
+• std::condition_variable: espera/notificación entre hilos.
+• std::atomic: operaciones atómicas sin locks.
+• std::call_once: inicialización única thread-safe.
+• std::latch (C++20): barrera de un solo uso.
+• std::barrier (C++20): barrera reutilizable.
+• thread_local: almacenamiento local por hilo.
+
+Patrones: Thread Pool, Productor-Consumidor, Bounded Buffer.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+1. Crea 5 hilos que impriman su ID y un mensaje, luego únelos.
+2. Implementa un contador compartido protegido con mutex.
+3. Usa std::async para ejecutar 3 tareas y obtener sus resultados.
+4. Implementa el patrón productor-consumidor con condition_variable.
+5. Crea un ThreadPool simple con 4 hilos.
+6. Usa std::promise/future para pasar un resultado entre hilos.
+7. Implementa un double-checked locking con std::atomic.
+8. Usa std::scoped_lock para evitar deadlocks con 2 mutexes.
+9. Crea una barrera con std::barrier para sincronizar fases.
+10. Implementa un singleton thread-safe con call_once.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿join() vs detach()?
+R: join() espera que el hilo termine. detach() desliga el hilo
+(no se puede unir después). Siempre debes llamar a uno de ellos.
+
+P: ¿Cuándo usar lock_guard vs unique_lock?
+R: lock_guard para la mayoría de casos (adquirir y liberar).
+unique_lock cuando necesitas unlock manual, defer, try_to_lock,
+o usar condition_variable.
+
+P: ¿Qué es un data race?
+R: Cuando dos o más hilos acceden a la misma variable sin
+sincronización y al menos uno escribe. Causa comportamiento
+indefinido.
+
+P: ¿Cómo evito deadlocks?
+R: Adquiriendo locks siempre en el mismo orden, usando
+std::lock() o std::scoped_lock para múltiples locks.
+
+P: ¿std::async lanza siempre un nuevo hilo?
+R: Con std::launch::async sí. Con std::launch::deferred,
+la ejecución es perezosa (cuando se llama a get()).
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseña un "Servidor Web Concurrente" en C++ moderno que:
+
+1. Use un ThreadPool para manejar conexiones concurrentes.
+2. Use std::async para tareas asíncronas (lectura de archivos).
+3. Use std::promise/future para comunicación entre hilos.
+4. Use mutex y condition_variable para una cola de peticiones.
+5. Use std::atomic para contadores de estadísticas.
+6. Use std::latch para inicialización paralela de recursos.
+7. Use std::scoped_lock para locks seguros.
+8. Use thread_local para almacenamiento por conexión.
+9. Implemente timeout con std::future::wait_for.
+10. Use std::call_once para inicialización de recursos globales.
+
+El servidor debe ser eficiente, escalable, y demostrar patrones
+de concurrencia robustos en C++ moderno.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+La concurrencia en C++ moderno es poderosa y segura cuando se usan
+las herramientas adecuadas. std::thread, mutex, future, y los
+patrones de sincronización te permiten escribir programas
+concurrentes eficientes y libres de data races.
+
+En el próximo capítulo finalizaremos el módulo con un proyecto
+integrador que combinará todas las características de C++ moderno.
+
+================================================================================
+  PRÓXIMO CAPÍTULO: PROYECTO DEL MÓDULO VII
+================================================================================
+
+Proyecto final: aplicación multi-hilo con características de
+C++ moderno que integra lambdas, move semantics, variadic
+templates, concepts, ranges, y concurrencia.
+
+================================================================================
+  FIN DEL CAPÍTULO 69
+================================================================================

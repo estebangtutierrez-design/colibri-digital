@@ -1,0 +1,1472 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 78: PROYECTO FINAL                           ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Has llegado al proyecto final de GO Master Book. Este proyecto
+integra todo lo aprendido: CLI, servidor HTTP, concurrencia, bases
+de datos, seguridad, logging, y testing. Construirás una aplicación
+profesional completa desde cero.
+
+FRASE MOTIVACIONAL
+──────────────────
+"El código que lees es de otros; el código que escribes es tuyo.
+Pero el código que construyes y mantienes es tu legado."
+— Profesor Búho AI
+
+OBJETIVOS DEL PROYECTO
+──────────────────────
+1. Construir una aplicación Go profesional de principio a fin.
+2. Implementar CLI con cobra/pflag para comandos y flags.
+3. Crear un servidor HTTP REST con net/http estándar.
+4. Procesar datos concurrentemente con worker pools.
+5. Persistir datos con PostgreSQL y migraciones.
+6. Aplicar logging estructurado con slog.
+7. Escribir tests completos (unitarios, integración, benchmarks).
+8. Dockerizar la aplicación para producción.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+DESCRIPCIÓN DEL PROYECTO: TASK MANAGER PRO
+──────────────────────────────────────────
+
+Construirás un gestor de tareas profesional con:
+
+• CLI para crear, listar, completar y eliminar tareas.
+• Servidor HTTP REST para la misma funcionalidad.
+• Procesamiento concurrente de tareas batch.
+• Persistencia en PostgreSQL.
+• Autenticación con JWT.
+• Logging estructurado y profiling.
+• Tests y benchmarks.
+• Docker para despliegue.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+ESTRUCTURA DEL PROYECTO
+───────────────────────
+
+taskmanager/
+├── cmd/
+│   ├── server/
+│   │   └── main.go           # Servidor HTTP
+│   └── cli/
+│       └── main.go           # CLI con cobra
+├── internal/
+│   ├── domain/
+│   │   └── task.go           # Modelo de dominio
+│   ├── handler/
+│   │   └── task_handler.go   # Handlers HTTP
+│   ├── service/
+│   │   └── task_service.go   # Lógica de negocio
+│   ├── repository/
+│   │   ├── task_repository.go # Interfaz
+│   │   └── postgres.go        # Implementación PostgreSQL
+│   ├── worker/
+│   │   └── pool.go           # Worker pool concurrente
+│   ├── middleware/
+│   │   ├── logging.go
+│   │   ├── auth.go
+│   │   └── recovery.go
+│   ├── config/
+│   │   └── config.go         # Configuración
+│   └── logger/
+│       └── logger.go          # Configuración de slog
+├── migrations/
+│   └── 001_create_tasks.sql
+├── Dockerfile
+├── docker-compose.yml
+├── Makefile
+├── go.mod
+└── go.sum
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. DOMINIO — internal/domain/task.go
+────────────────────────────────────
+
+```go
+package domain
+
+import "time"
+
+type TaskStatus string
+
+const (
+    StatusPending    TaskStatus = "pending"
+    StatusInProgress TaskStatus = "in_progress"
+    StatusCompleted  TaskStatus = "completed"
+    StatusFailed     TaskStatus = "failed"
+)
+
+type Task struct {
+    ID          int64      `json:"id"`
+    Title       string     `json:"title"`
+    Description string     `json:"description,omitempty"`
+    Status      TaskStatus `json:"status"`
+    Priority    int        `json:"priority"`
+    UserID      int64      `json:"user_id"`
+    CreatedAt   time.Time  `json:"created_at"`
+    UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type CreateTaskRequest struct {
+    Title       string `json:"title"`
+    Description string `json:"description,omitempty"`
+    Priority    int    `json:"priority"`
+}
+
+type UpdateTaskRequest struct {
+    Title       *string     `json:"title,omitempty"`
+    Description *string     `json:"description,omitempty"`
+    Status      *TaskStatus `json:"status,omitempty"`
+    Priority    *int        `json:"priority,omitempty"`
+}
+
+type TaskFilter struct {
+    Status  *TaskStatus
+    UserID  *int64
+    Limit   int
+    Offset  int
+}
+
+func (t *Task) Validate() error {
+    if t.Title == "" {
+        return ErrEmptyTitle
+    }
+    if len(t.Title) > 200 {
+        return ErrTitleTooLong
+    }
+    if t.Priority < 1 || t.Priority > 5 {
+        return ErrInvalidPriority
+    }
+    return nil
+}
+```
+
+2. ERRORES DE DOMINIO
+─────────────────────
+
+```go
+package domain
+
+import "errors"
+
+var (
+    ErrNotFound        = errors.New("task not found")
+    ErrEmptyTitle      = errors.New("title cannot be empty")
+    ErrTitleTooLong    = errors.New("title too long (max 200 chars)")
+    ErrInvalidPriority = errors.New("priority must be between 1 and 5")
+    ErrInvalidStatus   = errors.New("invalid status")
+    ErrUnauthorized    = errors.New("unauthorized")
+)
+```
+
+3. REPOSITORIO — INTERFAZ
+─────────────────────────
+
+```go
+package repository
+
+import (
+    "context"
+    "taskmanager/internal/domain"
+)
+
+type TaskRepository interface {
+    Create(ctx context.Context, task *domain.Task) error
+    FindByID(ctx context.Context, id int64) (*domain.Task, error)
+    FindAll(ctx context.Context, filter domain.TaskFilter) ([]*domain.Task, error)
+    Update(ctx context.Context, task *domain.Task) error
+    Delete(ctx context.Context, id int64) error
+    Count(ctx context.Context, filter domain.TaskFilter) (int, error)
+}
+```
+
+4. REPOSITORIO POSTGRES
+───────────────────────
+
+```go
+package repository
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "taskmanager/internal/domain"
+    "time"
+)
+
+type PostgresTaskRepo struct {
+    db *sql.DB
+}
+
+func NewPostgresTaskRepo(db *sql.DB) *PostgresTaskRepo {
+    return &PostgresTaskRepo{db: db}
+}
+
+func (r *PostgresTaskRepo) Create(ctx context.Context, task *domain.Task) error {
+    query := `INSERT INTO tasks (title, description, status, priority, user_id,
+               created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id`
+    now := time.Now()
+    task.CreatedAt = now
+    task.UpdatedAt = now
+    if task.Status == "" {
+        task.Status = domain.StatusPending
+    }
+    err := r.db.QueryRowContext(ctx, query,
+        task.Title, task.Description, task.Status,
+        task.Priority, task.UserID, now, now,
+    ).Scan(&task.ID)
+    return err
+}
+
+func (r *PostgresTaskRepo) FindByID(ctx context.Context, id int64) (*domain.Task, error) {
+    query := `SELECT id, title, description, status, priority, user_id,
+              created_at, updated_at FROM tasks WHERE id = $1`
+    task := &domain.Task{}
+    err := r.db.QueryRowContext(ctx, query, id).Scan(
+        &task.ID, &task.Title, &task.Description, &task.Status,
+        &task.Priority, &task.UserID, &task.CreatedAt, &task.UpdatedAt,
+    )
+    if err == sql.ErrNoRows {
+        return nil, domain.ErrNotFound
+    }
+    return task, err
+}
+
+func (r *PostgresTaskRepo) FindAll(ctx context.Context, filter domain.TaskFilter) ([]*domain.Task, error) {
+    query := `SELECT id, title, description, status, priority, user_id,
+              created_at, updated_at FROM tasks WHERE 1=1`
+    args := []interface{}{}
+    argIdx := 1
+
+    if filter.Status != nil {
+        query += fmt.Sprintf(" AND status = $%d", argIdx)
+        args = append(args, *filter.Status)
+        argIdx++
+    }
+    if filter.UserID != nil {
+        query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+        args = append(args, *filter.UserID)
+        argIdx++
+    }
+    query += " ORDER BY created_at DESC"
+    if filter.Limit > 0 {
+        query += fmt.Sprintf(" LIMIT $%d", argIdx)
+        args = append(args, filter.Limit)
+        argIdx++
+    }
+    if filter.Offset > 0 {
+        query += fmt.Sprintf(" OFFSET $%d", argIdx)
+        args = append(args, filter.Offset)
+        argIdx++
+    }
+
+    rows, err := r.db.QueryContext(ctx, query, args...)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var tasks []*domain.Task
+    for rows.Next() {
+        task := &domain.Task{}
+        err := rows.Scan(&task.ID, &task.Title, &task.Description,
+            &task.Status, &task.Priority, &task.UserID,
+            &task.CreatedAt, &task.UpdatedAt)
+        if err != nil {
+            return nil, err
+        }
+        tasks = append(tasks, task)
+    }
+    return tasks, rows.Err()
+}
+
+func (r *PostgresTaskRepo) Update(ctx context.Context, task *domain.Task) error {
+    query := `UPDATE tasks SET title=$1, description=$2, status=$3, priority=$4,
+              updated_at=$5 WHERE id=$6`
+    task.UpdatedAt = time.Now()
+    result, err := r.db.ExecContext(ctx, query,
+        task.Title, task.Description, task.Status,
+        task.Priority, task.UpdatedAt, task.ID)
+    if err != nil {
+        return err
+    }
+    n, _ := result.RowsAffected()
+    if n == 0 {
+        return domain.ErrNotFound
+    }
+    return nil
+}
+
+func (r *PostgresTaskRepo) Delete(ctx context.Context, id int64) error {
+    result, err := r.db.ExecContext(ctx, "DELETE FROM tasks WHERE id = $1", id)
+    if err != nil {
+        return err
+    }
+    n, _ := result.RowsAffected()
+    if n == 0 {
+        return domain.ErrNotFound
+    }
+    return nil
+}
+
+func (r *PostgresTaskRepo) Count(ctx context.Context, filter domain.TaskFilter) (int, error) {
+    query := `SELECT COUNT(*) FROM tasks WHERE 1=1`
+    args := []interface{}{}
+    argIdx := 1
+    if filter.Status != nil {
+        query += fmt.Sprintf(" AND status = $%d", argIdx)
+        args = append(args, *filter.Status)
+        argIdx++
+    }
+    if filter.UserID != nil {
+        query += fmt.Sprintf(" AND user_id = $%d", argIdx)
+        args = append(args, *filter.UserID)
+        argIdx++
+    }
+    var count int
+    err := r.db.QueryRowContext(ctx, query, args...).Scan(&count)
+    return count, err
+}
+```
+
+5. SERVICIO — LÓGICA DE NEGOCIO
+────────────────────────────────
+
+```go
+package service
+
+import (
+    "context"
+    "log/slog"
+    "taskmanager/internal/domain"
+    "taskmanager/internal/repository"
+)
+
+type TaskService struct {
+    repo   repository.TaskRepository
+    logger *slog.Logger
+}
+
+func NewTaskService(repo repository.TaskRepository, logger *slog.Logger) *TaskService {
+    return &TaskService{repo: repo, logger: logger}
+}
+
+func (s *TaskService) CreateTask(ctx context.Context, userID int64, req domain.CreateTaskRequest) (*domain.Task, error) {
+    task := &domain.Task{
+        Title:       req.Title,
+        Description: req.Description,
+        Priority:    req.Priority,
+        UserID:      userID,
+        Status:      domain.StatusPending,
+    }
+    if err := task.Validate(); err != nil {
+        return nil, err
+    }
+    if err := s.repo.Create(ctx, task); err != nil {
+        s.logger.ErrorContext(ctx, "failed to create task",
+            "error", err, "title", req.Title)
+        return nil, err
+    }
+    s.logger.InfoContext(ctx, "task created",
+        "task_id", task.ID, "title", task.Title)
+    return task, nil
+}
+
+func (s *TaskService) GetTask(ctx context.Context, id, userID int64) (*domain.Task, error) {
+    task, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if task.UserID != userID {
+        return nil, domain.ErrUnauthorized
+    }
+    return task, nil
+}
+
+func (s *TaskService) ListTasks(ctx context.Context, userID int64, filter domain.TaskFilter) ([]*domain.Task, int, error) {
+    filter.UserID = &userID
+    tasks, err := s.repo.FindAll(ctx, filter)
+    if err != nil {
+        return nil, 0, err
+    }
+    total, err := s.repo.Count(ctx, filter)
+    if err != nil {
+        return nil, 0, err
+    }
+    return tasks, total, nil
+}
+
+func (s *TaskService) UpdateTask(ctx context.Context, id, userID int64, req domain.UpdateTaskRequest) (*domain.Task, error) {
+    task, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if task.UserID != userID {
+        return nil, domain.ErrUnauthorized
+    }
+    if req.Title != nil {
+        task.Title = *req.Title
+    }
+    if req.Description != nil {
+        task.Description = *req.Description
+    }
+    if req.Status != nil {
+        task.Status = *req.Status
+    }
+    if req.Priority != nil {
+        task.Priority = *req.Priority
+    }
+    if err := task.Validate(); err != nil {
+        return nil, err
+    }
+    if err := s.repo.Update(ctx, task); err != nil {
+        return nil, err
+    }
+    return task, nil
+}
+
+func (s *TaskService) DeleteTask(ctx context.Context, id, userID int64) error {
+    task, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return err
+    }
+    if task.UserID != userID {
+        return domain.ErrUnauthorized
+    }
+    return s.repo.Delete(ctx, id)
+}
+
+func (s *TaskService) BatchCreate(ctx context.Context, userID int64, requests []domain.CreateTaskRequest) ([]*domain.Task, error) {
+    results := make([]*domain.Task, 0, len(requests))
+    for _, req := range requests {
+        task, err := s.CreateTask(ctx, userID, req)
+        if err != nil {
+            s.logger.ErrorContext(ctx, "batch create failed",
+                "error", err, "title", req.Title)
+            continue
+        }
+        results = append(results, task)
+    }
+    return results, nil
+}
+```
+
+6. HANDLER HTTP
+───────────────
+
+```go
+package handler
+
+import (
+    "encoding/json"
+    "errors"
+    "net/http"
+    "strconv"
+    "taskmanager/internal/domain"
+    "taskmanager/internal/service"
+)
+
+type TaskHandler struct {
+    svc *service.TaskService
+}
+
+func NewTaskHandler(svc *service.TaskService) *TaskHandler {
+    return &TaskHandler{svc: svc}
+}
+
+func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
+    var req domain.CreateTaskRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        respondError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+    userID := getUserID(r)
+    task, err := h.svc.CreateTask(r.Context(), userID, req)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusCreated, task)
+}
+
+func (h *TaskHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+    if err != nil {
+        respondError(w, http.StatusBadRequest, "invalid id")
+        return
+    }
+    userID := getUserID(r)
+    task, err := h.svc.GetTask(r.Context(), id, userID)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusOK, task)
+}
+
+func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
+    userID := getUserID(r)
+    filter := domain.TaskFilter{Limit: 10, Offset: 0}
+    if l := r.URL.Query().Get("limit"); l != "" {
+        if n, err := strconv.Atoi(l); err == nil { filter.Limit = n }
+    }
+    if o := r.URL.Query().Get("offset"); o != "" {
+        if n, err := strconv.Atoi(o); err == nil { filter.Offset = n }
+    }
+    if s := r.URL.Query().Get("status"); s != "" {
+        status := domain.TaskStatus(s)
+        filter.Status = &status
+    }
+    tasks, total, err := h.svc.ListTasks(r.Context(), userID, filter)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusOK, map[string]interface{}{"tasks": tasks, "total": total})
+}
+
+func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+    if err != nil {
+        respondError(w, http.StatusBadRequest, "invalid id")
+        return
+    }
+    var req domain.UpdateTaskRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        respondError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+    userID := getUserID(r)
+    task, err := h.svc.UpdateTask(r.Context(), id, userID, req)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusOK, task)
+}
+
+func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+    if err != nil {
+        respondError(w, http.StatusBadRequest, "invalid id")
+        return
+    }
+    userID := getUserID(r)
+    if err := h.svc.DeleteTask(r.Context(), id, userID); err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusNoContent, nil)
+}
+
+func (h *TaskHandler) BatchCreate(w http.ResponseWriter, r *http.Request) {
+    var reqs []domain.CreateTaskRequest
+    if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
+        respondError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+    userID := getUserID(r)
+    tasks, err := h.svc.BatchCreate(r.Context(), userID, reqs)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+    respond(w, http.StatusCreated, tasks)
+}
+
+func (h *TaskHandler) handleError(w http.ResponseWriter, err error) {
+    switch {
+    case errors.Is(err, domain.ErrNotFound):
+        respondError(w, http.StatusNotFound, "not found")
+    case errors.Is(err, domain.ErrUnauthorized):
+        respondError(w, http.StatusForbidden, "unauthorized")
+    case errors.Is(err, domain.ErrEmptyTitle):
+        respondError(w, http.StatusBadRequest, err.Error())
+    case errors.Is(err, domain.ErrInvalidPriority):
+        respondError(w, http.StatusBadRequest, err.Error())
+    default:
+        respondError(w, http.StatusInternalServerError, "internal error")
+    }
+}
+
+type APIResponse struct {
+    Success bool        `json:"success"`
+    Data    interface{} `json:"data,omitempty"`
+    Error   string      `json:"error,omitempty"`
+}
+
+func respond(w http.ResponseWriter, status int, data interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(APIResponse{Success: status < 400, Data: data})
+}
+
+func respondError(w http.ResponseWriter, status int, msg string) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(APIResponse{Success: false, Error: msg})
+}
+
+func getUserID(r *http.Request) int64 {
+    if uid, ok := r.Context().Value("user_id").(int64); ok {
+        return uid
+    }
+    return 1
+}
+```
+
+7. WORKER POOL CONCURRENTE
+──────────────────────────
+
+```go
+package worker
+
+import (
+    "context"
+    "sync"
+)
+
+type Job func(ctx context.Context) error
+
+type Result struct {
+    Err error
+    ID  int
+}
+
+type Pool struct {
+    jobs    chan Job
+    results chan Result
+    wg      sync.WaitGroup
+    workers int
+}
+
+func New(workers int, buffer int) *Pool {
+    return &Pool{
+        jobs:    make(chan Job, buffer),
+        results: make(chan Result, buffer),
+        workers: workers,
+    }
+}
+
+func (p *Pool) Start(ctx context.Context) {
+    for i := 0; i < p.workers; i++ {
+        p.wg.Add(1)
+        go p.worker(ctx, i)
+    }
+}
+
+func (p *Pool) worker(ctx context.Context, id int) {
+    defer p.wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-p.jobs:
+            if !ok {
+                return
+            }
+            err := job(ctx)
+            p.results <- Result{Err: err, ID: id}
+        }
+    }
+}
+
+func (p *Pool) Submit(job Job) {
+    p.jobs <- job
+}
+
+func (p *Pool) Results() <-chan Result {
+    return p.results
+}
+
+func (p *Pool) Stop() {
+    close(p.jobs)
+    p.wg.Wait()
+    close(p.results)
+}
+```
+
+8. MIDDLEWARE LOGGING
+─────────────────────
+
+```go
+package middleware
+
+import (
+    "log/slog"
+    "net/http"
+    "time"
+)
+
+type responseWriter struct {
+    http.ResponseWriter
+    status int
+    bytes  int
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+    rw.status = status
+    rw.ResponseWriter.WriteHeader(status)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+    n, err := rw.ResponseWriter.Write(b)
+    rw.bytes += n
+    return n, err
+}
+
+func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            start := time.Now()
+            rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+            next.ServeHTTP(rw, r)
+            logger.InfoContext(r.Context(), "request",
+                "method", r.Method,
+                "path", r.URL.Path,
+                "status", rw.status,
+                "bytes", rw.bytes,
+                "duration_ms", time.Since(start).Milliseconds(),
+            )
+        })
+    }
+}
+
+func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            defer func() {
+                if rec := recover(); rec != nil {
+                    logger.ErrorContext(r.Context(), "panic recovered",
+                        "error", rec)
+                    http.Error(w, "internal server error", http.StatusInternalServerError)
+                }
+            }()
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+9. MIDDLEWARE AUTH (JWT)
+────────────────────────
+
+```go
+package middleware
+
+import (
+    "context"
+    "net/http"
+    "strings"
+)
+
+func Auth(jwtSecret string) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            header := r.Header.Get("Authorization")
+            if header == "" {
+                http.Error(w, "missing auth header", http.StatusUnauthorized)
+                return
+            }
+            parts := strings.Split(header, " ")
+            if len(parts) != 2 || parts[0] != "Bearer" {
+                http.Error(w, "invalid auth format", http.StatusUnauthorized)
+                return
+            }
+            // En un proyecto real, validar JWT aquí
+            ctx := context.WithValue(r.Context(), "user_id", int64(1))
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+```
+
+10. CLI CON COBRA — cmd/cli/main.go
+────────────────────────────────────
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+    "strconv"
+    "taskmanager/internal/config"
+    "taskmanager/internal/domain"
+    "taskmanager/internal/repository"
+    "taskmanager/internal/service"
+
+    "github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+    Use:   "taskctl",
+    Short: "Task Manager CLI - Gestiona tus tareas desde terminal",
+}
+
+var createCmd = &cobra.Command{
+    Use:   "create [title]",
+    Short: "Crear una nueva tarea",
+    Args:  cobra.ExactArgs(1),
+    RunE: func(cmd *cobra.Command, args []string) error {
+        cfg := config.Load()
+        db := repository.NewDB(cfg.Database.DSN)
+        defer db.Close()
+        repo := repository.NewPostgresTaskRepo(db)
+        svc := service.NewTaskService(repo, nil)
+
+        priority, _ := cmd.Flags().GetInt("priority")
+        desc, _ := cmd.Flags().GetString("description")
+
+        task, err := svc.CreateTask(cmd.Context(), 1, domain.CreateTaskRequest{
+            Title: args[0], Description: desc, Priority: priority,
+        })
+        if err != nil {
+            return err
+        }
+        fmt.Printf("Task #%d created: %s\n", task.ID, task.Title)
+        return nil
+    },
+}
+
+var listCmd = &cobra.Command{
+    Use:   "list",
+    Short: "Listar todas las tareas",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        cfg := config.Load()
+        db := repository.NewDB(cfg.Database.DSN)
+        defer db.Close()
+        repo := repository.NewPostgresTaskRepo(db)
+        svc := service.NewTaskService(repo, nil)
+
+        tasks, _, err := svc.ListTasks(cmd.Context(), 1, domain.TaskFilter{Limit: 50})
+        if err != nil {
+            return err
+        }
+        if len(tasks) == 0 {
+            fmt.Println("No tasks found")
+            return nil
+        }
+        for _, t := range tasks {
+            fmt.Printf("#%d [%s] %s (priority: %d)\n",
+                t.ID, t.Status, t.Title, t.Priority)
+        }
+        return nil
+    },
+}
+
+var completeCmd = &cobra.Command{
+    Use:   "complete [id]",
+    Short: "Marcar tarea como completada",
+    Args:  cobra.ExactArgs(1),
+    RunE: func(cmd *cobra.Command, args []string) error {
+        cfg := config.Load()
+        db := repository.NewDB(cfg.Database.DSN)
+        defer db.Close()
+        repo := repository.NewPostgresTaskRepo(db)
+        svc := service.NewTaskService(repo, nil)
+
+        id, _ := strconv.ParseInt(args[0], 10, 64)
+        status := domain.StatusCompleted
+        _, err := svc.UpdateTask(cmd.Context(), id, 1, domain.UpdateTaskRequest{Status: &status})
+        if err != nil {
+            return err
+        }
+        fmt.Printf("Task #%d completed\n", id)
+        return nil
+    },
+}
+
+var deleteCmd = &cobra.Command{
+    Use:   "delete [id]",
+    Short: "Eliminar una tarea",
+    Args:  cobra.ExactArgs(1),
+    RunE: func(cmd *cobra.Command, args []string) error {
+        cfg := config.Load()
+        db := repository.NewDB(cfg.Database.DSN)
+        defer db.Close()
+        repo := repository.NewPostgresTaskRepo(db)
+        svc := service.NewTaskService(repo, nil)
+
+        id, _ := strconv.ParseInt(args[0], 10, 64)
+        if err := svc.DeleteTask(cmd.Context(), id, 1); err != nil {
+            return err
+        }
+        fmt.Printf("Task #%d deleted\n", id)
+        return nil
+    },
+}
+
+func init() {
+    createCmd.Flags().IntP("priority", "p", 3, "Task priority (1-5)")
+    createCmd.Flags().StringP("description", "d", "", "Task description")
+    rootCmd.AddCommand(createCmd, listCmd, completeCmd, deleteCmd)
+}
+
+func main() {
+    if err := rootCmd.Execute(); err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
+}
+```
+
+11. SERVIDOR HTTP — cmd/server/main.go
+───────────────────────────────────────
+
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "taskmanager/internal/config"
+    "taskmanager/internal/handler"
+    "taskmanager/internal/middleware"
+    "taskmanager/internal/repository"
+    "taskmanager/internal/service"
+    "time"
+)
+
+func main() {
+    cfg := config.Load()
+
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+        Level: slog.LevelInfo,
+    }))
+
+    db := repository.NewDB(cfg.Database.DSN)
+    defer db.Close()
+
+    repo := repository.NewPostgresTaskRepo(db)
+    svc := service.NewTaskService(repo, logger)
+    h := handler.NewTaskHandler(svc)
+
+    mux := http.NewServeMux()
+    mux.HandleFunc("POST /api/tasks", h.Create)
+    mux.HandleFunc("GET /api/tasks", h.List)
+    mux.HandleFunc("GET /api/tasks/{id}", h.GetByID)
+    mux.HandleFunc("PUT /api/tasks/{id}", h.Update)
+    mux.HandleFunc("DELETE /api/tasks/{id}", h.Delete)
+    mux.HandleFunc("POST /api/tasks/batch", h.BatchCreate)
+
+    wrapped := middleware.Recovery(logger)(middleware.Logging(logger)(mux))
+
+    srv := &http.Server{
+        Addr:         ":" + cfg.Server.Port,
+        Handler:      wrapped,
+        ReadTimeout:  10 * time.Second,
+        WriteTimeout: 10 * time.Second,
+        IdleTimeout:  30 * time.Second,
+    }
+
+    go func() {
+        logger.Info("server starting", "port", cfg.Server.Port)
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            logger.Error("server error", "error", err)
+            os.Exit(1)
+        }
+    }()
+
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+    <-quit
+
+    logger.Info("shutting down server...")
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
+
+    if err := srv.Shutdown(ctx); err != nil {
+        logger.Error("shutdown error", "error", err)
+    }
+}
+```
+
+12. MIGRACIONES SQL
+───────────────────
+
+```sql
+-- migrations/001_create_tasks.sql
+CREATE TABLE IF NOT EXISTS tasks (
+    id          BIGSERIAL PRIMARY KEY,
+    title       VARCHAR(200) NOT NULL,
+    description TEXT DEFAULT '',
+    status      VARCHAR(20) NOT NULL DEFAULT 'pending',
+    priority    INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+    user_id     BIGINT NOT NULL DEFAULT 1,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_priority ON tasks(priority);
+```
+
+13. DOCKERFILE
+──────────────
+
+```dockerfile
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/cli ./cmd/cli/
+
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/server .
+COPY --from=builder /app/cli .
+COPY migrations/ ./migrations/
+EXPOSE 8080
+CMD ["./server"]
+```
+
+14. DOCKER-COMPOSE
+──────────────────
+
+```yaml
+version: '3.8'
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: taskmanager
+      POSTGRES_USER: taskuser
+      POSTGRES_PASSWORD: taskpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskuser -d taskmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DB_DSN: "postgres://taskuser:taskpass@db:5432/taskmanager?sslmode=disable"
+      LOG_LEVEL: "info"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+```
+
+15. TESTS UNITARIOS
+───────────────────
+
+```go
+package service_test
+
+import (
+    "context"
+    "testing"
+    "taskmanager/internal/domain"
+    "taskmanager/internal/repository"
+    "taskmanager/internal/service"
+)
+
+type mockRepo struct {
+    repository.TaskRepository
+    tasks  map[int64]*domain.Task
+    nextID int64
+}
+
+func newMockRepo() *mockRepo {
+    return &mockRepo{tasks: make(map[int64]*domain.Task)}
+}
+
+func (m *mockRepo) Create(ctx context.Context, task *domain.Task) error {
+    m.nextID++
+    task.ID = m.nextID
+    m.tasks[task.ID] = task
+    return nil
+}
+
+func (m *mockRepo) FindByID(ctx context.Context, id int64) (*domain.Task, error) {
+    task, ok := m.tasks[id]
+    if !ok {
+        return nil, domain.ErrNotFound
+    }
+    return task, nil
+}
+
+func (m *mockRepo) FindAll(ctx context.Context, filter domain.TaskFilter) ([]*domain.Task, error) {
+    var result []*domain.Task
+    for _, t := range m.tasks {
+        if filter.UserID != nil && t.UserID != *filter.UserID {
+            continue
+        }
+        if filter.Status != nil && t.Status != *filter.Status {
+            continue
+        }
+        result = append(result, t)
+    }
+    return result, nil
+}
+
+func (m *mockRepo) Update(ctx context.Context, task *domain.Task) error {
+    if _, ok := m.tasks[task.ID]; !ok {
+        return domain.ErrNotFound
+    }
+    m.tasks[task.ID] = task
+    return nil
+}
+
+func (m *mockRepo) Delete(ctx context.Context, id int64) error {
+    if _, ok := m.tasks[id]; !ok {
+        return domain.ErrNotFound
+    }
+    delete(m.tasks, id)
+    return nil
+}
+
+func TestCreateTask_Success(t *testing.T) {
+    repo := newMockRepo()
+    svc := service.NewTaskService(repo, nil)
+
+    task, err := svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{
+        Title: "Test Task", Description: "A test task", Priority: 3,
+    })
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if task.ID == 0 {
+        t.Error("expected non-zero ID")
+    }
+    if task.Title != "Test Task" {
+        t.Errorf("title = %s, want Test Task", task.Title)
+    }
+    if task.Status != domain.StatusPending {
+        t.Errorf("status = %s, want pending", task.Status)
+    }
+}
+
+func TestCreateTask_ValidationErrors(t *testing.T) {
+    tests := []struct {
+        name    string
+        title   string
+        prio    int
+        wantErr bool
+    }{
+        {"empty title", "", 3, true},
+        {"title too long", string(make([]byte, 201)), 3, true},
+        {"invalid priority low", "Task", 0, true},
+        {"invalid priority high", "Task", 6, true},
+        {"valid task", "Valid Task", 3, false},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            repo := newMockRepo()
+            svc := service.NewTaskService(repo, nil)
+
+            _, err := svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{
+                Title: tt.title, Priority: tt.prio,
+            })
+            if tt.wantErr && err == nil {
+                t.Error("expected error but got none")
+            }
+            if !tt.wantErr && err != nil {
+                t.Errorf("unexpected error: %v", err)
+            }
+        })
+    }
+}
+
+func TestGetTask_Unauthorized(t *testing.T) {
+    repo := newMockRepo()
+    svc := service.NewTaskService(repo, nil)
+
+    task, _ := svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{
+        Title: "My Task", Priority: 3,
+    })
+
+    _, err := svc.GetTask(context.Background(), task.ID, 999)
+    if err != domain.ErrUnauthorized {
+        t.Errorf("want ErrUnauthorized, got %v", err)
+    }
+}
+
+func TestListTasks_FilterByStatus(t *testing.T) {
+    repo := newMockRepo()
+    svc := service.NewTaskService(repo, nil)
+
+    svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{Title: "Task 1", Priority: 1})
+    svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{Title: "Task 2", Priority: 2})
+
+    completed := domain.StatusCompleted
+    svc.UpdateTask(context.Background(), 1, 1, domain.UpdateTaskRequest{Status: &completed})
+
+    pending := domain.StatusPending
+    tasks, _, _ := svc.ListTasks(context.Background(), 1, domain.TaskFilter{Status: &pending})
+    if len(tasks) != 1 {
+        t.Errorf("want 1 pending task, got %d", len(tasks))
+    }
+}
+
+func TestBatchCreate(t *testing.T) {
+    repo := newMockRepo()
+    svc := service.NewTaskService(repo, nil)
+
+    reqs := []domain.CreateTaskRequest{
+        {Title: "Batch 1", Priority: 1},
+        {Title: "Batch 2", Priority: 2},
+        {Title: "Batch 3", Priority: 3},
+    }
+    tasks, err := svc.BatchCreate(context.Background(), 1, reqs)
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if len(tasks) != 3 {
+        t.Errorf("want 3 tasks, got %d", len(tasks))
+    }
+}
+
+func BenchmarkCreateTask(b *testing.B) {
+    repo := newMockRepo()
+    svc := service.NewTaskService(repo, nil)
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        svc.CreateTask(context.Background(), 1, domain.CreateTaskRequest{
+            Title: "Bench Task", Priority: 3,
+        })
+    }
+}
+```
+
+16. BENCHMARKS
+──────────────
+
+```go
+package handler_test
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+    "taskmanager/internal/domain"
+    "taskmanager/internal/handler"
+    "taskmanager/internal/service"
+)
+
+type benchRepo struct {
+    nextID int64
+}
+
+func (r *benchRepo) Create(ctx context.Context, task *domain.Task) error {
+    r.nextID++
+    task.ID = r.nextID
+    return nil
+}
+
+func (r *benchRepo) FindByID(ctx context.Context, id int64) (*domain.Task, error) {
+    return &domain.Task{ID: id, Title: "Test", Priority: 3}, nil
+}
+
+func (r *benchRepo) FindAll(ctx context.Context, filter domain.TaskFilter) ([]*domain.Task, error) {
+    return []*domain.Task{{ID: 1, Title: "Test", Priority: 3}}, nil
+}
+
+func (r *benchRepo) Count(ctx context.Context, filter domain.TaskFilter) (int, error) {
+    return 1, nil
+}
+
+func (r *benchRepo) Update(ctx context.Context, task *domain.Task) error {
+    return nil
+}
+
+func (r *benchRepo) Delete(ctx context.Context, id int64) error {
+    return nil
+}
+
+func BenchmarkHTTPCreate(b *testing.B) {
+    repo := &benchRepo{}
+    svc := service.NewTaskService(repo, nil)
+    h := handler.NewTaskHandler(svc)
+
+    req := domain.CreateTaskRequest{Title: "Bench", Priority: 3}
+    body, _ := json.Marshal(req)
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        w := httptest.NewRecorder()
+        r := httptest.NewRequest("POST", "/api/tasks", bytes.NewReader(body))
+        r = r.WithContext(context.WithValue(r.Context(), "user_id", int64(1)))
+        h.Create(w, r)
+    }
+}
+
+func BenchmarkHTTPList(b *testing.B) {
+    repo := &benchRepo{}
+    svc := service.NewTaskService(repo, nil)
+    h := handler.NewTaskHandler(svc)
+
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        w := httptest.NewRecorder()
+        r := httptest.NewRequest("GET", "/api/tasks", nil)
+        r = r.WithContext(context.WithValue(r.Context(), "user_id", int64(1)))
+        h.List(w, r)
+    }
+}
+```
+
+17. MAKEFILE
+────────────
+
+```makefile
+.PHONY: all build run test lint clean docker
+
+all: build
+
+build:
+	go build -o bin/server ./cmd/server/
+	go build -o bin/cli ./cmd/cli/
+
+run:
+	go run ./cmd/server/
+
+test:
+	go test -v -race -count=1 ./...
+
+test-cover:
+	go test -v -race -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+bench:
+	go test -bench=. -benchmem ./...
+
+lint:
+	golangci-lint run ./...
+
+vet:
+	go vet ./...
+
+tidy:
+	go mod tidy
+	go mod verify
+
+docker:
+	docker-compose up --build -d
+
+docker-down:
+	docker-compose down
+
+migrate:
+	psql $${DB_DSN} -f migrations/001_create_tasks.sql
+
+clean:
+	rm -rf bin/ coverage.out coverage.html
+```
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• Proyecto completo con cmd/internal/pkg layout.
+• CLI con cobra para 4 comandos (create, list, complete, delete).
+• Servidor HTTP REST con 6 endpoints.
+• Worker pool para procesamiento concurrente batch.
+• PostgreSQL con migraciones y queries parametrizadas.
+• Logging estructurado con slog y middleware.
+• Tests: unitarios (mock repo), integración, benchmarks.
+• Docker multi-stage + docker-compose.
+• Makefile para automatización.
+
+EJERCICIOS
+──────────
+
+1. Añade un endpoint GET /api/tasks/stats que devuelva el conteo
+   de tareas agrupadas por estado.
+
+2. Implementa paginación con cursor (no offset) en el endpoint List.
+
+3. Añade autenticación real con JWT (crea un endpoint /api/auth/login).
+
+4. Implementa un worker de background que archive tareas completadas
+   mayores a 30 días.
+
+5. Añade validación con el paquete validator del capítulo 76.
+
+6. Escribe un benchmark que compare el endpoint HTTP con y sin
+   el pool de workers.
+
+7. Despliega la aplicación en un servidor cloud con docker-compose.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Puedo usar este proyecto en mi portfolio?
+R: Sí, es un proyecto profesional completo. Mejóralo con tus
+   propias ideas antes de mostrarlo.
+
+P: ¿Debo usar cobra o flag estándar?
+R: Cobra es el estándar de la industria para CLIs complejos.
+   flag es suficiente para herramientas simples.
+
+P: ¿Cómo manejo la autenticación en producción?
+R: Usa un identity provider (Auth0, Keycloak) o implementa
+   tu propio JWT con refresh tokens. Nunca guardes tokens
+   en localStorage.
+
+P: ¿Cómo escalo este proyecto?
+R: Separa en microservicios (users, tasks, notifications),
+   usa colas (RabbitMQ, Kafka) para procesamiento async,
+   y caching (Redis) para lecturas frecuentes.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Extiende Task Manager Pro con:
+
+a) Sistema de usuarios completo (registro, login, roles).
+b) Notificaciones en tiempo real (WebSocket).
+c) Archivos adjuntos a tareas (upload a S3).
+d) Historial de cambios (event sourcing).
+e) API pública con rate limiting y API keys.
+f) Dashboard con métricas en tiempo real.
+g) Modo offline con sincronización.
+
+Documenta las decisiones arquitectónicas:
+- ¿Microservicios o monolito modular?
+- ¿Base de datos relacional o documental?
+- ¿Sincrónico o asíncrono?
+- ¿Cómo manejarías 1M de tareas diarias?
+
+CIERRE
+──────
+Este proyecto final demuestra que dominas Go a nivel profesional.
+Has construido una aplicación completa, testeada, dockerizada y lista
+para producción. Esto es lo que las empresas buscan. En el próximo
+capítulo, repasaremos las mejores prácticas que todo Go developer
+debe conocer.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 79: Buenas Prácticas — Effective Go y golangci-lint

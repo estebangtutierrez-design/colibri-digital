@@ -1,0 +1,1878 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║            RUBY MASTER BOOK — MÓDULO V: MÓDULOS Y MIXINS                      ║
+║         CAPÍTULO 43: EXTEND — MÉTODOS DE CLASE Y SINGLETON                    ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────────
+  BIENVENIDA
+────────────────────────────────────────────────────────────────────────────────────
+
+Bienvenido al Capítulo 43 del Ruby Master Book. Si en el capítulo anterior
+aprendiste a usar `include` para añadir métodos de instancia a una clase,
+ahora exploraremos `extend`, su contraparte que añade métodos de módulo
+directamente a un objeto.
+
+La forma más común de usar `extend` es dentro de una clase para añadir métodos
+de clase. Pero su verdadero poder está en que `extend` funciona sobre cualquier
+objeto, permitiéndote añadir comportamiento singleton a instancias individuales.
+
+En este capítulo veremos la diferencia fundamental entre `include` y `extend`,
+cómo usar `extend` para crear métodos de clase, cómo extender objetos
+individuales, y patrones avanzados como fábricas, decoradores y el mixin
+de clase auto-contenido.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FRASE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+"Extend en Ruby es como tener una navaja suiza: puedes añadir herramientas
+  a cualquier objeto, en cualquier momento, sin permiso de nadie."
+  — Sandi Metz, autora de "Practical Object-Oriented Design in Ruby"
+
+────────────────────────────────────────────────────────────────────────────────────
+  OBJETIVOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+  1. Comprender la diferencia fundamental entre `include` y `extend`.
+  2. Usar `extend` para añadir métodos de clase desde un módulo.
+  3. Usar `extend` sobre instancias individuales (métodos singleton).
+  4. Dominar el patrón `include + extend` con `included` callback.
+  5. Usar `Object#extend` para comportamiento dinámico en runtime.
+  6. Conocer el orden de resolución con `extend`.
+  7. Implementar fábricas y decoradores con `extend`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESARROLLO DEL CAPÍTULO — EXTEND
+────────────────────────────────────────────────────────────────────────────────────
+
+La directiva `extend` añade los métodos de un módulo como métodos singleton
+del objeto receptor. Cuando se usa dentro de una definición de clase, los
+métodos del módulo se convierten en métodos de clase. Cuando se usa sobre
+una instancia, los métodos se convierten en métodos singleton de esa instancia.
+
+Sintaxis:
+
+    # Como declaración dentro de una clase
+    class MiClase
+      extend MiModulo    # métodos de módulo → métodos de clase
+    end
+
+    # Sobre un objeto cualquiera
+    objeto.extend(MiModulo)  # métodos de módulo → métodos singleton
+
+Internamente, `extend` es equivalente a `objeto.singleton_class.include(modulo)`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  43.1 — EXTEND EN CLASES (MÉTODOS DE CLASE)
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 1: `extend` básico en una clase.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_01_extend_clase.rb
+# Usando extend para añadir métodos de clase
+
+module MetodosDeClase
+  def version
+    "1.0.0"
+  end
+
+  def autor
+    "Ruby Master Book"
+  end
+
+  def descripcion
+    "Clase manejada por #{name}"
+  end
+
+  def configurar(&bloque)
+    @configuracion ||= {}
+    bloque.call(@configuracion) if bloque
+    @configuracion
+  end
+
+  def configuracion
+    @configuracion || {}
+  end
+end
+
+class Producto
+  extend MetodosDeClase
+
+  attr_reader :nombre, :precio
+
+  def initialize(nombre, precio)
+    @nombre = nombre
+    @precio = precio
+  end
+
+  def to_s
+    "#{@nombre}: $#{@precio}"
+  end
+end
+
+# Llamando métodos de clase definidos por el módulo
+puts Producto.version
+puts Producto.autor
+puts Producto.descripcion
+
+Producto.configurar do |conf|
+  conf[:impuesto] = 0.16
+  conf[:descuento_max] = 0.5
+end
+
+puts "Configuración: #{Producto.configuracion}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 2: `extend` en instancias individuales.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_02_extend_instancia.rb
+# Extendiendo instancias individuales para añadir comportamiento singleton
+
+module Volador
+  def volar
+    "¡Volando! 🚀"
+  end
+
+  def aterrizar
+    "Aterrizando..."
+  end
+
+  def altitud
+    @altitud || 0
+  end
+
+  def ascender(metros)
+    @altitud = (altitud + metros)
+    "Ascendiendo #{metros}m... Altitud: #{@altitud}m"
+  end
+end
+
+class Vehiculo
+  attr_reader :tipo
+
+  def initialize(tipo)
+    @tipo = tipo
+  end
+
+  def describir
+    "Vehículo tipo: #{@tipo}"
+  end
+end
+
+auto = Vehiculo.new("Automóvil")
+avion = Vehiculo.new("Avión")
+
+# Solo el avión puede volar
+avion.extend(Volador)
+
+puts auto.describir
+puts avion.describir
+puts avion.volar
+puts avion.ascender(1000)
+puts avion.ascender(500)
+puts avion.aterrizar
+
+# auto.volar  # Esto lanzaría NoMethodError
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 3: `extend` con variables de instancia y estado.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_03_extend_estado.rb
+# Extend con estado persistente en la instancia
+
+module Estadisticas
+  def registrar_evento(evento)
+    @eventos ||= []
+    @eventos << { evento: evento, tiempo: Time.now }
+  end
+
+  def eventos
+    @eventos || []
+  end
+
+  def ultimo_evento
+    eventos.last
+  end
+
+  def contar_eventos
+    eventos.length
+  end
+
+  def eventos_hoy
+    hoy = Time.now.to_date
+    eventos.select { |e| e[:tiempo].to_date == hoy }
+  end
+
+  def eventos_por_tipo
+    eventos.group_by { |e| e[:evento] }
+  end
+
+  def limpiar_eventos
+    @eventos = []
+  end
+
+  def reporte
+    {
+      total: contar_eventos,
+      tipos: eventos_por_tipo.transform_values(&:length),
+      ultimo: ultimo_evento
+    }
+  end
+end
+
+sensor_1 = Object.new
+sensor_2 = Object.new
+
+sensor_1.extend(Estadisticas)
+sensor_2.extend(Estadisticas)
+
+sensor_1.registrar_evento(:lectura)
+sensor_1.registrar_evento(:lectura)
+sensor_1.registrar_evento(:alerta)
+
+sensor_2.registrar_evento(:lectura)
+sensor_2.registrar_evento(:error)
+
+puts "Sensor 1: #{sensor_1.reporte}"
+puts "Sensor 2: #{sensor_2.reporte}"
+puts "Sensor 1 eventos hoy: #{sensor_1.eventos_hoy.length}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 4: Patrón `include + extend` usando `included`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_04_include_extend.rb
+# El patrón clásico: include para instancia, extend para clase
+
+module Persistible
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def buscar_por_id(id)
+      puts "#{name}: Buscando por id=#{id}"
+      # Simulación de búsqueda
+      new(id: id, nombre: "Auto-generado")
+    end
+
+    def todos
+      puts "#{name}: Obteniendo todos los registros"
+      []
+    end
+
+    def count
+      puts "#{name}: Contando registros"
+      0
+    end
+
+    def crear(atributos = {})
+      nuevo = new(atributos)
+      puts "#{name}: Objeto creado: #{nuevo}"
+      nuevo
+    end
+
+    def schema
+      @schema || {}
+    end
+
+    def field(nombre, tipo)
+      @schema ||= {}
+      @schema[nombre] = tipo
+      attr_accessor nombre
+    end
+  end
+
+  def guardar
+    puts "#{self.class}: Objeto guardado: #{self}"
+    true
+  end
+
+  def eliminar
+    puts "#{self.class}: Objeto eliminado: #{self}"
+    true
+  end
+
+  def valido?
+    true
+  end
+
+  def to_h
+    instance_variables.each_with_object({}) do |iv, h|
+      h[iv.to_s.delete('@')] = instance_variable_get(iv)
+    end
+  end
+end
+
+class Usuario
+  include Persistible
+
+  field :nombre, String
+  field :email, String
+  field :edad, Integer
+
+  def initialize(atributos = {})
+    @nombre = atributos[:nombre]
+    @email = atributos[:email]
+    @edad = atributos[:edad]
+  end
+
+  def to_s
+    "Usuario(#{@nombre}, #{@email}, #{@edad})"
+  end
+end
+
+class Articulo
+  include Persistible
+
+  field :titulo, String
+  field :contenido, String
+  field :publicado, [TrueClass, FalseClass]
+
+  def initialize(atributos = {})
+    @titulo = atributos[:titulo]
+    @contenido = atributos[:contenido]
+    @publicado = atributos[:publicado] || false
+  end
+
+  def to_s
+    "Artículo(#{@titulo}, publicado=#{@publicado})"
+  end
+end
+
+# Métodos de clase vía extend
+u = Usuario.crear(nombre: "Alice", email: "alice@test.com", edad: 30)
+Usuario.buscar_por_id(42)
+Usuario.todos
+
+puts ""
+a = Articulo.crear(titulo: "Ruby Extend", contenido: "Contenido...", publicado: true)
+puts "Schema Usuario: #{Usuario.schema}"
+puts "Schema Artículo: #{Articulo.schema}"
+
+# Métodos de instancia vía include
+puts u.to_h
+puts u.guardar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 5: Fábrica con `extend`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_05_fabrica_extend.rb
+# Patrón fábrica usando extend para crear objetos especializados
+
+module ConLog
+  def loggear(mensaje)
+    puts "[#{Time.now.strftime('%H:%M:%S')}] #{self.class}: #{mensaje}"
+  end
+end
+
+module ConValidacion
+  def validar_presencia(atributo)
+    valor = instance_variable_get("@#{atributo}")
+    unless valor && !valor.to_s.empty?
+      raise ArgumentError, "#{atributo} no puede estar vacío"
+    end
+  end
+
+  def validar_numerico(atributo)
+    valor = instance_variable_get("@#{atributo}")
+    unless valor.is_a?(Numeric)
+      raise TypeError, "#{atributo} debe ser numérico"
+    end
+  end
+end
+
+module ConSerializacion
+  def to_json
+    require 'json'
+    JSON.generate(to_h)
+  end
+
+  def to_h
+    instance_variables.each_with_object({}) do |iv, h|
+      h[iv.to_s.delete('@')] = instance_variable_get(iv)
+    end
+  end
+
+  def to_yaml
+    require 'yaml'
+    YAML.dump(to_h)
+  end
+end
+
+class FabricaDeObjetos
+  def self.crear(tipo, atributos = {})
+    case tipo
+    when :usuario
+      obj = ClaseBase.new(atributos)
+      obj.extend(ConLog)
+      obj.extend(ConValidacion)
+      obj.extend(ConSerializacion)
+      obj
+    when :producto
+      obj = ClaseBase.new(atributos)
+      obj.extend(ConLog)
+      obj.extend(ConSerializacion)
+      obj
+    when :evento
+      obj = ClaseBase.new(atributos)
+      obj.extend(ConLog)
+      obj
+    else
+      raise ArgumentError, "Tipo desconocido: #{tipo}"
+    end
+  end
+end
+
+class ClaseBase
+  attr_reader :atributos
+
+  def initialize(atributos = {})
+    @atributos = atributos
+    atributos.each do |k, v|
+      instance_variable_set("@#{k}", v)
+    end
+  end
+
+  def method_missing(name, *args, &block)
+    attr = name.to_s.delete('@')
+    if instance_variable_defined?("@#{attr}")
+      instance_variable_get("@#{attr}")
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    instance_variable_defined?("@#{name.to_s.delete('@')}") || super
+  end
+
+  def to_s
+    "Objeto(#{@atributos})"
+  end
+end
+
+usuario = FabricaDeObjetos.crear(:usuario, nombre: "Ana", email: "ana@test.com", edad: 28)
+producto = FabricaDeObjetos.crear(:producto, codigo: "PROD-001", precio: 99.99)
+evento = FabricaDeObjetos.crear(:evento, tipo: "login", usuario_id: 1)
+
+usuario.loggear("Creado")
+puts usuario.to_json
+
+producto.loggear("Creado")
+puts producto.to_h
+
+evento.loggear("Evento registrado")
+
+begin
+  usuario.validar_presencia(:nombre)
+  usuario.validar_numerico(:edad)
+  puts "Validaciones pasadas"
+rescue => e
+  puts "Error: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 6: Decorador dinámico con `extend`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_06_decorador_extend.rb
+# Patrón decorador usando extend para añadir comportamiento dinámico
+
+module ConTiempo
+  def ejecutar(*args)
+    inicio = Time.now
+    resultado = super(*args)
+    duracion = Time.now - inicio
+    puts "[TIMER] #{duracion * 1000}ms"
+    resultado
+  end
+end
+
+module ConLog
+  def ejecutar(*args)
+    puts "[LOG] Llamando a #{self.class}##{__method__} con #{args.inspect}"
+    super(*args)
+  rescue => e
+    puts "[LOG] Error: #{e.message}"
+    raise
+  end
+end
+
+module ConCache
+  def ejecutar(*args)
+    @cache ||= {}
+    clave = args.hash
+    if @cache.key?(clave)
+      puts "[CACHE] Hit para #{args.inspect}"
+      @cache[clave]
+    else
+      puts "[CACHE] Miss para #{args.inspect}"
+      @cache[clave] = super(*args)
+    end
+  end
+end
+
+module ConValidacion
+  def ejecutar(*args)
+    raise ArgumentError, "Se requieren argumentos" if args.empty?
+    super(*args)
+  end
+end
+
+class Calculadora
+  def ejecutar(operacion, a, b)
+    case operacion
+    when :suma then a + b
+    when :resta then a - b
+    when :multiplicacion then a * b
+    when :division then raise("División por cero") if b == 0; a / b
+    else raise "Operación desconocida"
+    end
+  end
+
+  def status
+    "Calculadora básica"
+  end
+end
+
+calc = Calculadora.new
+calc.extend(ConValidacion)
+calc.extend(ConLog)
+calc.extend(ConTiempo)
+calc.extend(ConCache)
+
+puts "Resultado: #{calc.ejecutar(:suma, 5, 3)}"
+puts "Resultado (cacheado): #{calc.ejecutar(:suma, 5, 3)}"
+puts "Resultado: #{calc.ejecutar(:multiplicacion, 4, 7)}"
+
+begin
+  calc.ejecutar(:division, 10, 0)
+rescue => e
+  puts "Error capturado: #{e.message}"
+end
+
+begin
+  calc.ejecutar()
+rescue => e
+  puts "Error de validación: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 7: `extend` con módulos de clase para DSL.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_07_extend_dsl.rb
+# Usando extend para construir un DSL interno
+
+module DSLBuilder
+  def attribute(nombre, tipo = nil, &bloque)
+    @attributes ||= []
+    @attributes << { nombre: nombre, tipo: tipo }
+
+    attr_reader nombre
+
+    define_method("#{nombre}=") do |valor|
+      if tipo && !valor.is_a?(tipo)
+        raise TypeError, "#{nombre} debe ser #{tipo}"
+      end
+      instance_variable_set("@#{nombre}", valor)
+    end
+
+    if bloque
+      define_method(nombre) do |*args|
+        if args.empty?
+          instance_variable_get("@#{nombre}")
+        else
+          send("#{nombre}=", args.first)
+        end
+      end
+    end
+  end
+
+  def has_many(nombre, clase = nil, &bloque)
+    @associations ||= []
+    @associations << { nombre: nombre, clase: clase }
+
+    define_method(nombre) do
+      instance_variable_get("@#{nombre}") || []
+    end
+
+    define_method("#{nombre}=") do |valor|
+      instance_variable_set("@#{nombre}", valor)
+    end
+
+    define_method("agregar_#{nombre.to_s.singularize}") do |elemento|
+      coleccion = send(nombre)
+      coleccion << elemento
+      instance_variable_set("@#{nombre}", coleccion)
+    end
+  end
+
+  def validates(nombre, opciones = {})
+    @validaciones ||= []
+    @validaciones << { campo: nombre, opciones: opciones }
+
+    define_method("validar_#{nombre}") do
+      valor = send(nombre)
+      errores = []
+      errores << "#{nombre} requerido" if opciones[:presence] && (valor.nil? || valor.to_s.empty?)
+      if opciones[:length]
+        min = opciones[:length][:min] || 0
+        max = opciones[:length][:max] || Float::INFINITY
+        if valor && (valor.length < min || valor.length > max)
+          errores << "#{nombre} longitud entre #{min} y #{max}"
+        end
+      end
+      errores
+    end
+  end
+
+  def attributes_list
+    @attributes || []
+  end
+
+  def associations
+    @associations || []
+  end
+
+  def validaciones
+    @validaciones || []
+  end
+end
+
+class Post
+  extend DSLBuilder
+
+  attribute :titulo, String
+  attribute :contenido, String
+  attribute :visitas, Integer
+  has_many :comentarios
+  validates :titulo, presence: true, length: { min: 3, max: 100 }
+  validates :contenido, presence: true
+end
+
+post = Post.new
+post.titulo = "Ruby Extend es Poderoso"
+post.contenido = "Contenido del artículo..."
+post.visitas = 42
+
+puts "Título: #{post.titulo}"
+puts "Contenido: #{post.contenido}"
+puts "Visitas: #{post.visitas}"
+
+com1 = "¡Gran artículo!"
+com2 = "Muy útil, gracias."
+post.agregar_comentario(com1)
+post.agregar_comentario(com2)
+puts "Comentarios: #{post.comentarios.inspect}"
+
+puts "\nAttributes: #{Post.attributes_list}"
+puts "Validaciones: #{Post.validaciones}"
+puts "Associations: #{Post.associations}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 8: `extend` con objetos de clase anónima.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_08_clase_anonima_extend.rb
+# Creando clases anónimas con comportamiento específico vía extend
+
+module Autenticable
+  def autenticar(usuario, password)
+    usuario == @usuario && password == @password
+  end
+
+  def cambiar_password(viejo, nuevo)
+    if autenticar(@usuario, viejo)
+      @password = nuevo
+      true
+    else
+      false
+    end
+  end
+end
+
+module Auditable
+  def auditar(accion)
+    @auditoria ||= []
+    @auditoria << { accion: accion, tiempo: Time.now, usuario: @usuario }
+  end
+
+  def auditoria
+    @auditoria || []
+  end
+
+  def ultima_auditoria
+    auditoria.last
+  end
+end
+
+# Crear un objeto singleton con múltiples comportamientos
+servicio = Object.new
+servicio.extend(Autenticable)
+servicio.extend(Auditable)
+
+# Configurar como si fuera un objeto de clase
+servicio.instance_variable_set(:@usuario, "admin")
+servicio.instance_variable_set(:@password, "secreto123")
+
+puts "Autenticación: #{servicio.autenticar("admin", "secreto123")}"
+servicio.auditar("login")
+servicio.auditar("consulta_datos")
+servicio.auditar("logout")
+
+puts "Última auditoría: #{servicio.ultima_auditoria}"
+puts "Todas las auditorías: #{servicio.auditoria.length}"
+puts "¿Cambió password? #{servicio.cambiar_password("secreto123", "nuevo_secreto")}"
+puts "Nueva autenticación: #{servicio.autenticar("admin", "nuevo_secreto")}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 9: `extend` en lugar de herencia.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_09_extend_vs_herencia.rb
+# Usando extend como alternativa a herencia para objetos únicos
+
+module Exportable
+  def exportar(formato = :csv)
+    case formato
+    when :csv then exportar_csv
+    when :json then exportar_json
+    when :xml then exportar_xml
+    else raise "Formato no soportado: #{formato}"
+    end
+  end
+
+  def exportar_csv
+    headers = instance_variables.map { |iv| iv.to_s.delete('@') }
+    values = instance_variables.map { |iv| instance_variable_get(iv) }
+    "#{headers.join(',')}\n#{values.join(',')}"
+  end
+
+  def exportar_json
+    require 'json'
+    hash = instance_variables.each_with_object({}) do |iv, h|
+      h[iv.to_s.delete('@')] = instance_variable_get(iv)
+    end
+    JSON.generate(hash)
+  end
+
+  def exportar_xml
+    buffer = "<#{self.class.name}>\n"
+    instance_variables.each do |iv|
+      nombre = iv.to_s.delete('@')
+      valor = instance_variable_get(iv)
+      buffer += "  <#{nombre}>#{valor}</#{nombre}>\n"
+    end
+    buffer += "</#{self.class.name}>"
+    buffer
+  end
+end
+
+# En lugar de crear una clase hija para cada tipo de exportación,
+# extendemos objetos individuales
+class Reporte
+  def initialize(nombre, datos)
+    @nombre = nombre
+    @datos = datos
+    @creado_en = Time.now
+  end
+
+  def mostrar
+    puts "Reporte: #{@nombre}"
+    puts "Datos: #{@datos}"
+    puts "Creado: #{@creado_en}"
+  end
+end
+
+reporte_csv = Reporte.new("Ventas", [100, 200, 150])
+reporte_csv.extend(Exportable)
+
+reporte_json = Reporte.new("Usuarios", { activos: 50, total: 100 })
+reporte_json.extend(Exportable)
+
+puts "=== CSV ==="
+puts reporte_csv.exportar(:csv)
+
+puts "\n=== JSON ==="
+puts reporte_json.exportar(:json)
+
+puts "\n=== XML ==="
+puts reporte_json.exportar(:xml)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 10: `extend` con `self.included` para herencia de clase completa.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_10_extend_completo.rb
+# Módulo que añade métodos de instancia Y de clase simultáneamente
+
+module ModeloCompleto
+  def self.included(base)
+    base.extend(ClassMethods)
+    base.instance_variable_set(:@registros, [])
+  end
+
+  module ClassMethods
+    def registros
+      @registros || []
+    end
+
+    def crear(atributos)
+      nuevo = new(atributos)
+      @registros << nuevo
+      nuevo.guardar if nuevo.respond_to?(:guardar)
+      nuevo
+    end
+
+    def buscar_por(campo, valor)
+      registros.find { |r| r.send(campo) == valor }
+    end
+
+    def buscar_todos_por(campo, valor)
+      registros.select { |r| r.send(campo) == valor }
+    end
+
+    def count
+      registros.length
+    end
+
+    def primero
+      registros.first
+    end
+
+    def ultimo
+      registros.last
+    end
+
+    def sample
+      registros.sample
+    end
+
+    def cada(&bloque)
+      registros.each(&bloque)
+    end
+
+    def map(&bloque)
+      registros.map(&bloque)
+    end
+
+    def select(&bloque)
+      registros.select(&bloque)
+    end
+
+    def where(**condiciones)
+      registros.select do |r|
+        condiciones.all? { |campo, valor| r.send(campo) == valor }
+      end
+    end
+
+    def ordenar_por(campo, direccion = :asc)
+      registros.sort do |a, b|
+        compare = a.send(campo) <=> b.send(campo)
+        direccion == :asc ? compare : -compare
+      end
+    end
+
+    def to_s
+      "#{name}: #{count} registro(s)"
+    end
+  end
+
+  def atributos
+    instance_variables.each_with_object({}) do |iv, h|
+      h[iv.to_s.delete('@')] = instance_variable_get(iv)
+    end
+  end
+
+  def inspect
+    "#{self.class}(#{atributos})"
+  end
+end
+
+class Persona
+  include ModeloCompleto
+
+  attr_accessor :nombre, :edad, :ciudad
+
+  def initialize(atributos = {})
+    @nombre = atributos[:nombre]
+    @edad = atributos[:edad]
+    @ciudad = atributos[:ciudad]
+  end
+
+  def guardar
+    puts "Guardando #{@nombre} en base de datos..."
+  end
+
+  def to_s
+    "#{@nombre} (#{@edad} años, #{@ciudad})"
+  end
+end
+
+Persona.crear(nombre: "Ana", edad: 28, ciudad: "Madrid")
+Persona.crear(nombre: "Bob", edad: 35, ciudad: "Barcelona")
+Persona.crear(nombre: "Carlos", edad: 28, ciudad: "Madrid")
+Persona.crear(nombre: "Diana", edad: 42, ciudad: "Valencia")
+
+puts "Total: #{Persona.count}"
+puts "Primero: #{Persona.primero}"
+puts "Último: #{Persona.ultimo}"
+puts "Sample: #{Persona.sample}"
+puts "Buscar por nombre 'Bob': #{Persona.buscar_por(:nombre, 'Bob')}"
+puts "Where ciudad Madrid: #{Persona.where(ciudad: 'Madrid').join(', ')}"
+puts "Where edad 28: #{Persona.where(edad: 28).join(', ')}"
+puts "Ordenado por edad: #{Persona.ordenar_por(:edad).join(', ')}"
+puts "Ordenado por edad descendente: #{Persona.ordenar_por(:edad, :desc).join(', ')}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 11: `extend` en objetos frozen.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_11_extend_frozen.rb
+# Comportamiento de extend con objetos congelados
+
+module Extra
+  def extra_method
+    "Método extra"
+  end
+end
+
+obj = Object.new
+obj.freeze
+
+begin
+  obj.extend(Extra)
+rescue FrozenError => e
+  puts "Error: #{e.message}"
+end
+
+# extend no funciona en objetos frozen
+class ConfigFija
+  extend Extra rescue puts "No se puede extender clase frozen"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 12: `extend` dinámico condicional.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_12_extend_condicional.rb
+# Extend condicional basado en condiciones de runtime
+
+module AdminPermisos
+  def administrar
+    "Acceso total al sistema"
+  end
+
+  def configurar_sistema
+    "Configuración del sistema modificada"
+  end
+
+  def gestionar_usuarios
+    "Usuarios gestionados"
+  end
+end
+
+module EditorPermisos
+  def editar_contenido
+    "Contenido editado"
+  end
+
+  def publicar
+    "Contenido publicado"
+  end
+
+  def revisar
+    "Contenido revisado"
+  end
+end
+
+module ViewerPermisos
+  def ver_contenido
+    "Contenido visible"
+  end
+
+  def buscar
+    "Búsqueda realizada"
+  end
+
+  def exportar_reporte
+    "Reporte exportado"
+  end
+end
+
+class UsuarioSistema
+  attr_reader :nombre, :rol
+
+  def initialize(nombre, rol)
+    @nombre = nombre
+    @rol = rol
+    asignar_permisos
+  end
+
+  private
+
+  def asignar_permisos
+    case @rol
+    when :admin then extend(AdminPermisos)
+    when :editor then extend(EditorPermisos)
+    when :viewer then extend(ViewerPermisos)
+    else
+      extend(ViewerPermisos)
+    end
+  end
+end
+
+class SistemaAutenticacion
+  def self.crear_usuario(nombre, rol)
+    usuario = UsuarioSistema.new(nombre, rol)
+    usuario
+  end
+
+  def self.promover_a(usuario, nuevo_rol)
+    # Remover permisos anteriores es más complejo,
+    # pero para el ejemplo creamos un nuevo usuario
+    UsuarioSistema.new(usuario.nombre, nuevo_rol)
+  end
+end
+
+admin = SistemaAutenticacion.crear_usuario("Alice", :admin)
+editor = SistemaAutenticacion.crear_usuario("Bob", :editor)
+viewer = SistemaAutenticacion.crear_usuario("Carlos", :viewer)
+
+puts "Admin: #{admin.administrar}"
+puts "Editor: #{editor.editar_contenido}"
+puts "Viewer: #{viewer.ver_contenido}"
+
+# Promover a editor a admin
+admin2 = SistemaAutenticacion.promover_a(editor, :admin)
+puts "Promovido: #{admin2.administrar}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 13: `extend` para añadir métodos de clase temporalmente.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_13_extend_temporal.rb
+# Extend temporal en bloques de código
+
+module Temporal
+  def __temporal__
+    true
+  end
+end
+
+module ConEstado
+  def estado
+    @estado || :inicial
+  end
+
+  def estado=(valor)
+    @estado = valor
+  end
+
+  def procesar
+    @estado = :procesando
+    yield
+    @estado = :completado
+  rescue
+    @estado = :error
+    raise
+  end
+end
+
+def con_extend(objeto, *modulos)
+  objeto.extend(*modulos)
+  yield objeto
+ensure
+  # Nota: no podemos "des-extender" fácilmente
+  # pero podemos limpiar estado
+  objeto.instance_variables.each { |iv| objeto.remove_instance_variable(iv) }
+end
+
+class Tarea
+  def ejecutar
+    "Tarea ejecutándose..."
+  end
+end
+
+tarea = Tarea.new
+tarea.extend(ConEstado)
+tarea.estado = :pendiente
+
+tarea.procesar do
+  puts "Procesando..."
+end
+
+puts "Estado final: #{tarea.estado}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 14: `extend` vs `include` comparación directa.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_14_extend_vs_include.rb
+# Comparación directa entre include y extend
+
+module MiModulo
+  def saludar
+    "¡Hola!"
+  end
+end
+
+class ConInclude
+  include MiModulo
+end
+
+class ConExtend
+  extend MiModulo
+end
+
+# Con include: saludar es método de instancia
+obj_include = ConInclude.new
+puts "Include - instancia: #{obj_include.saludar}"
+puts "Include - clase: #{ConInclude.saludar rescue 'NoMethodError'}"
+
+# Con extend: saludar es método de clase
+puts "Extend - clase: #{ConExtend.saludar}"
+puts "Extend - instancia: #{ConExtend.new.saludar rescue 'NoMethodError'}"
+
+# También se puede extender una instancia
+obj_extendido = Object.new
+obj_extendido.extend(MiModulo)
+puts "Objeto extendido: #{obj_extendido.saludar}"
+
+# Cadena de ancestros
+puts "\nAncestros con include: #{ConInclude.ancestors}"
+puts "Ancestros con extend: #{ConExtend.ancestors}"
+puts "Singleton class con extend: #{ConExtend.singleton_class.ancestors}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 15: `extend` con `Enumerable` en clase.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_15_extend_enumerable.rb
+# Usando extend con Enumerable para métodos de clase
+
+module Buscable
+  def buscar(&bloque)
+    select(&bloque)
+  end
+
+  def buscar_por(campo, valor)
+    select { |item| item.send(campo) == valor }
+  end
+
+  def agrupar_por(campo)
+    group_by { |item| item.send(campo) }
+  end
+
+  def max_por(campo)
+    max_by { |item| item.send(campo) }
+  end
+
+  def min_por(campo)
+    min_by { |item| item.send(campo) }
+  end
+
+  def ordenar_por(campo, direccion = :asc)
+    sort_by { |item| item.send(campo) }
+  end
+
+  def pluck(campo)
+    map { |item| item.send(campo) }
+  end
+
+  def promedio(campo)
+    valores = pluck(campo)
+    valores.sum.to_f / valores.length
+  end
+end
+
+class Empleado
+  attr_reader :nombre, :departamento, :salario
+
+  def initialize(nombre, departamento, salario)
+    @nombre = nombre
+    @departamento = departamento
+    @salario = salario
+  end
+
+  def to_s
+    "#{@nombre} (#{@departamento}, $#{@salario})"
+  end
+end
+
+class Nomina
+  extend Buscable
+  include Enumerable
+
+  def initialize
+    @empleados = []
+  end
+
+  def <<(empleado)
+    @empleados << empleado
+  end
+
+  def each(&bloque)
+    @empleados.each(&bloque)
+  end
+
+  def length
+    @empleados.length
+  end
+end
+
+nomina = Nomina.new
+nomina << Empleado.new("Ana", "Ventas", 35000)
+nomina << Empleado.new("Bob", "IT", 45000)
+nomina << Empleado.new("Carlos", "Ventas", 38000)
+nomina << Empleado.new("Diana", "RH", 32000)
+nomina << Empleado.new("Eva", "IT", 50000)
+
+# Include Enumerable da métodos de instancia
+puts "Empleados con salario > 35000:"
+nomina.select { |e| e.salario > 35000 }.each { |e| puts "  #{e}" }
+
+# Extend Buscable da métodos de clase... pero aquí lo usamos en la clase Nomina
+puts "\nSalario promedio: $#{nomina.promedio(:salario)}"
+puts "Departamento con más empleados: #{nomina.agrupar_por(:departamento)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 16: `Object#extend` en objetos de sistema.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_16_extend_sistema.rb
+# Extendiendo objetos del sistema Ruby
+
+module Monitoreable
+  def monitorear(metodo)
+    original = method(metodo)
+
+    define_singleton_method(metodo) do |*args, &bloque|
+      puts "[MONITOR] #{metodo}(#{args.map(&:inspect).join(', ')})"
+      resultado = original.call(*args, &bloque)
+      puts "[MONITOR] => #{resultado.inspect}"
+      resultado
+    end
+  end
+end
+
+# Extender un string para monitorear sus métodos
+str = "Hola, Ruby!"
+str.extend(Monitoreable)
+str.monitorear(:upcase)
+str.monitorear(:length)
+
+puts str.upcase
+puts str.length
+
+# Extender un arreglo
+arr = [3, 1, 4, 1, 5]
+arr.extend(Monitoreable)
+arr.monitorear(:sort)
+arr.monitorear(:first)
+
+puts arr.sort.inspect
+puts arr.first
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 17: `extend` con patrón Null Object.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_17_extend_null.rb
+# Implementación de Null Object pattern con extend
+
+module NullObject
+  def method_missing(*args)
+    nil
+  end
+
+  def respond_to_missing?(*)
+    true
+  end
+
+  def nil?
+    true
+  end
+
+  def present?
+    false
+  end
+
+  def blank?
+    true
+  end
+
+  def to_s
+    ""
+  end
+
+  def to_i
+    0
+  end
+
+  def to_f
+    0.0
+  end
+
+  def to_a
+    []
+  end
+
+  def to_h
+    {}
+  end
+
+  def length
+    0
+  end
+
+  def size
+    0
+  end
+
+  def each
+  end
+
+  def map
+    []
+  end
+
+  def select
+    []
+  end
+end
+
+class UsuarioRepository
+  def self.buscar_por_id(id)
+    if id == 1
+      Usuario.new(1, "Alice", "alice@test.com")
+    else
+      NULL_USUARIO
+    end
+  end
+
+  NULL_USUARIO = Object.new.freeze
+  NULL_USUARIO.extend(NullObject)
+end
+
+class Usuario
+  attr_reader :id, :nombre, :email
+
+  def initialize(id, nombre, email)
+    @id = id
+    @nombre = nombre
+    @email = email
+  end
+
+  def saludo
+    "Hola, soy #{@nombre}"
+  end
+
+  def to_s
+    "Usuario(#{@id}, #{@nombre}, #{@email})"
+  end
+end
+
+usuario = UsuarioRepository.buscar_por_id(1)
+puts "Usuario encontrado: #{usuario.saludo}"
+
+no_encontrado = UsuarioRepository.buscar_por_id(999)
+puts "¿Nil? #{no_encontrado.nil?}"
+puts "Nombre: #{no_encontrado.nombre.inspect}"
+puts "Email: #{no_encontrado.email.inspect}"
+puts "Saludo: #{no_encontrado.saludo.inspect}"
+puts "to_s: '#{no_encontrado.to_s}'"
+puts "to_i: #{no_encontrado.to_i}"
+puts "to_a: #{no_encontrado.to_a.inspect}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 18: `extend` con `singleton_class`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_18_singleton_class.rb
+# Entendiendo la relación entre extend y singleton_class
+
+module MixinPrueba
+  def metodo_mixin
+    "Método del mixin"
+  end
+end
+
+obj = Object.new
+
+# extend es equivalente a:
+obj.singleton_class.include(MixinPrueba)
+puts obj.metodo_mixin
+
+# Incluso podemos hacerlo manualmente
+obj2 = Object.new
+obj2.singleton_class.include(MixinPrueba)
+puts obj2.metodo_mixin
+
+# Para clases, extend es equivalente a:
+# Clase.singleton_class.include(Modulo)
+class Prueba
+end
+
+Prueba.singleton_class.include(MixinPrueba)
+puts Prueba.metodo_mixin
+
+# Ver los ancestros de la singleton_class
+puts "\nAncestros singleton_class de obj: #{obj.singleton_class.ancestors}"
+puts "Ancestros singleton_class de Prueba: #{Prueba.singleton_class.ancestors}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 19: Mixin completo con `extend` y `include`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_19_mixin_completo.rb
+# Mixin que proporciona métodos de instancia y de clase organizados
+
+module ApiClient
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def base_url(url = nil)
+      @base_url = url if url
+      @base_url || "http://localhost:3000"
+    end
+
+    def headers(h = nil)
+      @headers = h if h
+      @headers || {}
+    end
+
+    def timeout(t = nil)
+      @timeout = t if t
+      @timeout || 30
+    end
+
+    def get(path, params = {})
+      url = build_url(path, params)
+      puts "GET #{url}"
+      # Simulación de respuesta
+      { status: 200, data: { message: "OK" } }
+    end
+
+    def post(path, body = {})
+      url = "#{base_url}#{path}"
+      puts "POST #{url} #{body.to_json}"
+      { status: 201, data: { id: rand(1000) } }
+    end
+
+    def put(path, body = {})
+      url = "#{base_url}#{path}"
+      puts "PUT #{url} #{body.to_json}"
+      { status: 200, data: { updated: true } }
+    end
+
+    def delete(path)
+      url = "#{base_url}#{path}"
+      puts "DELETE #{url}"
+      { status: 204 }
+    end
+
+    private
+
+    def build_url(path, params)
+      uri = URI("#{base_url}#{path}")
+      uri.query = URI.encode_www_form(params) unless params.empty?
+      uri.to_s
+    end
+  end
+
+  def client_info
+    "Cliente de API: #{self.class.base_url}"
+  end
+
+  def request(method, path, options = {})
+    self.class.send(method, path, options)
+  end
+end
+
+class GitHubAPI
+  include ApiClient
+
+  base_url "https://api.github.com"
+  headers "User-Agent" => "RubyMaster/1.0", "Accept" => "application/vnd.github.v3+json"
+  timeout 10
+
+  def initialize(token = nil)
+    @token = token
+  end
+
+  def perfil
+    self.class.get("/user")
+  end
+
+  def repositorios(usuario)
+    self.class.get("/users/#{usuario}/repos")
+  end
+end
+
+class TwitterAPI
+  include ApiClient
+
+  base_url "https://api.twitter.com/2"
+  headers "Authorization" => "Bearer token123"
+  timeout 15
+
+  def initialize(consumer_key, consumer_secret)
+    @consumer_key = consumer_key
+    @consumer_secret = consumer_secret
+  end
+
+  def timeline(usuario_id)
+    self.class.get("/users/#{usuario_id}/tweets")
+  end
+end
+
+gh = GitHubAPI.new("token_github")
+puts gh.client_info
+puts gh.perfil
+puts gh.repositorios("matz")
+
+puts ""
+tw = TwitterAPI.new("key", "secret")
+puts tw.client_info
+puts tw.timeline("12345")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 20: `extend` para métodos de utilidad global.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 43_20_extend_global.rb
+# Extend para añadir métodos de utilidad a objetos globales
+
+module HashUtils
+  def profundidad
+    values.max { |v| v.is_a?(Hash) ? v.profundidad : 0 } + 1 rescue 1
+  end
+
+  def compact
+    select { |_, v| !v.nil? }
+  end
+
+  def transformar_valores(&bloque)
+    each_with_object({}) { |(k, v), h| h[k] = bloque.call(v) }
+  end
+
+  def solo(*llaves)
+    select { |k, _| llaves.include?(k) }
+  end
+
+  def excepto(*llaves)
+    reject { |k, _| llaves.include?(k) }
+  end
+
+  def fusionar(*otros)
+    otros.each { |otro| merge!(otro) }
+    self
+  end
+
+  def invertir_profundo
+    each_with_object({}) do |(k, v), h|
+      if v.is_a?(Hash)
+        v.invertir_profundo.each { |vk, vv| h[vk] = { k => vv } }
+      else
+        h[v] = k
+      end
+    end
+  end
+end
+
+module StringUtils
+  def titulo
+    split.map(&:capitalize).join(' ')
+  end
+
+  def palabra_reversa
+    split.map(&:reverse).join(' ')
+  end
+
+  def contar_palabras
+    split.length
+  end
+
+  def truncar(longitud = 30)
+    length > longitud ? self[0..longitud - 3] + "..." : self
+  end
+
+  def limpiar
+    gsub(/\s+/, ' ').strip
+  end
+
+  def a_snake_case
+    gsub(/([A-Z])/) { "_#{$1}" }.downcase.gsub(/^_/, '')
+  end
+
+  def a_camel_case
+    split('_').map(&:capitalize).join
+  end
+
+  def es_email?
+    match?(/\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+  end
+
+  def es_url?
+    match?(/\Ahttps?:\/\/[\S]+\z/i)
+  end
+
+  def rot13
+    tr("A-Za-z", "N-ZA-Mn-za-m")
+  end
+
+  def alternar_case
+    chars.map.with_index { |c, i| i.even? ? c.upcase : c.downcase }.join
+  end
+end
+
+Hash.include(HashUtils)
+String.include(StringUtils)
+
+h = { a: 1, b: nil, c: 2, d: { e: 3, f: { g: 4 } } }
+puts "Compact: #{h.compact}"
+puts "Solo :a y :c: #{h.solo(:a, :c)}"
+puts "Profundidad: #{h.profundidad}"
+puts "Transformar: #{h.transformar_valores { |v| v.is_a?(Hash) ? v.to_s : v }}"
+
+s = "hola mundo ruby"
+puts "Título: #{s.titulo}"
+puts "Palabras reversa: #{s.palabra_reversa}"
+puts "Contar palabras: #{s.contar_palabras}"
+puts "Truncar: #{s.truncar(10)}"
+
+email = "usuario@example.com"
+puts "Email válido: #{email.es_email?}"
+
+url = "https://ruby-lang.org"
+puts "URL válida: #{url.es_url?}"
+
+snake = "EstoEsUnEjemplo"
+puts "Snake case: #{snake.a_snake_case}"
+puts "Rot13: #{'Hello'.rot13}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+  RESUMEN DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`extend` es una herramienta versátil para añadir comportamiento en Ruby:
+
+  1. `extend` en una clase convierte métodos de módulo en métodos de clase.
+  2. `extend` en una instancia añade métodos singleton a ese objeto.
+  3. `extend` es equivalente a `singleton_class.include(modulo)`.
+  4. El patrón `include + extend` con `included` proporciona métodos de
+     instancia y de clase desde un solo módulo.
+  5. `extend` permite decorar objetos individuales sin afectar a la clase.
+  6. Es una alternativa limpia a la herencia para objetos únicos.
+  7. No se puede "des-extender" un objeto, pero se puede limpiar estado.
+
+────────────────────────────────────────────────────────────────────────────────────
+  EJERCICIOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+1. Crea un módulo `ConUUID` que añada un método `uuid` a la clase que lo
+   extienda. Úsalo en tres clases diferentes.
+
+2. Implementa un módulo `Fabricable` que, al extender una clase, le dé
+   métodos de clase como `crear`, `lista`, `buscar` y `destruir`.
+
+3. Escribe un sistema donde objetos `Persona` puedan extender dinámicamente
+   módulos de habilidades (`Nadador`, `Corredor`, `Cantante`).
+
+4. Usa `extend` en una instancia de String para añadirle métodos de
+   cifrado simple como `rot13` y `cifrado_cesar`.
+
+5. Implementa un módulo `Estadistico` que al extender un Array le dé
+   métodos como `media`, `mediana`, `moda`, `varianza`.
+
+6. Crea un asistente de `extend` que permita añadir/remover módulos
+   dinámicamente en runtime usando una clase wrapper.
+
+7. Usa `extend` para implementar el patrón Decorator sobre objetos de
+   una clase `Notificador` base.
+
+8. Implementa un DSL para definir rutas HTTP similar a Sinatra usando
+   `extend` para los métodos de clase.
+
+9. Crea un módulo `ConEventos` que permita a cualquier objeto emitir
+   y escuchar eventos mediante `extend`.
+
+10. Escribe un sistema de plugins donde cada plugin es un módulo que
+    se extiende sobre una clase `PluginHost` dinámicamente.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FAQ — PREGUNTAS FRECUENTES
+────────────────────────────────────────────────────────────────────────────────────
+
+P: ¿Puedo usar `include` y `extend` con el mismo módulo?
+R: Sí, y es un patrón muy común. El módulo se incluye para métodos de
+   instancia y se extiende (o se usa el callback `included`) para clase.
+
+P: ¿Puedo extender un objeto después de crearlo?
+R: Sí, esa es una de las características más poderosas de Ruby. Cualquier
+   objeto puede ser extendido en cualquier momento.
+
+P: ¿Extender un objeto afecta a otros objetos de la misma clase?
+R: No. `extend` sobre una instancia solo afecta a esa instancia en particular.
+
+P: ¿Cómo "des-extiendo" un objeto?
+R: No hay una forma directa. Ruby no tiene `unextend`. Una alternativa es
+   usar delegación o crear un nuevo objeto.
+
+P: ¿Cuál es la diferencia entre `extend` y `include`?
+R: `include` añade métodos de instancia. `extend` añade métodos singleton
+   (de clase cuando se usa en la definición de una clase).
+
+P: ¿`extend` funciona con objetos frozen?
+R: No. Los objetos frozen no pueden ser modificados, incluyendo extend.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESAFÍO DEL ARQUITECTO
+────────────────────────────────────────────────────────────────────────────────────
+
+Construye un sistema de "Plugins Inteligentes" usando `extend` como mecanismo
+principal de carga:
+
+  1. Define un módulo base `Plugin` con:
+     - Callbacks `on_load`, `on_enable`, `on_disable`
+     - Métodos de instancia que los plugins pueden sobrescribir
+     - Métodos de clase para configuración del plugin
+
+  2. Crea 5 plugins como módulos:
+     - `Plugin::Logger` — añade logging al sistema
+     - `Plugin::Auth` — añade autenticación
+     - `Plugin::Cache` — añade caché
+     - `Plugin::Compression` — añade compresión
+     - `Plugin::Monitoring` — añade monitoreo
+
+  3. La clase `PluginManager` debe:
+     - Mantener un registro de plugins cargados
+     - Proveer `load_plugin(plugin_module, target)`
+     - Proveer `unload_plugin(plugin_module, target)` (simulado)
+     - Proveer `plugins_activos` y `plugin_status`
+
+  4. Cada plugin debe poder configurarse con opciones al cargarse.
+
+  5. Implementa el patrón `include + extend` donde el plugin aporta tanto
+     métodos de instancia como de clase al target.
+
+  6. El sistema debe soportar que un target tenga múltiples plugins
+     activos simultáneamente.
+
+Este desafío explora `extend` en profundidad, combinándolo con `include`,
+manejo de estado, y diseño de sistemas extensibles. Es similar a cómo
+funcionan los sistemas de plugins en frameworks reales como Rails.
+
+────────────────────────────────────────────────────────────────────────────────────
+  CIERRE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`extend` te ha mostrado cómo añadir comportamiento donde y cuando lo necesites.
+Ya sea para dotar a una clase de métodos de utilidad, para decorar objetos
+individuales, o para construir sistemas extensibles de plugins, `extend` es
+una herramienta elegante y poderosa.
+
+Recuerda: `include` es para comportamiento compartido entre instancias,
+`extend` es para comportamiento específico de un objeto o clase. Domina
+ambos y tendrás un control total sobre la organización de tu código.
+
+────────────────────────────────────────────────────────────────────────────────────
+  PREVIEW DEL PRÓXIMO CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+En el Capítulo 44: Prepend, exploraremos la tercera directiva de mezcla de
+módulos en Ruby. `prepend` es como `include` pero invierte el orden en la
+cadena de ancestros: el módulo se inserta antes que la clase, permitiendo
+que los métodos del módulo sobrescriban a los de la clase. Esto abre la
+puerta a patrones avanzados como Aspect-Oriented Programming, alias_method
+chain, y monkey-patching controlado.
+═══════════════════════════════════════════════════════════════════════════════════

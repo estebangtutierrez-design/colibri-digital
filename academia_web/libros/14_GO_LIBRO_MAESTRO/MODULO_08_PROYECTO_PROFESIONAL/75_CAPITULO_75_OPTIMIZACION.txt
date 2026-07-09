@@ -1,0 +1,1120 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 75: OPTIMIZACIÓN                             ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, optimizador. El código que funciona es bueno; el código
+que vuela es magistral. En este capítulo aprenderás a medir el
+rendimiento de tus programas Go con pprof, analizar perfiles de CPU
+y memoria, realizar escape analysis, y aplicar optimizaciones del
+compilador sin sacrificar legibilidad.
+
+FRASE MOTIVACIONAL
+──────────────────
+"No optimices sin medir. Sin datos, tus 'mejoras' solo son
+opiniones. Con pprof, cada optimización es una decisión informada."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Usar pprof para perfiles de CPU, memoria, goroutines y bloqueos.
+2. Interpretar flame graphs y perfiles con go tool pprof.
+3. Realizar escape analysis para reducir allocaciones en heap.
+4. Aplicar optimizaciones del compilador (inline, bounds check).
+5. Escribir benchmarks efectivos con testing.B.
+6. Identificar cuellos de botella comunes en Go.
+7. Optimizar sin perder claridad ni mantenibilidad.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. INTRODUCCIÓN A PPROF
+───────────────────────
+
+pprof es la herramienta de profiling de Go. Puede analizar:
+
+• CPU: qué funciones consumen más tiempo de procesamiento.
+• Memoria (heap): qué funciones asignan más memoria.
+• Goroutines: cuántas goroutines hay y dónde se crearon.
+• Bloqueos (mutex): dónde hay contención de locks.
+• Threads: creación de hilos del sistema.
+
+Se integra fácilmente con net/http/pprof:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+    _ "net/http/pprof"
+    "time"
+)
+
+func heavyCPUWork() {
+    sum := 0
+    for i := 0; i < 100000000; i++ {
+        sum += i * i
+    }
+    fmt.Println(sum)
+}
+
+func allocateMemory() {
+    data := make([]byte, 10*1024*1024)
+    for i := range data {
+        data[i] = byte(i)
+    }
+    _ = data
+}
+
+func main() {
+    go func() {
+        log.Println("pprof en :6060")
+        log.Println(http.ListenAndServe("localhost:6060", nil))
+    }()
+
+    for i := 0; i < 10; i++ {
+        heavyCPUWork()
+        allocateMemory()
+        time.Sleep(100 * time.Millisecond)
+    }
+}
+```
+
+Para obtener perfiles:
+
+```bash
+# Perfil de CPU
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+
+# Perfil de memoria
+go tool pprof http://localhost:6060/debug/pprof/heap
+
+# Perfil de goroutines
+go tool pprof http://localhost:6060/debug/pprof/goroutine
+
+# Visualización web
+go tool pprof -http=:8081 http://localhost:6060/debug/pprof/profile
+```
+
+2. USO DIRECTO DE runtime/pprof
+────────────────────────────────
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+    "os"
+    "runtime/pprof"
+)
+
+func isPrime(n int) bool {
+    if n < 2 {
+        return false
+    }
+    for i := 2; i <= int(math.Sqrt(float64(n))); i++ {
+        if n%i == 0 {
+            return false
+        }
+    }
+    return true
+}
+
+func findPrimes(limit int) []int {
+    var primes []int
+    for i := 0; i < limit; i++ {
+        if isPrime(i) {
+            primes = append(primes, i)
+        }
+    }
+    return primes
+}
+
+func main() {
+    f, err := os.Create("cpu.prof")
+    if err != nil {
+        panic(err)
+    }
+    defer f.Close()
+
+    pprof.StartCPUProfile(f)
+    defer pprof.StopCPUProfile()
+
+    primes := findPrimes(1000000)
+    fmt.Printf("Encontrados %d primos\n", len(primes))
+}
+```
+
+Análisis:
+
+```bash
+go tool pprof cpu.prof
+(pprof) top
+(pprof) list findPrimes
+(pprof) peek isPrime
+(pprof) svg
+```
+
+3. PERFIL DE MEMORIA (HEAP)
+──────────────────────────
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+    "runtime"
+    "runtime/pprof"
+)
+
+type LargeStruct struct {
+    Data [1024]byte
+    ID   int64
+}
+
+func createObjects(n int) []LargeStruct {
+    objects := make([]LargeStruct, n)
+    for i := 0; i < n; i++ {
+        objects[i] = LargeStruct{ID: int64(i)}
+    }
+    return objects
+}
+
+func main() {
+    f, err := os.Create("heap.prof")
+    if err != nil {
+        panic(err)
+    }
+    defer f.Close()
+
+    runtime.GC()
+    _ = createObjects(100000)
+
+    if err := pprof.WriteHeapProfile(f); err != nil {
+        panic(err)
+    }
+    fmt.Println("heap.prof escrito")
+}
+```
+
+4. INTERPRETACIÓN DE PERFILES
+─────────────────────────────
+
+Comandos interactivos de pprof:
+
+```
+(pprof) top              # Funciones más costosas
+(pprof) top10 --cum      # Top 10 por tiempo acumulado
+(pprof) list FunctionName  # Código de función con tiempos línea por línea
+(pprof) peek FunctionName  # Llamantes y llamados de una función
+(pprof) tree             # Árbol de llamadas completo
+(pprof) svg              # Generar SVG del gráfico de llamadas
+(pprof) web              # Abrir gráfico en navegador
+(pprof) flame            # Mostrar flame graph
+(pprof) traces           # Trazas individuales
+```
+
+Ejemplo de `list findPrimes`:
+
+```
+ROUTINE ======================== main.findPrimes
+     1.80s      4.10s (flat, cum) 87.23% of Total
+         .          .     33:
+         .          .     34: func findPrimes(limit int) []int {
+         .          .     35:     var primes []int
+     10ms       10ms     36:     for i := 0; i < limit; i++ {
+     1.79s      4.09s     37:         if isPrime(i) {
+         .          .     38:             primes = append(primes, i)
+         .          .     39:         }
+         .          .     40:     }
+         .          .     41:     return primes
+         .          .     42: }
+```
+
+La columna `flat` es tiempo en la función misma; `cum` incluye
+tiempo en funciones llamadas desde ella.
+
+5. BENCHMARKS CON TESTING.B
+───────────────────────────
+
+```go
+package main
+
+import (
+    "testing"
+)
+
+func BenchmarkIsPrime(b *testing.B) {
+    for i := 0; i < b.N; i++ {
+        isPrime(9999991)
+    }
+}
+
+func BenchmarkFindPrimes(b *testing.B) {
+    for i := 0; i < b.N; i++ {
+        findPrimes(10000)
+    }
+}
+
+// Benchmark con diferentes tamaños
+func BenchmarkFindPrimesTable(b *testing.B) {
+    sizes := []int{100, 1000, 10000, 100000}
+    for _, size := range sizes {
+        b.Run(fmt.Sprintf("size-%d", size), func(b *testing.B) {
+            for i := 0; i < b.N; i++ {
+                findPrimes(size)
+            }
+        })
+    }
+}
+
+// Benchmark para comparar algoritmos
+func BenchmarkPrimeAlgorithm(b *testing.B) {
+    tests := []struct {
+        name string
+        fn   func(int) []int
+    }{
+        {"simple", findPrimes},
+        {"sieve", sieveOfEratosthenes},
+    }
+
+    for _, tt := range tests {
+        b.Run(tt.name, func(b *testing.B) {
+            for i := 0; i < b.N; i++ {
+                tt.fn(100000)
+            }
+        })
+    }
+}
+
+func sieveOfEratosthenes(limit int) []int {
+    isPrime := make([]bool, limit+1)
+    for i := 2; i <= limit; i++ {
+        isPrime[i] = true
+    }
+    for i := 2; i*i <= limit; i++ {
+        if isPrime[i] {
+            for j := i * i; j <= limit; j += i {
+                isPrime[j] = false
+            }
+        }
+    }
+    var primes []int
+    for i := 2; i <= limit; i++ {
+        if isPrime[i] {
+            primes = append(primes, i)
+        }
+    }
+    return primes
+}
+```
+
+Ejecutar:
+
+```bash
+go test -bench=. -benchmem -count=5
+```
+
+Salida típica:
+
+```
+BenchmarkIsPrime-8             	10000000	       116.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFindPrimes-8          	    5000	    345201 ns/op	   16384 B/op	       1 allocs/op
+BenchmarkFindPrimesTable/size-100-8         	  200000	      6789 ns/op	     512 B/op	       1 allocs/op
+BenchmarkFindPrimesTable/size-1000-8        	   20000	     67890 ns/op	    8192 B/op	       1 allocs/op
+```
+
+6. ESCAPE ANALYSIS
+──────────────────
+
+El compilador Go determina si una variable va al heap o se queda
+en la pila. Podemos ver sus decisiones:
+
+```bash
+go build -gcflags='-m' ./...
+```
+
+Ejemplo:
+
+```go
+package main
+
+type User struct {
+    Name string
+    Age  int
+}
+
+// Escapa porque retorna un puntero a variable local
+func NewUser(name string, age int) *User {
+    u := User{Name: name, Age: age}
+    return &u // u escapa al heap
+}
+
+// No escapa porque el valor se retorna por copia
+func NewUserValue(name string, age int) User {
+    return User{Name: name, Age: age}
+}
+
+// Escapa porque fmt.Sprintf retorna string del heap
+func greet(name string) string {
+    return fmt.Sprintf("Hola, %s", name)
+}
+
+// Escapa si la interface causa que el tipo se保 en heap
+func printAge(age interface{}) {
+    fmt.Println(age)
+}
+```
+
+Salida de escape analysis:
+
+```bash
+$ go build -gcflags='-m' ./escape.go
+# command-line-arguments
+./escape.go:10:6: moved to heap: u
+./escape.go:18:14: greet name does not escape
+./escape.go:22:14: age escapes to heap
+./escape.go:19:20: ... argument does not escape
+```
+
+7. OPTIMIZACIONES DEL COMPILADOR
+─────────────────────────────────
+
+7.1. Inlining
+
+El compilador decide inline de funciones pequeñas:
+
+```go
+// Pequeña, será inlineada
+func add(a, b int) int {
+    return a + b
+}
+
+// Grande, no será inlineada
+func processLarge() {
+    for i := 0; i < 100; i++ {
+        for j := 0; j < 100; j++ {
+            _ = i * j
+        }
+    }
+}
+```
+
+Forzar no-inline para debugging:
+
+```go
+//go:noinline
+func debugThis(a, b int) int {
+    return a + b
+}
+```
+
+7.2. Bounds Check Elimination (BCE)
+
+```go
+func sum(s []int) int {
+    total := 0
+    for i := 0; i < len(s); i++ {
+        total += s[i] // bounds check
+    }
+    return total
+}
+
+func sumNoBCE(s []int) int {
+    total := 0
+    // El compilador asume que cualquier índice podría estar fuera
+    for i := 0; i < 1000; i++ {
+        if i < len(s) {
+            total += s[i]
+        }
+    }
+    return total
+}
+
+// Si accedemos en rango conocido, el compilador elimina checks
+func sumOptimized(s [1024]int) int {
+    total := 0
+    // El compilador sabe que i < 1024 y s tiene tamaño 1024
+    for i := 0; i < 1024; i++ {
+        total += s[i] // sin bounds check
+    }
+    return total
+}
+```
+
+7.3. Slice de stack vs heap
+
+```go
+// Slice en heap (porque make siempre heap para tamaño variable)
+func heapSlice(n int) []int {
+    return make([]int, n)
+}
+
+// Slice en stack si el compilador puede probar tamaño fijo
+func stackSlice() [100]int {
+    var arr [100]int
+    return arr
+}
+
+// Rebanada de array en stack
+func stackSlice2() []int {
+    var arr [100]int
+    return arr[:] // No escapa si no se comparte
+}
+```
+
+8. OPTIMIZACIÓN DE STRINGS
+──────────────────────────
+
+```go
+package main
+
+import (
+    "strings"
+    "unsafe"
+)
+
+// MAL: muchas allocaciones por concatenación
+func slowConcat(words []string) string {
+    result := ""
+    for _, w := range words {
+        result += w + " "
+    }
+    return result
+}
+
+// BIEN: usar strings.Builder
+func fastConcat(words []string) string {
+    var b strings.Builder
+    b.Grow(len(words) * 8) // Preasignar capacidad
+    for _, w := range words {
+        b.WriteString(w)
+        b.WriteByte(' ')
+    }
+    return b.String()
+}
+
+// Para conversión string/[]byte sin copia (solo lectura)
+func stringToBytes(s string) []byte {
+    return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+func bytesToString(b []byte) string {
+    return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
+// Preferir bytes.Buffer para concatenación en bucles
+func fastConcatBuffer(words []string) string {
+    buf := make([]byte, 0, len(words)*8)
+    for _, w := range words {
+        buf = append(buf, w...)
+        buf = append(buf, ' ')
+    }
+    return string(buf)
+}
+```
+
+9. OPTIMIZACIÓN DE MAPAS
+────────────────────────
+
+```go
+package main
+
+type Product struct {
+    ID    int
+    Name  string
+    Price float64
+}
+
+// Preasignar capacidad del mapa
+func createProductMap(products []Product) map[int]Product {
+    m := make(map[int]Product, len(products))
+    for _, p := range products {
+        m[p.ID] = p
+    }
+    return m
+}
+
+// Usar struct{} como valor para sets (0 bytes)
+type Set map[string]struct{}
+
+func NewSet(items ...string) Set {
+    s := make(Set, len(items))
+    for _, item := range items {
+        s[item] = struct{}{}
+    }
+    return s
+}
+
+// Mapa con clave struct en vez de string compuesto
+type Key struct {
+    A, B, C int
+}
+
+func structKeyMap(items []Key) map[Key]int {
+    m := make(map[Key]int, len(items))
+    for i, k := range items {
+        m[k] = i
+    }
+    return m
+}
+```
+
+10. OPTIMIZACIÓN DE SLICES
+──────────────────────────
+
+```go
+package main
+
+// Preasignar capacidad
+func buildSlice(n int) []int {
+    s := make([]int, 0, n)
+    for i := 0; i < n; i++ {
+        s = append(s, i)
+    }
+    return s
+}
+
+// Sin preasignación: muchas reallocaciones
+func buildSliceSlow(n int) []int {
+    var s []int
+    for i := 0; i < n; i++ {
+        s = append(s, i)
+    }
+    return s
+}
+
+// Rebanadas sin copia (slicing)
+func sliceNoCopy(s []int, start, end int) []int {
+    return s[start:end] // Comparte el array subyacente
+}
+
+// Copia cuando es necesario aislar
+func sliceCopy(s []int) []int {
+    c := make([]int, len(s))
+    copy(c, s)
+    return c
+}
+```
+
+11. CONTENCIÓN Y CONCURRENCIA
+─────────────────────────────
+
+```go
+package main
+
+import (
+    "sync"
+    "sync/atomic"
+)
+
+// MAL: contención por mutex global
+type CounterBad struct {
+    mu    sync.Mutex
+    value int64
+}
+
+func (c *CounterBad) Increment() {
+    c.mu.Lock()
+    c.value++
+    c.mu.Unlock()
+}
+
+// BIEN: usar atomic para operaciones simples
+type CounterGood struct {
+    value atomic.Int64
+}
+
+func (c *CounterGood) Increment() {
+    c.value.Add(1)
+}
+
+// MAL: goroutines sin límite
+func processAll(items []int) {
+    var wg sync.WaitGroup
+    for _, item := range items {
+        wg.Add(1)
+        go func(i int) {
+            defer wg.Done()
+            process(i)
+        }(item)
+    }
+    wg.Wait()
+}
+
+// BIEN: worker pool con límite
+func processAllPool(items []int, workers int) {
+    ch := make(chan int, len(items))
+    var wg sync.WaitGroup
+
+    for i := 0; i < workers; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for item := range ch {
+                process(item)
+            }
+        }()
+    }
+
+    for _, item := range items {
+        ch <- item
+    }
+    close(ch)
+    wg.Wait()
+}
+
+func process(x int) {}
+```
+
+12. ALINEACIÓN DE ESTRUCTURAS
+─────────────────────────────
+
+El orden de los campos afecta el tamaño de la struct:
+
+```go
+package main
+
+import (
+    "fmt"
+    "unsafe"
+)
+
+// MAL orden: 24 bytes (con padding)
+type BadStruct struct {
+    A bool    // 1 byte + 7 padding
+    B int64   // 8 bytes
+    C bool    // 1 byte + 7 padding
+}
+
+// BIEN orden: 16 bytes (optimizado)
+type GoodStruct struct {
+    B int64   // 8 bytes
+    A bool    // 1 byte
+    C bool    // 1 byte + 6 padding
+}
+
+// Compacta: usar tipos más pequeños
+type CompactStruct struct {
+    A uint32  // 4 bytes
+    B uint32  // 4 bytes
+    C bool    // 1 byte + 7 padding
+}
+
+func main() {
+    fmt.Println("BadStruct:", unsafe.Sizeof(BadStruct{}))    // 24
+    fmt.Println("GoodStruct:", unsafe.Sizeof(GoodStruct{}))  // 16
+}
+```
+
+13. OBJETOS VOLÁTILES Y POOL DE OBJETOS
+────────────────────────────────────────
+
+```go
+package main
+
+import (
+    "bytes"
+    "sync"
+)
+
+var bufferPool = sync.Pool{
+    New: func() interface{} {
+        return new(bytes.Buffer)
+    },
+}
+
+func getBuffer() *bytes.Buffer {
+    buf := bufferPool.Get().(*bytes.Buffer)
+    buf.Reset()
+    return buf
+}
+
+func putBuffer(buf *bytes.Buffer) {
+    bufferPool.Put(buf)
+}
+
+func processWithPool(data [][]byte) []string {
+    results := make([]string, len(data))
+    for i, d := range data {
+        buf := getBuffer()
+        buf.WriteString("prefix_")
+        buf.Write(d)
+        results[i] = buf.String()
+        putBuffer(buf)
+    }
+    return results
+}
+
+// Con pool de structs
+type Request struct {
+    ID   int
+    Data []byte
+}
+
+var requestPool = sync.Pool{
+    New: func() interface{} {
+        return &Request{Data: make([]byte, 0, 1024)}
+    },
+}
+
+func acquireRequest() *Request {
+    return requestPool.Get().(*Request)
+}
+
+func releaseRequest(r *Request) {
+    r.ID = 0
+    r.Data = r.Data[:0]
+    requestPool.Put(r)
+}
+```
+
+14. COMPILADOR Y BANDERAS DE OPTIMIZACIÓN
+─────────────────────────────────────────
+
+```bash
+# Ver decisiones del compilador
+go build -gcflags='-m' ./...
+go build -gcflags='-m -m' ./...  # Más detalle
+
+# Deshabilitar optimizaciones (debugging)
+go build -gcflags='all=-N -l' ./...
+
+# Ver assembly generado
+go tool compile -S main.go
+go build -gcflags='-S' ./...
+
+# Ver inline decisions
+go build -gcflags='-m -l' ./...
+
+# Límite de inline (ajustar confianza)
+go build -gcflags='-l=4' ./...
+```
+
+15. FLAME GRAPHS
+────────────────
+
+Instalar:
+
+```bash
+go install github.com/brendangregg/FlameGraph@latest
+```
+
+Generar:
+
+```bash
+# 1. Obtener perfil de CPU
+curl -o cpu.pprof http://localhost:6060/debug/pprof/profile?seconds=30
+
+# 2. Convertir a formato flamegraph
+go tool pprof -raw cpu.pprof | FlameGraph/stackcollapse-perf.pl | FlameGraph/flamegraph.pl > cpu.svg
+
+# O directamente con pprof
+go tool pprof -http=:8081 cpu.pprof
+# Luego hacer clic en "Flame Graph"
+```
+
+16. PROFILING DE APLICACIONES EN PRODUCCIÓN
+────────────────────────────────────────────
+
+```go
+package main
+
+import (
+    "net/http"
+    _ "net/http/pprof"
+    "runtime"
+    "time"
+
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+func main() {
+    // pprof en puerto separado
+    go func() {
+        mux := http.NewServeMux()
+        mux.Handle("/debug/pprof/", http.DefaultServeMux)
+        mux.Handle("/metrics", promhttp.Handler())
+
+        // Solo en localhost en producción
+        server := &http.Server{
+            Addr:    "localhost:6060",
+            Handler: mux,
+        }
+        server.ListenAndServe()
+    }()
+
+    // Monitoreo de GC
+    go func() {
+        for {
+            var m runtime.MemStats
+            runtime.ReadMemStats(&m)
+            log.Printf("Alloc=%d MB, HeapInuse=%d MB, GCs=%d",
+                m.Alloc/1024/1024,
+                m.HeapInuse/1024/1024,
+                m.NumGC,
+            )
+            time.Sleep(30 * time.Second)
+        }
+    }()
+
+    // App principal
+    http.ListenAndServe(":8080", nil)
+}
+
+var log = &simpleLogger{}
+type simpleLogger struct{}
+func (l *simpleLogger) Printf(format string, args ...interface{}) {
+    // simple stdout logging
+}
+```
+
+17. BENCHMARKS COMPARATIVOS (EJEMPLO REAL)
+──────────────────────────────────────────
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "testing"
+)
+
+type Data struct {
+    ID    int    `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+var testData = Data{ID: 1, Name: "Alice", Email: "alice@example.com"}
+
+// Benchmark de serialización JSON
+func BenchmarkJSONMarshal(b *testing.B) {
+    for i := 0; i < b.N; i++ {
+        _, _ = json.Marshal(testData)
+    }
+}
+
+// Benchmark de serialización manual
+func BenchmarkManualMarshal(b *testing.B) {
+    for i := 0; i < b.N; i++ {
+        _ = fmt.Sprintf(`{"id":%d,"name":"%s","email":"%s"}`,
+            testData.ID, testData.Name, testData.Email)
+    }
+}
+
+// Benchmark con sync.Pool vs allocación directa
+func BenchmarkWithPool(b *testing.B) {
+    pool := &sync.Pool{
+        New: func() interface{} { return &Data{} },
+    }
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        d := pool.Get().(*Data)
+        d.ID = 1
+        d.Name = "Alice"
+        pool.Put(d)
+    }
+}
+
+func BenchmarkWithoutPool(b *testing.B) {
+    for i := 0; i < b.N; i++ {
+        d := &Data{ID: 1, Name: "Alice"}
+        _ = d
+    }
+}
+```
+
+18. ANTI-PATRONES DE RENDIMIENTO
+─────────────────────────────────
+
+🔴 Usar fmt.Sprintf en bucles críticos:
+
+```go
+// MAL
+for i, item := range items {
+    key := fmt.Sprintf("item_%d", i)
+    cache[key] = item
+}
+
+// BIEN
+for i, item := range items {
+    var buf [32]byte
+    n := copy(buf[:], "item_")
+    n += copy(buf[n:], strconv.Itoa(i))
+    key := string(buf[:n])
+    cache[key] = item
+}
+```
+
+🔴 Reflection en hotspots:
+
+```go
+// MAL: reflection en cada llamada
+func setField(obj interface{}, value string) {
+    reflect.ValueOf(obj).Elem().FieldByName("Name").SetString(value)
+}
+
+// BIEN: asignación directa
+func setField(obj *MyStruct, value string) {
+    obj.Name = value
+}
+```
+
+🔴 Defers en bucles:
+
+```go
+// MAL: defer en bucle
+for _, f := range files {
+    f, _ := os.Open(f)
+    defer f.Close() // No se ejecuta hasta que la función retorna
+    // ...
+}
+
+// BIEN: close explícito
+for _, f := range files {
+    f, _ := os.Open(f)
+    // ...
+    f.Close()
+}
+```
+
+🔴 Conversión innecesaria entre tipos:
+
+```go
+// MAL: int -> float64 -> int
+result := int(float64(a) / float64(b) * 100)
+
+// BIEN
+result := a * 100 / b
+```
+
+19. GUÍA RÁPIDA DE OPTIMIZACIÓN
+────────────────────────────────
+
+1. Primero mide con pprof. Sin datos, no sabes qué optimizar.
+2. Optimiza el algoritmo antes que el código.
+3. Preasigna capacidad de slices y mapas.
+4. Usa strings.Builder para concatenación.
+5. Evita allocaciones en el heap (escape analysis).
+6. Usa sync.Pool para objetos temporales frecuentes.
+7. Ordena structs para minimizar padding.
+8. Prefiere valores sobre punteros (menos GC pressure).
+9. Limita goroutines con worker pools.
+10. Usa atomic antes que mutex para contadores.
+
+20. COMPARATIVA DE RENDIMIENTO
+──────────────────────────────
+
+| Operación                | Tiempo típico      |
+|--------------------------|--------------------|
+| Asignación de variable   | ~0.3 ns            |
+| Llamada a función        | ~2 ns              |
+| make([]int, 1000)        | ~300 ns            |
+| fmt.Sprintf pequeña      | ~150 ns            |
+| json.Marshal({simple})   | ~200 ns            |
+| Mutex Lock/Unlock        | ~30 ns             |
+| atomic.AddInt64          | ~5 ns              |
+| Channel send/receive     | ~50 ns             |
+| map[string]int lookup    | ~40 ns             |
+| strings.Builder pequeña  | ~50 ns             |
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• pprof: CPU, heap, goroutines, mutex, threads.
+• go tool pprof: top, list, peek, svg, web, flame.
+• testing.B: benchmarks con -bench, -benchmem, -count.
+• Escape analysis: go build -gcflags='-m'.
+• Inlining: automático, control con //go:noinline.
+• Bounds check elimination: usar arrays de tamaño fijo.
+• strings.Builder para concatenación eficiente.
+• sync.Pool para reciclar objetos.
+• atomic vs mutex para operaciones simples.
+• Alineación de structs importa.
+
+EJERCICIOS
+──────────
+
+1. Escribe un benchmark que compare strings.Builder, bytes.Buffer y
+   concatenación con + para unir 1000 strings.
+
+2. Usa pprof para encontrar el cuello de botella en un programa que
+   procesa un archivo CSV de 100MB.
+
+3. Analiza el escape analysis de un programa con varias funciones.
+   Identifica 3 variables que escapan al heap y optimízalas.
+
+4. Crea un sync.Pool para reutilizar objetos Request en un servidor
+   HTTP bajo alta carga. Mide la mejora.
+
+5. Compara el rendimiento de un mapa con capacidad preasignada vs
+   sin preasignar para 100000 elementos.
+
+6. Usa go tool pprof -http para generar un flame graph de tu
+   aplicación y explica los 3 hotspots principales.
+
+7. Optimiza una estructura con campos desordenados. Mide la
+   diferencia de tamaño con unsafe.Sizeof.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Debo optimizar todo desde el principio?
+R: No. Primero escribe código claro y correcto. Luego mide, y solo
+   optimiza los cuellos de botella reales.
+
+P: ¿Cómo sé si una variable escapa al heap?
+R: Usa go build -gcflags='-m'. Busca "moved to heap".
+
+P: ¿Qué es más rápido: canal o mutex?
+R: Depende. Los canales son más lentos que mutex para protección
+   simple. Pero los canales son mejores para comunicación y
+   orquestación.
+
+P: ¿Vale la pena sync.Pool?
+R: Solo si creas y destruyes muchos objetos del mismo tipo. Para
+   objetos de larga duración, no aporta beneficio.
+
+P: ¿Debo evitar reflection siempre?
+R: Si puedes evitarlo, hazlo. Reflection es ~10x más lento que
+   código directo. Para path de inicio (una vez), puede ser aceptable.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Optimiza un servidor HTTP que procesa JSON con las siguientes
+características problemáticas:
+
+a) Endpoint /api/process que recibe 10,000 objetos JSON por
+   segundo y los transforma.
+
+b) Cada transformación: parsea JSON, aplica reglas, re-serializa.
+
+c) Actualmente procesa ~500 req/s con alta latencia (p95 > 2s).
+
+Tu misión:
+
+1. Usa pprof para identificar los 3 principales cuellos de botella.
+2. Implementa sync.Pool para objetos reutilizables.
+3. Optimiza la serialización/deserialización JSON.
+4. Implementa un worker pool para paralelizar.
+5. Mide la mejora (debe llegar a 5000+ req/s).
+6. Documenta cada optimización con su justificación.
+
+CIERRE
+──────
+Optimizar sin medir es adivinar. Con pprof y las técnicas de este
+capítulo, cada cambio que hagas estará respaldado por datos. En el
+próximo capítulo nos enfocaremos en la seguridad, el aspecto más
+crítico de cualquier sistema profesional.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 76: Seguridad — Protege tu aplicación Go

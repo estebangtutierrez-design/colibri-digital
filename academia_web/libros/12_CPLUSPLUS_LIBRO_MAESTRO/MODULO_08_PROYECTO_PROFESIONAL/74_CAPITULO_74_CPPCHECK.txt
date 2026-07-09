@@ -1,0 +1,1006 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 74: CPPCHECK Y ANÁLISIS ESTÁTICO
+================================================================================
+
+  "El análisis estático es tener un revisor de código incansable
+   que ha leído el estándar de C++ de cabo a rabo."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido, Arquitecto!
+
+  En el capítulo anterior aprendiste a cazar bugs con GDB. Pero
+  ¿y si pudieras detectar muchos de esos bugs antes de ejecutar
+  siquiera el programa? Eso es el análisis estático.
+
+  cppcheck, clang-tidy y los warnings del compilador forman una
+  red de seguridad que atrapa errores en tiempo de compilación.
+  En este capítulo aprenderás a configurar y usar estas herramientas
+  para escribir código C++ más seguro y robusto desde el primer
+  intento.
+
+  FRASE DEL DÍA
+  -------------
+  "El mejor bug es el que nunca llega a compilar."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Configurar cppcheck para análisis estático profundo.
+  2. Dominar clang-tidy con checks personalizados.
+  3. Activar y entender todos los warnings del compilador.
+  4. Integrar análisis estático en CI/CD.
+  5. Crear un archivo .clang-tidy configuración del proyecto.
+  6. Suprimir falsos positivos sin apagar el análisis.
+  7. Diferenciar entre warning, error y style issue.
+  8. Usar static analysis para enforce de estilo y seguridad.
+
+================================================================================
+
+  CPPCHECK Y ANÁLISIS ESTÁTICO — CONTENIDO COMPLETO
+================================================================================
+
+► 1. ¿QUÉ ES EL ANÁLISIS ESTÁTICO?
+
+  El análisis estático examina el código fuente sin ejecutarlo,
+  buscando patrones que indican posibles bugs, malas prácticas
+  o violaciones de estilo.
+
+  TIPOS DE ANÁLISIS:
+  • Sintáctico: Errores de sintaxis (el compilador ya lo hace).
+  • Semántico: Uso incorrecto del lenguaje (variables sin init).
+  • De flujo: Valores que pueden llevar a comportamientos indefinidos.
+  • De estilo: Violaciones de guías de estilo (Google, LLVM).
+  • De seguridad: Vulnerabilidades potenciales (buffer overflow).
+
+  vs. ANÁLISIS DINÁMICO (Valgrind, Sanitizers):
+  • Estático: Antes de ejecutar, cubre todos los paths.
+  • Dinámico: Durante la ejecución, solo cubre paths recorridos.
+
+  IDEAL: Ambas herramientas combinadas.
+
+► 2. WARNINGS DEL COMPILADOR — LA PRIMERA LÍNEA DE DEFENSA
+
+  Los warnings del compilador son la forma más básica (y gratuita)
+  de análisis estático. Gcc y Clang tienen décadas de experiencia
+  en detectar código sospechoso.
+
+*/
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <memory>
+#include <cstring>
+#include <cstdio>
+#include <stdexcept>
+#include <algorithm>
+#include <map>
+#include <set>
+#include <functional>
+#include <optional>
+#include <variant>
+#include <any>
+#include <cstdint>
+#include <array>
+#include <cassert>
+
+//==============================================================================
+// EJEMPLO 1: WARNINGS QUE DEBES ACTIVAR SIEMPRE
+//==============================================================================
+
+/*
+  // Compilación con TODOS los warnings
+  g++ -Wall -Wextra -Wpedantic -Werror -Wshadow
+      -Wnon-virtual-dtor -Wold-style-cast -Wcast-align
+      -Wunused -Woverloaded-virtual -Wconversion
+      -Wsign-conversion -Wmisleading-indentation
+      -Wduplicated-cond -Wduplicated-branches
+      -Wlogical-op -Wnull-dereference -Wuseless-cast
+      -Wformat=2 -Wno-unused-parameter
+
+  FLAGS ESENCIALES:
+  • -Wall          → Activa warnings comunes.
+  • -Wextra        → Más warnings (no todos, el nombre engaña).
+  • -Wpedantic     → Rechaza extensiones no estándar.
+  • -Werror        → Trata warnings como errores (obligatorio en CI).
+  • -Wshadow       → Variable shadows otra en ámbito externo.
+  • -Wconversion   → Pérdida de datos en conversiones implícitas.
+*/
+
+// Ejemplos de código que activa warnings:
+
+void warning_shadow() {
+    int x = 10;
+    for (int i = 0; i < 5; ++i) {
+        int x = 20;  // -Wshadow: x oculta la variable externa
+        std::cout << x;
+    }
+}
+
+void warning_conversion() {
+    int grande = 100000;
+    short chico = grande;  // -Wconversion: posible pérdida de datos
+
+    double d = 3.14159;
+    int truncado = d;  // -Wconversion: truncamiento
+
+    // Corrección: cast explícito
+    short seguro = static_cast<short>(grande);
+}
+
+void warning_no_virtual_dtor() {
+    // Base sin destructor virtual
+    struct Base {
+        ~Base() {}  // -Wnon-virtual-dtor si se usa polimórficamente
+    };
+    struct Derivada : Base {
+        ~Derivada() {}
+    };
+    Base* ptr = new Derivada();
+    delete ptr;  // Undefined behavior: no llama ~Derivada()
+}
+
+//==============================================================================
+// EJEMPLO 2: CPPCHECK — EL ANALIZADOR POR EXCELENCIA
+//==============================================================================
+
+/*
+  cppcheck es un analizador estático específico para C/C++ que
+  detecta bugs que el compilador no ve.
+
+  INSTALACIÓN:
+  sudo apt install cppcheck        # Ubuntu/Debian
+  sudo pacman -S cppcheck          # Arch
+  brew install cppcheck            # macOS
+  winget install cppcheck          # Windows
+
+  USO BÁSICO:
+  cppcheck --enable=all --suppress=missingIncludeSystem .
+  cppcheck --enable=warning --error-exitcode=1 src/
+  cppcheck --enable=performance --enable=portability src/
+  cppcheck --enable=style --suppress=*:test/* src/
+
+  NIVELES DE GRAVEDAD:
+  • error        → Bug definitivo (buffer overflow, null pointer)
+  • warning      → Bug probable (memory leak, recurso no liberado)
+  • style        → Código no idiomático (funciones muy largas)
+  • performance  → Código lento (copias innecesarias)
+  • portability  → Problemas entre plataformas (tamaño de tipos)
+  • information  → Observaciones generales
+*/
+
+// Código con bugs que cppcheck detectaría:
+
+class GestorRecursos {
+public:
+    GestorRecursos() {
+        // cppcheck detecta: asignación en constructor sin init list
+        archivo_ = fopen("datos.txt", "r");
+        buffer_ = new char[1024];
+        // cppcheck: recurso adquirido pero no liberado en destructor
+    }
+
+    // Error: Falta destructor ~GestorRecursos()
+    // cppcheck: class 'GestorRecursos' does not have a destructor
+
+    void leer() {
+        if (archivo_) {
+            // cppcheck: no verificar fgets return
+            fgets(buffer_, 1024, archivo_);
+        }
+    }
+
+    // Error: Se permite copia pero hay recursos raw
+    // cppcheck: class has copy constructor but no operator=
+
+private:
+    FILE* archivo_;
+    char* buffer_;
+};
+
+// Corregido con RAII:
+
+class GestorRecursosRAII {
+public:
+    GestorRecursosRAII()
+        : archivo_(fopen("datos.txt", "r"))
+        , buffer_(std::make_unique<char[]>(1024)) {
+        if (!archivo_) {
+            throw std::runtime_error("No se pudo abrir archivo");
+        }
+    }
+
+    ~GestorRecursosRAII() {
+        if (archivo_) fclose(archivo_);
+    }
+
+    // No copiable (fstream no se copia)
+    GestorRecursosRAII(const GestorRecursosRAII&) = delete;
+    GestorRecursosRAII& operator=(const GestorRecursosRAII&) = delete;
+
+    // Movible
+    GestorRecursosRAII(GestorRecursosRAII&&) noexcept = default;
+    GestorRecursosRAII& operator=(GestorRecursosRAII&&) noexcept = default;
+
+    void leer() {
+        if (archivo_ && buffer_) {
+            if (!fgets(buffer_.get(), 1024, archivo_)) {
+                throw std::runtime_error("Error de lectura");
+            }
+        }
+    }
+
+private:
+    FILE* archivo_;
+    std::unique_ptr<char[]> buffer_;
+};
+
+//==============================================================================
+// EJEMPLO 3: BUGS CLÁSICOS DETECTADOS POR CPPCHECK
+//==============================================================================
+
+// --- Buffer overflow ---
+void cppcheck_buffer_overflow() {
+    char destino[10];
+    strcpy(destino, "Este texto es demasiado largo"); // cppcheck: buffer overflow
+    // Corrección: strncpy(destino, "texto", sizeof(destino)-1);
+}
+
+// --- Null pointer dereference ---
+void cppcheck_null_ptr(int* ptr) {
+    if (ptr == nullptr) {
+        *ptr = 42; // cppcheck: null pointer dereference
+    }
+}
+
+// --- Memory leak ---
+void cppcheck_memory_leak() {
+    int* datos = new int[100];
+    if (datos[0] == 0) {
+        return; // cppcheck: memory leak, no se libera datos
+    }
+    delete[] datos;
+}
+
+// --- Use after free ---
+void cppcheck_use_after_free() {
+    int* ptr = new int(42);
+    delete ptr;
+    *ptr = 10; // cppcheck: using pointer after free
+}
+
+// --- Variable no inicializada ---
+void cppcheck_uninit() {
+    int x;
+    if (x == 0) { // cppcheck: uninitialized variable
+        std::cout << "cero\n";
+    }
+}
+
+// --- Doble liberación ---
+void cppcheck_double_free() {
+    int* ptr = new int(10);
+    delete ptr;
+    delete ptr; // cppcheck: double free
+}
+
+// --- División por cero ---
+int cppcheck_div_cero(int a, int b) {
+    if (b == 0) {
+        return a / b; // cppcheck: division by zero (ya en el if!)
+    }
+    return a / b;
+}
+
+// --- Asignación en condicional ---
+void cppcheck_assign_in_cond() {
+    int x;
+    if (x = 5) { // cppcheck: assignment in condition, probablemente ==
+        std::cout << "x es 5\n";
+    }
+}
+
+// --- Stray semicolon ---
+void cppcheck_stray_semicolon() {
+    for (int i = 0; i < 10; ++i); // cppcheck: stray semicolon
+    {
+        std::cout << "Esto se ejecuta una vez!\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 4: CLANG-TIDY — EL ANALIZADOR MODERNO
+//==============================================================================
+
+/*
+  clang-tidy es parte del ecosistema LLVM. Ofrece checks más
+  avanzados que cppcheck, incluyendo modernización de código.
+
+  INSTALACIÓN:
+  sudo apt install clang-tidy     # Ubuntu/Debian
+  brew install llvm               # macOS (incluye clang-tidy)
+
+  USO BÁSICO:
+  clang-tidy archivo.cpp -- -std=c++20
+  clang-tidy --checks='modernize-*,readability-*' archivo.cpp
+  clang-tidy --fix archivo.cpp   # Aplica correcciones automáticas
+
+  ARCHIVO DE CONFIGURACIÓN (.clang-tidy):
+  clang-tidy --dump-config > .clang-tidy
+*/
+
+//==============================================================================
+// EJEMPLO 5: .clang-tidy — CONFIGURACIÓN COMPLETA
+//==============================================================================
+
+/*
+  --- .clang-tidy ---
+  Checks:
+    'clang-diagnostic-*',
+    'clang-analyzer-*',
+    'modernize-*',
+    'performance-*',
+    'readability-*',
+    'bugprone-*',
+    'cppcoreguidelines-*'
+
+  WarningsAsErrors: '*'
+  HeaderFilterRegex: '.*'
+  FormatStyle: file
+
+  CheckOptions:
+    readability-identifier-naming.VariableCase: camelBack
+    readability-identifier-naming.ClassCase: CamelCase
+    readability-identifier-naming.FunctionCase: camelBack
+    readability-identifier-naming.MemberCase: camelBack
+    readability-identifier-naming.MemberSuffix: '_'
+    readability-identifier-naming.ConstantCase: UPPER_CASE
+    modernize-use-default-member-init: true
+    modernize-use-auto: true
+    modernize-use-nullptr: true
+    modernize-use-override: true
+    performance-unnecessary-value-param: true
+*/
+
+// Código que clang-tidy mejoraría:
+
+class mal_estilo {
+public:
+    int valor;          // clang-tidy: member sin sufijo _
+    int getValor() {    // clang-tidy: función debería ser const
+        return valor;
+    }
+
+    // clang-tidy: usar nullptr en lugar de NULL
+    mal_estilo() : ptr(NULL) {}
+
+    // clang-tidy: usar override
+    virtual ~mal_estilo() {}
+
+    // clang-tidy: parámetro por copia innecesario
+    void setNombre(std::string nombre) {
+        nombre_ = nombre;
+    }
+
+private:
+    std::string nombre_;
+    int* ptr;
+};
+
+// Versión mejorada:
+
+class BuenEstilo {
+public:
+    explicit BuenEstilo(int valor = 0)
+        : valor_(valor), ptr_(nullptr) {}
+
+    int getValor() const { return valor_; }
+
+    void setNombre(const std::string& nombre) {
+        nombre_ = nombre;
+    }
+
+    virtual ~BuenEstilo() = default;
+
+private:
+    int valor_;
+    std::string nombre_;
+    std::unique_ptr<int> ptr_;
+};
+
+//==============================================================================
+// EJEMPLO 6: CHECKS ESENCIALES DE CLANG-TIDY
+//==============================================================================
+
+/*
+  modernize-*
+  -----------
+  • modernize-use-auto: Reemplazar tipos verbosos con auto.
+  • modernize-use-nullptr: Reemplazar NULL/0 con nullptr.
+  • modernize-use-override: Añadir override a funciones virtuales.
+  • modernize-use-default-member-init: Inicializar miembros in-class.
+  • modernize-use-emplace: Usar emplace_back en lugar de push_back.
+  • modernize-loop-convert: Convertir for tradicional a range-based.
+  • modernize-raw-string-literal: Usar raw strings para regex.
+  • modernize-return-braced-init-list: Devolver {} en lugar de make_pair.
+
+  performance-*
+  ------------
+  • performance-unnecessary-value-param: Parámetros que deberían ser const&.
+  • performance-move-const-arg: std::move en objeto const.
+  • performance-for-range-copy: Copia innecesaria en range-for.
+  • performance-implicit-conversion-in-loop: Conversiones en loops.
+
+  bugprone-*
+  ----------
+  • bugprone-suspicious-missing-comma: Saltos de línea sospechosos.
+  • bugprone-too-small-loop-variable: Loop variable muy pequeña.
+  • bugprone-integer-division: División entera asignada a float.
+  • bugprone-unused-raii: Objeto RAII no usado.
+  • bugprone-narrowing-conversions: Conversiones que pierden datos.
+
+  readability-*
+  ------------
+  • readability-identifier-naming: Forzar convención de nombres.
+  • readability-braces-around-statements: Exigir llaves siempre.
+  • readability-const-return-type: Devolver const no tiene sentido.
+  • readability-implicit-bool-conversion: Conversiones implícitas a bool.
+*/
+
+// --- modernize-use-auto ---
+void check_modernize_auto() {
+    // Antes:
+    std::vector<int> vec = {1, 2, 3};
+    std::vector<int>::iterator it = vec.begin();
+
+    // Después (clang-tidy --fix):
+    auto vec2 = std::vector{1, 2, 3};
+    auto it2 = vec2.begin();
+}
+
+// --- modernize-use-emplace ---
+void check_modernize_emplace() {
+    std::vector<std::pair<int, std::string>> v;
+
+    // Antes:
+    v.push_back(std::make_pair(1, "uno"));
+    v.push_back(std::pair<int, std::string>(2, "dos"));
+
+    // Después:
+    v.emplace_back(1, "uno");
+    v.emplace_back(2, "dos");
+}
+
+// --- performance-unnecessary-value-param ---
+void check_perf_value_param(std::string s) { // Warning: debería ser const std::string&
+    std::cout << s;
+}
+
+void check_perf_value_param_ok(const std::string& s) {
+    std::cout << s;
+}
+
+// --- bugprone-integer-division ---
+void check_bugprone_int_div() {
+    int a = 5, b = 2;
+    double resultado = a / b; // bugprone: división entera, resultado = 2.0
+    // Debería ser: double resultado = static_cast<double>(a) / b;
+}
+
+//==============================================================================
+// EJEMPLO 7: CLANG-TIDY EN CI/CD
+//==============================================================================
+
+/*
+  --- .github/workflows/static-analysis.yml ---
+  name: Static Analysis
+  on: [push, pull_request]
+  jobs:
+    cppcheck:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - run: sudo apt install cppcheck clang-tidy
+        - run: cppcheck --enable=all --error-exitcode=1 src/
+        - run: clang-tidy src/*.cpp -- -std=c++20
+
+  --- Makefile ---
+  .PHONY: static-analysis
+  static-analysis:
+    cppcheck --enable=warning,performance,portability \
+             --suppress=missingIncludeSystem \
+             --error-exitcode=1 \
+             --inline-suppr \
+             src/
+
+  .PHONY: lint
+  lint:
+    clang-tidy src/*.cpp -- -std=c++20 -Iinclude
+
+  .PHONY: tidy-fix
+  tidy-fix:
+    clang-tidy --fix src/*.cpp -- -std=c++20 -Iinclude
+*/
+
+//==============================================================================
+// EJEMPLO 8: SUPRIMIENDO FALSOS POSITIVOS
+//==============================================================================
+
+/*
+  A veces las herramientas de análisis estático generan alarmas
+  falsas. Es importante saber suprimirlas correctamente SIN
+  desactivar el check por completo.
+
+  --- cppcheck ---
+  // cppcheck-suppress nullPointerRedundantCheck
+  if (ptr && *ptr == 42) { ... }
+
+  // cppcheck-suppress memleak
+  int* p = new int[100];
+  // Lo liberamos en otro lugar intencionalmente
+
+  --- clang-tidy ---
+  // NOLINTNEXTLINE(performance-unnecessary-value-param)
+  void funcion(string s);
+
+  // NOLINTBEGIN(modernize-use-auto)
+  std::vector<int>::iterator it = v.begin();
+  // NOLINTEND(modernize-use-auto)
+*/
+
+//==============================================================================
+// EJEMPLO 9: WERROR — POLÍTICA DE TOLERANCIA CERO
+//==============================================================================
+
+/*
+  En proyectos profesionales, se recomienda -Werror para que
+  ningún warning llegue a producción.
+
+  // CMakeLists.txt
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wshadow -Wconversion")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wnon-virtual-dtor")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wold-style-cast")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Woverloaded-virtual")
+
+  add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+
+  // Excepciones controladas:
+  // -Wno-unused-parameter (parámetros sin usar en callbacks)
+  // -Wno-padded (estructuras con padding)
+*/
+
+//==============================================================================
+// EJEMPLO 10: ANÁLISIS ESTÁTICO CON IWYU
+//==============================================================================
+
+/*
+  IWYU (Include What You Use) es una herramienta de LLVM que
+  verifica que los #includes sean precisos.
+
+  #include <iostream>   // ← No se usa directamente
+  #include <vector>     // ← Se usa
+  #include <string>     // ← Se usa
+
+  std::vector<std::string> getNames();
+
+  // IWYU sugeriría: quitar <iostream>, añadir <vector> y <string>
+
+  INSTALACIÓN:
+  sudo apt install iwyu
+
+  USO:
+  include-what-you-use -std=c++20 archivo.cpp
+
+  INTEGRACIÓN CON CMAKE:
+  set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE "include-what-you-use")
+*/
+
+//==============================================================================
+// EJEMPLO 11: COMPARATIVA DE HERRAMIENTAS
+//==============================================================================
+
+/*
+  HERRAMIENTA     | ALCANCE           | VELOCIDAD | FALSOS +
+  ----------------+-------------------+-----------+----------
+  Compiler warns  | Sintaxis, básico  | Instantáneo  | Muy pocos
+  cppcheck        | Bugs, estilo      | Rápido    | Algunos
+  clang-tidy      | Bugs, moderno     | Medio     | Pocos
+  PVS-Studio      | Bugs, seguridad   | Medio     | Muy pocos
+  Coverity        | Profundo           | Lento     | Pocos
+  SonarQube       | Todo              | Lento     | Variable
+  IWYU            | Includes          | Rápido    | Muy pocos
+
+  RECOMENDACIÓN:
+  • Proyecto pequeño: g++ -Wall -Wextra + cppcheck
+  • Proyecto mediano: + clang-tidy
+  • Proyecto grande/profesional: + SonarQube o PVS-Studio
+*/
+
+//==============================================================================
+// EJEMPLO 12: CREANDO UN CHECK PERSONALIZADO DE CLANG-TIDY
+//==============================================================================
+
+/*
+  clang-tidy permite escribir checks personalizados usando LibTooling.
+
+  // MiCheck.cpp
+  class MiCheck : public ClangTidyCheck {
+  public:
+      MiCheck(StringRef Name, ClangTidyContext* Context)
+          : ClangTidyCheck(Name, Context) {}
+
+      void registerMatchers(MatchFinder* Finder) override {
+          Finder->addMatcher(
+              varDecl(hasType(isInteger())).bind("intVar"), this);
+      }
+
+      void check(const MatchFinder::MatchResult& Result) override {
+          const auto* Var = Result.Nodes.getNodeAs<VarDecl>("intVar");
+          if (Var && Var->getName().startswith("m_")) {
+              diag(Var->getLocation(),
+                   "Las variables miembro deben terminar con _, "
+                   "no empezar con m_");
+          }
+      }
+  };
+*/
+
+//==============================================================================
+// EJEMPLO 13: EJEMPLO COMPLETO — INTEGRACIÓN EN PROYECTO
+//==============================================================================
+
+/*
+  Supongamos un proyecto con esta estructura:
+
+  proyecto/
+  ├── src/
+  │   ├── main.cpp
+  │   └── utils.cpp
+  ├── include/
+  │   └── utils.h
+  ├── .clang-tidy
+  ├── .cppcheck-suppressions
+  └── Makefile
+
+  --- Makefile ---
+  CXX = g++
+  CXXFLAGS = -std=c++20 -Wall -Wextra -Wpedantic -Werror
+  CXXFLAGS += -Wshadow -Wconversion -Wnon-virtual-dtor
+  INCLUDES = -Iinclude
+
+  all: programa
+
+  programa: src/main.o src/utils.o
+      $(CXX) $(CXXFLAGS) -o $@ $^
+
+  %.o: %.cpp
+      $(CXX) $(CXXFLAGS) $(INCLUDES) -c -o $@ $<
+
+  static-analysis:
+      cppcheck --enable=all --suppress=missingIncludeSystem \
+               --error-exitcode=1 --inline-suppr \
+               --suppressions-list=.cppcheck-suppressions \
+               src/ include/
+      clang-tidy src/*.cpp -- $(CXXFLAGS) $(INCLUDES)
+
+  .PHONY: all static-analysis
+
+  --- .cppcheck-suppressions ---
+  // Suprimir falsos positivos conocidos
+  missingIncludeSystem
+  *:tests/*
+  unusedFunction:*test*
+*/
+
+//==============================================================================
+// EJEMPLO 14: SANITIZERS — ANÁLISIS DINÁMICO COMPLEMENTARIO
+//==============================================================================
+
+/*
+  Los sanitizers son análisis DINÁMICO (en ejecución), pero
+  complementan perfectamente al análisis estático.
+
+  AddressSanitizer (ASan):
+  g++ -fsanitize=address -g -O1 programa.cpp
+
+  UndefinedBehaviorSanitizer (UBSan):
+  g++ -fsanitize=undefined -g -O1 programa.cpp
+
+  ThreadSanitizer (TSan):
+  g++ -fsanitize=thread -g -O1 programa.cpp
+
+  MemorySanitizer (MSan):
+  g++ -fsanitize=memory -g -O1 programa.cpp
+
+  LeakSanitizer (LSan):
+  g++ -fsanitize=leak -g -O1 programa.cpp
+
+  COMBINACIÓN RECOMENDADA (más común):
+  g++ -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
+*/
+
+class ObjetoConBug {
+public:
+    ObjetoConBug() : datos(new int[100]) {}
+
+    // BUG: Falta destructor, copy constructor, copy assignment
+    // ASan detectará memory leak
+    // UBSan no dirá nada aquí
+
+    void escribir(int idx, int valor) {
+        datos[idx] = valor; // ASan detecta si idx < 0 o idx >= 100
+    }
+
+private:
+    int* datos;
+};
+
+//==============================================================================
+// EJEMPLO 15: GUÍA RÁPIDA DE REFERENCIA
+//==============================================================================
+
+/*
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │              GUÍA RÁPIDA DE ANÁLISIS ESTÁTICO                      │
+  ├─────────────────────────────────────────────────────────────────────┤
+  │                                                                     │
+  │  1. SIEMPRE compila con:                                           │
+  │     g++ -Wall -Wextra -Wpedantic -Werror                           │
+  │                                                                     │
+  │  2. Añade según el proyecto:                                       │
+  │     -Wshadow -Wconversion -Wnon-virtual-dtor                       │
+  │     -Wold-style-cast -Woverloaded-virtual                          │
+  │                                                                     │
+  │  3. cppcheck (rápido, diario):                                     │
+  │     cppcheck --enable=warning,performance,portability src/          │
+  │                                                                     │
+  │  4. clang-tidy (profundo, semanal):                                │
+  │     clang-tidy src/*.cpp -- -std=c++20 -Iinclude                   │
+  │                                                                     │
+  │  5. Sanitizers (tests):                                            │
+  │     g++ -fsanitize=address,undefined programa.cpp                   │
+  │                                                                     │
+  │  6. CI/CD: ERROR si hay warnings:                                  │
+  │     cppcheck --error-exitcode=1 ...                                │
+  │     clang-tidy --warnings-as-errors='*' ...                        │
+  │                                                                     │
+  │  7. Suprime solo cuando es necesario:                              │
+  │     // NOLINTNEXTLINE                                               │
+  │     // cppcheck-suppress nombre                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+*/
+
+int main_ejemplo_74() {
+    // Ejemplos de código que las herramientas detectarían
+    std::cout << "Análisis estático en acción\n";
+
+    // -Wsign-conversion
+    unsigned int u = 10;
+    int s = -5;
+    // auto r = u + s; // -Wsign-conversion
+
+    // -Wunused (variable no usada)
+    int no_usada = 42; // Warning
+
+    // clang-tidy: modernize-use-auto
+    std::map<int, std::string> mapa;
+    mapa[1] = "uno";
+
+    return 0;
+}
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 74:
+
+  1. El análisis estático detecta bugs SIN ejecutar el programa,
+     complementando al testing y al análisis dinámico.
+
+  2. Warnings del compilador: -Wall -Wextra -Wpedantic -Werror
+     son la base. Añade -Wshadow, -Wconversion, -Wnon-virtual-dtor.
+
+  3. cppcheck: Rápido y efectivo para bugs clásicos: buffer overflow,
+     null pointers, memory leaks, variables sin inicializar.
+
+  4. clang-tidy: Más profundo, con checks de modernización,
+     rendimiento, legibilidad y estilo. Configurable con .clang-tidy.
+
+  5. Integración en CI/CD: Usa --error-exitcode=1 para que el build
+     falle si hay issues. --fix para correcciones automáticas.
+
+  6. Suprimir falsos positivos es necesario, pero hazlo con
+     precisión: // NOLINT, // cppcheck-suppress, no globalmente.
+
+  7. Complementa con sanitizers (-fsanitize=address,undefined)
+     para análisis dinámico durante las pruebas.
+
+  8. IWYU (Include What You Use) mantiene los #includes precisos.
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Configurar un proyecto con análisis estático
+  ---------------------------------------------------------
+  Crea un proyecto mínimo con:
+  • 3 archivos .cpp y 2 headers
+  • Makefile con -Wall -Wextra -Wpedantic -Werror
+  • Target static-analysis con cppcheck
+  • Target lint con clang-tidy
+  • .clang-tidy con 10 checks activados
+
+  EJERCICIO 2: Analizar y corregir código legacy
+  ----------------------------------------------
+  Dado el siguiente código, ejecuta cppcheck y clang-tidy,
+  corrige todos los issues encontrados:
+
+  class Data {
+  public:
+    Data(int s) : size(s) { data = new int[s]; }
+    ~Data() {}
+    int get(int i) { return data[i]; }
+  private:
+    int* data;
+    int size;
+  };
+
+  EJERCICIO 3: Crear un .clang-tidy personalizado
+  ------------------------------------------------
+  Configura .clang-tidy para:
+  • Naming: variables miembro con _, clases CamelCase, funciones camelBack
+  • Prohibir malloc/free (usar new/delete o smart pointers)
+  • Exigir override en todas las virtuales
+  • Marcar como error el uso de NULL
+
+  EJERCICIO 4: Suprimir falsos positivos
+  ---------------------------------------
+  Escribe 3 ejemplos donde cppcheck o clang-tidy den falsos
+  positivos y muetsra cómo suprimirlos correctamente.
+
+  EJERCICIO 5: Integrar en GitHub Actions
+  ----------------------------------------
+  Crea un workflow de GitHub Actions que ejecute:
+  • cppcheck --enable=all --error-exitcode=1
+  • clang-tidy --warnings-as-errors='*'
+  • Compilación con -Werror
+  • Tests con -fsanitize=address,undefined
+
+  EJERCICIO 6: Comparar herramientas
+  ----------------------------------
+  Toma un archivo .cpp con 10 bugs intencionales y ejecuta:
+  • g++ -Wall -Wextra (¿cuántos detecta?)
+  • cppcheck --enable=all (¿cuántos?)
+  • clang-tidy (¿cuántos?)
+  • -fsanitize=address (¿cuántos al ejecutar?)
+  Crea una tabla comparativa.
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿cppcheck o clang-tidy? ¿Cuál es mejor?
+  R: Ambos. cppcheck es más rápido y detecta bugs clásicos.
+     clang-tidy es más moderno y configurable. Úsalos juntos.
+
+  P: ¿Debo usar -Werror en producción?
+  R: Sí, si tu base de código está limpia. Si hay warnings que no
+     puedes arreglar, suprímelos específicamente, no quites -Werror.
+
+  P: Los sanitizers ya detectan bugs, ¿necesito análisis estático?
+  R: Sí. El análisis estático cubre TODOS los paths, los sanitizers
+     solo los que se ejecutan. Se complementan.
+
+  P: ¿Cómo integro esto en un proyecto existente con miles de warnings?
+  R: Gradualmente. Empieza con --suppress para ignorar los existentes
+     y --error-exitcode=1 para que los NUEVOS fallen. Limpia de a poco.
+
+  P: clang-tidy es muy lento, ¿cómo acelero?
+  R: Usa -p build/ para pasar el compile_commands.json. Limita los
+     checks a los que necesitas. No analices archivos generados.
+
+  P: ¿Qué hago con los falsos positivos?
+  R: Suprímelos LOCALMENTE con // NOLINT o // cppcheck-suppress.
+     Nunca desactives un check globalmente por un falso positivo.
+
+  P: ¿Funciona con C++20 modules?
+  R: cppcheck tiene soporte experimental. clang-tidy funciona mejor
+     con módulos de Clang. Es un área en evolución.
+
+  P: ¿Qué es MISRA y cómo se relaciona?
+  R: MISRA es un conjunto de reglas para C++ crítico (automoción,
+     aviación). cppcheck y clang-tidy pueden verificar subsets de MISRA.
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 74                ║
+  ║        "EL GUARDIÁN DEL CÓDIGO"                            ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Tu empresa ha heredado un código base de 500,000 líneas de C++
+  escrito durante 15 años por docenas de desarrolladores. Está
+  lleno de bugs, estilo inconsistente y prácticas inseguras.
+
+  Te han contratado como "Guardián del Código" para implementar
+  un sistema de análisis estático que evite que el código siga
+  degenerándose.
+
+  Requisitos del desafío:
+  1. Diseña una estrategia de implementación gradual:
+     - Fase 1: Semana 1 (qué herramientas, qué checks)
+     - Fase 2: Mes 1 (cómo limpiar lo existente)
+     - Fase 3: Mes 3 (cómo prevenir nuevo código malo)
+
+  2. Crea los archivos de configuración:
+     - .clang-tidy completo
+     - .cppcheck-suppressions
+     - Makefile con targets de análisis
+     - GitHub Actions workflow
+
+  3. Escribe un script que:
+     - Analice un directorio y genere un reporte HTML
+     - Clasifique issues por severidad
+     - Sugiera correcciones automáticas donde sea posible
+
+  4. Define una política de equipo:
+     - ¿Qué pasa si alguien introduce un warning?
+     - ¿Cómo se manejan las excepciones?
+     - ¿Cada cuánto se ejecuta el análisis completo?
+
+  Criterios:
+  • Estrategia realista y aplicable (30 pts)
+  • Configuraciones completas y correctas (30 pts)
+  • Política de equipo clara y justa (20 pts)
+  • Script funcional (20 pts)
+
+  ¡La calidad del código de tu empresa está en tus manos!
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 74: cppcheck y Análisis Estático.
+
+  Ahora tienes el poder de detectar cientos de bugs potenciales
+  antes de que el código llegue a producción. En un proyecto
+  profesional, el análisis estático es tan importante como los tests.
+
+  Recuerda: las herramientas te ayudan, pero el criterio final
+  es tuyo. No todo warning es un bug, pero todo warning merece
+  ser entendido.
+
+  En el próximo capítulo exploraremos la optimización de código
+  C++: desde -O2/-O3 hasta constexpr, move semantics y datos
+  cache-friendly. Harás que tu código vuele.
+
+  "El mejor código no es el que corre más rápido, sino el que
+   no necesita correr porque el bug nunca existió."
+
+  ¡Nos vemos en el Capítulo 75!
+
+================================================================================
+  FIN DEL CAPÍTULO 74 — CPPCHECK Y ANÁLISIS ESTÁTICO
+  PRÓXIMO CAPÍTULO: OPTIMIZACIÓN (Capítulo 75)
+================================================================================

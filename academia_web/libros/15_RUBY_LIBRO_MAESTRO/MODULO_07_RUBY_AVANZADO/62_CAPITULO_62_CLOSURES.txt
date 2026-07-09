@@ -1,0 +1,1139 @@
+===============================================================================
+                RUBY MASTER BOOK · MÓDULO VII · RUBY AVANZADO
+===============================================================================
+  CAPÍTULO 62: CLOSURES
+===============================================================================
+
+   ██████╗██╗      ██████╗ ███████╗██╗   ██╗██████╗ ███████╗
+  ██╔════╝██║     ██╔═══██╗██╔════╝██║   ██║██╔══██╗██╔════╝
+  ██║     ██║     ██║   ██║███████╗██║   ██║██████╔╝███████╗
+  ██║     ██║     ██║   ██║╚════██║██║   ██║██╔══██╗╚════██║
+  ╚██████╗███████╗╚██████╔╝███████║╚██████╔╝██║  ██║███████║
+   ╚═════╝╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝
+
+================================================================================
+                        BIENVENIDA AL CAPÍTULO 62
+================================================================================
+
+  Bienvenido al corazón del comportamiento funcional de Ruby. En este
+  capítulo desentrañaremos el misterio de los closures: esas criaturas
+  de código que viajan en el tiempo, recordando variables de ámbitos
+  que ya desaparecieron.
+
+  Un closure (clausura o cerradura) es una función que captura y retiene
+  las variables del entorno léxico donde fue definida, incluso cuando
+  ese entorno ya no existe. En Ruby, cada bloque, proc y lambda es un
+  closure. Esto significa que cada vez que escribes un bloque, estás
+  creando una pequeña máquina del tiempo que preserva el estado.
+
+  Entender los closures es entender cómo Ruby gestiona la memoria, el
+  ámbito y la continuidad del estado. Es el concepto que une a los
+  bloques, los procs, los lambdas y las binding.
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+  "Un closure es una función que lleva consigo el equipaje de su pasado."
+  — Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✓ Comprender qué es un closure y cómo funciona en Ruby.
+  ✓ Identificar cómo los bloques, procs y lambdas capturan variables.
+  ✓ Analizar el objeto Binding y su relación con los closures.
+  ✓ Explorar el ámbito léxico (lexical scope) vs ámbito dinámico.
+  ✓ Implementar factories de funciones usando closures.
+  ✓ Usar closures para crear datos privados y encapsulación.
+  ✓ Identificar problemas de memoria con closures.
+  ✓ Aplicar closures en patrones de diseño reales.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+-------------------------------------------------------------------------------
+  1. ¿QUÉ ES UN CLOSURE?
+-------------------------------------------------------------------------------
+
+  Un closure es una función que:
+    1. Es un objeto de primera clase (se puede asignar, pasar, devolver).
+    2. Captura el entorno léxico donde fue definida.
+    3. Mantiene acceso a las variables de ese entorno aunque el ámbito
+       original haya terminado.
+
+  En Ruby, estos elementos forman closures:
+    • Bloques ({ } o do...end)
+    • Procs (Proc.new)
+    • Lambdas (lambda, ->)
+    • Métodos bindeados (method(:foo).to_proc)
+
+  Todo closure en Ruby contiene:
+    • El código ejecutable (el bloque en sí).
+    • Un binding (el entorno de variables capturadas).
+
+-------------------------------------------------------------------------------
+  2. EL OBJETO BINDING
+-------------------------------------------------------------------------------
+
+  Binding es un objeto que encapsula el contexto de ejecución en un
+  punto dado del programa. Contiene:
+    • Variables locales
+    • Variables de instancia
+    • Variables de clase
+    • self (el objeto actual)
+    • El contador de línea, archivo, etc.
+
+  Podemos obtener un binding explícito:
+
+    def obtener_binding
+      x = 10
+      y = 20
+      binding
+    end
+
+    b = obtener_binding
+    puts b.local_variable_get(:x)  # => 10
+    puts b.local_variable_get(:y)  # => 20
+
+  Los closures capturan el binding implícitamente.
+
+-------------------------------------------------------------------------------
+  3. CAPTURA DE VARIABLES LOCALES
+-------------------------------------------------------------------------------
+
+  El ejemplo más básico de closure:
+
+    def crear_saludo(nombre)
+      -> { "Hola, #{nombre}!" }
+    end
+
+    saludo = crear_saludo("Ana")
+    puts saludo.call  # => "Hola, Ana!"
+
+  La variable nombre fue parámetro de crear_saludo. Cuando la función
+  termina, nombre debería desaparecer, pero el lambda la capturó y la
+  mantiene viva.
+
+  Esto funciona porque el lambda retiene una referencia al binding
+  donde nombre existe.
+
+-------------------------------------------------------------------------------
+  4. COMPARTIENDO ÁMBITO
+-------------------------------------------------------------------------------
+
+  Múltiples closures pueden capturar el mismo ámbito:
+
+    def crear_contadores
+      contador = 0
+      [
+        -> { contador += 1 },
+        -> { contador -= 1 },
+        -> { contador }
+      ]
+    end
+
+    inc, dec, val = crear_contadores
+    puts inc.call  # => 1
+    puts inc.call  # => 2
+    puts dec.call  # => 1
+    puts val.call  # => 1
+
+  Los tres lambdas comparten la misma variable contador.
+
+-------------------------------------------------------------------------------
+  5. CLOSURES CON BLOQUES
+-------------------------------------------------------------------------------
+
+  Los bloques también son closures:
+
+    def ejecutar_con_contexto
+      mensaje = "dentro del método"
+      yield
+    end
+
+    mensaje = "fuera del método"
+    ejecutar_con_contexto { puts mensaje }
+    # => "fuera del método"
+
+  El bloque captura la variable mensaje del ámbito donde fue definido
+  (el ámbito global), no del ámbito donde se ejecuta (dentro del método).
+
+-------------------------------------------------------------------------------
+  6. PELIGRO: VARIABLES COMPARTIDAS EN ITERADORES
+-------------------------------------------------------------------------------
+
+  Un problema clásico con closures en bucles:
+
+    lambdas = []
+    (1..5).each do |n|
+      lambdas << -> { n }
+    end
+
+    puts lambdas.map(&:call).inspect
+    # => [1, 2, 3, 4, 5] (correcto, each crea un nuevo binding)
+
+    # Pero con while:
+    lambdas2 = []
+    i = 0
+    while i < 5
+      lambdas2 << -> { i }
+      i += 1
+    end
+
+    puts lambdas2.map(&:call).inspect
+    # => [5, 5, 5, 5, 5] (todos apuntan a la misma i)
+
+  En el while, todos los lambdas capturan la misma variable i, que al
+  final vale 5. En each, cada iteración tiene su propio binding.
+
+-------------------------------------------------------------------------------
+  7. CLOSURES Y ENCAPSULACIÓN (DATOS PRIVADOS)
+-------------------------------------------------------------------------------
+
+  Podemos usar closures para crear datos privados sin clases:
+
+    def crear_banco(saldo_inicial)
+      saldo = saldo_inicial
+      {
+        depositar: ->(monto) { saldo += monto },
+        retirar:  ->(monto) { saldo -= monto if saldo >= monto },
+        saldo:    -> { saldo }
+      }
+    end
+
+    cuenta = crear_banco(1000)
+    puts cuenta[:saldo].call        # => 1000
+    cuenta[:depositar].call(500)
+    puts cuenta[:saldo].call        # => 1500
+
+  La variable saldo es inaccesible desde fuera, solo modificable a
+  través de los lambdas.
+
+-------------------------------------------------------------------------------
+  8. FACTORY DE FUNCIONES CON CLOSURES
+-------------------------------------------------------------------------------
+
+  Los closures permiten crear fábricas de funciones configuradas:
+
+    def crear_multiplicador(factor)
+      ->(n) { n * factor }
+    end
+
+    doblar  = crear_multiplicador(2)
+    triplicar = crear_multiplicador(3)
+
+    puts doblar.call(10)     # => 20
+    puts triplicar.call(10)  # => 30
+
+  Cada multiplicador captura su propio factor.
+
+-------------------------------------------------------------------------------
+  9. CLOSURES CON VARIABLES DE INSTANCIA Y self
+-------------------------------------------------------------------------------
+
+  Los closures también capturan self:
+
+    class Reloj
+      attr_accessor :formato
+
+      def initialize
+        @formato = "%H:%M:%S"
+      end
+
+      def crear_tick
+        -> { Time.now.strftime(@formato) }
+      end
+    end
+
+    reloj = Reloj.new
+    tick = reloj.crear_tick
+    puts tick.call  # => "14:30:22"
+
+  El closure captura la referencia al objeto reloj (self), por lo que
+  @formato se resuelve en el contexto del objeto.
+
+-------------------------------------------------------------------------------
+  10. BINDING EXPLÍCITO CON eval
+-------------------------------------------------------------------------------
+
+  Podemos usar binding con eval para ejecutar código en un contexto:
+
+    def contexto_ejemplo
+      secreto = 42
+      binding
+    end
+
+    b = contexto_ejemplo
+    puts eval("secreto", b)  # => 42
+
+  Esto es extremadamente poderoso y peligroso. Es la base de las DSL
+  y también de posibles vulnerabilidades de seguridad.
+
+-------------------------------------------------------------------------------
+  11. PROC.new Y BINDING
+-------------------------------------------------------------------------------
+
+  Proc.new también tiene un binding, accesible con el método binding:
+
+    def crear_proc_con_binding
+      x = 100
+      p = Proc.new { x }
+      [p, p.binding]
+    end
+
+    proc_obj, bind = crear_proc_con_binding
+    puts proc_obj.call      # => 100
+    puts bind.local_variable_get(:x)  # => 100
+    bind.local_variable_set(:x, 999)
+    puts proc_obj.call      # => 999
+
+  El binding de un proc permite inspeccionar y modificar sus variables.
+
+-------------------------------------------------------------------------------
+  12. CLOSURES Y LAZY EVALUATION
+-------------------------------------------------------------------------------
+
+  Podemos usar closures para evaluación perezosa:
+
+    def lazy_reader(archivo)
+      contenido = nil
+      -> {
+        contenido ||= File.read(archivo)
+        contenido
+      }
+    end
+
+    reader = lazy_reader("/etc/hostname")
+    puts reader.call  # Lee el archivo solo aquí
+
+  El archivo se lee solo en la primera llamada, luego se cachea.
+
+-------------------------------------------------------------------------------
+  13. CLOSURES EN CALLBACKS
+-------------------------------------------------------------------------------
+
+  Los closures son ideales para callbacks:
+
+    class Boton
+      attr_reader :accion
+
+      def initialize(&bloque)
+        @accion = bloque
+      end
+
+      def presionar
+        @accion.call
+      end
+    end
+
+    usuario = "admin"
+    boton = Boton.new { puts "Ejecutando como #{usuario}" }
+    boton.presionar
+    # => "Ejecutando como admin"
+
+-------------------------------------------------------------------------------
+  14. CLOSURES EN MÉTODOS DINÁMICOS
+-------------------------------------------------------------------------------
+
+  Los closures permiten crear métodos dinámicos con estado:
+
+    class Cache
+      def initialize
+        @cache = {}
+      end
+
+      def definir_calculadora(nombre, &bloque)
+        define_method(nombre) do |*args|
+          clave = [nombre, *args]
+          if @cache.key?(clave)
+            @cache[clave]
+          else
+            @cache[clave] = bloque.call(*args)
+          end
+        end
+      end
+    end
+
+    calc = Cache.new
+    calc.definir_calculadora(:fib) do |n|
+      n <= 1 ? n : calc.fib(n-1) + calc.fib(n-2)
+    end
+
+    puts calc.fib(40)  # Rápido gracias al cache
+
+-------------------------------------------------------------------------------
+  15. CLOSURES Y EL CICLO DE VIDA DE OBJETOS
+-------------------------------------------------------------------------------
+
+  Los closures pueden mantener objetos vivos en memoria:
+
+    def crear_referencia
+      objeto_grande = "X" * 10_000_000
+      -> { puts objeto_grande.length }
+    end
+
+    ref = crear_referencia
+    # El string de 10MB sigue en memoria porque ref lo captura
+    ref.call  # 10000000
+
+  Esto puede causar fugas de memoria si no se gestiona adecuadamente.
+  Para liberar, asigna nil al closure cuando ya no lo necesites.
+
+-------------------------------------------------------------------------------
+  16. CLOSURES Y THREADS
+-------------------------------------------------------------------------------
+
+  Los closures son seguros para pasar entre hilos:
+
+    contador = 0
+    mutex = Mutex.new
+
+    tareas = 10.times.map do
+      Thread.new do
+        1000.times do
+          mutex.synchronize { contador += 1 }
+        end
+      end
+    end
+
+    tareas.each(&:join)
+    puts contador  # => 10000
+
+  El closure captura contador y mutex del ámbito exterior.
+
+-------------------------------------------------------------------------------
+  17. COMPARATIVA: CLOSURES EN DIFERENTES LENGUAJES
+-------------------------------------------------------------------------------
+
+  Ruby:  ->(x) { x * factor }
+  JS:    (x) => x * factor
+  Python: lambda x: x * factor
+  C#:    x => x * factor
+  Kotlin: { x -> x * factor }
+
+  En todos los casos, factor se captura del entorno léxico.
+
+-------------------------------------------------------------------------------
+  18. DEEP DIVE: CÓMO IMPLEMENTA RUBY LOS CLOSURES
+-------------------------------------------------------------------------------
+
+  En la máquina virtual YARV (Yet Another Ruby VM):
+    1. Cuando se compila un bloque/proc/lambda, YARV registra las
+       variables locales que necesita capturar.
+    2. Se crea un objeto especial (un "env" o entorno) que contiene
+       los valores de esas variables.
+    3. El bloque compilado contiene una referencia a este entorno.
+    4. Si el bloque es un Proc, se empaqueta en un objeto Proc con
+       el entorno y el puntero al código compilado.
+
+  Las variables capturadas se almacenan en el heap, no en la pila,
+  lo que permite que sobrevivan a su ámbito original.
+
+-------------------------------------------------------------------------------
+  19. CLOSURES Y PATRONES DE DISEÑO
+-------------------------------------------------------------------------------
+
+  Strategy Pattern con closures:
+
+    class Ordenador
+      def ordenar(lista, &estrategia)
+        estrategia.call(lista)
+      end
+    end
+
+    datos = [3, 1, 4, 1, 5, 9, 2, 6]
+    ord = Ordenador.new
+
+    ascendente = ->(arr) { arr.sort }
+    descendente = ->(arr) { arr.sort.reverse }
+
+    puts ord.ordenar(datos, &ascendente).inspect
+    puts ord.ordenar(datos, &descendente).inspect
+
+  Command Pattern con closures:
+
+    class Comando
+      def ejecutar(&accion)
+        @historial ||= []
+        resultado = accion.call
+        @historial << accion
+        resultado
+      end
+
+      def deshacer
+        # Implementación simplificada
+      end
+    end
+
+-------------------------------------------------------------------------------
+  20. BUENAS PRÁCTICAS CON CLOSURES
+-------------------------------------------------------------------------------
+
+  • Los closures son excelentes para encapsular estado sin clases.
+  • Ten cuidado con closures en bucles (especialmente while/for).
+  • Documenta qué variables captura cada closure.
+  • Libera referencias grandes si el closure vive mucho tiempo.
+  • Prefiere lambdas sobre procs para closures predecibles.
+  • Usa binding solo para metaprogramación avanzada y con precaución.
+  • No abuses: un closure excesivamente complejo es difícil de depurar.
+
+-------------------------------------------------------------------------------
+  CÓDIGO COMPLETO DE EJEMPLO
+-------------------------------------------------------------------------------
+
+```ruby
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# =============================================================================
+# CAPÍTULO 62: CLOSURES
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. CLOSURE BÁSICO
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "1. CLOSURE BÁSICO"
+puts "=" * 60
+
+def crear_saludo(nombre)
+  -> { "Hola, #{nombre}!" }
+end
+
+saludo = crear_saludo("Ana")
+puts saludo.call
+
+# ---------------------------------------------------------------------------
+# 2. EL OBJETO BINDING
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "2. BINDING"
+puts "=" * 60
+
+def crear_binding
+  x = 10
+  y = 20
+  binding
+end
+
+b = crear_binding
+puts "x = #{b.local_variable_get(:x)}"
+puts "y = #{b.local_variable_get(:y)}"
+puts "eval: #{eval('x + y', b)}"
+
+# ---------------------------------------------------------------------------
+# 3. CAPTURA DE VARIABLES LOCALES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "3. CAPTURA DE VARIABLES"
+puts "=" * 60
+
+def crear_captura
+  mensaje_secreto = "secreto: 42"
+  [
+    -> { mensaje_secreto },
+    ->(nuevo) { mensaje_secreto = nuevo }
+  ]
+end
+
+leer, escribir = crear_captura
+puts leer.call
+escribir.call("nuevo secreto: 99")
+puts leer.call
+
+# ---------------------------------------------------------------------------
+# 4. ÁMBITO COMPARTIDO
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "4. ÁMBITO COMPARTIDO"
+puts "=" * 60
+
+def crear_operaciones
+  valor = 0
+  {
+    inc: ->(n) { valor += n },
+    dec: ->(n) { valor -= n },
+    val: -> { valor }
+  }
+end
+
+ops = crear_operaciones
+ops[:inc].call(10)
+ops[:inc].call(5)
+ops[:dec].call(3)
+puts "Valor final: #{ops[:val].call}"
+
+# ---------------------------------------------------------------------------
+# 5. CLOSURES CON BLOQUES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "5. CLOSURES CON BLOQUES"
+puts "=" * 60
+
+def ejecutar_bloque
+  mensaje_local = "DENTRO del método"
+  yield
+end
+
+mensaje_externo = "FUERA del método"
+ejecutar_bloque { puts "El bloque ve: #{mensaje_externo}" }
+
+# ---------------------------------------------------------------------------
+# 6. PELIGRO: VARIABLES EN BUCLES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "6. VARIABLES EN BUCLES"
+puts "=" * 60
+
+# Correcto con each
+lambdas1 = []
+(1..3).each { |n| lambdas1 << -> { n } }
+puts "each: #{lambdas1.map(&:call).inspect}"
+
+# Problema con while
+lambdas2 = []
+i = 0
+while i < 3
+  lambdas2 << -> { i }
+  i += 1
+end
+puts "while: #{lambdas2.map(&:call).inspect}"
+
+# Solución: crear un nuevo binding por iteración
+lambdas3 = []
+j = 0
+while j < 3
+  lambdas3 << ->(v = j) { v }
+  j += 1
+end
+puts "while fix: #{lambdas3.map(&:call).inspect}"
+
+# ---------------------------------------------------------------------------
+# 7. ENCAPSULACIÓN CON CLOSURES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "7. ENCAPSULACIÓN"
+puts "=" * 60
+
+def crear_contador_seguro(inicial = 0)
+  count = inicial
+  {
+    up:   -> { count += 1 },
+    down: -> { count -= 1 },
+    val:  -> { count },
+    reset: ->(v = 0) { count = v }
+  }
+end
+
+c = crear_contador_seguro(100)
+c[:up].call
+c[:up].call
+c[:down].call
+puts "Contador: #{c[:val].call}"
+c[:reset].call(0)
+puts "Reseteado: #{c[:val].call}"
+
+# ---------------------------------------------------------------------------
+# 8. FACTORY DE FUNCIONES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "8. FACTORY DE FUNCIONES"
+puts "=" * 60
+
+def crear_potencia(exponente)
+  ->(base) { base ** exponente }
+end
+
+cuadrado   = crear_potencia(2)
+cubo       = crear_potencia(3)
+pot_4      = crear_potencia(4)
+
+puts "2^2 = #{cuadrado.call(2)}"
+puts "3^3 = #{cubo.call(3)}"
+puts "5^4 = #{pot_4.call(5)}"
+
+# ---------------------------------------------------------------------------
+# 9. CLOSURES CON self
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "9. CLOSURES CON self"
+puts "=" * 60
+
+class CajaFuerte
+  def initialize(codigo, contenido)
+    @codigo = codigo
+    @contenido = contenido
+  end
+
+  def crear_acceso(codigo_ingresado)
+    if codigo_ingresado == @codigo
+      -> { "Contenido: #{@contenido}" }
+    else
+      -> { "Acceso denegado" }
+    end
+  end
+end
+
+caja = CajaFuerte.new(1234, "Tesoro escondido")
+acceso = caja.crear_acceso(1234)
+puts acceso.call
+acceso_malo = caja.crear_acceso(0000)
+puts acceso_malo.call
+
+# ---------------------------------------------------------------------------
+# 10. MÚLTIPLES CLOSURES MISMA VARIABLE
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "10. MÚLTIPLES CLOSURES"
+puts "=" * 60
+
+def crear_sistema
+  eventos = []
+  {
+    registrar: ->(ev) { eventos << ev },
+    eventos:   -> { eventos.dup },
+    limpiar:   -> { eventos.clear },
+    contar:    -> { eventos.size }
+  }
+end
+
+sys = crear_sistema
+sys[:registrar].call(:click)
+sys[:registrar].call(:scroll)
+sys[:registrar].call(:click)
+puts "Eventos: #{sys[:contar].call}"
+puts "Lista: #{sys[:eventos].call.inspect}"
+sys[:limpiar].call
+puts "Limpio: #{sys[:contar].call}"
+
+# ---------------------------------------------------------------------------
+# 11. BINDING DINÁMICO CON eval
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "11. BINDING DINÁMICO"
+puts "=" * 60
+
+class DSLContext
+  def initialize
+    @atributos = {}
+  end
+
+  def metodo(nombre, &bloque)
+    @atributos[nombre] = bloque
+  end
+
+  def ejecutar(nombre)
+    @atributos[nombre]&.call
+  end
+
+  def binding_para_eval
+    binding
+  end
+end
+
+dsl = DSLContext.new
+dsl.metodo(:saludo) { "Hola desde DSL" }
+puts dsl.ejecutar(:saludo)
+
+# ---------------------------------------------------------------------------
+# 12. LAZY EVALUATION
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "12. LAZY EVALUATION"
+puts "=" * 60
+
+def lazy_operacion(op, *args)
+  resultado = nil
+  -> {
+    if resultado.nil?
+      resultado = send(op, *args)
+      puts "  (computado)"
+    end
+    resultado
+  }
+end
+
+operacion = lazy_operacion(:+, 1, 2, 3, 4, 5)
+puts "Primera llamada:"
+puts "  #{operacion.call}"
+puts "Segunda llamada (cacheado):"
+puts "  #{operacion.call}"
+
+# ---------------------------------------------------------------------------
+# 13. CALLBACKS CON CLOSURES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "13. CALLBACKS"
+puts "=" * 60
+
+class Timer
+  def initialize(segundos, &callback)
+    @segundos = segundos
+    @callback = callback
+  end
+
+  def iniciar
+    puts "Timer de #{@segundos}s iniciado..."
+    sleep @segundos
+    @callback.call
+  end
+end
+
+# timer = Timer.new(2) { puts "¡Tiempo cumplido!" }
+# timer.iniciar
+
+puts "  (Timer comentado para evitar espera)"
+
+# ---------------------------------------------------------------------------
+# 14. CLOSURE EN MÉTODO DINÁMICO
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "14. MÉTODO DINÁMICO CON CLOSURE"
+puts "=" * 60
+
+class Memoize
+  def initialize
+    @cache = {}
+  end
+
+  def definir(nombre, &bloque)
+    define_method(nombre) do |*args|
+      clave = [nombre, *args]
+      if @cache.key?(clave)
+        @cache[clave]
+      else
+        @cache[clave] = bloque.call(*args)
+      end
+    end
+  end
+end
+
+mem = Memoize.new
+mem.definir(:factorial) do |n|
+  n <= 1 ? 1 : n * mem.factorial(n - 1)
+end
+
+puts "factorial(5) = #{mem.factorial(5)}"
+puts "factorial(5) = #{mem.factorial(5)} (cacheado)"
+
+# ---------------------------------------------------------------------------
+# 15. CICLO DE VIDA: FUGAS DE MEMORIA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "15. CICLO DE VIDA"
+puts "=" * 60
+
+def crear_closure_con_fuga
+  datos = "X" * 1_000_000
+  -> { datos.length }
+end
+
+ref = crear_closure_con_fuga
+puts "El closure retiene datos grandes: #{ref.call}"
+
+# Liberar:
+ref = nil
+puts "Referencia liberada (GC recolectará)"
+
+# ---------------------------------------------------------------------------
+# 16. CLOSURES EN THREADS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "16. CLOSURES EN THREADS"
+puts "=" * 60
+
+contador_compartido = 0
+mutex = Mutex.new
+hilos = []
+
+5.times do |i|
+  hilos << Thread.new do
+    1000.times do
+      mutex.synchronize { contador_compartido += 1 }
+    end
+  end
+end
+
+hilos.each(&:join)
+puts "Contador con closures en threads: #{contador_compartido}"
+
+# ---------------------------------------------------------------------------
+# 17. PATRÓN STRATEGY CON CLOSURES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "17. PATRÓN STRATEGY"
+puts "=" * 60
+
+class ProcesadorTexto
+  def procesar(texto, &transformacion)
+    transformacion.call(texto)
+  end
+end
+
+mayusculas  = ->(t) { t.upcase }
+minusculas  = ->(t) { t.downcase }
+capitalizar = ->(t) { t.split.map(&:capitalize).join(" ") }
+invertir    = ->(t) { t.reverse }
+
+proc = ProcesadorTexto.new
+texto = "hola mundo ruby"
+puts "Original:      #{texto}"
+puts "Mayúsculas:    #{proc.procesar(texto, &mayusculas)}"
+puts "Minúsculas:    #{proc.procesar(texto, &minusculas)}"
+puts "Capitalizar:   #{proc.procesar(texto, &capitalizar)}"
+puts "Invertir:      #{proc.procesar(texto, &invertir)}"
+
+# ---------------------------------------------------------------------------
+# 18. CLOSURE PARA CONTEXTO DE BASE DE DATOS (SIMULADO)
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "18. CONTEXTO SIMULADO"
+puts "=" * 60
+
+def con_conexion_db(config)
+  conexion = "Conexión a #{config[:host]}:#{config[:port]}"
+  puts "  Abriendo #{conexion}"
+  ->(query) { "#{conexion} => Resultado de: #{query}" }
+end
+
+db = con_conexion_db({ host: "localhost", port: 5432 })
+puts db.call("SELECT * FROM usuarios")
+puts db.call("SELECT 1")
+
+# ---------------------------------------------------------------------------
+# 19. CLOSURES PARA VALIDACIONES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "19. VALIDACIONES"
+puts "=" * 60
+
+class Validador
+  def initialize
+    @reglas = []
+  end
+
+  def agregar_regla(mensaje, &regla)
+    @reglas << [mensaje, regla]
+  end
+
+  def validar(objeto)
+    errores = []
+    @reglas.each do |msg, regla|
+      errores << msg unless regla.call(objeto)
+    end
+    errores
+  end
+end
+
+val = Validador.new
+val.agregar_regla("Debe ser mayor de edad") { |edad| edad >= 18 }
+val.agregar_regla("Debe ser menor de 65")   { |edad| edad < 65 }
+
+puts "Edad 15: #{val.validar(15).inspect}"
+puts "Edad 25: #{val.validar(25).inspect}"
+puts "Edad 70: #{val.validar(70).inspect}"
+
+# ---------------------------------------------------------------------------
+# 20. CLOSURE COMO OBJETO (FULL CLOSURE OBJECT)
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "20. CLOSURE COMO OBJETO"
+puts "=" * 60
+
+def crear_objeto_closure
+  estado = {
+    nombre: "objeto",
+    valor:  0
+  }
+  {
+    get_nombre: -> { estado[:nombre] },
+    set_nombre: ->(n) { estado[:nombre] = n },
+    get_valor:  -> { estado[:valor] },
+    set_valor:  ->(v) { estado[:valor] = v },
+    inspeccionar: -> { estado.dup }
+  }
+end
+
+obj = crear_objeto_closure
+obj[:set_nombre].call("closure_1")
+obj[:set_valor].call(42)
+puts "Objeto closure: #{obj[:inspeccionar].call.inspect}"
+
+puts "=" * 60
+puts "FIN DEL EJEMPLO COMPLETO"
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+  En este capítulo hemos explorado los closures en Ruby:
+
+  • Un closure es una función que captura y retiene las variables del
+    entorno léxico donde fue definida.
+
+  • En Ruby, los bloques, procs y lambdas son closures.
+
+  • El objeto Binding encapsula el contexto de ejecución y es la base
+    de los closures.
+
+  • Los closures permiten encapsular estado sin necesidad de clases,
+    implementar factories de funciones, lazy evaluation y callbacks.
+
+  • Compartir variables entre closures puede causar efectos colaterales
+    inesperados (especialmente en bucles while/for).
+
+  • Los closures pueden causar fugas de memoria si retienen referencias
+    a objetos grandes.
+
+  • Los closures son la base de la metaprogramación, las DSL y muchos
+    patrones de diseño funcional.
+
+  Entender closures es entender cómo Ruby preserva el contexto. Es el
+  concepto que transforma a un programador de Ruby en un arquitecto.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+  Ejercicio 1: Crea un closure que capture una variable local y la
+  modifique en cada llamada (contador).
+
+  Ejercicio 2: Implementa una función crear_cache que devuelva un
+  closure que guarde resultados de operaciones costosas.
+
+  Ejercicio 3: Escribe 3 closures que compartan el mismo array y cada
+  uno haga una operación diferente (agregar, eliminar, listar).
+
+  Ejercicio 4: Crea un factory de funciones que genere operaciones
+  matemáticas (suma, resta, multiplicación) configuradas con un valor
+  fijo.
+
+  Ejercicio 5: Demuestra el problema de variables compartidas en un
+  bucle while con closures y soluciónalo.
+
+  Ejercicio 6: Implementa una validación de formulario donde cada regla
+  sea un closure.
+
+  Ejercicio 7: Usa binding para inspeccionar y modificar el contexto de
+  un closure desde fuera.
+
+  Ejercicio 8: Crea un sistema de eventos simple donde los handlers
+  sean closures que capturen contexto adicional.
+
+  Ejercicio 9: Implementa lazy evaluation para una operación de lectura
+  de archivo usando closures.
+
+  Ejercicio 10: Construye un mini-REPL que evalúe expresiones en el
+  binding de un objeto.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  P: ¿Todos los bloques en Ruby son closures?
+  R: Sí, cualquier bloque { } o do...end captura el ámbito léxico donde
+     fue creado.
+
+  P: ¿Cuál es la diferencia entre ámbito léxico y ámbito dinámico?
+  R: El ámbito léxico se determina en tiempo de compilación (por la
+     estructura del código). El ámbito dinámico se determina en tiempo
+     de ejecución (por la pila de llamadas). Los closures usan ámbito
+     léxico.
+
+  P: ¿Puedo crear un closure que capture el binding de otro objeto?
+  R: Sí, puedes obtener el binding de cualquier método o proc y pasarlo
+     a eval. Pero es una técnica avanzada y potencialmente peligrosa.
+
+  P: ¿Los closures causan problemas de rendimiento?
+  R: Crear muchos closures puede aumentar el uso de memoria, pero el
+     impacto en rendimiento suele ser mínimo. Preocúpate primero por la
+     claridad del código.
+
+  P: ¿Cómo libero un closure para evitar fugas de memoria?
+  R: Asigna nil a la variable que contiene el closure. El garbage
+     collector recolectará tanto el closure como las variables que
+     captura si no hay más referencias.
+
+  P: ¿Puedo serializar un closure?
+  R: No directamente. Los closures contienen código y binding (que son
+     objetos en memoria). Necesitarías usar librerías como Ruby2Ruby
+     o sourcify para serializar el código fuente.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  Implementa un sistema de "Objetos sin Clases" usando solo closures.
+
+  Requisitos:
+    • Cada objeto se crea con crear_objeto(estado_inicial) y devuelve
+      un hash de métodos (closures).
+    • Debe soportar: get_atributo, set_atributo, métodos personalizados.
+    • Implementar herencia prototípica: crear_heredero(objeto_padre).
+    • Incluir un método to_s que muestre el estado del objeto.
+    • Debe tener encapsulación real (estado no accesible sin métodos).
+
+  Ejemplo:
+
+    animal = crear_objeto(tipo: "genérico")
+    animal[:set_metodo].call(:sonido, -> { "..." })
+    perro = crear_heredero(animal)
+    perro[:set_atributo].call(:tipo, "perro")
+    perro[:set_metodo].call(:sonido, -> { "Guau!" })
+    puts perro[:to_s].call
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+  Los closures son el puente entre el mundo orientado a objetos y el
+  mundo funcional en Ruby. Cada bloque es una promesa: "recuerdo lo que
+  había aquí". Entender closures es entender cómo Ruby logra que el
+  código sea maleable, expresivo y sorprendentemente poderoso.
+
+  Has aprendido que una variable no es solo un nombre, sino un ancla
+  al pasado del programa. Los closures te permiten llevar ese pasado
+  contigo, construir memoria donde el lenguaje no la provee y diseñar
+  sistemas que trascienden la rigidez de las clases.
+
+  En el próximo capítulo exploraremos el currying, una técnica de
+  transformación de funciones que lleva la composición al siguiente
+  nivel.
+
+  Nos vemos en el Capítulo 63: CURRYING.
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  → CAPÍTULO 63: CURRYING
+  → Aprenderás a transformar funciones de múltiples argumentos en
+    cadenas de funciones de un solo argumento.
+
+================================================================================
+  FIN DEL CAPÍTULO 62
+================================================================================

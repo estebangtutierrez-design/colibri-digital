@@ -1,0 +1,505 @@
+================================================================================
+  C# MASTER BOOK — MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 76: SEGURIDAD
+================================================================================
+
+  BIENVENIDA
+  ----------
+  Bienvenido al Capítulo 76. La seguridad no es una característica opcional:
+  es un requisito fundamental. Una aplicación insegura puede exponer datos
+  sensibles, permitir accesos no autorizados y causar daños irreparables.
+  Este capítulo te enseñará a proteger tu código contra las amenazas más
+  comunes.
+
+  FRASE DEL DÍA
+  -------------
+  "La seguridad no es un producto, sino un proceso." — Bruce Schneier
+  "Y en software, ese proceso empieza en cada línea de código." — Profesor Búho AI
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  • Prevenir inyección SQL en aplicaciones .NET.
+  • Proteger contra Cross-Site Scripting (XSS).
+  • Usar parámetros y consultas parametrizadas.
+  • Implementar cifrado AES para datos sensibles.
+  • Aplicar las mejores prácticas de seguridad en ASP.NET Core.
+  • Manejar autenticación y autorización.
+  • Proteger secretos y configuraciones sensibles.
+  • Implementar CSRF, HTTPS y Content Security Policy.
+
+================================================================================
+  [CONTENIDO TEÓRICO]
+================================================================================
+
+  1. SEGURIDAD EN APLICACIONES .NET
+  -----------------------------------
+  Las aplicaciones web y APIs enfrentan amenazas constantes:
+    • Inyección SQL: el atacante inserta código SQL malicioso.
+    • XSS (Cross-Site Scripting): inyecta scripts en el navegador.
+    • CSRF (Cross-Site Request Forgery): fuerza acciones sin consentimiento.
+    • Exposición de datos sensibles: contraseñas, tokens, tarjetas.
+    • Autenticación rota: sesiones secuestradas, tokens mal manejados.
+
+  2. INYECCIÓN SQL
+  -----------------
+  Ocurre cuando datos del usuario se concatenan directamente en consultas SQL.
+  Solución: usar siempre consultas parametrizadas o EF Core.
+
+  3. CROSS-SITE SCRIPTING (XSS)
+  ------------------------------
+  El atacante inyecta JavaScript malicioso. Solución: codificar la salida,
+  usar Content Security Policy (CSP), validar entrada.
+
+  4. CIFRADO AES
+  ---------------
+  AES (Advanced Encryption Standard) es el estándar de cifrado simétrico.
+  Úsalo para proteger datos sensibles en reposo (contraseñas, tokens).
+  Para contraseñas, usa siempre bcrypt, PBKDF2 o Argon2 (hash con salt).
+
+  5. AUTENTICACIÓN Y AUTORIZACIÓN
+  --------------------------------
+  • Autenticación: ¿quién eres? (JWT, cookies, OAuth).
+  • Autorización: ¿qué puedes hacer? (roles, claims, policies).
+
+  6. PROTECCIÓN DE CONFIGURACIONES
+  ---------------------------------
+  Nunca hardcodees secretos. Usa:
+    • User Secrets (desarrollo).
+    • Azure Key Vault / AWS Secrets Manager (producción).
+    • Variables de entorno.
+    • Data Protection API de .NET.
+
+  7. HTTPS Y SSL
+  ---------------
+  Siempre fuerza HTTPS. En producción, redirige HTTP a HTTPS y usa
+  HSTS (HTTP Strict Transport Security).
+
+================================================================================
+  [CÓDIGO — IMPLEMENTACIÓN PRÁCTICA]
+================================================================================
+
+  ------------------------------------------------------------------------------
+  Ejemplo 1: Inyección SQL — El problema
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Data.SqlClient;
+
+  public class SQLInjectionVulnerable
+  {
+      // ¡NUNCA HAGAS ESTO! Código VULNERABLE
+      public void BuscarUsuarioVulnerable(string nombreUsuario)
+      {
+          string conexion = "Server=.;Database=MiDB;Trusted_Connection=true;";
+          string query = "SELECT * FROM Usuarios WHERE Nombre = '" + nombreUsuario + "'";
+          using var conn = new SqlConnection(conexion);
+          using var cmd = new SqlCommand(query, conn);
+          conn.Open();
+          using var reader = cmd.ExecuteReader();
+          while (reader.Read())
+              Console.WriteLine($"Usuario: {reader["Nombre"]}");
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 2: Consultas parametrizadas (solución)
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Data.SqlClient;
+
+  public class SQLInjectionSeguro
+  {
+      public void BuscarUsuarioSeguro(string nombreUsuario)
+      {
+          string conexion = "Server=.;Database=MiDB;Trusted_Connection=true;";
+          string query = "SELECT * FROM Usuarios WHERE Nombre = @Nombre";
+          using var conn = new SqlConnection(conexion);
+          using var cmd = new SqlCommand(query, conn);
+          cmd.Parameters.AddWithValue("@Nombre", nombreUsuario);
+          conn.Open();
+          using var reader = cmd.ExecuteReader();
+          while (reader.Read())
+              Console.WriteLine($"Usuario: {reader["Nombre"]}");
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 3: EF Core previene inyección SQL
+  ------------------------------------------------------------------------------
+
+  using Microsoft.EntityFrameworkCore;
+  using System.Linq;
+
+  public class RepositorioSeguro
+  {
+      private readonly AppDbContext _ctx;
+      public RepositorioSeguro(AppDbContext ctx) => _ctx = ctx;
+
+      public Usuario BuscarPorNombre(string nombre)
+          => _ctx.Usuarios.FirstOrDefault(u => u.Nombre == nombre);
+
+      public Usuario BuscarRaw(string nombre)
+          => _ctx.Usuarios.FromSqlRaw(
+              "SELECT * FROM Usuarios WHERE Nombre = @p0", nombre)
+              .FirstOrDefault();
+  }
+
+  public class AppDbContext : DbContext
+  {
+      public DbSet<Usuario> Usuarios { get; set; }
+  }
+  public class Usuario { public int Id { get; set; } public string Nombre { get; set; } public string Email { get; set; } }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 4: Protección contra XSS
+  ------------------------------------------------------------------------------
+
+  using Microsoft.AspNetCore.Mvc;
+  using System;
+
+  public class XSSProtectionController : Controller
+  {
+      public ContentResult ComentarioSeguro(string texto)
+      {
+          var seguro = System.Net.WebUtility.HtmlEncode(texto);
+          return Content($"<div>{seguro}</div>", "text/html");
+      }
+
+      [HttpPost]
+      public IActionResult PublicarComentario(string texto)
+      {
+          if (texto.Length > 500) return BadRequest("Texto muy largo");
+          return Ok();
+      }
+  }
+
+  public class CSPMiddleware
+  {
+      private readonly RequestDelegate _next;
+      public CSPMiddleware(RequestDelegate next) => _next = next;
+      public async Task InvokeAsync(HttpContext context)
+      {
+          context.Response.Headers.Add("Content-Security-Policy",
+              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'");
+          await _next(context);
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 5: Cifrado AES en C#
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.IO;
+  using System.Security.Cryptography;
+  using System.Text;
+
+  public class CifradoAES
+  {
+      public static (byte[] encrypted, byte[] iv) Encrypt(string plainText, byte[] key)
+      {
+          using var aes = Aes.Create();
+          aes.Key = key;
+          aes.GenerateIV();
+          using var encryptor = aes.CreateEncryptor(aes.Key, aes.IV);
+          using var ms = new MemoryStream();
+          using var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write);
+          using var sw = new StreamWriter(cs);
+          sw.Write(plainText);
+          sw.Flush();
+          cs.FlushFinalBlock();
+          return (ms.ToArray(), aes.IV);
+      }
+
+      public static string Decrypt(byte[] cipherText, byte[] key, byte[] iv)
+      {
+          using var aes = Aes.Create();
+          aes.Key = key;
+          aes.IV = iv;
+          using var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
+          using var ms = new MemoryStream(cipherText);
+          using var cs = new CryptoStream(ms, decryptor, CryptoStreamMode.Read);
+          using var sr = new StreamReader(cs);
+          return sr.ReadToEnd();
+      }
+
+      public static byte[] GenerateKey()
+      {
+          using var aes = Aes.Create();
+          aes.GenerateKey();
+          return aes.Key;
+      }
+
+      public static string KeyToString(byte[] key) => Convert.ToBase64String(key);
+      public static byte[] StringToKey(string base64) => Convert.FromBase64String(base64);
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 6: Hashing seguro con PBKDF2
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Security.Cryptography;
+
+  public class PasswordHasher
+  {
+      private const int SaltSize = 16;
+      private const int HashSize = 32;
+      private const int Iterations = 100000;
+
+      public static string Hash(string password)
+      {
+          byte[] salt = RandomNumberGenerator.GetBytes(SaltSize);
+          byte[] hash = Rfc2898DeriveBytes.Pbkdf2(
+              password, salt, Iterations, HashAlgorithmName.SHA256, HashSize);
+          return $"{Convert.ToBase64String(salt)}.{Convert.ToBase64String(hash)}";
+      }
+
+      public static bool Verify(string password, string hashedPassword)
+      {
+          var parts = hashedPassword.Split('.');
+          byte[] salt = Convert.FromBase64String(parts[0]);
+          byte[] storedHash = Convert.FromBase64String(parts[1]);
+          byte[] computedHash = Rfc2898DeriveBytes.Pbkdf2(
+              password, salt, Iterations, HashAlgorithmName.SHA256, HashSize);
+          return CryptographicOperations.FixedTimeEquals(storedHash, computedHash);
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 7: Autenticación JWT
+  ------------------------------------------------------------------------------
+
+  using Microsoft.IdentityModel.Tokens;
+  using System.IdentityModel.Tokens.Jwt;
+  using System.Security.Claims;
+  using System.Text;
+
+  public class JwtService
+  {
+      private readonly IConfiguration _config;
+      public JwtService(IConfiguration config) => _config = config;
+
+      public string GenerateToken(string userId, string role)
+      {
+          var key = new SymmetricSecurityKey(
+              Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
+          var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+          var claims = new[]
+          {
+              new Claim(ClaimTypes.NameIdentifier, userId),
+              new Claim(ClaimTypes.Role, role),
+              new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+          };
+          var token = new JwtSecurityToken(
+              issuer: _config["Jwt:Issuer"],
+              audience: _config["Jwt:Audience"],
+              claims: claims,
+              expires: DateTime.UtcNow.AddHours(1),
+              signingCredentials: creds
+          );
+          return new JwtSecurityTokenHandler().WriteToken(token);
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 8: Autorización por roles y policies
+  ------------------------------------------------------------------------------
+
+  using Microsoft.AspNetCore.Authorization;
+  using Microsoft.AspNetCore.Mvc;
+
+  [ApiController]
+  [Route("api/[controller]")]
+  public class AdminController : ControllerBase
+  {
+      [HttpGet("perfil")]
+      [Authorize]
+      public IActionResult GetPerfil()
+      {
+          var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+          return Ok(new { Mensaje = $"Perfil de {userId}" });
+      }
+
+      [HttpDelete("usuarios/{id}")]
+      [Authorize(Roles = "Admin")]
+      public IActionResult EliminarUsuario(int id)
+          => Ok(new { Mensaje = $"Usuario {id} eliminado" });
+
+      [HttpPost("reportes")]
+      [Authorize(Policy = "EdadMinima")]
+      public IActionResult GenerarReporte()
+          => Ok(new { Mensaje = "Reporte generado" });
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 9: Data Protection API
+  ------------------------------------------------------------------------------
+
+  using Microsoft.AspNetCore.DataProtection;
+
+  public class DataProtectionService
+  {
+      private readonly IDataProtector _protector;
+      public DataProtectionService(IDataProtectionProvider provider)
+      {
+          _protector = provider.CreateProtector("MiApp.Proposito.Unico");
+      }
+      public string Proteger(string textoPlano) => _protector.Protect(textoPlano);
+      public string Desproteger(string textoProtegido) => _protector.Unprotect(textoProtegido);
+  }
+
+  // En Program.cs:
+  // builder.Services.AddDataProtection()
+  //     .PersistKeysToFileSystem(new DirectoryInfo(@"/etc/keys"))
+  //     .ProtectKeysWithAzureKeyVault(new Uri("..."), credential);
+
+  ------------------------------------------------------------------------------
+  Ejemplo 10: HTTPS, HSTS y Rate Limiting
+  ------------------------------------------------------------------------------
+
+  using Microsoft.AspNetCore.Builder;
+  using System.Threading.RateLimiting;
+
+  var builder = WebApplication.CreateBuilder(args);
+  builder.Services.AddRateLimiter(options =>
+  {
+      options.AddFixedWindowLimiter("Login", cfg =>
+      {
+          cfg.PermitLimit = 5;
+          cfg.Window = TimeSpan.FromMinutes(1);
+          cfg.QueueLimit = 0;
+      });
+      options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+  });
+
+  var app = builder.Build();
+  if (!app.Environment.IsDevelopment())
+  {
+      app.UseHsts();
+  }
+  app.UseHttpsRedirection();
+
+  // Nota: Configura HSTS en Program.cs:
+  // builder.Services.AddHsts(options =>
+  // {
+  //     options.Preload = true;
+  //     options.IncludeSubDomains = true;
+  //     options.MaxAge = TimeSpan.FromDays(365);
+  // });
+
+  ------------------------------------------------------------------------------
+  Ejemplo 11: CORS seguro
+  ------------------------------------------------------------------------------
+
+  public static class CorsConfig
+  {
+      public static IServiceCollection AddAppCors(this IServiceCollection services, IConfiguration config)
+      {
+          var allowedOrigins = config.GetSection("Cors:AllowedOrigins").Get<string[]>()
+              ?? new[] { "https://miapp.com" };
+          services.AddCors(options =>
+          {
+              options.AddPolicy("Produccion", policy =>
+              {
+                  policy.WithOrigins(allowedOrigins)
+                        .AllowMethods("GET", "POST", "PUT", "DELETE")
+                        .AllowHeaders("Authorization", "Content-Type");
+              });
+          });
+          return services;
+      }
+  }
+
+================================================================================
+  [RESUMEN DEL CAPÍTULO]
+================================================================================
+
+  En este capítulo has aprendido:
+  • Inyección SQL: cómo ocurre y cómo prevenirla con parámetros.
+  • XSS: sanitización y CSP.
+  • Cifrado AES para datos sensibles.
+  • Hashing seguro de contraseñas con PBKDF2.
+  • Autenticación JWT en ASP.NET Core.
+  • Autorización por roles y policies.
+  • Data Protection API de .NET.
+  • Configuración segura con User Secrets.
+  • HTTPS, HSTS, Rate Limiting y CORS.
+
+  La seguridad es responsabilidad de todos. No esperes a que un ataque
+  ocurra para empezar a proteger tu aplicación.
+
+================================================================================
+  [EJERCICIOS]
+================================================================================
+
+  1. Toma un método vulnerable a SQL injection y corrígelo con parámetros.
+  2. Implementa hash de contraseñas con PBKDF2 en un servicio de registro.
+  3. Crea un endpoint protegido con JWT.
+  4. Configura CORS para solo tu frontend en producción.
+  5. Implementa Rate Limiting en un endpoint de login (5 intentos/minuto).
+  6. Usa Data Protection API para cifrar datos sensibles antes de almacenarlos.
+  7. Agrega un middleware que fuerce HTTPS y HSTS.
+  8. Implementa autorización por roles (Admin, User, Guest).
+  9. Configura CSP (Content Security Policy) en las respuestas HTTP.
+  10. Almacena secretos con User Secrets y verifica que no aparezcan en git.
+
+================================================================================
+  [PREGUNTAS FRECUENTES — FAQ]
+================================================================================
+
+  P: ¿EF Core es 100% seguro contra inyección SQL?
+  R: Sí, cuando usas LINQ. Pero ten cuidado con FromSqlRaw y ExecuteSqlRaw:
+     siempre usa parámetros.
+
+  P: ¿Cómo almaceno contraseñas de forma segura?
+  R: Nunca en texto plano. Usa PBKDF2, bcrypt o Argon2 con salt.
+
+  P: ¿JWT es seguro?
+  R: Sí, si se implementa correctamente. Usa HTTPS, clave fuerte, expiry
+     corto y almacena el token de forma segura (httpOnly cookie).
+
+  P: ¿Cómo proteger mi API contra bots?
+  R: Rate limiting, reCAPTCHA, análisis de comportamiento, bloqueo por IP.
+
+  P: ¿Debo validar en cliente y servidor?
+  R: Sí. La validación del cliente es para experiencia de usuario; la del
+     servidor es para seguridad. Nunca confíes en datos del cliente.
+
+================================================================================
+  [DESAFÍO DEL ARQUITECTO]
+================================================================================
+
+  Construye una API segura de "Gestión de Usuarios" que incluya:
+  • Registro con hash de contraseña (PBKDF2).
+  • Login con JWT (access + refresh token).
+  • Endpoints protegidos por roles (Admin, User).
+  • Rate limiting en login.
+  • Protección CSRF en endpoints de escritura.
+  • Cifrado AES de datos personales en la BD.
+  • Todas las consultas parametrizadas.
+  • CSP y HSTS configurados.
+  • User Secrets para todas las claves.
+  • Logging de intentos de acceso fallidos.
+  EXTRA: Implementa "cuenta bloqueada" tras 5 intentos fallidos.
+
+================================================================================
+  [CIERRE DEL CAPÍTULO]
+================================================================================
+
+  La seguridad no es un destino, es un viaje continuo. Las amenazas
+  evolucionan, y tú debes evolucionar con ellas. Cada línea de código
+  que escribes puede ser una puerta abierta o un muro sólido. Elige
+  construir muros.
+
+  En el próximo capítulo te enfrentarás al Examen Profesional, una prueba
+  que cubre todos los módulos del curso. Prepárate.
+
+  ¡Nos vemos en el Capítulo 77!
+
+  ------------------------------------------------------------------------------
+  © 2026 C# MASTER BOOK — Profesor Búho AI
+  "El conocimiento no pesa, ilumina."
+  ------------------------------------------------------------------------------
+  [FIN DEL CAPÍTULO 76]

@@ -1,0 +1,1260 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 59: EXCEPCIONES PERSONALIZADAS
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 59! Has recorrido un largo camino en el manejo
+de excepciones. Sabes capturarlas, lanzarlas, reintentarlas, y limpiar
+recursos. Pero las excepciones de Ruby estándar (ArgumentError,
+RuntimeError, TypeError, etc.) son genéricas. En aplicaciones reales,
+necesitas excepciones que hablen el lenguaje de tu dominio.
+
+Las excepciones personalizadas te permiten:
+  - Modelar errores específicos de tu dominio (SaldoInsuficienteError,
+    UsuarioNoEncontradoError, etc.).
+  - Incluir información contextual relevante (saldo actual, ID del
+    usuario, etc.).
+  - Crear jerarquías de errores para capturar con precisión.
+  - Hacer el código más legible y auto-documentado.
+
+En este capítulo aprenderás a diseñar e implementar jerarquías de
+excepciones personalizadas que harán que tu código sea más expresivo,
+robusto y mantenible.
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"Las excepciones personalizadas son el vocabulario con el que tu
+código le cuenta al mundo qué salió mal." — Anónimo
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Crear clases de excepción personalizadas.
+2. Heredar de StandardError y otras clases base.
+3. Agregar atributos y métodos a excepciones.
+4. Usar attr_reader en excepciones para datos contextuales.
+5. Diseñar jerarquías de errores de aplicación.
+6. Implementar mensajes de error dinámicos.
+7. Capturar excepciones personalizadas específicamente.
+8. Aplicar mejores prácticas de diseño de excepciones.
+9. Documentar excepciones para otros desarrolladores.
+10. Integrar excepciones personalizadas en aplicaciones reales.
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. ¿POR QUÉ EXCEPCIONES PERSONALIZADAS?
+----------------------------------------------------------------------
+
+Las excepciones estándar de Ruby son genéricas:
+
+  raise "Error"           # RuntimeError - ¿qué error?
+  raise ArgumentError     # - ¿argumento inválido para qué?
+
+Con excepciones personalizadas:
+
+  raise SaldoInsuficienteError.new(saldo_actual: 50, requerido: 100)
+  raise UsuarioNoEncontradoError.new(id: 123)
+  raise ConexionPerdidaError.new(host: "api.ejemplo.com")
+
+Ventajas:
+  - El tipo de error describe el problema.
+  - Los atributos proporcionan contexto.
+  - Los rescues pueden ser muy específicos.
+  - La jerarquía permite capturar grupos de errores.
+
+================================================================================
+EJEMPLO 1: Comparativa
+================================================================================
+
+#------ archivo: ej01_comparativa.rb ------
+puts "=== COMPARATIVA: ESTÁNDAR VS PERSONALIZADA ==="
+
+# Sin excepción personalizada
+def retirar_sin_personalizada(cuenta, monto)
+  if monto > cuenta[:saldo]
+    raise "Saldo insuficiente: tienes #{cuenta[:saldo]}, necesitas #{monto}"
+  end
+  cuenta[:saldo] -= monto
+  "Nuevo saldo: #{cuenta[:saldo]}"
+end
+
+begin
+  retirar_sin_personalizada({saldo: 30}, 100)
+rescue RuntimeError => e
+  puts "Error genérico: #{e.message}"
+  # No sabemos programáticamente si es saldo, permiso, etc.
+end
+
+# Con excepción personalizada
+class SaldoInsuficienteError < StandardError
+  attr_reader :saldo_actual, :monto_requerido
+
+  def initialize(saldo_actual:, monto_requerido:)
+    @saldo_actual = saldo_actual
+    @monto_requerido = monto_requerido
+    super("Saldo insuficiente: tienes #{saldo_actual}, necesitas #{monto_requerido}")
+  end
+end
+
+def retirar_con_personalizada(cuenta, monto)
+  if monto > cuenta[:saldo]
+    raise SaldoInsuficienteError.new(
+      saldo_actual: cuenta[:saldo],
+      monto_requerido: monto
+    )
+  end
+  cuenta[:saldo] -= monto
+  "Nuevo saldo: #{cuenta[:saldo]}"
+end
+
+begin
+  retirar_con_personalizada({saldo: 30}, 100)
+rescue SaldoInsuficienteError => e
+  puts "Error específico: #{e.message}"
+  puts "  Saldo actual: #{e.saldo_actual}"
+  puts "  Monto requerido: #{e.monto_requerido}"
+  puts "  Diferencia: #{e.monto_requerido - e.saldo_actual}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+2. CREACIÓN DE EXCEPCIONES PERSONALIZADAS
+----------------------------------------------------------------------
+
+La estructura básica:
+
+  class MiError < StandardError
+    def initialize(mensaje = "Mensaje por defecto")
+      super(mensaje)
+    end
+  end
+
+Puedes heredar de:
+  - StandardError (la más común)
+  - RuntimeError
+  - Otra excepción personalizada
+  - Cualquier subclase de Exception
+
+La regla general: hereda de StandardError o de una excepción existente
+que tenga sentido.
+
+================================================================================
+EJEMPLO 2: Creación básica
+================================================================================
+
+#------ archivo: ej02_creacion_basica.rb ------
+puts "=== CREACIÓN BÁSICA ==="
+
+# Excepción simple
+class ErrorMatematico < StandardError; end
+class DivisionPorCeroError < ErrorMatematico; end
+class RaizNegativaError < ErrorMatematico; end
+class LogaritmoInvalidoError < ErrorMatematico; end
+
+# Excepción con mensaje por defecto
+class ConexionBaseDatosError < StandardError
+  def initialize(mensaje = "Error de conexión a la base de datos")
+    super(mensaje)
+  end
+end
+
+# Excepción con constructor personalizado
+class UsuarioNoEncontradoError < StandardError
+  def initialize(id)
+    super("Usuario no encontrado con ID: #{id}")
+  end
+end
+
+# Probar
+begin
+  raise DivisionPorCeroError, "No dividirás por cero"
+rescue DivisionPorCeroError => e
+  puts "Capturado: #{e.class}: #{e.message}"
+end
+
+begin
+  raise ConexionBaseDatosError
+rescue ConexionBaseDatosError => e
+  puts "Capturado: #{e.class}: #{e.message}"
+end
+
+begin
+  raise ConexionBaseDatosError, "Timeout al conectar a MySQL"
+rescue ConexionBaseDatosError => e
+  puts "Capturado: #{e.class}: #{e.message}"
+end
+
+begin
+  raise UsuarioNoEncontradoError.new(456)
+rescue UsuarioNoEncontradoError => e
+  puts "Capturado: #{e.class}: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+3. ATRIBUTOS EN EXCEPCIONES
+----------------------------------------------------------------------
+
+Los atributos permiten transportar información contextual sobre el
+error. Se definen con attr_reader y se inicializan en el constructor.
+
+  class MiError < StandardError
+    attr_reader :codigo, :detalles
+
+    def initialize(mensaje = "Error", codigo: nil, detalles: {})
+      @codigo = codigo
+      @detalles = detalles
+      super(mensaje)
+    end
+  end
+
+Luego en el rescue:
+  rescue MiError => e
+    e.codigo    # => nil o el código
+    e.detalles  # => {} o los detalles
+
+================================================================================
+EJEMPLO 3: Atributos en excepciones
+================================================================================
+
+#------ archivo: ej03_atributos.rb ------
+puts "=== ATRIBUTOS EN EXCEPCIONES ==="
+
+class ErrorAPI < StandardError
+  attr_reader :http_status, :codigo_interno, :detalles
+
+  def initialize(mensaje = "Error de API", http_status: 500,
+                 codigo_interno: nil, detalles: {})
+    @http_status = http_status
+    @codigo_interno = codigo_interno
+    @detalles = detalles
+    super(mensaje)
+  end
+end
+
+class ErrorAutenticacion < ErrorAPI
+  def initialize(mensaje = "Autenticación fallida")
+    super(mensaje, http_status: 401, codigo_interno: "AUTH_001")
+  end
+end
+
+class ErrorPermisos < ErrorAPI
+  def initialize(mensaje = "Permisos insuficientes", recurso: nil)
+    super(mensaje, http_status: 403, codigo_interno: "AUTH_002",
+          detalles: {recurso: recurso})
+  end
+end
+
+# Probar
+begin
+  raise ErrorAutenticacion.new("Token expirado")
+rescue ErrorAutenticacion => e
+  puts "Error de autenticación:"
+  puts "  Mensaje: #{e.message}"
+  puts "  HTTP Status: #{e.http_status}"
+  puts "  Código: #{e.codigo_interno}"
+end
+
+begin
+  raise ErrorPermisos.new(recurso: "/admin/usuarios")
+rescue ErrorPermisos => e
+  puts "\nError de permisos:"
+  puts "  Mensaje: #{e.message}"
+  puts "  HTTP Status: #{e.http_status}"
+  puts "  Código: #{e.codigo_interno}"
+  puts "  Recurso: #{e.detalles[:recurso]}"
+end
+
+# Captura genérica de ErrorAPI
+begin
+  raise ErrorAutenticacion.new
+rescue ErrorAPI => e
+  puts "\nCapturado como ErrorAPI: #{e.class} - #{e.http_status}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+4. JERARQUÍAS DE ERRORES
+----------------------------------------------------------------------
+
+Diseñar una jerarquía de errores permite capturar con diferentes
+niveles de granularidad:
+
+  StandardError
+    +-- ErrorAplicacion
+          +-- ErrorPersistencia
+          |     +-- ErrorBaseDatos
+          |     +-- ErrorArchivo
+          +-- ErrorNegocio
+          |     +-- SaldoInsuficienteError
+          |     +-- LimiteCreditoError
+          +-- ErrorRed
+                +-- ErrorTimeout
+                +-- ErrorConexion
+
+Así puedes capturar:
+  rescue ErrorAplicacion          # cualquier error de la app
+  rescue ErrorPersistencia        # errores de persistencia
+  rescue SaldoInsuficienteError   # un error específico
+
+================================================================================
+EJEMPLO 4: Jerarquía de errores
+================================================================================
+
+#------ archivo: ej04_jerarquia.rb ------
+puts "=== JERARQUÍA DE ERRORES ==="
+
+# Nivel base de la aplicación
+class ErrorAplicacion < StandardError; end
+
+# Errores de persistencia
+class ErrorPersistencia < ErrorAplicacion; end
+class ErrorBaseDatos < ErrorPersistencia
+  attr_reader :codigo_sql
+  def initialize(mensaje = "Error de base de datos", codigo_sql: nil)
+    @codigo_sql = codigo_sql
+    super(mensaje)
+  end
+end
+class ErrorArchivo < ErrorPersistencia
+  attr_reader :ruta
+  def initialize(mensaje = "Error de archivo", ruta: nil)
+    @ruta = ruta
+    super(mensaje)
+  end
+end
+
+# Errores de negocio
+class ErrorNegocio < ErrorAplicacion; end
+class SaldoInsuficienteError < ErrorNegocio
+  attr_reader :saldo, :requerido
+  def initialize(saldo:, requerido:)
+    @saldo = saldo
+    @requerido = requerido
+    super("Saldo insuficiente: $#{saldo} < $#{requerido}")
+  end
+end
+class LimiteCreditoError < ErrorNegocio
+  attr_reader :limite, :intentado
+  def initialize(limite:, intentado:)
+    @limite = limite
+    @intentado = intentado
+    super("Límite de crédito excedido: $#{limite}")
+  end
+end
+
+# Errores de red
+class ErrorRed < ErrorAplicacion; end
+class ErrorTimeout < ErrorRed
+  attr_reader :tiempo_espera
+  def initialize(mensaje = "Timeout", tiempo_espera: 30)
+    @tiempo_espera = tiempo_espera
+    super("#{mensaje} después de #{tiempo_espera}s")
+  end
+end
+class ErrorConexion < ErrorRed
+  attr_reader :host, :puerto
+  def initialize(host:, puerto:)
+    @host = host
+    @puerto = puerto
+    super("No se pudo conectar a #{host}:#{puerto}")
+  end
+end
+
+# Demostrar la jerarquía
+def procesar_pago(monto, saldo)
+  raise SaldoInsuficienteError.new(saldo: saldo, requerido: monto) if monto > saldo
+
+  begin
+    conectar_gateway
+  rescue ErrorTimeout => e
+    raise ErrorNegocio, "El pago no pudo procesarse: #{e.message}"
+  end
+
+  "Pago exitoso"
+end
+
+def conectar_gateway
+  raise ErrorTimeout.new(tiempo_espera: 5)
+end
+
+# Captura específica
+begin
+  procesar_pago(200, 100)
+rescue SaldoInsuficienteError => e
+  puts "Error de negocio específico: #{e.message}"
+  puts "  Déficit: $#{e.requerido - e.saldo}"
+rescue ErrorNegocio => e
+  puts "Error de negocio genérico: #{e.message}"
+rescue ErrorAplicacion => e
+  puts "Error de aplicación: #{e.message}"
+end
+
+# Captura genérica
+begin
+  procesar_pago(200, 500)
+rescue ErrorAplicacion => e
+  puts "\nCaptura genérica: #{e.class}: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+5. MENSAJES DINÁMICOS
+----------------------------------------------------------------------
+
+Los mensajes de error deben ser informativos. Puedes generarlos
+dinámicamente en el constructor combinando el mensaje base con
+los atributos.
+
+  class MiError < StandardError
+    def initialize(atributo)
+      @atributo = atributo
+      super("Mensaje con #{atributo}")
+    end
+  end
+
+También puedes permitir mensajes personalizados:
+
+  class MiError < StandardError
+    def initialize(mensaje = nil, atributo:)
+      @atributo = atributo
+      super(mensaje || "Mensaje por defecto con #{atributo}")
+    end
+  end
+
+================================================================================
+EJEMPLO 5: Mensajes dinámicos
+================================================================================
+
+#------ archivo: ej05_mensajes_dinamicos.rb ------
+puts "=== MENSAJES DINÁMICOS ==="
+
+class ProductoNoDisponibleError < StandardError
+  attr_reader :producto_id, :stock_actual
+
+  def initialize(producto_id:, stock_actual:, mensaje: nil)
+    @producto_id = producto_id
+    @stock_actual = stock_actual
+    super(mensaje || "Producto ##{producto_id} no disponible. " \
+                     "Stock actual: #{stock_actual}")
+  end
+end
+
+class PrecioInvalidoError < StandardError
+  attr_reader :precio, :moneda
+
+  def initialize(precio:, moneda: "USD")
+    @precio = precio
+    @moneda = moneda
+    msg = if precio < 0
+            "El precio no puede ser negativo: #{precio} #{moneda}"
+          elsif precio == 0
+            "El precio no puede ser cero"
+          else
+            "Precio inválido: #{precio} #{moneda}"
+          end
+    super(msg)
+  end
+end
+
+# Probar
+begin
+  raise ProductoNoDisponibleError.new(producto_id: 42, stock_actual: 0)
+rescue ProductoNoDisponibleError => e
+  puts "Error: #{e.message}"
+end
+
+begin
+  raise ProductoNoDisponibleError.new(
+    producto_id: 42, stock_actual: 0,
+    mensaje: "El producto #{e.producto_id} está agotado"
+  )
+rescue ProductoNoDisponibleError => e
+  puts "Error personalizado: #{e.message}" rescue nil
+  # Nota: e no está disponible en el mensaje porque es el mismo objeto
+end
+
+begin
+  raise PrecioInvalidoError.new(precio: -10)
+rescue PrecioInvalidoError => e
+  puts "Error: #{e.message}"
+end
+
+begin
+  raise PrecioInvalidoError.new(precio: 0)
+rescue PrecioInvalidoError => e
+  puts "Error: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+6. EXCEPCIONES CON CÓDIGOS DE ERROR
+----------------------------------------------------------------------
+
+En aplicaciones empresariales, es común tener códigos de error
+estándar que los clientes pueden interpretar:
+
+  class ErrorAplicacion < StandardError
+    attr_reader :codigo_error
+    def initialize(mensaje, codigo_error: "ERR_GENERICO")
+      @codigo_error = codigo_error
+      super(mensaje)
+    end
+  end
+
+  class ErrorValidacion < ErrorAplicacion
+    def initialize(mensaje, codigo_error: "ERR_VALIDACION")
+      super
+    end
+  end
+
+================================================================================
+EJEMPLO 6: Códigos de error
+================================================================================
+
+#------ archivo: ej06_codigos_error.rb ------
+puts "=== CÓDIGOS DE ERROR ==="
+
+class ErrorAplicacion < StandardError
+  attr_reader :codigo
+
+  def initialize(mensaje, codigo: "ERR_GENERICO")
+    @codigo = codigo
+    super(mensaje)
+  end
+end
+
+class ErrorValidacion < ErrorAplicacion
+  def initialize(mensaje, codigo: "ERR_VALIDACION")
+    super(mensaje, codigo: codigo)
+  end
+end
+
+class ErrorAutenticacion < ErrorAplicacion
+  def initialize(mensaje = "Error de autenticación", codigo: "ERR_AUTH")
+    super(mensaje, codigo: codigo)
+  end
+end
+
+class ErrorAutorizacion < ErrorAplicacion
+  def initialize(mensaje = "No autorizado", codigo: "ERR_FORBIDDEN")
+    super(mensaje, codigo: codigo)
+  end
+end
+
+# Catálogo de códigos
+module CodigosError
+  VALIDACION_CAMPO_REQUERIDO = "ERR_CAMPO_REQUERIDO"
+  VALIDACION_FORMATO = "ERR_FORMATO_INVALIDO"
+  VALIDACION_RANGO = "ERR_RANGO_INVALIDO"
+  AUTH_TOKEN_EXPIRADO = "ERR_TOKEN_EXPIRADO"
+  AUTH_CREDENCIALES = "ERR_CREDENCIALES_INVALIDAS"
+end
+
+class ErrorCampoRequerido < ErrorValidacion
+  attr_reader :campo
+  def initialize(campo)
+    @campo = campo
+    super("El campo '#{campo}' es requerido",
+          codigo: CodigosError::VALIDACION_CAMPO_REQUERIDO)
+  end
+end
+
+# Probar
+def validar_usuario(nombre, email)
+  raise ErrorCampoRequerido.new("nombre") if nombre.nil? || nombre.empty?
+  raise ErrorCampoRequerido.new("email") if email.nil? || email.empty?
+  raise ErrorValidacion.new("Email inválido", codigo: CodigosError::VALIDACION_FORMATO) unless email.include?("@")
+  "Usuario válido"
+end
+
+begin
+  validar_usuario("", "test@test.com")
+rescue ErrorCampoRequerido => e
+  puts "Error: #{e.codigo} - #{e.message}"
+end
+
+begin
+  validar_usuario("Ana", "invalido")
+rescue ErrorValidacion => e
+  puts "Error: #{e.codigo} - #{e.message}"
+end
+
+# Captura por código
+begin
+  validar_usuario("", "")
+rescue ErrorAplicacion => e
+  puts "\nTodos los errores de aplicación:"
+  puts "  #{e.codigo}: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+7. EXCEPCIONES CON INFORMACIÓN ESTRUCTURADA
+---------------------------------------------------------------:-----
+
+Para errores complejos, puedes incluir estructuras de datos completas:
+
+  class ErrorImportacion < StandardError
+    attr_reader :archivo, :linea, :columna, :valor, :reglas_violadas
+
+    def initialize(archivo:, linea:, columna:, valor:, reglas_violadas: [])
+      @archivo = archivo
+      @linea = linea
+      @columna = columna
+      @valor = valor
+      @reglas_violadas = reglas_violadas
+      super("Error en #{archivo}:#{linea}:#{columna}: valor '#{valor}' " \
+            "viola #{reglas_violadas.size} regla(s)")
+    end
+
+    def to_h
+      {
+        tipo: self.class.name,
+        archivo: @archivo,
+        linea: @linea,
+        columna: @columna,
+        valor: @valor,
+        reglas_violadas: @reglas_violadas,
+        mensaje: message
+      }
+    end
+  end
+
+================================================================================
+EJEMPLO 7: Información estructurada
+================================================================================
+
+#------ archivo: ej07_info_estructurada.rb ------
+puts "=== INFORMACIÓN ESTRUCTURADA ==="
+
+class ErrorImportacionCSV < StandardError
+  attr_reader :archivo, :fila, :columna, :valor, :detalles
+
+  def initialize(archivo:, fila:, columna: nil, valor: nil, detalles: {})
+    @archivo = archivo
+    @fila = fila
+    @columna = columna
+    @valor = valor
+    @detalles = detalles
+
+    partes = ["Error en #{archivo}, fila #{fila}"]
+    partes << ", columna #{columna}" if columna
+    partes << ": valor '#{valor}'" if valor
+    partes << " - #{detalles[:razon]}" if detalles[:razon]
+    super(partes.join)
+  end
+
+  def to_h
+    {
+      tipo: "ERROR_IMPORTACION",
+      archivo: @archivo,
+      fila: @fila,
+      columna: @columna,
+      valor: @valor,
+      detalles: @detalles,
+      mensaje: message
+    }
+  end
+end
+
+class ErrorFormatoFecha < ErrorImportacionCSV; end
+class ErrorFormatoNumero < ErrorImportacionCSV; end
+class ErrorCampoFaltante < ErrorImportacionCSV; end
+
+# Procesar archivo CSV simulado
+def importar_csv(ruta)
+  datos_csv = [
+    {nombre: "Ana", edad: "30", fecha: "2024-01-15"},
+    {nombre: "Luis", edad: "veinticinco", fecha: "2024-13-01"},
+    {nombre: "", edad: "25", fecha: "2024-01-01"}
+  ]
+
+  datos_csv.each_with_index do |row, i|
+    fila = i + 2  # +1 por header, +1 por 0-index
+
+    begin
+      raise ErrorCampoFaltante.new(
+        archivo: ruta, fila: fila, columna: "nombre",
+        valor: row[:nombre],
+        detalles: {razon: "El nombre es requerido"}
+      ) if row[:nombre].empty?
+
+      Integer(row[:edad])
+    rescue ArgumentError
+      raise ErrorFormatoNumero.new(
+        archivo: ruta, fila: fila, columna: "edad",
+        valor: row[:edad],
+        detalles: {razon: "La edad debe ser un número"}
+      )
+    end
+  end
+
+  "Importación completada"
+end
+
+begin
+  importar_csv("usuarios.csv")
+rescue ErrorFormatoNumero => e
+  puts "Error de formato: #{e.message}"
+  puts "  Detalles completos:"
+  e.to_h.each { |k, v| puts "    #{k}: #{v.inspect}" }
+rescue ErrorImportacionCSV => e
+  puts "Error de importación: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+8. EXCEPCIONES Y MÓDULOS
+----------------------------------------------------------------------
+
+Puedes definir excepciones dentro de módulos para namespaces:
+
+  module MiAplicacion
+    class Error < StandardError; end
+    class ErrorPersistencia < Error; end
+    class ErrorRed < Error; end
+    class ErrorTimeout < ErrorRed; end
+  end
+
+Esto evita colisiones de nombres y agrupa errores por contexto.
+
+================================================================================
+EJEMPLO 8: Excepciones en módulos
+================================================================================
+
+#------ archivo: ej08_modulos.rb ------
+puts "=== EXCEPCIONES EN MÓDULOS ==="
+
+module ProcesadorPagos
+  class Error < StandardError; end
+
+  class ErrorValidacion < Error; end
+  class ErrorTarjeta < ErrorValidacion; end
+  class ErrorMonto < ErrorValidacion; end
+
+  class ErrorGateway < Error; end
+  class ErrorTimeout < ErrorGateway; end
+  class ErrorConexion < ErrorGateway; end
+  class ErrorRechazado < ErrorGateway; end
+
+  class ErrorInterno < Error; end
+
+  # Atributos en excepciones dentro de módulos
+  class ErrorTarjetaRechazada < ErrorTarjeta
+    attr_reader :tarjeta, :codigo_rechazo, :banco
+
+    def initialize(tarjeta:, codigo_rechazo:, banco: nil, mensaje: nil)
+      @tarjeta = tarjeta
+      @codigo_rechazo = codigo_rechazo
+      @banco = banco
+      super(mensaje || "Tarjeta #{tarjeta} rechazada: #{codigo_rechazo}")
+    end
+  end
+end
+
+# Uso
+def procesar_pago(monto, tarjeta)
+  raise ProcesadorPagos::ErrorMonto, "Monto mínimo: $1" if monto < 1
+  raise ProcesadorPagos::ErrorTarjetaRechazada.new(
+    tarjeta: "****#{tarjeta[-4..]}",
+    codigo_rechazo: "INSUFFICIENT_FUNDS",
+    banco: "Banco Nacional"
+  )
+end
+
+begin
+  procesar_pago(50, "1234567890123456")
+rescue ProcesadorPagos::ErrorTarjeta => e
+  puts "Error de tarjeta: #{e.message}"
+
+  if e.is_a?(ProcesadorPagos::ErrorTarjetaRechazada)
+    puts "  Código: #{e.codigo_rechazo}"
+    puts "  Banco: #{e.banco}"
+  end
+rescue ProcesadorPagos::Error => e
+  puts "Error de pago: #{e.message}"
+end
+
+# Namespace anidado
+module MiApp
+  module Usuarios
+    class Error < StandardError; end
+    class NoEncontrado < Error; end
+    class Duplicado < Error; end
+  end
+
+  module Productos
+    class Error < StandardError; end
+    class NoDisponible < Error; end
+    class PrecioInvalido < Error; end
+  end
+end
+
+puts "\nJerarquía:"
+puts "  MiApp::Usuarios::NoEncontrado < #{MiApp::Usuarios::NoEncontrado.superclass}"
+puts "  MiApp::Productos::Error < #{MiApp::Productos::Error.superclass}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+9. EXCEPCIONES CON LOCALIZACIÓN (I18N)
+----------------------------------------------------------------------
+
+Puedes integrar mensajes internacionalizados (i18n) en excepciones:
+
+  class ErrorAplicacion < StandardError
+    attr_reader :clave_i18n, :parametros
+
+    def initialize(clave_i18n, parametros: {}, mensaje: nil)
+      @clave_i18n = clave_i18n
+      @parametros = parametros
+      super(mensaje || I18n.t(clave_i18n, **parametros))
+    end
+  end
+
+================================================================================
+EJEMPLO 9: Excepciones con i18n
+================================================================================
+
+#------ archivo: ej09_i18n.rb ------
+puts "=== EXCEPCIONES CON I18N ==="
+
+# Simular I18n sin la gema
+module I18n
+  @traducciones = {
+    "errores.saldo_insuficiente" => "Saldo insuficiente. Disponible: %{saldo}",
+    "errores.usuario_no_encontrado" => "Usuario %{id} no encontrado",
+    "errores.conexion_tiempo_excedido" => "Tiempo de conexión excedido (%{tiempo}s)"
+  }
+
+  def self.t(clave, **opts)
+    plantilla = @traducciones[clave] || "Error desconocido: #{clave}"
+    plantilla % opts
+  rescue ArgumentError
+    plantilla
+  end
+end
+
+class ErrorAplicacionConI18n < StandardError
+  attr_reader :clave_i18n, :parametros
+
+  def initialize(clave_i18n, **parametros)
+    @clave_i18n = clave_i18n
+    @parametros = parametros
+    super(I18n.t(clave_i18n, **parametros))
+  end
+end
+
+class SaldoInsuficienteError < ErrorAplicacionConI18n
+  attr_reader :saldo
+  def initialize(saldo:)
+    @saldo = saldo
+    super("errores.saldo_insuficiente", saldo: saldo)
+  end
+end
+
+class UsuarioNoEncontradoError < ErrorAplicacionConI18n
+  def initialize(id:)
+    super("errores.usuario_no_encontrado", id: id)
+  end
+end
+
+# Probar
+begin
+  raise SaldoInsuficienteError.new(saldo: 50)
+rescue SaldoInsuficienteError => e
+  puts "Error con i18n: #{e.message}"
+  puts "  Clave: #{e.clave_i18n}"
+  puts "  Parámetros: #{e.parametros}"
+end
+
+begin
+  raise UsuarioNoEncontradoError.new(id: 999)
+rescue ErrorAplicacionConI18n => e
+  puts "Error con i18n: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+10. BUENAS PRÁCTICAS
+----------------------------------------------------------------------
+
+1. HEREda de StandardError, no de Exception.
+2. Usa nombres descriptivos: SaldoInsuficienteError, no ErrorX.
+3. Incluye atributos relevantes para el contexto.
+4. Proporciona mensajes informativos.
+5. Diseña jerarquías con sentido (no más de 3-4 niveles).
+6. Documenta las excepciones (cuándo y por qué se lanzan).
+7. Usa módulos para namespacing.
+8. No abuses: no crees una excepción para cada caso.
+9. Sé consistente con la convención de nombres (sufijo Error).
+10. Considera i18n si la aplicación es multilingüe.
+
+================================================================================
+EJEMPLO 10: Buenas prácticas
+================================================================================
+
+#------ archivo: ej10_buenas_practicas.rb ------
+puts "=== BUENAS PRÁCTICAS ==="
+
+# MAL: nombres poco descriptivos
+class Error1 < StandardError; end
+class MiError < StandardError; end
+class ErrorDelSistema < StandardError; end
+
+# BIEN: nombres descriptivos
+class SaldoInsuficienteError < StandardError; end
+class ConexionBaseDatosError < StandardError; end
+class FormatoEmailInvalidoError < StandardError; end
+
+# MAL: sin atributos útiles
+class ErrorLogin < StandardError
+  def initialize
+    super("Error de login")
+  end
+end
+
+# BIEN: con atributos contextuales
+class ErrorLogin < StandardError
+  attr_reader :intentos_restantes, :bloqueado_hasta
+
+  def initialize(intentos_restantes:, bloqueado_hasta: nil)
+    @intentos_restantes = intentos_restantes
+    @bloqueado_hasta = bloqueado_hasta
+    mensaje = "Error de login. Intentos restantes: #{intentos_restantes}"
+    mensaje += ". Cuenta bloqueada hasta #{bloqueado_hasta}" if bloqueado_hasta
+    super(mensaje)
+  end
+end
+
+# MAL: jerarquía plana (todo hereda de StandardError)
+class ErrorArchivoNoEncontrado < StandardError; end
+class ErrorArchivoPermiso < StandardError; end
+class ErrorArchivoCorrupto < StandardError; end
+
+# BIEN: jerarquía con sentido
+class ErrorArchivo < StandardError; end
+class ErrorArchivoNoEncontrado < ErrorArchivo; end
+class ErrorArchivoPermiso < ErrorArchivo; end
+class ErrorArchivoCorrupto < ErrorArchivo; end
+
+# MAL: mensaje genérico
+raise "Error"  # no dice nada
+
+# BIEN: mensaje informativo
+raise SaldoInsuficienteError.new(saldo: 50, requerido: 100)
+
+# Documentación
+module Banco
+  # Error lanzado cuando una cuenta no tiene fondos suficientes
+  # para realizar una operación.
+  #
+  # Atributos:
+  #   saldo     - saldo actual de la cuenta
+  #   requerido - monto que se intentó retirar
+  #
+  # Ejemplo:
+  #   raise SaldoInsuficienteError.new(saldo: 50, requerido: 100)
+  class SaldoInsuficienteError < StandardError
+    attr_reader :saldo, :requerido
+
+    def initialize(saldo:, requerido:)
+      @saldo = saldo
+      @requerido = requerido
+      super("Saldo insuficiente: $#{saldo} < $#{requerido}")
+    end
+  end
+end
+
+puts "Buenas prácticas demostradas"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+11. TESTEO DE EXCEPCIONES PERSONALIZADAS
+----------------------------------------------------------------------
+
+Las excepciones personalizadas se testean como cualquier clase:
+
+  describe SaldoInsuficienteError do
+    it "tiene atributos" do
+      error = SaldoInsuficienteError.new(saldo: 50, requerido: 100)
+      expect(error.saldo).to eq(50)
+      expect(error.requerido).to eq(100)
+    end
+
+    it "tiene mensaje informativo" do
+      error = SaldoInsuficienteError.new(saldo: 50, requerido: 100)
+      expect(error.message).to include("50")
+      expect(error.message).to include("100")
+    end
+  end
+
+================================================================================
+EJEMPLO 11: Testeo de excepciones
+================================================================================
+
+#------ archivo: ej11_testeo.rb ------
+puts "=== TESTEO DE EXCEPCIONES ==="
+
+class ErrorAplicacion < StandardError; end
+class ErrorValidacion < ErrorAplicacion
+  attr_reader :campo, :valor
+
+  def initialize(campo:, valor:, mensaje: nil)
+    @campo = campo
+    @valor = valor
+    super(mensaje || "Validación fallida en #{campo}: #{valor.inspect}")
+  end
+end
+
+# Simular test
+def testear_excepcion
+  resultados = []
+
+  # Test 1: herencia
+  error = ErrorValidacion.new(campo: "email", valor: "invalido")
+  resultados << ("hereda de ErrorAplicacion: #{error.is_a?(ErrorAplicacion)}")
+
+  # Test 2: atributos
+  resultados << ("campo = 'email': #{error.campo == 'email'}")
+  resultados << ("valor = 'invalido': #{error.valor == 'invalido'}")
+
+  # Test 3: mensaje
+  resultados << ("mensaje incluye campo: #{error.message.include?('email')}")
+
+  # Test 4: raise y rescue
+  begin
+    raise error
+  rescue ErrorValidacion => e
+    resultados << ("raise/rescue funciona: #{e == error}")
+  end
+
+  # Test 5: captura por jerarquía
+  begin
+    raise error
+  rescue ErrorAplicacion => e
+    resultados << ("captura por superclase: #{e.is_a?(ErrorValidacion)}")
+  end
+
+  # Test 6: mensaje personalizado
+  error2 = ErrorValidacion.new(campo: "edad", valor: -1, mensaje: "La edad no puede ser negativa")
+  resultados << ("mensaje personalizado: #{error2.message == 'La edad no puede ser negativa'}")
+
+  resultados
+end
+
+puts "Resultados de tests:"
+testear_excepcion.each { |r| puts "  #{r ? '✓' : '✗'} #{r}" }
+
+#------ fin del ejemplo ------
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. Excepciones personalizadas: clases que heredan de StandardError.
+2. Atributos: attr_reader para datos contextuales (saldo, id, etc.).
+3. Jerarquías: organizar errores por dominio (ErrorPersistencia,
+   ErrorNegocio, ErrorRed).
+4. Mensajes dinámicos: construir mensajes informativos en el constructor.
+5. Códigos de error: identificadores estándar para los clientes.
+6. Información estructurada: to_h para logs y respuestas HTTP.
+7. Namespace con módulos: evitar colisiones y agrupar por contexto.
+8. i18n: internacionalización de mensajes de error.
+9. Buenas prácticas: nombres descriptivos, atributos útiles,
+   jerarquías sensatas, documentación.
+10. Testeo: verificar herencia, atributos, mensaje, raise/rescue.
+
+Regla de oro: "Una excepción personalizada debe contar una historia:
+qué pasó, por qué pasó, y qué información se necesita para resolverlo."
+
+================================================================================
+EJERCICIOS
+================================================================================
+
+1. BÁSICA: Crea una excepción personalizada ErrorEdad que herede de
+   StandardError. Úsala cuando la edad sea menor a 0 o mayor a 150.
+
+2. ATRIBUTOS: Crea una excepción ErrorProducto con atributos
+   producto_id, stock, y precio. El mensaje debe incluir todos.
+
+3. JERARQUÍA: Diseña una jerarquía para un sistema bancario:
+   ErrorBanco → ErrorCuenta (NoEncontrada, Bloqueada, SaldoInsuficiente)
+   → ErrorTransferencia (LimiteDiario, CuentaDestinoInvalida).
+
+4. MÓDULOS: Define las excepciones del ejercicio 3 dentro de un
+   módulo Banco.
+
+5. CÓDIGOS: Agrega códigos de error a tus excepciones (ej: "BANCO_001")
+   y crea un catálogo de códigos.
+
+6. MENSAJE DINÁMICO: Crea una excepción ErrorArchivoConfig que
+   muestre la ruta del archivo, la línea del error, y el valor
+   inválido.
+
+7. TO_H: Implementa el método to_h en una excepción para facilitar
+   logs estructurados.
+
+8. DOCUMENTACIÓN: Documenta una excepción personalizada con comentarios
+   explicando cuándo se lanza, sus atributos, y un ejemplo.
+
+9. TESTEO: Escribe pruebas (en comentarios) para una jerarquía de
+   3 excepciones, verificando herencia, atributos y mensajes.
+
+10. DESAFÍO: Crea un módulo Errores que incluya:
+    - Un método .registrar(tipo, &bloque) para crear excepciones
+      dinámicamente.
+    - Un método .lanzar(tipo, **atributos) que lance la excepción.
+    Ejemplo:
+      Errores.registrar(:saldo_insuficiente, atributos: [:saldo, :requerido])
+      Errores.lanzar(:saldo_insuficiente, saldo: 50, requerido: 100)
+
+================================================================================
+PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿De qué clase debo heredar mis excepciones?
+R: De StandardError (o de una excepción personalizada existente).
+   Nunca de Exception directamente.
+
+P: ¿Cuántas excepciones personalizadas debo crear?
+R: Las necesarias para que el código sea expresivo. Una por cada
+   tipo de error significativo en tu dominio.
+
+P: ¿Debo crear una jerarquía siempre?
+R: No siempre. Para aplicaciones pequeñas, jerarquías planas están
+   bien. Para aplicaciones grandes, una jerarquía organizada ayuda.
+
+P: ¿Puedo tener atributos que no sean strings?
+R: Sí, cualquier tipo de Ruby: números, hashes, arrays, objetos.
+
+P: ¿Cómo documento mis excepciones?
+R: Con comentarios YARD: @raise SaldoInsuficienteError cuando no
+   hay fondos.
+
+P: ¿Las excepciones personalizadas afectan el rendimiento?
+R: Mínimamente. La creación de objetos es rápida. Lo que es lento
+   es el backtrace (caller). Si el rendimiento es crítico, puedes
+   sobrescribir set_backtrace.
+
+P: ¿Puedo tener métodos en mis excepciones?
+R: Sí, son clases Ruby normales. Pueden tener cualquier método.
+
+P: ¿Cómo serializo excepciones personalizadas?
+R: Marshal.dump funciona. Para JSON, implementa to_json o as_json.
+
+P: ¿Debo usar attr_accessor o attr_reader?
+R: attr_reader (solo lectura). Las excepciones deben ser inmutables.
+
+P: ¿Qué hago si mi excepción tiene muchos atributos?
+R: Usa un hash de opciones en el constructor y attr_reader para
+   los más importantes. Proporciona valores por defecto.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Construye un sistema de manejo de errores empresarial llamado
+"ErrorFramework" que proporcione una infraestructura completa para
+excepciones personalizadas.
+
+Requisitos funcionales:
+
+1. ErrorFramework::Error (clase base)
+   - Atributos: codigo, modulo, usuario, timestamp, metadatos
+   - Método to_h para serialización
+   - Método as_json para APIs JSON
+   - Método log_message para archivos de log
+
+2. ErrorFramework.capturar(tipo, &bloque)
+   - Captura excepciones del tipo especificado y ejecuta el bloque.
+   - El bloque recibe la excepción y puede tomar acciones.
+
+3. ErrorFramework.notificar(excepción)
+   - Envía la excepción a canales configurados (log, email, SMS).
+   - Configurable por tipo de error y severidad.
+
+4. ErrorFramework.severidad(tipo_excepción, nivel)
+   - Asigna niveles de severidad: :debug, :info, :warn, :error, :fatal.
+
+5. ErrorFramework::ErrorBuilder
+   - Permite crear excepciones con DSL:
+     ErrorFramework.build(:saldo_insuficiente)
+       .con_atributo(:saldo)
+       .con_atributo(:requerido)
+       .con_mensaje("Saldo insuficiente: %{saldo} < %{requerido}")
+       .con_codigo("BANCO_004")
+       .crear
+
+6. ErrorFramework.with_handling(&bloque)
+   - Ejecuta un bloque con manejo centralizado de errores.
+   - Según la severidad, toma acciones diferentes.
+   - Siempre registra en log.
+   - Relanza errores fatales.
+
+Requisitos técnicos:
+  - Jerarquía bien diseñada con módulos.
+  - Thread-safe para atributos de clase.
+  - Configurable vía bloque de configuración.
+  - Incluye ejemplos de uso completos.
+  - Pruebas unitarias.
+
+Este desafío integra todos los conceptos de excepciones personalizadas
+y simula un framework de manejo de errores de nivel empresarial.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+================================================================================
+
+Has llegado al corazón del sistema de excepciones de Ruby. Ahora sabes
+crear excepciones que hablan el lenguaje de tu dominio, con atributos
+que cuentan la historia completa del error, y jerarquías que permiten
+capturar con precisión quirúrgica.
+
+Las excepciones personalizadas son una de las herramientas más
+poderosas para escribir código Ruby expresivo y mantenible. Cada
+excepción es una oportunidad de comunicar exactamente qué salió mal
+y por qué.
+
+En el próximo y último capítulo del módulo, pondremos todo en práctica
+con un proyecto completo que integra archivos, directorios, serialización,
+excepciones, y todas las técnicas aprendidas.
+
+¡Nos vemos en el Capítulo 60!
+
+================================================================================
+PRÓXIMO CAPÍTULO
+================================================================================
+
+Capítulo 60: PROYECTO MÓDULO VI
+  - Aplicación completa integrando archivos, directorios,
+    serialización y excepciones
+  - Diseño de una aplicación NoteApp con persistencia
+  - Arquitectura, implementación y pruebas
+  - Repaso de todos los conceptos del módulo
+
+================================================================================
+FIN DEL CAPÍTULO 59
+================================================================================

@@ -1,0 +1,894 @@
+================================================================================
+  C# MASTER BOOK — MÓDULO III: POO AVANZADA
+  CAPÍTULO 23: RECORDS
+================================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+¡Bienvenido al Capítulo 23 del C# Master Book! Los records, introducidos
+en C# 9 y ampliados en C# 10, son uno de los tipos más innovadores del
+lenguaje. Un record es un tipo de referencia (o valor, con record struct)
+que proporciona igualdad estructural, inmutabilidad, with expressions y
+una sintaxis posicional concisa. Son ideales para modelar datos que no
+cambian una vez creados (inmutabilidad) y donde la igualdad se basa en
+el contenido, no en la identidad.
+
+Dominar los records transformará la forma en que diseñas modelos de
+datos, DTOs, value objects y mensajes en sistemas distribuidos.
+
+--------------------------------------------------------------------------------
+  FRASE DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+"Los records no son solo datos. Son la promesa de que los datos no
+cambiarán sin que lo sepas." — Mads Torgersen
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+✓ Declarar records posicionales y nominales.
+✓ Comprender la igualdad estructural (value equality) vs referencial.
+✓ Usar with expressions para crear copias modificadas.
+✓ Diferenciar entre record class y record struct.
+✓ Entender los miembros sintetizados por el compilador.
+✓ Usar propiedades init-only para inmutabilidad parcial.
+✓ Aplicar records en herencia y polimorfismo.
+✓ Integrar records con patrones de desestructuración.
+✓ Usar records como value objects en DDD.
+
+================================================================================
+  CUERPO DEL CAPÍTULO
+================================================================================
+
+23.1 — ¿QUÉ ES UN RECORD?
+---------------------------
+
+Un record es un tipo especial que el compilador enriquece con miembros
+sintetizados para igualdad estructural, toString, GetHashCode, y más.
+
+```csharp
+// Record posicional (sintaxis más concisa)
+public record Persona(string Nombre, int Edad);
+
+// Equivale aproximadamente a:
+public class Persona : IEquatable<Persona>
+{
+    public string Nombre { get; init; }
+    public int Edad { get; init; }
+    // ...Equals, GetHashCode, ToString, Deconstruct, Clone...
+}
+```
+
+Uso:
+
+```csharp
+var p1 = new Persona("Ana", 30);
+var p2 = new Persona("Ana", 30);
+
+Console.WriteLine(p1);           // Persona { Nombre = Ana, Edad = 30 }
+Console.WriteLine(p1 == p2);     // True (igualdad estructural)
+Console.WriteLine(ReferenceEquals(p1, p2)); // False (distintos objetos)
+
+var p3 = p1 with { Edad = 31 };
+Console.WriteLine(p3);           // Persona { Nombre = Ana, Edad = 31 }
+```
+
+23.2 — RECORDS POSICIONALES VS NOMINALES
+------------------------------------------
+
+```csharp
+// Posicional (parámetros en la declaración)
+public record Coordenada(double X, double Y);
+
+// Nominal (propiedades definidas explícitamente)
+public record Punto
+{
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+// La diferencia principal es que los posicionales generan:
+// - Constructor primario con los parámetros
+// - Propiedades init-only
+// - Deconstruct automático
+// - Los parámetros son posicionales en el constructor
+```
+
+23.3 — PROPIEDADES INIT-ONLY
+------------------------------
+
+Las propiedades init-only solo pueden asignarse durante la inicialización
+o dentro de un with expression.
+
+```csharp
+public record Producto
+{
+    public string Nombre { get; init; }
+    public decimal Precio { get; init; }
+    public string Categoria { get; init; }
+
+    // Propiedad calculada (no init)
+    public decimal PrecioConIVA => Precio * 1.21m;
+}
+
+// Uso
+var producto = new Producto
+{
+    Nombre = "Laptop",
+    Precio = 1500m,
+    Categoria = "Electrónica"
+};
+
+// Esto NO compila:
+// producto.Precio = 1600m;
+
+// Esto SÍ:
+var productoActualizado = producto with { Precio = 1600m };
+```
+
+23.4 — WITH EXPRESSIONS
+-------------------------
+
+La expresión with crea una nueva instancia del record con algunas
+propiedades modificadas. Internamente usa un método Clone protegido.
+
+```csharp
+public record Direccion(string Calle, string Ciudad, string Pais);
+
+var dir1 = new Direccion("Av. Mayo 123", "Buenos Aires", "Argentina");
+
+// Cambiar solo la calle
+var dir2 = dir1 with { Calle = "Av. Corrientes 456" };
+
+// Cambiar múltiples propiedades
+var dir3 = dir1 with
+{
+    Calle = "Calle 52",
+    Ciudad = "La Plata"
+};
+
+// Copia exacta
+var dir4 = dir1 with { };
+
+Console.WriteLine(dir1); // Direccion { Calle = Av. Mayo 123, Ciudad = Buenos Aires, Pais = Argentina }
+Console.WriteLine(dir2); // Direccion { Calle = Av. Corrientes 456, Ciudad = Buenos Aires, Pais = Argentina }
+```
+
+23.5 — IGUALDAD ESTRUCTURAL
+-----------------------------
+
+Los records implementan igualdad de valor (value equality):
+- Dos records son iguales si todas sus propiedades son iguales.
+- El compilador sintetiza Equals, GetHashCode, == y !=.
+
+```csharp
+public record PersonaConDireccion(string Nombre, int Edad, Direccion Direccion);
+
+var a = new PersonaConDireccion("Ana", 30,
+    new Direccion("Calle 1", "Madrid", "España"));
+
+var b = new PersonaConDireccion("Ana", 30,
+    new Direccion("Calle 1", "Madrid", "España"));
+
+Console.WriteLine(a == b); // True
+Console.WriteLine(a.Equals(b)); // True
+Console.WriteLine(a.GetHashCode() == b.GetHashCode()); // True
+
+// La igualdad es recursiva: compara las propiedades, y si son records,
+// compara estructuralmente también
+```
+
+23.6 — RECORDS INMUTABLES Y MUTABILIDAD
+-----------------------------------------
+
+Por defecto, los records son inmutables (propiedades init-only). Pero
+puedes crear records mutables con set:
+
+```csharp
+// Record mutable (no recomendado para semántica de valor)
+public record PersonaMutable
+{
+    public string Nombre { get; set; }
+    public int Edad { get; set; }
+}
+
+var pm = new PersonaMutable { Nombre = "Luis", Edad = 25 };
+pm.Edad = 26; // Ok porque es set
+```
+
+La inmutabilidad trae ventajas:
+- Thread-safe por defecto.
+- Sin efectos secundarios.
+- Fáciles de cachear.
+- Razonamiento más simple.
+
+23.7 — RECORD STRUCT (C# 10)
+------------------------------
+
+Los record struct combinan la semántica de valor de los structs con
+la igualdad estructural y with expressions de los records.
+
+```csharp
+// Record struct posicional (inmutable por defecto)
+public readonly record struct Vector2(float X, float Y);
+
+// Record struct mutable
+public record struct Puntuacion
+{
+    public string Jugador { get; set; }
+    public int Puntos { get; set; }
+
+    public Puntuacion(string jugador, int puntos)
+    {
+        Jugador = jugador;
+        Puntos = puntos;
+    }
+}
+```
+
+Uso:
+
+```csharp
+var v1 = new Vector2(3, 4);
+var v2 = new Vector2(3, 4);
+Console.WriteLine(v1 == v2); // True — igualdad estructural
+Console.WriteLine(v1); // Vector2 { X = 3, Y = 4 }
+
+var v3 = v1 with { X = 10 };
+
+var p1 = new Puntuacion("Ana", 100);
+p1.Puntos = 200; // Mutable
+```
+
+23.8 — MIEMBROS SINTETIZADOS POR EL COMPILADOR
+-------------------------------------------------
+
+El compilador genera automáticamente para los records:
+
+```csharp
+public record class Libro(string Titulo, string Autor, int Anio)
+{
+    // El compilador genera (aproximadamente):
+    //
+    // public string Titulo { get; init; }
+    // public string Autor { get; init; }
+    // public int Anio { get; init; }
+    //
+    // public Libro(string Titulo, string Autor, int Anio)
+    // {
+    //     this.Titulo = Titulo;
+    //     this.Autor = Autor;
+    //     this.Anio = Anio;
+    // }
+    //
+    // public void Deconstruct(out string Titulo, out string Autor, out int Anio)
+    // {
+    //     Titulo = this.Titulo;
+    //     Autor = this.Autor;
+    //     Anio = this.Anio;
+    // }
+    //
+    // public bool Equals(Libro? other) => ...
+    // public override bool Equals(object? obj) => ...
+    // public override int GetHashCode() => ...
+    // public static bool operator ==(Libro? a, Libro? b) => ...
+    // public static bool operator !=(Libro? a, Libro? b) => ...
+    // public override string ToString() => ...
+    // protected virtual Libro Clone() => ...
+}
+```
+
+23.9 — DESESTRUCTURACIÓN
+--------------------------
+
+Los records posicionales pueden desestructurarse automáticamente.
+
+```csharp
+public record PersonaCompleta(string Nombre, string Apellido, int Edad, string Ciudad);
+
+var persona = new PersonaCompleta("Lucas", "Ega", 35, "Buenos Aires");
+
+// Desestructuración
+var (nombre, apellido, edad, ciudad) = persona;
+Console.WriteLine($"{nombre} {apellido}, {edad} años, {ciudad}");
+// Lucas Ega, 35 años, Buenos Aires
+
+// Desestructuración parcial con discard
+var (n, a, _, _) = persona;
+Console.WriteLine($"{n} {a}");
+
+// Con tipos explícitos
+(string nombre2, string apellido2, int edad2, string ciudad2) = persona;
+```
+
+23.10 — HERENCIA CON RECORDS
+------------------------------
+
+Los records pueden heredar de otros records, pero no de clases.
+
+```csharp
+public abstract record Animal(string Nombre);
+
+public record Perro(string Nombre, string Raza) : Animal(Nombre);
+
+public record Gato(string Nombre, string Color) : Animal(Nombre);
+
+// Uso
+Animal mascota1 = new Perro("Rex", "Pastor Alemán");
+Animal mascota2 = new Gato("Misu", "Negro");
+
+if (mascota1 is Perro p)
+    Console.WriteLine($"{p.Nombre} es un {p.Raza}");
+
+if (mascota2 is Gato g)
+    Console.WriteLine($"{g.Nombre} es de color {g.Color}");
+```
+
+Polimorfismo con records:
+
+```csharp
+public record Figura
+{
+    public string Nombre { get; init; } = "Figura";
+}
+
+public record Circulo : Figura
+{
+    public double Radio { get; init; }
+}
+
+public record RectanguloRecord : Figura
+{
+    public double Ancho { get; init; }
+    public double Alto { get; init; }
+}
+
+public static class Calculadora
+{
+    public static double Area(Figura figura) => figura switch
+    {
+        Circulo c => Math.PI * c.Radio * c.Radio,
+        RectanguloRecord r => r.Ancho * r.Alto,
+        _ => 0
+    };
+}
+```
+
+23.11 — RECORDS Y PATTERN MATCHING
+------------------------------------
+
+```csharp
+public record Pedido(int Id, string Cliente, decimal Monto, bool EsUrgente);
+
+string ClasificarPedido(Pedido pedido) => pedido switch
+{
+    { Monto: > 10000, EsUrgente: true } => "Pedido VIP urgente",
+    { Monto: > 10000 } => "Pedido VIP",
+    { EsUrgente: true } => "Pedido urgente",
+    { Monto: > 5000 } => "Pedido grande",
+    _ => "Pedido estándar"
+};
+
+// Uso
+var pedidos = new[]
+{
+    new Pedido(1, "Empresa A", 15000, true),
+    new Pedido(2, "Empresa B", 3000, false),
+    new Pedido(3, "Empresa C", 12000, false),
+    new Pedido(4, "Empresa D", 500, true),
+};
+
+foreach (var p in pedidos)
+    Console.WriteLine($"{p.Id}: {ClasificarPedido(p)}");
+```
+
+23.12 — RECORDS COMO VALUE OBJECTS (DDD)
+------------------------------------------
+
+En Domain-Driven Design, un Value Object es inmutable y se identifica
+por sus atributos. Los records son perfectos para esto.
+
+```csharp
+public record Dinero(decimal Cantidad, string Moneda)
+{
+    public Dinero Sumar(Dinero otro)
+    {
+        if (otro.Moneda != Moneda)
+            throw new InvalidOperationException("Monedas diferentes");
+        return this with { Cantidad = Cantidad + otro.Cantidad };
+    }
+
+    public Dinero Multiplicar(decimal factor) =>
+        this with { Cantidad = Cantidad * factor };
+
+    public static Dinero operator +(Dinero a, Dinero b) => a.Sumar(b);
+    public static Dinero operator *(Dinero a, decimal b) => a.Multiplicar(b);
+}
+
+// Uso
+var precio = new Dinero(100, "USD");
+var impuesto = new Dinero(21, "USD");
+var total = precio + impuesto;
+Console.WriteLine(total); // Dinero { Cantidad = 121, Moneda = USD }
+
+var doble = precio * 2;
+Console.WriteLine(doble); // Dinero { Cantidad = 200, Moneda = USD }
+```
+
+23.13 — RECORDS Y JSON
+------------------------
+
+```csharp
+using System.Text.Json;
+
+public record Cliente(int Id, string Nombre, string Email, bool Activo);
+
+public record Factura(
+    int Numero,
+    Cliente Cliente,
+    DateTime Fecha,
+    List<LineaFactura> Lineas,
+    decimal Total
+);
+
+public record LineaFactura(string Producto, int Cantidad, decimal PrecioUnitario)
+{
+    public decimal Subtotal => Cantidad * PrecioUnitario;
+}
+
+// Serialización
+var factura = new Factura(
+    1001,
+    new Cliente(1, "Empresa XYZ", "contacto@xyz.com", true),
+    DateTime.Now,
+    new List<LineaFactura>
+    {
+        new("Laptop", 5, 1500m),
+        new("Monitor", 10, 300m),
+        new("Teclado", 20, 50m)
+    },
+    0
+);
+
+var options = new JsonSerializerOptions { WriteIndented = true };
+string json = JsonSerializer.Serialize(factura, options);
+Console.WriteLine(json);
+
+// Deserialización
+var deserializada = JsonSerializer.Deserialize<Factura>(json, options);
+Console.WriteLine(deserializada == factura); // True — igualdad estructural
+```
+
+23.14 — RECORDS CON VALIDACIÓN
+-------------------------------
+
+Puedes agregar validación en el constructor primario usando el cuerpo
+del record.
+
+```csharp
+public record Email
+{
+    public string Valor { get; }
+
+    public Email(string valor)
+    {
+        if (string.IsNullOrWhiteSpace(valor))
+            throw new ArgumentException("El email no puede estar vacío");
+        if (!valor.Contains('@'))
+            throw new ArgumentException("Email inválido");
+        Valor = valor.ToLowerInvariant();
+    }
+}
+
+public record UsuarioValido(int Id, string Nombre, Email Email);
+```
+
+O usando el método de fábrica:
+
+```csharp
+public record NumeroTelefono
+{
+    public string Valor { get; init; }
+
+    public NumeroTelefono()
+    {
+        Valor = string.Empty;
+    }
+
+    public static NumeroTelefono Crear(string valor)
+    {
+        if (string.IsNullOrWhiteSpace(valor))
+            throw new ArgumentException("El teléfono no puede estar vacío");
+
+        var limpio = new string(valor.Where(char.IsDigit).ToArray());
+        if (limpio.Length < 7 || limpio.Length > 15)
+            throw new ArgumentException("Longitud de teléfono inválida");
+
+        return new NumeroTelefono { Valor = limpio };
+    }
+}
+```
+
+23.15 — RECORDS CON COMPORTAMIENTO
+------------------------------------
+
+Aunque los records son principalmente para datos, pueden tener métodos.
+
+```csharp
+public record CuentaBancaria(string Titular, decimal Saldo)
+{
+    public string Resumen => $"{Titular}: {Saldo:C}";
+
+    public CuentaBancaria Depositar(decimal monto) =>
+        this with { Saldo = Saldo + monto };
+
+    public CuentaBancaria Retirar(decimal monto)
+    {
+        if (monto > Saldo)
+            throw new InvalidOperationException("Saldo insuficiente");
+        return this with { Saldo = Saldo - monto };
+    }
+}
+
+// Uso
+var cuenta = new CuentaBancaria("Ana", 1000);
+cuenta = cuenta.Depositar(500);
+cuenta = cuenta.Retirar(200);
+Console.WriteLine(cuenta.Resumen); // Ana: $1,300.00
+```
+
+23.16 — RECORDS Y ALCANCE (SCOPE)
+-----------------------------------
+
+Puedes definir records anidados dentro de clases.
+
+```csharp
+public class SistemaPedidos
+{
+    public record ItemPedido(string ProductoId, string Nombre, int Cantidad, decimal Precio);
+    public record DireccionEnvio(string Calle, string Ciudad, string CodigoPostal);
+    public record PedidoCompleto(int Id, List<ItemPedido> Items, DireccionEnvio Direccion);
+
+    public PedidoCompleto CrearPedido(List<ItemPedido> items, DireccionEnvio direccion)
+    {
+        return new PedidoCompleto(
+            new Random().Next(1000, 9999),
+            items,
+            direccion
+        );
+    }
+}
+```
+
+23.17 — RECORDS Y EF CORE
+---------------------------
+
+Los records funcionan bien con Entity Framework Core, especialmente
+como value objects o DTOs.
+
+```csharp
+public record DireccionEF(string Calle, string Ciudad, string Pais, string CodigoPostal);
+
+public class ClienteEF
+{
+    public int Id { get; set; }
+    public string Nombre { get; set; }
+    public DireccionEF Direccion { get; set; } = null!;
+}
+
+// Configuración en DbContext (owning)
+// modelBuilder.Entity<ClienteEF>().OwnsOne(c => c.Direccion);
+```
+
+23.18 — EJEMPLO COMPLETO: SISTEMA DE RESERVAS DE VUELOS
+----------------------------------------------------------
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+// Value Objects
+public record CodigoVuelo(string Codigo)
+{
+    public string Codigo { get; } = Codigo.ToUpperInvariant();
+}
+
+public record Aeropuerto(string Codigo, string Ciudad, string Pais)
+{
+    public string Codigo { get; } = Codigo.ToUpperInvariant();
+}
+
+public record FechaVuelo(DateTime Salida, DateTime Llegada)
+{
+    public TimeSpan Duracion => Llegada - Salida;
+    public bool EsValida => Llegada > Salida;
+}
+
+// Tarifas
+public record Tarifa(string Nombre, decimal Precio, bool EquipajeIncluido, bool Reembolsable);
+
+// Pasajero
+public record Pasajero(string Nombre, string Pasaporte, string Asiento);
+
+// Vuelo
+public record Vuelo(
+    CodigoVuelo Codigo,
+    Aeropuerto Origen,
+    Aeropuerto Destino,
+    FechaVuelo Fecha,
+    List<Tarifa> Tarifas,
+    int CapacidadTotal
+)
+{
+    public string Ruta => $"{Origen.Ciudad} -> {Destino.Ciudad}";
+    public decimal PrecioMinimo => Tarifas.Min(t => t.Precio);
+}
+
+// Reserva
+public record Reserva(
+    int Id,
+    Vuelo Vuelo,
+    Pasajero Pasajero,
+    Tarifa TarifaSeleccionada,
+    DateTime FechaReserva,
+    EstadoReserva Estado
+);
+
+public enum EstadoReserva { Confirmada, Pendiente, Cancelada, CheckInRealizado }
+
+// Sistema
+public class SistemaReservas
+{
+    private readonly List<Vuelo> _vuelos = new();
+    private readonly List<Reserva> _reservas = new();
+    private int _siguienteId = 1;
+
+    public Vuelo AgregarVuelo(Vuelo vuelo)
+    {
+        _vuelos.Add(vuelo);
+        return vuelo;
+    }
+
+    public Reserva? Reservar(Vuelo vuelo, Pasajero pasajero, Tarifa tarifa)
+    {
+        var reservadas = _reservas.Count(r => r.Vuelo.Codigo == vuelo.Codigo && r.Estado != EstadoReserva.Cancelada);
+        if (reservadas >= vuelo.CapacidadTotal)
+            return null;
+
+        var reserva = new Reserva(
+            _siguienteId++,
+            vuelo,
+            pasajero,
+            tarifa,
+            DateTime.Now,
+            EstadoReserva.Confirmada
+        );
+        _reservas.Add(reserva);
+        return reserva;
+    }
+
+    public Reserva CancelarReserva(int id)
+    {
+        var index = _reservas.FindIndex(r => r.Id == id);
+        if (index < 0) throw new KeyNotFoundException($"Reserva {id} no encontrada");
+        var cancelada = _reservas[index] with { Estado = EstadoReserva.Cancelada };
+        _reservas[index] = cancelada;
+        return cancelada;
+    }
+
+    public IEnumerable<Reserva> ReservasPorVuelo(CodigoVuelo codigo) =>
+        _reservas.Where(r => r.Vuelo.Codigo == codigo && r.Estado != EstadoReserva.Cancelada);
+
+    public void MostrarVuelos()
+    {
+        foreach (var vuelo in _vuelos)
+        {
+            Console.WriteLine($"{vuelo.Codigo.Codigo}: {vuelo.Ruta}");
+            Console.WriteLine($"  Salida: {vuelo.Fecha.Salida:g}, Llegada: {vuelo.Fecha.Llegada:g}");
+            Console.WriteLine($"  Duración: {vuelo.Fecha.Duracion:h\\:mm}");
+            Console.WriteLine($"  Precio desde: {vuelo.PrecioMinimo:C}");
+            Console.WriteLine($"  Capacidad: {vuelo.CapacidadTotal} asientos");
+            Console.WriteLine($"  Tarifas:");
+            foreach (var t in vuelo.Tarifas)
+                Console.WriteLine($"    - {t.Nombre}: {t.Precio:C} (Equipaje: {t.EquipajeIncluido}, Reembolsable: {t.Reembolsable})");
+            Console.WriteLine();
+        }
+    }
+}
+
+public class Programa
+{
+    public static void Main()
+    {
+        var sistema = new SistemaReservas();
+
+        var vuelo1 = new Vuelo(
+            new CodigoVuelo("AA1234"),
+            new Aeropuerto("EZE", "Buenos Aires", "Argentina"),
+            new Aeropuerto("MAD", "Madrid", "España"),
+            new FechaVuelo(
+                new DateTime(2026, 8, 15, 23, 30, 0),
+                new DateTime(2026, 8, 16, 17, 45, 0)
+            ),
+            new List<Tarifa>
+            {
+                new("Económica", 850.00m, false, false),
+                new("Premium", 1250.00m, true, false),
+                new("Business", 2500.00m, true, true),
+                new("Primera Clase", 4500.00m, true, true),
+            },
+            300
+        );
+
+        var vuelo2 = vuelo1 with
+        {
+            Codigo = new CodigoVuelo("AA1235"),
+            Fecha = vuelo1.Fecha with
+            {
+                Salida = vuelo1.Fecha.Salida.AddDays(1),
+                Llegada = vuelo1.Fecha.Llegada.AddDays(1)
+            }
+        };
+
+        sistema.AgregarVuelo(vuelo1);
+        sistema.AgregarVuelo(vuelo2);
+
+        sistema.MostrarVuelos();
+
+        var pasajero1 = new Pasajero("Ana Martínez", "AB123456", "14A");
+        var pasajero2 = new Pasajero("Carlos García", "CD789012", "14B");
+
+        var reserva1 = sistema.Reservar(vuelo1, pasajero1, vuelo1.Tarifas[0]);
+        var reserva2 = sistema.Reservar(vuelo1, pasajero2, vuelo1.Tarifas[1]);
+
+        Console.WriteLine($"Reserva 1: {reserva1}");
+        Console.WriteLine($"Reserva 2: {reserva2}");
+
+        var cancelada = sistema.CancelarReserva(reserva1!.Id);
+        Console.WriteLine($"Reserva cancelada: {cancelada}");
+
+        // Demostración de igualdad estructural
+        Console.WriteLine($"\n¿Vuelos iguales? {vuelo1 == vuelo2}"); // False
+        Console.WriteLine($"¿Reservas iguales? {reserva1 == reserva1}"); // True
+    }
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  Los records son tipos de referencia inmutables con igualdad        │
+│  estructural. Se declaran con la palabra clave record (C# 9+).      │
+│  Soporte: posicional y nominal, with expressions, desestructuración,│
+│  herencia entre records, y record struct (C# 10). El compilador     │
+│  genera Equals, GetHashCode, ToString, Clone y Deconstruct. Son     │
+│  ideales para DTOs, Value Objects en DDD, y modelos de datos        │
+│  inmutables. Los record struct ofrecen semántica de valor con       │
+│  rendimiento de stack.                                              │
+└──────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  EJERCICIOS
+================================================================================
+
+1. Define un record posicional Producto con Id, Nombre, Precio y Stock.
+   Crea tres instancias y compara dos de ellas con ==.
+
+2. Convierte el siguiente código a un record: public class Punto
+   { public double X { get; set; } public double Y { get; set; } }
+
+3. Usa with expression para crear una copia de un record Persona
+   cambiando solo la edad.
+
+4. Crea un record struct Vector3D con coordenadas X, Y, Z. Implementa
+   la suma y resta como métodos que devuelvan nuevos vectores.
+
+5. Hereda un record Empleado de un record Persona. Empleado debe tener
+   Salario y Departamento adicionales.
+
+6. Implementa un record Direccion con validación en el constructor
+   (código postal de 5 dígitos).
+
+7. Desestructura un record Producto y muestra sus componentes.
+
+8. Crea un record Factura con items y total. El total debe calcularse
+   automáticamente como suma de subtotales.
+
+9. Usa pattern matching con records para clasificar figuras geométricas
+   (Circulo, Rectangulo, Triangulo) y calcular su área.
+
+10. Diseña un value object Moneda con cantidad y tipo de moneda.
+    Implementa los operadores +, -, * y la comparación == y !=.
+
+================================================================================
+  FAQ — PREGUNTAS FRECUENTES
+================================================================================
+
+P: ¿Cuándo debo usar record en lugar de class?
+R: Usa record cuando modeles datos inmutables, cuando la igualdad deba
+   ser por valor, y cuando necesites with expressions. Usa class cuando
+   necesites comportamiento mutable, herencia compleja o identidad.
+
+P: ¿Los records son más lentos que las clases?
+R: En general no. La igualdad estructural hace comparaciones de
+   propiedades, pero es comparable a implementarlo manualmente.
+
+P: ¿Puedo tener setters (set) en un record?
+R: Sí, pero pierdes la inmutabilidad. Usa set si necesitas mutabilidad,
+   pero considera si un record es el tipo adecuado.
+
+P: ¿Puedo serializar records con System.Text.Json?
+R: Sí, los records se serializan y deserializan sin problemas.
+
+P: ¿Los records soportan herencia de clases no-record?
+R: No. Los records solo pueden heredar de otros records o de object.
+   Las clases no-record no pueden heredar de records.
+
+P: ¿Qué es el método Clone en un record?
+R: Es un método protegido que el compilador genera para las with
+   expressions. Crea una copia superficial del record.
+
+P: ¿Cómo afecta la herencia a la igualdad en records?
+R: Dos records de tipos diferentes nunca son iguales, aunque tengan
+   las mismas propiedades.
+
+P: ¿Puedo usar record con Entity Framework?
+R: Sí, como owned entities (value objects) o como DTOs. No se recomiendan
+   como entidades principales porque las entidades necesitan identidad.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseña un sistema de gestión de pedidos de comercio electrónico
+utilizando exclusivamente records, record struct y enums. El sistema
+debe incluir:
+
+- Value Objects: Dinero, Direccion, Email, CodigoProducto.
+- Records de datos: Producto, Cliente, ItemPedido, Pedido.
+- Record struct: Puntuacion (para reviews de productos).
+- Enums: EstadoPedido, MetodoPago, CategoriaProducto.
+- Herencia de records: ClientePremium que herede de Cliente con
+  descuento adicional.
+- Un servicio PedidoService que procese pedidos con métodos que
+  devuelvan nuevos records (inmutabilidad).
+- Un sistema de descuentos basado en reglas usando pattern matching
+  con records.
+- Serialización a JSON de todo el modelo.
+- Un método que calcule el total del pedido considerando descuentos,
+  impuestos y envío.
+- Una función de búsqueda que filtre pedidos por estado, rango de
+  precio y cliente, usando LINQ sobre records.
+
+Requisitos adicionales:
+- Todos los datos deben ser inmutables (init-only o posicionales).
+- Las operaciones deben devolver nuevas instancias, no modificar.
+- Debe haber al menos 3 niveles de herencia de records.
+- Incluye tests que demuestren igualdad estructural.
+
+Este desafío integra todos los conceptos del capítulo en un escenario
+real de e-commerce.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Has completado el Capítulo 23. Ahora dominas los records: su sintaxis
+posicional y nominal, with expressions, igualdad estructural, herencia
+entre records, desestructuración, y record struct. Esta herramienta
+transformará tu código haciéndolo más expresivo, inmutable y seguro.
+
+En el próximo capítulo exploraremos los genéricos, que permiten crear
+código reutilizable para cualquier tipo de dato.
+
+¡Nos vemos en el Capítulo 24: GENÉRICOS!
+
+================================================================================
+  FIN DEL CAPÍTULO 23
+================================================================================

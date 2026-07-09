@@ -1,0 +1,902 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO III: ESTRUCTURAS DE DATOS
+  CAPÍTULO 23: MAKE Y CAPACIDAD
+ ================================================================================
+
+  ███╗   ███╗ █████╗ ██╗  ██╗███████╗
+  ████╗ ████║██╔══██╗██║ ██╔╝██╔════╝
+  ██╔████╔██║███████║█████╔╝ █████╗
+  ██║╚██╔╝██║██╔══██║██╔═██╗ ██╔══╝
+  ██║ ╚═╝ ██║██║  ██║██║  ██╗███████╗
+  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+
+  ██╗   ██╗ ██████╗ █████╗  ██████╗██████╗ ██╗██████╗  █████╗ ██████╗
+  ╚██╗ ██╔╝██╔════╝██╔══██╗██╔════╝██╔══██╗██║██╔══██╗██╔══██╗██╔══██╗
+   ╚████╔╝ ██║     ███████║██║     ██║  ██║██║██████╔╝███████║██████╔╝
+    ╚██╔╝  ██║     ██╔══██║██║     ██║  ██║██║██╔══██╗██╔══██║██╔══██╗
+     ██║   ╚██████╗██║  ██║╚██████╗██████╔╝██║██║  ██║██║  ██║██████╔╝
+     ╚═╝    ╚═════╝╚═╝  ╚═╝ ╚═════╝╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝
+
+  ================================================================================
+  BIENVENIDA
+  ================================================================================
+
+  ¡Bienvenido al Capítulo 23 del GO MASTER BOOK! Este capítulo está dedicado
+  a make(), una función integrada (built-in) esencial para crear slices, maps
+  y channels. Nos centraremos en los slices: cómo make inicializa el slice
+  header, cómo la capacidad controla el crecimiento, cuándo Go realoca el array
+  subyacente, y cómo evitar realocaciones innecesarias.
+
+  ================================================================================
+  FRASE DEL CAPÍTULO
+  ================================================================================
+
+  "Mide dos veces, corta una." — Proverbio inglés
+
+  Asignar la capacidad correcta desde el principio evita realocaciones costosas.
+  Planifica antes de codificar.
+
+  ================================================================================
+  OBJETIVOS DEL CAPÍTULO
+  ================================================================================
+
+  ✓ Dominar la función make() para slices con len y cap.
+  ✓ Comprender la diferencia entre longitud y capacidad.
+  ✓ Entender el algoritmo de crecimiento de capacidad (double, luego 25%).
+  ✓ Saber cuándo Go realoca el array subyacente.
+  ✓ Usar make con slices nil y slices preasignados.
+  ✓ Diferenciar make vs literal en inicialización.
+  ✓ Optimizar el rendimiento mediante preasignación de capacidad.
+
+  ================================================================================
+  CONTENIDO
+  ================================================================================
+
+  1. La Función make()
+  ─────────────────────
+
+  make es una función built-in que crea slices, maps y channels. Para slices,
+  la firma es:
+
+      func make([]T, len int, cap ...int) []T
+
+  • El primer argumento es el tipo del slice.
+  • len: longitud inicial (elementos accesibles, inicializados a cero).
+  • cap (opcional): capacidad (si se omite, cap = len).
+
+  ================================================================================
+  EJEMPLO 1: make básico
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      // Sin especificar capacidad (cap = len)
+      s1 := make([]int, 5)
+      fmt.Println("s1:", s1, "len:", len(s1), "cap:", cap(s1))
+
+      // Especificando capacidad
+      s2 := make([]int, 3, 10)
+      fmt.Println("s2:", s2, "len:", len(s2), "cap:", cap(s2))
+  }
+
+  ================================================================================
+  EJEMPLO 2: make con diferentes tipos
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      strings := make([]string, 4)
+      fmt.Printf("strings: %q, len=%d, cap=%d\n",
+          strings, len(strings), cap(strings))
+
+      floats := make([]float64, 5, 20)
+      fmt.Printf("floats: %v, len=%d, cap=%d\n",
+          floats, len(floats), cap(floats))
+
+      bytes := make([]byte, 0, 256)
+      fmt.Printf("bytes: len=%d, cap=%d\n", len(bytes), cap(bytes))
+  }
+
+  2. Longitud vs Capacidad
+  ────────────────────────
+
+  • len: cuántos elementos puedes leer/escribir (accesibles).
+  • cap: cuántos elementos hay disponibles en el array subyacente desde ptr.
+
+  Los elementos más allá de len pero dentro de cap NO son accesibles directamente.
+
+  ================================================================================
+  EJEMPLO 3: len y cap en acción
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 3, 8)
+      fmt.Println("Inicial:")
+      fmt.Printf("  s = %v\n", s)
+      fmt.Printf("  len = %d, cap = %d\n", len(s), cap(s))
+
+      // Podemos acceder a índices 0, 1, 2 (len)
+      s[0] = 10
+      s[1] = 20
+      s[2] = 30
+
+      // No podemos acceder a s[3] aunque cap=8
+      // s[3] = 40 // PANIC: index out of range
+
+      // Pero podemos rebanar para expandir len
+      s = s[:5] // Ahora len=5
+      s[3] = 40
+      s[4] = 50
+      fmt.Println("Expandido:")
+      fmt.Printf("  s = %v\n", s)
+      fmt.Printf("  len = %d, cap = %d\n", len(s), cap(s))
+  }
+
+  3. Crecimiento de Capacidad
+  ───────────────────────────
+
+  Cuando usas append y el slice no tiene capacidad suficiente, Go:
+  1. Crea un NUEVO array subyacente con mayor capacidad.
+  2. Copia los elementos viejos al nuevo array.
+  3. Retorna un nuevo slice header apuntando al nuevo array.
+
+  Regla de crecimiento (histórica):
+  • Si cap < 256: duplica la capacidad.
+  • Si cap >= 256: incrementa en ~25% (fórmula: cap += (cap + 3*256) / 4).
+  • Esta fórmula cambió en Go 1.18 para ser más gradual.
+
+  ================================================================================
+  EJEMPLO 4: Crecimiento con append
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 0, 2)
+      fmt.Printf("cap=%d\n", cap(s))
+
+      s = append(s, 1)
+      fmt.Printf("después de 1: len=%d, cap=%d\n", len(s), cap(s))
+
+      s = append(s, 2)
+      fmt.Printf("después de 2: len=%d, cap=%d\n", len(s), cap(s))
+
+      s = append(s, 3) // ¡Realocación!
+      fmt.Printf("después de 3: len=%d, cap=%d\n", len(s), cap(s))
+
+      s = append(s, 4)
+      fmt.Printf("después de 4: len=%d, cap=%d\n", len(s), cap(s))
+
+      s = append(s, 5) // ¡Realocación!
+      fmt.Printf("después de 5: len=%d, cap=%d\n", len(s), cap(s))
+  }
+
+  ================================================================================
+  EJEMPLO 5: Rastrear realocaciones
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 0)
+      var capAnterior int
+
+      for i := 0; i < 1024; i++ {
+          s = append(s, i)
+          if cap(s) != capAnterior {
+              fmt.Printf("Realocación en n=%d: cap %d → %d (creció %.1fx)\n",
+                  i, capAnterior, cap(s), float64(cap(s))/float64(max(capAnterior, 1)))
+              capAnterior = cap(s)
+          }
+      }
+  }
+
+  func max(a, b int) int {
+      if a > b {
+          return a
+      }
+      return b
+  }
+
+  ================================================================================
+  EJEMPLO 6: Patrón de crecimiento hasta 1024
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 0, 1)
+      capacidades := []int{}
+
+      for i := 0; i < 10000; i++ {
+          if cap(s) != len(s) {
+              capacidades = append(capacidades, cap(s))
+          }
+          s = append(s, i)
+      }
+
+      fmt.Println("Secuencia de capacidades:", capacidades[:20], "...")
+      fmt.Printf("Total de realocaciones: %d\n", len(capacidades))
+  }
+
+  4. Preasignación de Capacidad
+  ─────────────────────────────
+
+  Si sabes cuántos elementos vas a añadir, preasigna la capacidad para evitar
+  realocaciones.
+
+  ================================================================================
+  EJEMPLO 7: Con y sin preasignación
+  ================================================================================
+
+  package main
+
+  import (
+      "fmt"
+      "time"
+  )
+
+  func main() {
+      n := 10000000
+
+      start := time.Now()
+      sinPreasignar := make([]int, 0)
+      for i := 0; i < n; i++ {
+          sinPreasignar = append(sinPreasignar, i)
+      }
+      t1 := time.Since(start)
+
+      start = time.Now()
+      conPreasignar := make([]int, 0, n)
+      for i := 0; i < n; i++ {
+          conPreasignar = append(conPreasignar, i)
+      }
+      t2 := time.Since(start)
+
+      fmt.Printf("Sin preasignar: %v\n", t1)
+      fmt.Printf("Con preasignar: %v\n", t2)
+      fmt.Printf("Diferencia: %.1fx más rápido\n", float64(t1)/float64(t2))
+  }
+
+  5. make vs Literal
+  ──────────────────
+
+  ================================================================================
+  EJEMPLO 8: make vs literal
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      // Literal: especificas los valores
+      a := []int{1, 2, 3, 4, 5}
+      fmt.Println("Literal:", a, "len:", len(a), "cap:", cap(a))
+
+      // make: especificas tamaño, valores cero
+      b := make([]int, 5)
+      fmt.Println("make:", b, "len:", len(b), "cap:", cap(b))
+
+      // make con cap extra
+      c := make([]int, 5, 10)
+      fmt.Println("make+cap:", c, "len:", len(c), "cap:", cap(c))
+  }
+
+  ================================================================================
+  EJEMPLO 9: Inicializar con valores después de make
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 5)
+      for i := range s {
+          s[i] = (i + 1) * 10
+      }
+      fmt.Println(s) // [10, 20, 30, 40, 50]
+  }
+
+  6. Slice nil y make
+  ───────────────────
+
+  ================================================================================
+  EJEMPLO 10: Slice nil vs make
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      var s1 []int
+      s2 := make([]int, 0)
+
+      fmt.Printf("s1 (var): %#v, len=%d, cap=%d, nil=%t\n",
+          s1, len(s1), cap(s1), s1 == nil)
+      fmt.Printf("s2 (make): %#v, len=%d, cap=%d, nil=%t\n",
+          s2, len(s2), cap(s2), s2 == nil)
+
+      // Ambos funcionan con append
+      s1 = append(s1, 1)
+      s2 = append(s2, 1)
+      fmt.Println("s1:", s1)
+      fmt.Println("s2:", s2)
+  }
+
+  7. Reslicing y Capacidad
+  ────────────────────────
+
+  ================================================================================
+  EJEMPLO 11: Reslicing para usar capacidad extra
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 3, 10)
+      s[0], s[1], s[2] = 1, 2, 3
+
+      fmt.Println("Antes:", s, "len:", len(s), "cap:", cap(s))
+
+      // Expandimos len hasta cap
+      s = s[:cap(s)]
+      fmt.Println("Después de s[:cap(s)]:", s)
+      fmt.Println("len:", len(s), "cap:", cap(s))
+
+      // Los nuevos elementos son cero
+      fmt.Println("s[3]:", s[3])
+  }
+
+  ================================================================================
+  EJEMPLO 12: Shrinking (reducir len)
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 10, 10)
+      for i := range s {
+          s[i] = i * 10
+      }
+
+      fmt.Println("Completo:", s)
+      s = s[:3]
+      fmt.Println("Reducido a 3:", s)
+      fmt.Println("cap sigue siendo:", cap(s)) // 10
+
+      // Podemos volver a expandir
+      s = s[:10]
+      fmt.Println("Re-expandido:", s)
+  }
+
+  8. Compartir Array Subyacente con make
+  ──────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 13: Slice derivado de make
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      original := make([]int, 5, 10)
+      for i := 0; i < 5; i++ {
+          original[i] = i + 1
+      }
+
+      sub := original[1:4]
+      fmt.Println("original:", original)
+      fmt.Println("sub:", sub)
+
+      sub[0] = 999
+      fmt.Println("original después de modificar sub:", original)
+  }
+
+  9. make y Slices Multidimensionales
+  ───────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 14: Matriz con make
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      filas := 5
+      columnas := 4
+
+      // Cada fila es un slice independiente
+      matriz := make([][]int, filas)
+      for i := range matriz {
+          matriz[i] = make([]int, columnas)
+          for j := range matriz[i] {
+              matriz[i][j] = i*columnas + j + 1
+          }
+      }
+
+      for _, fila := range matriz {
+          fmt.Println(fila)
+      }
+  }
+
+  ================================================================================
+  EJEMPLO 15: Matriz con un solo make (contigua)
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      filas := 5
+      columnas := 4
+
+      // Un solo bloque contiguo
+      datos := make([]int, filas*columnas)
+      matriz := make([][]int, filas)
+      for i := range matriz {
+          matriz[i] = datos[i*columnas : (i+1)*columnas]
+      }
+
+      for i := 0; i < filas; i++ {
+          for j := 0; j < columnas; j++ {
+              matriz[i][j] = i*columnas + j + 1
+          }
+      }
+
+      fmt.Println("Matriz contigua:")
+      for _, fila := range matriz {
+          fmt.Println(fila)
+      }
+      fmt.Println("Array subyacente:", datos)
+  }
+
+  10. make para otros tipos (vista previa)
+  ────────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 16: make con map y chan
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      // Map (Capítulo 25)
+      m := make(map[string]int, 100)
+      m["clave"] = 42
+      fmt.Println("Map:", m)
+
+      // Channel (Módulo IV)
+      ch := make(chan int, 10)
+      ch <- 1
+      ch <- 2
+      fmt.Println("Channel:", <-ch, <-ch)
+  }
+
+  11. Error común: olvidar que make inicializa a cero
+  ──────────────────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 17: make inicializa a valor cero
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  type Usuario struct {
+      Nombre string
+      Edad   int
+  }
+
+  func main() {
+      usuarios := make([]Usuario, 3)
+      fmt.Printf("%+v\n", usuarios)
+      // [{Nombre: Edad:0} {Nombre: Edad:0} {Nombre: Edad:0}]
+
+      usuarios[0].Nombre = "Alice"
+      usuarios[0].Edad = 30
+      fmt.Printf("%+v\n", usuarios[0])
+  }
+
+  12. Crear Slice con tamaño calculado
+  ────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 18: Tamaño dinámico con make
+  ================================================================================
+
+  package main
+
+  import (
+      "fmt"
+      "math/rand"
+  )
+
+  func main() {
+      n := rand.Intn(100) + 1
+      s := make([]int, n)
+      for i := range s {
+          s[i] = rand.Intn(1000)
+      }
+      fmt.Printf("Slice de %d elementos: primeros 5: %v\n", n, s[:5])
+  }
+
+  13. make con cap = 0
+  ────────────────────
+
+  ================================================================================
+  EJEMPLO 19: make con cap cero
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := make([]int, 0, 0)
+      fmt.Println("make([]int, 0, 0):", s, "len:", len(s), "cap:", cap(s))
+
+      // Equivalente a var s []int en comportamiento, pero no en representación
+      var s2 []int
+      fmt.Println("var s2 []int:", s2, "nil:", s2 == nil)
+  }
+
+  14. Reducir Capacidad (Go 1.21+)
+  ────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 20: clear (Go 1.21)
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      s := []int{1, 2, 3, 4, 5}
+      fmt.Println("Antes de clear:", s)
+
+      // clear pone todos los elementos a cero y reduce len a 0
+      // (disponible desde Go 1.21)
+      // clear(s)
+      // fmt.Println("Después de clear:", s, "len:", len(s))
+      fmt.Println("(clear disponible en Go 1.21+)")
+
+      // Alternativa manual de "reset"
+      s = s[:0]
+      fmt.Println("s[:0]:", s, "len:", len(s), "cap:", cap(s))
+  }
+
+  15. Copia segura con make + copy
+  ────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 21: Clonar con make y copy
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      original := []int{10, 20, 30, 40, 50}
+      clone := make([]int, len(original))
+      n := copy(clone, original)
+
+      fmt.Printf("Clonados %d elementos\n", n)
+      fmt.Println("Original:", original)
+      fmt.Println("Clone:", clone)
+
+      clone[0] = 999
+      fmt.Println("Original intacto:", original)
+  }
+
+  ================================================================================
+  EJEMPLO 22: copy con capacidad insuficiente
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      origen := []int{1, 2, 3, 4, 5}
+      destino := make([]int, 3)
+
+      n := copy(destino, origen) // Solo copia 3 elementos
+      fmt.Printf("Copiados %d: %v\n", n, destino)
+  }
+
+  16. append con make — crecimiento manual
+  ────────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 23: Simular append manualmente
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func appendManual(s []int, v int) []int {
+      if len(s) < cap(s) {
+          s = s[:len(s)+1]
+          s[len(s)-1] = v
+          return s
+      }
+      // Realocar
+      nuevaCap := cap(s) * 2
+      if nuevaCap == 0 {
+          nuevaCap = 1
+      }
+      nuevo := make([]int, len(s)+1, nuevaCap)
+      copy(nuevo, s)
+      nuevo[len(s)] = v
+      return nuevo
+  }
+
+  func main() {
+      s := make([]int, 0)
+      for i := 0; i < 100; i++ {
+          s = appendManual(s, i)
+      }
+      fmt.Println("len:", len(s), "cap:", cap(s))
+  }
+
+  17. Preasignación de Slices Anidados
+  ────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 24: Slices anidados con make
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      grupos := make([][]int, 4)
+      for i := range grupos {
+          grupos[i] = make([]int, 0, i*2+1)
+          for j := 0; j < i*2+1; j++ {
+              grupos[i] = append(grupos[i], j)
+          }
+      }
+
+      for i, g := range grupos {
+          fmt.Printf("Grupo %d (len=%d, cap=%d): %v\n",
+              i, len(g), cap(g), g)
+      }
+  }
+
+  18. Estrategias para elegir capacidad
+  ─────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 25: Diferentes estrategias de capacidad
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      n := 1000000
+
+      // Estrategia 1: sin preasignación
+      s1 := make([]int, 0)
+      for i := 0; i < n; i++ {
+          s1 = append(s1, i)
+      }
+
+      // Estrategia 2: preasignación exacta
+      s2 := make([]int, 0, n)
+      for i := 0; i < n; i++ {
+          s2 = append(s2, i)
+      }
+
+      // Estrategia 3: preasignación generosa
+      s3 := make([]int, 0, n+1000)
+      for i := 0; i < n; i++ {
+          s3 = append(s3, i)
+      }
+
+      fmt.Printf("s1: len=%d, cap=%d\n", len(s1), cap(s1))
+      fmt.Printf("s2: len=%d, cap=%d\n", len(s2), cap(s2))
+      fmt.Printf("s3: len=%d, cap=%d\n", len(s3), cap(s3))
+  }
+
+  19. make con tipos alias
+  ───────────────────────
+
+  ================================================================================
+  EJEMPLO 26: Tipo definido sobre slice
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  type Lista []int
+
+  func main() {
+      l := make(Lista, 5, 10)
+      for i := 0; i < 5; i++ {
+          l[i] = (i + 1) * 100
+      }
+      fmt.Println("Lista:", l, "len:", len(l), "cap:", cap(l))
+  }
+
+  20. Peligro: compartir array subyacente con append
+  ─────────────────────────────────────────────────
+
+  ================================================================================
+  EJEMPLO 27: Append puede o no realocar
+  ================================================================================
+
+  package main
+
+  import "fmt"
+
+  func main() {
+      base := make([]int, 3, 5)
+      base[0], base[1], base[2] = 1, 2, 3
+
+      a := base[:3]
+      b := base[3:5]
+
+      fmt.Println("Antes:")
+      fmt.Println("  base:", base, "len:", len(base), "cap:", cap(base))
+      fmt.Println("  a:", a)
+      fmt.Println("  b:", b)
+
+      // Append a 'a' (hay capacidad)
+      a = append(a, 10)
+      fmt.Println("Después de a = append(a, 10):")
+      fmt.Println("  base:", base)
+      fmt.Println("  a:", a)
+      fmt.Println("  b:", b) // b[0] ahora es 10!
+  }
+
+  ================================================================================
+  RESUMEN DEL CAPÍTULO
+  ================================================================================
+
+  • make([]T, len, cap) crea un slice con array subyacente.
+  • Si cap se omite, cap = len.
+  • La longitud controla el acceso; la capacidad controla el crecimiento.
+  • append realoca cuando len == cap, duplicando cap (para cap < 256) o ~25%.
+  • Preasignar cap con make evita realocaciones y mejora rendimiento.
+  • make([]T, 0) y var s []T son diferentes (nil vs no-nil).
+  • Reslicing (s[:n]) permite expandir/contraer el slice dentro de la cap.
+  • Para clonar: clone := make([]T, len(orig)); copy(clone, orig).
+  • make también funciona para maps y channels.
+
+  ================================================================================
+  EJERCICIOS
+  ================================================================================
+
+  1. Usa make para crear un slice de 10 enteros con capacidad 20. Imprime len y cap.
+  2. Crea un slice con make([]int, 0, 5) y añade 10 elementos. Observa cuándo realoca.
+  3. Implementa una función que reciba n y devuelva un []int con los números del 1
+     al n, preasignando capacidad exacta.
+  4. Crea un slice de 5 elementos con make, expande a 10 con reslicing, completa los
+     5 nuevos con valores y muestra el resultado.
+  5. Compara el rendimiento de append con make([]int, 0) vs make([]int, 0, 1000)
+     para 1000 elementos usando time.
+  6. Crea una matriz 4x4 usando make([][]int, 4) y make dentro del bucle.
+  7. Dado un slice existente, clónalo usando make + copy.
+  8. Implementa append manualmente sin usar la función append.
+  9. Crea un slice con make de capacidad 3, añade 4 elementos y observa la realocación
+     imprimiendo la dirección del primer elemento.
+  10. Escribe un programa que muestre el patrón de crecimiento de cap desde 0 hasta
+      100000 elementos.
+
+  ================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+  ================================================================================
+
+  ❓ ¿Qué diferencia hay entre make([]int, 5) y make([]int, 5, 5)?
+  → Ninguna. Si omites cap, cap se iguala a len.
+
+  ❓ ¿make inicializa los elementos a cero?
+  → Sí. make asigna memoria y la inicializa al valor cero del tipo.
+
+  ❓ ¿var a []int y a := make([]int, 0) son equivalentes?
+  → No. var a []int es nil; make([]int, 0) no es nil. Ambos tienen len=0.
+
+  ❓ ¿Cuánto crece la capacidad con append?
+  → Depende de la versión de Go. Go 1.18+: duplica hasta 256, luego ~25%.
+
+  ❓ ¿Puedo reducir la capacidad de un slice?
+  → No directamente. Puedes crear un nuevo slice con copy, o usar slices.Compact
+    (Go 1.21+). La capacidad original se conserva.
+
+  ❓ ¿Qué pasa si uso make con capacidad 0?
+  → Obtienes un slice vacío (no nil) con cap=0. Cada append realocará.
+
+  ❓ ¿make asigna memoria en el heap o stack?
+  → Depende del tamaño y del análisis de escape del compilador.
+
+  ❓ ¿Es obligatorio usar make para slices?
+  → No. Puedes usar literales []T{...}. make es útil cuando necesitas
+    controlar la capacidad.
+
+  ❓ ¿Cómo clono un slice eficientemente?
+  → clone := make([]T, len(orig)); copy(clone, orig).
+
+  ❓ ¿Puedo usar make con un tipo definido como type Lista []int?
+  → Sí: make(Lista, len, cap).
+
+  ================================================================================
+  DESAFÍO DEL ARQUITECTO
+  ================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  Implementa un "Pool de Slices" reutilizable para evitar realocaciones.    │
+  │                                                                             │
+  │  Requisitos:                                                                │
+  │  • Crea un tipo SlicePool que administre slices de []byte.                 │
+  │  • Método Get(size int) []byte: retorna un slice con al menos size cap.    │
+  │  • Método Put(s []byte): devuelve el slice al pool si cap <= 1024.        │
+  │  • El pool debe reusar slices en vez de crear nuevos.                     │
+  │  • Simula 1000 solicitudes de diferentes tamaños (1-512 bytes).           │
+  │  • Muestra cuántas realocaciones evitaste vs make() directo.              │
+  │  • Benchmarkea con time.                                                   │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+  ================================================================================
+  CIERRE DEL CAPÍTULO
+  ================================================================================
+
+  Has completado el Capítulo 23 — MAKE Y CAPACIDAD. Ahora entiendes cómo Go
+  gestiona la memoria de los slices bajo el capó. Este conocimiento te permite
+  escribir código más eficiente, evitando realocaciones innecesarias y
+  aprovechando al máximo el rendimiento de tus aplicaciones.
+
+  "La capacidad no es solo un número: es control sobre la memoria."
+
+  ================================================================================
+  PREPARACIÓN PARA EL SIGUIENTE CAPÍTULO
+  ================================================================================
+
+  En el Capítulo 24 — APPEND Y COPY, explorarás en detalle cómo append maneja
+  slices nil, cómo copy maneja superposición, variadic append, y técnicas
+  avanzadas para manipular slices de forma eficiente.
+
+  ¡Nos vemos en el Capítulo 24!
+
+  ================================================================================
+  GO MASTER BOOK — MÓDULO III: ESTRUCTURAS DE DATOS
+  CAPÍTULO 23: MAKE Y CAPACIDAD (FIN)
+  ================================================================================

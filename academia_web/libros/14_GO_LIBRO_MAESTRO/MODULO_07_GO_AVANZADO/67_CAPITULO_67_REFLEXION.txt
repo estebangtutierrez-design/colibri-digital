@@ -1,0 +1,966 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 67: REFLEXIÓN (REFLECT)
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 67. La reflexión (reflection) permite a un
+  programa inspeccionar y modificar su propia estructura en tiempo de
+  ejecución. En Go, el paquete `reflect` es una herramienta poderosa
+  pero peligrosa: usada correctamente, permite serialización, ORMs,
+  y frameworks; usada incorrectamente, produce código frágil y lento.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "La reflexión es como un espejo: te muestra lo que eres, pero usarla
+  mal puede hacer añicos el cristal." — Adaptado de Rob Pike
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Comprender reflect.TypeOf y reflect.ValueOf.
+  2. Navegar la jerarquía de tipos (Kind, StructField, Method).
+  3. Leer y modificar valores dinámicamente.
+  4. Implementar serialización/deserialización con struct tags.
+  5. Construir un validador genérico usando tags.
+  6. Reconocer cuándo NO usar reflection.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. ¿QUÉ ES REFLECTION? ──
+
+  Reflection es la capacidad del programa de examinarse a sí mismo en
+  tiempo de ejecución. En Go, el paquete `reflect` permite:
+
+  ● Obtener el tipo de cualquier valor: reflect.TypeOf(v)
+  ● Obtener el valor subyacente: reflect.ValueOf(v)
+  ● Leer y modificar campos de structs.
+  ● Llamar métodos dinámicamente.
+  ● Leer struct tags (usados por JSON, XML, ORMs).
+  ● Crear valores dinámicamente.
+
+  Casos de uso legítimos:
+  ● encoding/json, encoding/xml
+  ● database/sql (mapeo de columnas)
+  ● Validación dinámica (go-playground/validator)
+  ● Dependency injection containers
+
+  ── 2. reflect.TypeOf ──
+
+  TypeOf devuelve un reflect.Type que describe el tipo del valor:
+
+  import (
+      "fmt"
+      "reflect"
+  )
+
+  func main() {
+      var x int = 42
+      t := reflect.TypeOf(x)
+      fmt.Println(t)       // int
+      fmt.Println(t.Name())  // int
+      fmt.Println(t.Kind())  // int
+      fmt.Println(t.Size())  // 8 (en sistemas de 64 bits)
+
+      var s string = "hola"
+      fmt.Println(reflect.TypeOf(s)) // string
+
+      type Persona struct {
+          Nombre string
+          Edad   int
+      }
+
+      p := Persona{"Alice", 30}
+      tp := reflect.TypeOf(p)
+      fmt.Println(tp)          // main.Persona
+      fmt.Println(tp.Name())    // Persona
+      fmt.Println(tp.Kind())    // struct
+  }
+
+  ── 3. reflect.ValueOf ──
+
+  ValueOf devuelve un reflect.Value que contiene el valor:
+
+  func main() {
+      var x int = 42
+      v := reflect.ValueOf(x)
+      fmt.Println(v)            // 42
+      fmt.Println(v.Int())      // 42
+      fmt.Println(v.Kind())     // int
+      fmt.Println(v.Type())     // int
+
+      // Cambiar el valor requiere un puntero
+      vp := reflect.ValueOf(&x)
+      vp.Elem().SetInt(100)
+      fmt.Println(x) // 100
+  }
+
+  Valores obtenidos con ValueOf son de solo lectura a menos que:
+  ● Se pase un puntero (&x).
+  ● Se llame a Elem() para obtener el valor apuntado.
+  ● El valor sea direccionable (addressable).
+
+  ── 4. KIND VS TYPE ──
+
+  Kind es la categoría base del tipo (int, string, struct, slice...).
+  Type es el tipo completo (incluyendo nombre de tipo definido).
+
+  type MiEntero int
+
+  func main() {
+      var m MiEntero = 10
+
+      t := reflect.TypeOf(m)
+      fmt.Println(t.Name()) // MiEntero
+      fmt.Println(t.Kind()) // int (no MiEntero)
+
+      // Kind nunca cambia con tipos definidos
+      type Status string
+      fmt.Println(reflect.TypeOf(Status("ok")).Kind()) // string
+  }
+
+  Kinds disponibles:
+  Bool, Int, Int8,..., Uint64, Float32, Float64, Complex64, Complex128,
+  Array, Chan, Func, Interface, Map, Ptr, Slice, String, Struct,
+  UnsafePointer
+
+  ── 5. ITERAR CAMPOS DE UN STRUCT ──
+
+  type Usuario struct {
+      Nombre  string
+      Edad    int
+      Email   string
+  }
+
+  func main() {
+      u := Usuario{"Alice", 30, "alice@example.com"}
+      t := reflect.TypeOf(u)
+      v := reflect.ValueOf(u)
+
+      for i := 0; i < t.NumField(); i++ {
+          field := t.Field(i)
+          value := v.Field(i)
+
+          fmt.Printf("Campo %d: %s (%s) = %v\n",
+              i, field.Name, field.Type, value.Interface())
+      }
+  }
+
+  // Output:
+  // Campo 0: Nombre (string) = Alice
+  // Campo 1: Edad (int) = 30
+  // Campo 2: Email (string) = alice@example.com
+
+  ── 6. STRUCT TAGS ──
+
+  Las struct tags son metadatos asociados a campos:
+
+  type Config struct {
+      Host string `json:"host" xml:"host" env:"HOST"`
+      Port int    `json:"port" xml:"port" env:"PORT"`
+  }
+
+  func main() {
+      t := reflect.TypeOf(Config{})
+      for i := 0; i < t.NumField(); i++ {
+          field := t.Field(i)
+          fmt.Printf("%s: json=%s, xml=%s, env=%s\n",
+              field.Name,
+              field.Tag.Get("json"),
+              field.Tag.Get("xml"),
+              field.Tag.Get("env"),
+          )
+      }
+  }
+
+  Tag con opciones:
+
+  type Example struct {
+      Field string `json:"field,omitempty" validate:"required,max=100"`
+  }
+
+  Para tags complejos, parsea manualmente:
+
+  tag := field.Tag.Get("json")
+  parts := strings.Split(tag, ",")
+  // parts[0] = nombre, parts[1:] = opciones
+
+  ── 7. VALIDACIÓN GENÉRICA CON TAGS ──
+
+  // --- validator.go ---
+  package validator
+
+  import (
+      "fmt"
+      "reflect"
+      "strings"
+  )
+
+  type ValidationError struct {
+      Field string
+      Tag   string
+      Value interface{}
+  }
+
+  func (e ValidationError) Error() string {
+      return fmt.Sprintf("campo %s: validación '%s' falló para %v",
+          e.Field, e.Tag, e.Value)
+  }
+
+  type ValidationErrors []ValidationError
+
+  func (ve ValidationErrors) Error() string {
+      msgs := make([]string, len(ve))
+      for i, e := range ve {
+          msgs[i] = e.Error()
+      }
+      return strings.Join(msgs, "; ")
+  }
+
+  func Validate(v interface{}) error {
+      var errs ValidationErrors
+      val := reflect.ValueOf(v)
+      typ := reflect.TypeOf(v)
+
+      // Si es puntero, obtener el valor apuntado
+      if typ.Kind() == reflect.Ptr {
+          val = val.Elem()
+          typ = typ.Elem()
+      }
+
+      if typ.Kind() != reflect.Struct {
+          return fmt.Errorf("se esperaba un struct, got %s", typ.Kind())
+      }
+
+      for i := 0; i < typ.NumField(); i++ {
+          field := typ.Field(i)
+          value := val.Field(i)
+
+          // Tag "required"
+          if field.Tag.Get("validate") == "required" {
+              if isEmpty(value) {
+                  errs = append(errs, ValidationError{
+                      Field: field.Name,
+                      Tag:   "required",
+                      Value: value.Interface(),
+                  })
+              }
+          }
+
+          // Tag "min"
+          if minStr := field.Tag.Get("min"); minStr != "" {
+              var min int
+              fmt.Sscanf(minStr, "%d", &min)
+              if value.Int() < int64(min) {
+                  errs = append(errs, ValidationError{
+                      Field: field.Name,
+                      Tag:   "min",
+                      Value: value.Interface(),
+                  })
+              }
+          }
+
+          // Tag "max"
+          if maxStr := field.Tag.Get("max"); maxStr != "" {
+              var max int
+              fmt.Sscanf(maxStr, "%d", &max)
+              if value.Int() > int64(max) {
+                  errs = append(errs, ValidationError{
+                      Field: field.Name,
+                      Tag:   "max",
+                      Value: value.Interface(),
+                  })
+              }
+          }
+      }
+
+      if len(errs) > 0 {
+          return errs
+      }
+      return nil
+  }
+
+  func isEmpty(v reflect.Value) bool {
+      switch v.Kind() {
+      case reflect.String:
+          return v.String() == ""
+      case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+          return v.Int() == 0
+      case reflect.Float32, reflect.Float64:
+          return v.Float() == 0
+      case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan:
+          return v.IsNil()
+      case reflect.Bool:
+          return !v.Bool()
+      default:
+          return false
+      }
+  }
+
+  // --- main.go ---
+  type User struct {
+      Name  string `validate:"required"`
+      Email string `validate:"required"`
+      Age   int    `validate:"min=18,max=150"`
+  }
+
+  func main() {
+      u := User{Name: "", Age: 10}
+      if err := Validate(&u); err != nil {
+          fmt.Println(err)
+      }
+  }
+
+  ── 8. MODIFICAR VALORES CON REFLECTION ──
+
+  func SetField(obj interface{}, name string, value interface{}) error {
+      v := reflect.ValueOf(obj)
+
+      // Debe ser puntero
+      if v.Kind() != reflect.Ptr {
+          return fmt.Errorf("se esperaba un puntero")
+      }
+      v = v.Elem()
+
+      // Debe ser struct
+      if v.Kind() != reflect.Struct {
+          return fmt.Errorf("se esperaba un struct")
+      }
+
+      field := v.FieldByName(name)
+      if !field.IsValid() {
+          return fmt.Errorf("campo %s no encontrado", name)
+      }
+
+      if !field.CanSet() {
+          return fmt.Errorf("campo %s no es modificable", name)
+      }
+
+      newVal := reflect.ValueOf(value)
+      if newVal.Type() != field.Type() {
+          return fmt.Errorf("tipo incorrecto: esperado %s, got %s",
+              field.Type(), newVal.Type())
+      }
+
+      field.Set(newVal)
+      return nil
+  }
+
+  func main() {
+      p := struct{ Name string }{}
+      SetField(&p, "Name", "Alice")
+      fmt.Println(p.Name) // Alice
+  }
+
+  ── 9. LLAMAR MÉTODOS DINÁMICAMENTE ──
+
+  type Calculator struct{}
+
+  func (c Calculator) Add(a, b int) int {
+      return a + b
+  }
+
+  func main() {
+      c := Calculator{}
+      v := reflect.ValueOf(c)
+
+      method := v.MethodByName("Add")
+      if !method.IsValid() {
+          fmt.Println("Método no encontrado")
+          return
+      }
+
+      args := []reflect.Value{
+          reflect.ValueOf(10),
+          reflect.ValueOf(20),
+      }
+
+      result := method.Call(args)
+      fmt.Println(result[0].Int()) // 30
+  }
+
+  Variadic methods:
+
+  func (c Calculator) Sum(nums ...int) int {
+      total := 0
+      for _, n := range nums {
+          total += n
+      }
+      return total
+  }
+
+  func main() {
+      method := reflect.ValueOf(Calculator{}).MethodByName("Sum")
+      args := []reflect.Value{
+          reflect.ValueOf(1),
+          reflect.ValueOf(2),
+          reflect.ValueOf(3),
+      }
+      result := method.Call(args)
+      fmt.Println(result[0].Int()) // 6
+  }
+
+  ── 10. CREAR VALORES DINÁMICAMENTE ──
+
+  func main() {
+      // Crear un slice dinámicamente
+      sliceType := reflect.SliceOf(reflect.TypeOf(0))
+      slice := reflect.MakeSlice(sliceType, 0, 10)
+      slice = reflect.Append(slice, reflect.ValueOf(1))
+      slice = reflect.Append(slice, reflect.ValueOf(2))
+      fmt.Println(slice.Interface()) // [1 2]
+
+      // Crear un map dinámicamente
+      mapType := reflect.MapOf(reflect.TypeOf(""), reflect.TypeOf(0))
+      m := reflect.MakeMap(mapType)
+      m.SetMapIndex(reflect.ValueOf("a"), reflect.ValueOf(1))
+      fmt.Println(m.Interface()) // map[a:1]
+
+      // Crear un struct dinámicamente
+      type Person struct {
+          Name string
+          Age  int
+      }
+      p := reflect.New(reflect.TypeOf(Person{}))
+      p.Elem().FieldByName("Name").SetString("Alice")
+      p.Elem().FieldByName("Age").SetInt(30)
+      fmt.Println(p.Interface()) // &{Alice 30}
+  }
+
+  ── 11. EJEMPLO COMPLETO: SERIALIZADOR CSV ──
+
+  // --- csv.go ---
+  package csvutil
+
+  import (
+      "fmt"
+      "reflect"
+      "strings"
+  )
+
+  func ToCSV(v interface{}) (string, error) {
+      val := reflect.ValueOf(v)
+      typ := reflect.TypeOf(v)
+
+      if typ.Kind() == reflect.Ptr {
+          val = val.Elem()
+          typ = typ.Elem()
+      }
+
+      if typ.Kind() != reflect.Struct {
+          return "", fmt.Errorf("se esperaba un struct")
+      }
+
+      // Cabeceras
+      headers := make([]string, 0, typ.NumField())
+      for i := 0; i < typ.NumField(); i++ {
+          field := typ.Field(i)
+          csvTag := field.Tag.Get("csv")
+          if csvTag == "-" {
+              continue
+          }
+          if csvTag != "" {
+              headers = append(headers, csvTag)
+          } else {
+              headers = append(headers, field.Name)
+          }
+      }
+
+      // Valores
+      values := make([]string, 0, typ.NumField())
+      for i := 0; i < typ.NumField(); i++ {
+          field := typ.Field(i)
+          csvTag := field.Tag.Get("csv")
+          if csvTag == "-" {
+              continue
+          }
+          values = append(values, fmt.Sprintf("%v", val.Field(i).Interface()))
+      }
+
+      headerLine := strings.Join(headers, ",")
+      valueLine := strings.Join(values, ",")
+      return headerLine + "\n" + valueLine, nil
+  }
+
+  func FromCSV(line string, v interface{}) error {
+      val := reflect.ValueOf(v)
+      if val.Kind() != reflect.Ptr || val.IsNil() {
+          return fmt.Errorf("se esperaba un puntero no nil")
+      }
+      val = val.Elem()
+
+      parts := strings.Split(line, ",")
+      typ := val.Type()
+
+      for i := 0; i < typ.NumField() && i < len(parts); i++ {
+          field := typ.Field(i)
+          csvTag := field.Tag.Get("csv")
+          if csvTag == "-" {
+              continue
+          }
+          dest := val.Field(i)
+          switch dest.Kind() {
+          case reflect.String:
+              dest.SetString(strings.TrimSpace(parts[i]))
+          case reflect.Int, reflect.Int64:
+              var n int64
+              fmt.Sscanf(parts[i], "%d", &n)
+              dest.SetInt(n)
+          case reflect.Float64:
+              var f float64
+              fmt.Sscanf(parts[i], "%f", &f)
+              dest.SetFloat(f)
+          case reflect.Bool:
+              dest.SetBool(parts[i] == "true")
+          }
+      }
+      return nil
+  }
+
+  // --- main.go ---
+  type Product struct {
+      Name  string  `csv:"nombre"`
+      Price float64 `csv:"precio"`
+      Stock int     `csv:"stock"`
+  }
+
+  func main() {
+      p := Product{"Laptop", 999.99, 10}
+      csv, _ := ToCSV(p)
+      fmt.Println(csv)
+      // nombre,precio,stock
+      // Laptop,999.99,10
+
+      var p2 Product
+      FromCSV("Mouse,19.99,50", &p2)
+      fmt.Printf("%+v\n", p2)
+      // {Name:Mouse Price:19.99 Stock:50}
+  }
+
+  ── 12. REFLECTION Y JSON ──
+
+  encoding/json usa reflection internamente. Puedes inspeccionar tags
+  JSON para obtener metadatos:
+
+  type APIResponse struct {
+      Status  string      `json:"status"`
+      Data    interface{} `json:"data,omitempty"`
+      Error   string      `json:"error,omitempty"`
+  }
+
+  func GetJSONFieldName(v interface{}, fieldName string) string {
+      t := reflect.TypeOf(v)
+      if t.Kind() == reflect.Ptr {
+          t = t.Elem()
+      }
+      field, ok := t.FieldByName(fieldName)
+      if !ok {
+          return fieldName
+      }
+      jsonTag := field.Tag.Get("json")
+      if jsonTag == "" {
+          return fieldName
+      }
+      name := strings.Split(jsonTag, ",")[0]
+      if name == "" {
+          return fieldName
+      }
+      if name == "-" {
+          return ""
+      }
+      return name
+  }
+
+  func main() {
+      resp := APIResponse{}
+      fmt.Println(GetJSONFieldName(resp, "Status")) // status
+      fmt.Println(GetJSONFieldName(resp, "Data"))   // data
+      fmt.Println(GetJSONFieldName(resp, "Error"))  // error
+  }
+
+  ── 13. REFLECTION EN LA BIBLIOTECA ESTÁNDAR ──
+
+  Ejemplos de uso de reflect en la stdlib:
+
+  // fmt.Println: usa reflect para imprimir cualquier tipo
+  func Println(v ...interface{}) {
+      for _, arg := range v {
+          val := reflect.ValueOf(arg)
+          // ... imprime según Kind
+      }
+  }
+
+  // encoding/json: usa reflect para marshal/unmarshal
+  func Marshal(v interface{}) ([]byte, error) {
+      val := reflect.ValueOf(v)
+      // ... recorre struct fields, lee tags, serializa
+  }
+
+  // sort.Slice: usa reflect para ordenar dinámicamente
+  sort.Slice(s, func(i, j int) bool {
+      // less function
+  })
+
+  // database/sql: mapea columnas a struct fields
+  rows.Scan(&dest)
+
+  ── 14. RENDIMIENTO: REFLECTION ES LENTA ──
+
+  Benchmark comparativo:
+
+  func BenchmarkDirect(b *testing.B) {
+      v := MyStruct{Name: "Alice"}
+      for i := 0; i < b.N; i++ {
+          _ = v.Name
+      }
+  }
+
+  func BenchmarkReflect(b *testing.B) {
+      v := MyStruct{Name: "Alice"}
+      val := reflect.ValueOf(v)
+      for i := 0; i < b.N; i++ {
+          _ = val.FieldByName("Name")
+      }
+  }
+
+  // Resultados típicos:
+  // Direct:   0.3 ns/op
+  // Reflect:  40 ns/op  (~130x más lento)
+
+  Consejo: cachea los resultados de reflection cuando sea posible:
+
+  type Person struct {
+      Name string
+      Age  int
+  }
+
+  var personType = reflect.TypeOf(Person{})
+
+  func main() {
+      // Usa personType cacheado en lugar de llamar TypeOf cada vez
+      for i := 0; i < personType.NumField(); i++ {
+          // ...
+      }
+  }
+
+  ── 15. LIMITACIONES DE REFLECTION ──
+
+  1. No puedes crear nuevas funciones.
+  2. No puedes acceder a campos no exportados (a menos que uses unsafe).
+  3. No puedes invocar métodos no exportados.
+  4. No hay tipado en tiempo de compilación; los errores aparecen en
+     runtime.
+  5. El código con reflection es más difícil de leer y mantener.
+
+  ── 16. REFLECTION VS TYPE SWITCH ──
+
+  // Reflection
+  func Describe(v interface{}) {
+      t := reflect.TypeOf(v)
+      fmt.Println("Tipo:", t.Name(), "Kind:", t.Kind())
+  }
+
+  // Type switch (preferible cuando los tipos son conocidos)
+  func Describe2(v interface{}) {
+      switch x := v.(type) {
+      case int:
+          fmt.Println("Entero:", x)
+      case string:
+          fmt.Println("String:", x)
+      default:
+          fmt.Println("Otro:", x)
+      }
+  }
+
+  Usa type switch cuando sepas los tipos de antemano. Usa reflection
+  cuando los tipos sean desconocidos o dinámicos.
+
+  ── 17. EJEMPLO COMPLETO: MAPPER DE ENV VARIABLES ──
+
+  // --- envconfig.go ---
+  package envconfig
+
+  import (
+      "fmt"
+      "os"
+      "reflect"
+      "strconv"
+      "strings"
+  )
+
+  func Load(v interface{}) error {
+      val := reflect.ValueOf(v)
+      if val.Kind() != reflect.Ptr || val.IsNil() {
+          return fmt.Errorf("se esperaba un puntero no nil")
+      }
+      val = val.Elem()
+      typ := val.Type()
+
+      if typ.Kind() != reflect.Struct {
+          return fmt.Errorf("se esperaba un struct")
+      }
+
+      for i := 0; i < typ.NumField(); i++ {
+          field := typ.Field(i)
+          dest := val.Field(i)
+
+          if !dest.CanSet() {
+              continue
+          }
+
+          envTag := field.Tag.Get("env")
+          if envTag == "" {
+              envTag = strings.ToUpper(field.Name)
+          }
+
+          defaultTag := field.Tag.Get("default")
+          value := os.Getenv(envTag)
+          if value == "" {
+              value = defaultTag
+          }
+          if value == "" {
+              continue
+          }
+
+          switch dest.Kind() {
+          case reflect.String:
+              dest.SetString(value)
+          case reflect.Int, reflect.Int64:
+              n, err := strconv.ParseInt(value, 10, 64)
+              if err != nil {
+                  return fmt.Errorf("campo %s: %w", field.Name, err)
+              }
+              dest.SetInt(n)
+          case reflect.Float64:
+              f, err := strconv.ParseFloat(value, 64)
+              if err != nil {
+                  return fmt.Errorf("campo %s: %w", field.Name, err)
+              }
+              dest.SetFloat(f)
+          case reflect.Bool:
+              b, err := strconv.ParseBool(value)
+              if err != nil {
+                  return fmt.Errorf("campo %s: %w", field.Name, err)
+              }
+              dest.SetBool(b)
+          }
+      }
+      return nil
+  }
+
+  // --- main.go ---
+  type Config struct {
+      Host    string `env:"HOST" default:"localhost"`
+      Port    int    `env:"PORT" default:"8080"`
+      Debug   bool   `env:"DEBUG"`
+      DBPath  string `env:"DB_PATH" default:"/data/app.db"`
+  }
+
+  func main() {
+      os.Setenv("PORT", "9090")
+      os.Setenv("DEBUG", "true")
+
+      var cfg Config
+      if err := Load(&cfg); err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Printf("%+v\n", cfg)
+      // {Host:localhost Port:9090 Debug:true DBPath:/data/app.db}
+  }
+
+  ── 18. REFLECTION Y NIL ──
+
+  func main() {
+      var p *int = nil
+      v := reflect.ValueOf(p)
+      fmt.Println(v.IsNil()) // true
+      fmt.Println(v.IsValid()) // true
+
+      var i interface{} = nil
+      v = reflect.ValueOf(i)
+      fmt.Println(v.IsValid()) // false (nil interface no tiene tipo)
+      // fmt.Println(v.IsNil()) // panic: calling IsNil on zero Value
+  }
+
+  Siempre verifica IsValid() antes de operar con un Value:
+
+  v := reflect.ValueOf(someInterface)
+  if v.IsValid() {
+      // seguro operar
+  }
+
+  ── 19. REFLECTION PARA DEEP EQUAL ──
+
+  reflect.DeepEqual compara dos valores recursivamente:
+
+  func main() {
+      m1 := map[string]int{"a": 1, "b": 2}
+      m2 := map[string]int{"a": 1, "b": 2}
+
+      fmt.Println(m1 == m2)              // ❌ no compila (map no comparable)
+      fmt.Println(reflect.DeepEqual(m1, m2)) // true
+
+      s1 := []int{1, 2, 3}
+      s2 := []int{1, 2, 3}
+      fmt.Println(reflect.DeepEqual(s1, s2)) // true
+
+      // Prefiere: slices.Equal, maps.Equal (Go 1.21+)
+  }
+
+  ── 20. REFLECTION Y CANALES ──
+
+  func main() {
+      ch := make(chan int, 5)
+      ch <- 1
+      ch <- 2
+
+      v := reflect.ValueOf(ch)
+      fmt.Println(v.Kind())           // chan
+      fmt.Println(v.Type())           // chan int
+      fmt.Println(v.Cap())            // 5
+      fmt.Println(v.Len())             // 2
+
+      // Enviar dinámicamente
+      v.Send(reflect.ValueOf(3))
+      fmt.Println(v.Len()) // 3
+
+      // Recibir dinámicamente
+      val, ok := v.Recv()
+      fmt.Println(val.Int(), ok) // 1 true
+
+      // Cerrar dinámicamente
+      v.Close()
+  }
+
+  ── 21. REFLECTION PARA COPY GENÉRICO ──
+
+  func Copy(dst, src interface{}) error {
+      dstVal := reflect.ValueOf(dst)
+      srcVal := reflect.ValueOf(src)
+
+      if dstVal.Kind() != reflect.Ptr || dstVal.IsNil() {
+          return fmt.Errorf("dst debe ser puntero no nil")
+      }
+      dstVal = dstVal.Elem()
+      srcVal = reflect.Indirect(srcVal)
+
+      if dstVal.Type() != srcVal.Type() {
+          return fmt.Errorf("tipos distintos: %s vs %s",
+              dstVal.Type(), srcVal.Type())
+      }
+
+      dstVal.Set(srcVal)
+      return nil
+  }
+
+  func main() {
+      a := "original"
+      b := "copia"
+      Copy(&a, b)
+      fmt.Println(a) // copia
+  }
+
+  ── 22. CUÁNDO NO USAR REFLECTION ──
+
+  Reflection NO debe usarse para:
+  ● Evitar escribir código repetitivo (prefiere generics en Go 1.18+).
+  ● Acceder a campos privados (código frágil y sin garantías).
+  ● Implementar lógica de negocio.
+  ● Lo que se pueda hacer con type switches.
+
+  Reflection SÍ es apropiada para:
+  ● Serialización/deserialización (JSON, XML, YAML, CSV).
+  ● ORMs y mapeo objeto-relacional.
+  ● Validación dinámica basada en tags.
+  ● Dependency injection.
+  ● Herramientas de desarrollo y generación de código.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● reflect.TypeOf devuelve el tipo; reflect.ValueOf devuelve el valor.
+  ● Kind es la categoría base (int, string, struct...); Type es el tipo
+    completo (incluyendo nombre definido por el usuario).
+  ● Struct tags permiten añadir metadatos a los campos.
+  ● Para modificar valores, debes pasar un puntero.
+  ● Reflection es ~100x más lenta que el acceso directo.
+  ● Usa reflection solo para serialización, validación, y frameworks.
+  ● En Go 1.18+, los genéricos pueden reemplazar algunos usos de
+    reflection.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Implementa una función `Inspect(v interface{})` que imprima el tipo,
+     kind, y todos los campos de un struct.
+  2. Crea un serializador a YAML usando struct tags.
+  3. Implementa un validador que soporte tags `min`, `max`, `pattern`,
+     `email`.
+  4. Escribe una función `CopyStruct` que copie campos con el mismo
+     nombre entre dos structs de diferentes tipos.
+  5. Implementa un mapper de query params a struct: `?name=Alice&age=30`.
+  6. Crea un `Flatten` que convierta un struct anidado en un map.
+  7. Implementa un constructor de objetos desde SQL rows usando reflect.
+  8. Escribe una función `CallMethod` que llame un método por nombre.
+  9. Crea un decorador que logee la entrada/salida de cualquier función.
+  10. Implementa un cache de campos de struct para mejorar rendimiento.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Reflection rompe la encapsulación?
+  R: Puede acceder a campos privados usando unsafe, pero hacerlo es una
+     mala práctica. La encapsulación se mantiene si respetas la API.
+
+  P: ¿Puedo usar genéricos en lugar de reflection?
+  R: En muchos casos sí. Los genéricos (Go 1.18+) resuelven problemas
+     de tipado que antes requerían reflection.
+
+  P: ¿Cómo accedo a un tag de un campo?
+  R: `field.Tag.Get("json")` o `field.Tag.Lookup("json")` (Lookup
+     distingue entre tag vacío y tag ausente).
+
+  P: ¿Qué significa "value is not addressable"?
+  R: Obtienes este error cuando intentas Set en un valor que no es
+     direccionable. Pasa un puntero para que sea addressable.
+
+  P: ¿Reflection es segura para concurrencia?
+  R: reflect.Value no es seguro para concurrencia. Debes sincronizar el
+     acceso si compartes valores reflect entre goroutines.
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Implementa un mini framework de "Object Relational Mapping" (ORM) que:
+
+  1. Use struct tags para mapear campos a columnas: `db:"columna"`.
+  2. Implemente `Insert(v interface{}) error` que genere INSERT dinámico.
+  3. Implemente `Update(v interface{}) error` que genere UPDATE dinámico.
+  4. Implemente `Select(id interface{}, v interface{}) error` que mapee
+     columnas a campos.
+  5. Implemente `Delete(v interface{}) error`.
+  6. Soporte tipos básicos: string, int, float64, bool.
+  7. Use tags adicionales: `primary_key`, `auto_increment`, `default`.
+  8. Genere las consultas SQL dinámicamente con reflection.
+  9. Cachee la estructura de los tipos para rendimiento.
+  10. El desafío: implementar `Where` con condiciones dinámicas:
+      `db.Find(&users, "age > ? AND active = ?", 18, true)`
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has explorado la reflexión en Go, una herramienta poderosa que permite
+  construir frameworks, serializadores, y ORMs. Recuerda: con gran poder
+  viene gran responsabilidad. Reflection debe usarse con moderación y
+  siempre considerando alternativas como genéricos o type switches.
+  En el próximo capítulo veremos Context.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 68: CONTEXT (CONTEXT.CONTEXT) → context.Background, TODO,
+  WithCancel, WithTimeout, WithDeadline, ctx.Done(), y patrones de
+  cancelación y timeouts en Go.
+
+================================================================================
+  FIN DEL CAPÍTULO 67
+================================================================================

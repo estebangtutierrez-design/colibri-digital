@@ -1,0 +1,1318 @@
+===============================================================================
+                RUBY MASTER BOOK · MÓDULO VII · RUBY AVANZADO
+===============================================================================
+  CAPÍTULO 65: CLASS_EVAL / INSTANCE_EVAL
+===============================================================================
+
+   ██████╗██╗      █████╗ ███████╗███████╗     ███████╗██╗   ██╗ █████╗ ██╗
+  ██╔════╝██║     ██╔══██╗██╔════╝██╔════╝     ██╔════╝██║   ██║██╔══██╗██║
+  ██║     ██║     ███████║███████╗█████╗       █████╗  ██║   ██║███████║██║
+  ██║     ██║     ██╔══██║╚════██║██╔══╝       ██╔══╝  ╚██╗ ██╔╝██╔══██║██║
+  ╚██████╗███████╗██║  ██║███████║███████╗     ███████╗ ╚████╔╝ ██║  ██║███████╗
+   ╚═════╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝     ╚══════╝  ╚═══╝  ╚═╝  ╚═╝╚══════╝
+
+   ██╗███╗   ██╗███████╗████████╗ █████╗ ███╗   ██╗ ██████╗███████╗
+   ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗████╗  ██║██╔════╝██╔════╝
+   ██║██╔██╗ ██║███████╗   ██║   ███████║██╔██╗ ██║██║     █████╗
+   ██║██║╚██╗██║╚════██║   ██║   ██╔══██║██║╚██╗██║██║     ██╔══╝
+   ██║██║ ╚████║███████║   ██║   ██║  ██║██║ ╚████║╚██████╗███████╗
+   ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝
+
+================================================================================
+                        BIENVENIDA AL CAPÍTULO 65
+================================================================================
+
+  Bienvenido a uno de los temas más confusos y poderosos de Ruby:
+  la diferencia entre class_eval e instance_eval. A simple vista,
+  ambos evalúan código en un contexto, pero el "contexto" es muy
+  diferente en cada caso.
+
+  class_eval (también llamado module_eval) abre una clase o módulo
+  como si estuvieras escribiendo código dentro de su definición.
+  instance_eval abre un objeto como si estuvieras dentro de sus
+  entrañas, permitiéndote acceder a sus variables de instancia y
+  definirle métodos singleton.
+
+  Dominar estos dos métodos es esencial para la metaprogramación seria:
+  los DSLs, las configuraciones declarativas y las bibliotecas como
+  ActiveRecord o RSpec dependen de esta distinción.
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+  "class_eval abre la puerta a la clase; instance_eval abre la caja
+   fuerte del objeto."
+   — Paolo Perrotta, "Metaprogramming Ruby"
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✓ Comprender la diferencia fundamental entre ambos métodos.
+  ✓ Usar class_eval para definir métodos de instancia.
+  ✓ Usar instance_eval para acceder a variables de instancia.
+  ✓ Usar instance_eval con clases para definir métodos de clase.
+  ✓ Construir DSLs con instance_eval (bloques de configuración).
+  ✓ Analizar la relación entre self y el contexto de evaluación.
+  ✓ Identificar cuándo usar cada uno en casos reales.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+-------------------------------------------------------------------------------
+  1. ¿QUÉ ES CLASS_EVAL?
+-------------------------------------------------------------------------------
+
+  class_eval es un método de Module que evalúa un bloque en el contexto
+  de una clase o módulo. Dentro del bloque, self es la clase/módulo.
+
+    class MiClase; end
+
+    MiClase.class_eval do
+      # self es MiClase
+      def mi_metodo
+        "hola desde class_eval"
+      end
+    end
+
+    puts MiClase.new.mi_metodo
+    # => "hola desde class_eval"
+
+  Equivale a reabrir la clase y agregar métodos.
+
+-------------------------------------------------------------------------------
+  2. ¿QUÉ ES INSTANCE_EVAL?
+-------------------------------------------------------------------------------
+
+  instance_eval es un método de Object que evalúa un bloque en el
+  contexto de una instancia específica. Dentro del bloque, self es
+  el objeto receptor.
+
+    obj = "Hola"
+    obj.instance_eval do
+      # self es "Hola" (el string)
+      puts upcase   # "HOLA"
+      puts size     # 4
+    end
+
+  instance_eval permite:
+    • Acceder a variables de instancia del objeto.
+    • Definir métodos singleton (propios del objeto).
+    • Ejecutar código en el contexto del objeto.
+
+-------------------------------------------------------------------------------
+  3. DIFERENCIA CLAVE: CONTEXTO
+-------------------------------------------------------------------------------
+
+  Con class_eval, self es la clase.
+  Con instance_eval, self es el objeto receptor.
+
+    class Demo; end
+
+    Demo.class_eval do
+      puts "class_eval: self = #{self}"  # Demo
+    end
+
+    Demo.new.instance_eval do
+      puts "instance_eval: self = #{self}"  # <Demo:0x...>
+    end
+
+  class_eval sobre una clase define métodos de instancia.
+  instance_eval sobre una clase define métodos de clase (singleton).
+
+-------------------------------------------------------------------------------
+  4. CLASS_EVAL: DEFINIR MÉTODOS DE INSTANCIA
+-------------------------------------------------------------------------------
+
+  class_eval es ideal para añadir métodos a una clase existente:
+
+    String.class_eval do
+      def invertir_palabras
+        split.reverse.join(" ")
+      end
+    end
+
+    puts "Hola Mundo Ruby".invertir_palabras
+    # => "Ruby Mundo Hola"
+
+  También puedes usar class_eval con un string:
+
+    String.class_eval("def nuevo; 'nuevo método'; end")
+    puts "".nuevo  # => "nuevo método"
+
+  Pero la forma con bloque es más segura y común.
+
+-------------------------------------------------------------------------------
+  5. INSTANCE_EVAL: ACCEDER A VARIABLES PRIVADAS
+-------------------------------------------------------------------------------
+
+  instance_eval permite ver y modificar variables de instancia privadas:
+
+    class CajaFuerte
+      def initialize
+        @secreto = "TESORO-12345"
+        @pin = 1234
+      end
+
+      private
+
+      def pin_correcto?(pin)
+        @pin == pin
+      end
+    end
+
+    caja = CajaFuerte.new
+    secreto = caja.instance_eval { @secreto }
+    puts secreto  # => "TESORO-12345"
+
+    # También podemos modificar
+    caja.instance_eval { @secreto = "NUEVO-TESORO" }
+    puts caja.instance_eval { @secreto }
+
+  Esto es extremadamente poderoso y peligroso: rompe el encapsulamiento.
+
+-------------------------------------------------------------------------------
+  6. INSTANCE_EVAL SOBRE CLASES (MÉTODOS DE CLASE)
+-------------------------------------------------------------------------------
+
+  Cuando usamos instance_eval sobre una clase, self es la clase misma.
+  Esto nos permite definir métodos de clase:
+
+    class Config
+    end
+
+    Config.instance_eval do
+      def api_key
+        "clave-secreta"
+      end
+
+      def endpoint
+        "https://api.example.com"
+      end
+    end
+
+    puts Config.api_key     # => "clave-secreta"
+    puts Config.endpoint    # => "https://api.example.com"
+
+  Los métodos definidos con instance_eval sobre una clase son métodos
+  singleton de esa clase (lo que comúnmente llamamos "métodos de clase").
+
+-------------------------------------------------------------------------------
+  7. CLASS_EVAL VS INSTANCE_EVAL EN LA PRÁCTICA
+-------------------------------------------------------------------------------
+
+  Ejemplo comparativo directo:
+
+    class Ejemplo
+      def initialize
+        @valor = 42
+      end
+    end
+
+    # class_eval: define método de instancia que accede a @valor
+    Ejemplo.class_eval do
+      def valor
+        @valor
+      end
+    end
+
+    # instance_eval en instancia: accede directamente a @valor
+    obj = Ejemplo.new
+    puts obj.valor                    # 42 (vía class_eval)
+    puts obj.instance_eval { @valor } # 42 (vía instance_eval)
+
+    # instance_eval en clase: define método de clase
+    Ejemplo.instance_eval do
+      def clase_valor
+        "método de clase"
+      end
+    end
+    puts Ejemplo.clase_valor  # "método de clase"
+
+-------------------------------------------------------------------------------
+  8. CLASS_EVAL CON STRING (VS BLOQUE)
+-------------------------------------------------------------------------------
+
+  class_eval acepta un string o un bloque:
+
+    class Calculadora
+    end
+
+    # Con string:
+    Calculadora.class_eval("def suma(a,b); a+b; end")
+
+    # Con bloque:
+    Calculadora.class_eval do
+      def resta(a, b)
+        a - b
+      end
+    end
+
+    puts Calculadora.new.suma(5, 3)   # 8
+    puts Calculadora.new.resta(5, 3)  # 2
+
+  La forma con bloque es preferida por legibilidad y seguridad.
+
+-------------------------------------------------------------------------------
+  9. INSTANCE_EVAL PARA DSLs
+-------------------------------------------------------------------------------
+
+  instance_eval es la base de la mayoría de DSLs en Ruby:
+
+    class Configuracion
+      attr_reader :server, :database, :debug
+
+      def initialize
+        @server = "localhost"
+        @database = "dev"
+        @debug = false
+      end
+
+      def configurar(&bloque)
+        instance_eval(&bloque)
+      end
+
+      private
+
+      def server(s)
+        @server = s
+      end
+
+      def database(d)
+        @database = d
+      end
+
+      def debug(d)
+        @debug = d
+      end
+    end
+
+    config = Configuracion.new
+    config.configurar do
+      server "prod.example.com"
+      database "produccion"
+      debug true
+    end
+
+    puts config.server   # => "prod.example.com"
+
+  Los métodos server, database, debug son privados y solo se llaman
+  dentro del bloque de configuración.
+
+-------------------------------------------------------------------------------
+  10. EL PROBLEMA DEL CAMBIO DE self
+-------------------------------------------------------------------------------
+
+  Cuando usas instance_eval, self cambia. Esto puede causar problemas
+  si dentro del bloque necesitas acceder al self original:
+
+    class Helper
+      def saludo
+        "Hola desde Helper"
+      end
+    end
+
+    class Usuario
+      def initialize(nombre)
+        @nombre = nombre
+      end
+
+      def configurar(&bloque)
+        instance_eval(&bloque)
+      end
+    end
+
+    helper = Helper.new
+    user = Usuario.new("Ana")
+    user.configurar do
+      # self es user, no podemos llamar helper.saludo directamente
+      puts @nombre
+      # puts helper.saludo  # Sí funciona si capturamos helper
+    end
+
+  Solución: capturar el helper en una variable antes del bloque.
+
+-------------------------------------------------------------------------------
+  11. INSTANCE_EXEC Y CLASS_EXEC
+-------------------------------------------------------------------------------
+
+  Ruby también tiene instance_exec y class_exec que permiten pasar
+  argumentos al bloque:
+
+    class Ejemplo
+      def initialize
+        @x = 10
+      end
+    end
+
+    obj = Ejemplo.new
+    obj.instance_exec(5) do |arg|
+      puts @x + arg  # 15
+    end
+
+  Esto es útil cuando el bloque recibe parámetros del exterior.
+
+-------------------------------------------------------------------------------
+  12. CLASS_EVAL CON HERENCIA
+-------------------------------------------------------------------------------
+
+  class_eval respeta la herencia:
+
+    class Padre
+    end
+
+    class Hijo < Padre
+    end
+
+    Padre.class_eval do
+      def metodo_padre
+        "de padre"
+      end
+    end
+
+    puts Hijo.new.metodo_padre  # "de padre" (heredado)
+
+  Pero instance_eval sobre una clase hija no hereda los métodos
+  singleton (de clase) de la clase padre:
+
+    Padre.instance_eval do
+      def metodo_clase
+        "clase padre"
+      end
+    end
+
+    # Hijo.metodo_clase  # NoMethodError (no se hereda)
+
+-------------------------------------------------------------------------------
+  13. USO EN GEMAS POPULARES
+-------------------------------------------------------------------------------
+
+  RSpec usa instance_eval para los bloques describe/it:
+
+    RSpec.describe "algo" do
+      it "funciona" do
+        expect(1 + 1).to eq(2)
+      end
+    end
+
+  ActiveRecord usa class_eval para definir asociaciones:
+
+    class Usuario < ApplicationRecord
+      has_many :posts
+    end
+
+  # has_many usa class_eval internamente para definir métodos.
+
+  Rails routes usan instance_eval:
+
+    Rails.application.routes.draw do
+      resources :usuarios
+      get "login", to: "sessions#new"
+    end
+
+-------------------------------------------------------------------------------
+  14. MODULE_EVAL (ALIAS DE CLASS_EVAL)
+-------------------------------------------------------------------------------
+
+  module_eval es un alias de class_eval. Se usa con módulos:
+
+    module MiModulo
+    end
+
+    MiModulo.module_eval do
+      def metodo_modulo
+        "definido en módulo"
+      end
+    end
+
+    class Incluye
+      include MiModulo
+    end
+
+    puts Incluye.new.metodo_modulo  # "definido en módulo"
+
+-------------------------------------------------------------------------------
+  15. EVAL SIN BLOQUE
+-------------------------------------------------------------------------------
+
+  Tanto class_eval como instance_eval pueden recibir un string:
+
+    str_class = "def hola; 'mundo'; end"
+    String.class_eval(str_class)
+    puts "".hola  # "mundo"
+
+    obj = "test"
+    obj.instance_eval("def nuevo; 'nuevo'; end")
+    puts obj.nuevo  # "nuevo"
+
+  La forma con bloque es más segura (no evalúa strings arbitrarios).
+
+-------------------------------------------------------------------------------
+  16. ACCESO A CONSTANTES
+-------------------------------------------------------------------------------
+
+  class_eval respeta las constantes de la clase:
+
+    class Exterior
+      CONST = "exterior"
+    end
+
+    Exterior.class_eval do
+      def obtener_const
+        CONST
+      end
+    end
+
+    puts Exterior.new.obtener_const  # "exterior"
+
+  instance_eval no:
+
+    Exterior.new.instance_eval do
+      # puts CONST  # NameError (no encuentra CONST)
+    end
+
+-------------------------------------------------------------------------------
+  17. PATRÓN: DSL CON INSTANCE_EVAL
+-------------------------------------------------------------------------------
+
+  Patrón completo para un DSL:
+
+    class DSLBuilder
+      def initialize
+        @resultado = {}
+      end
+
+      def construir(&bloque)
+        instance_eval(&bloque)
+        @resultado
+      end
+
+      private
+
+      def campo(nombre, valor)
+        @resultado[nombre] = valor
+      end
+
+      def grupo(nombre, &bloque)
+        sub = DSLBuilder.new
+        @resultado[nombre] = sub.construir(&bloque)
+      end
+    end
+
+    config = DSLBuilder.new.construir do
+      campo :app, "MiApp"
+      campo :version, "2.0"
+      grupo :database do
+        campo :host, "localhost"
+        campo :port, 5432
+      end
+    end
+
+    puts config.inspect
+
+-------------------------------------------------------------------------------
+  18. EVITAR PELIGROS CON INSTANCE_EVAL
+-------------------------------------------------------------------------------
+
+  Los principales peligros de instance_eval son:
+
+  1. Rompe encapsulamiento: Puedes acceder a datos privados.
+  2. Cambia self: Puede causar confusión en el código.
+  3. Seguridad: evaluar strings puede ser riesgoso.
+  4. Debugging: Los errores dentro de instance_eval pueden ser
+     difíciles de rastrear.
+
+  Buenas prácticas:
+    • Usa instance_eval principalmente para DSLs controlados.
+    • No uses instance_eval para acceder a datos privados en
+      producción (solo en tests si es necesario).
+    • Prefiere bloques en lugar de strings.
+    • Documenta claramente cuándo cambia self.
+
+-------------------------------------------------------------------------------
+  19. COMPARATIVA COMPLETA
+-------------------------------------------------------------------------------
+
+  Característica      | class_eval              | instance_eval
+  --------------------|-------------------------|-------------------------
+  self es             | La clase/módulo         | El objeto receptor
+  Define métodos de   | Instancia               | Singleton (del objeto)
+  Accede a constants  | Sí                      | No
+  Accede a vars inst  | No (solo desde método)  | Sí
+  Usado para          | Abrir clases            | DSLs, singleton methods
+  Método de           | Module                  | Object
+  Alias               | module_eval             | —
+
+-------------------------------------------------------------------------------
+  CÓDIGO COMPLETO DE EJEMPLO
+-------------------------------------------------------------------------------
+
+```ruby
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# =============================================================================
+# CAPÍTULO 65: CLASS_EVAL / INSTANCE_EVAL
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. CLASS_EVAL BÁSICO
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "1. CLASS_EVAL BÁSICO"
+puts "=" * 60
+
+class Animal; end
+
+Animal.class_eval do
+  def sonido
+    "..." # genérico
+  end
+end
+
+puts Animal.new.sonido
+
+# ---------------------------------------------------------------------------
+# 2. INSTANCE_EVAL BÁSICO
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "2. INSTANCE_EVAL BÁSICO"
+puts "=" * 60
+
+saludo = "Hola, Mundo!"
+saludo.instance_eval do
+  puts "self es: #{self}"
+  puts "upcase: #{upcase}"
+  puts "size: #{size}"
+end
+
+# ---------------------------------------------------------------------------
+# 3. CLASS_EVAL: AÑADIR MÉTODOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "3. CLASS_EVAL: AÑADIR MÉTODOS"
+puts "=" * 60
+
+String.class_eval do
+  def eco(n = 1)
+    "#{self} " * n
+  end
+end
+
+puts "Ruby".eco(3)
+
+# ---------------------------------------------------------------------------
+# 4. INSTANCE_EVAL: ACCESO A VARIABLES PRIVADAS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "4. INSTANCE_EVAL: ACCESO PRIVADO"
+puts "=" * 60
+
+class Banco
+  def initialize
+    @saldo = 1000
+    @titular = "Anónimo"
+  end
+end
+
+cuenta = Banco.new
+puts "Saldo: #{cuenta.instance_eval { @saldo }}"
+cuenta.instance_eval { @saldo = 9999 }
+puts "Nuevo saldo: #{cuenta.instance_eval { @saldo }}"
+
+# ---------------------------------------------------------------------------
+# 5. INSTANCE_EVAL SOBRE CLASES (MÉTODOS DE CLASE)
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "5. INSTANCE_EVAL: MÉTODOS DE CLASE"
+puts "=" * 60
+
+class LoggerConfig
+end
+
+LoggerConfig.instance_eval do
+  def nivel=(n)
+    @nivel = n
+  end
+
+  def nivel
+    @nivel || :info
+  end
+
+  def formatear(mensaje)
+    "[#{nivel.upcase}] #{mensaje}"
+  end
+end
+
+LoggerConfig.nivel = :debug
+puts LoggerConfig.formatear("Iniciando sistema")
+
+# ---------------------------------------------------------------------------
+# 6. DSL CON INSTANCE_EVAL
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "6. DSL CON INSTANCE_EVAL"
+puts "=" * 60
+
+class Ruta
+  attr_reader :path, :metodo, :handler
+
+  def initialize(metodo, path, &handler)
+    @metodo = metodo
+    @path = path
+    @handler = handler
+  end
+
+  def ejecutar
+    handler.call
+  end
+end
+
+class Router
+  attr_reader :rutas
+
+  def initialize
+    @rutas = []
+  end
+
+  def definir(&bloque)
+    instance_eval(&bloque)
+  end
+
+  private
+
+  def get(path, &handler)
+    @rutas << Ruta.new(:get, path, &handler)
+  end
+
+  def post(path, &handler)
+    @rutas << Ruta.new(:post, path, &handler)
+  end
+end
+
+router = Router.new
+router.definir do
+  get "/" do "Home" end
+  get "/about" do "About" end
+  post "/users" do "Create user" end
+end
+
+router.rutas.each do |r|
+  puts "#{r.metodo.upcase} #{r.path} -> #{r.ejecutar}"
+end
+
+# ---------------------------------------------------------------------------
+# 7. CLASS_EVAL CON STRING
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "7. CLASS_EVAL CON STRING"
+puts "=" * 60
+
+class Calculadora
+end
+
+codigo = <<~RUBY
+  def multiplicar(a, b)
+    a * b
+  end
+RUBY
+
+Calculadora.class_eval(codigo)
+puts Calculadora.new.multiplicar(6, 7)
+
+# ---------------------------------------------------------------------------
+# 8. INSTANCE_EXEC CON ARGUMENTOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "8. INSTANCE_EXEC"
+puts "=" * 60
+
+class Contexto
+  def initialize
+    @base = 100
+  end
+end
+
+ctx = Contexto.new
+resultado = ctx.instance_exec(25, 3) do |a, b|
+  @base + a * b
+end
+puts "Resultado: #{resultado}"
+
+# ---------------------------------------------------------------------------
+# 9. HERENCIA Y CLASS_EVAL
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "9. HERENCIA"
+puts "=" * 60
+
+class Vehiculo
+end
+
+class Coche < Vehiculo
+end
+
+Vehiculo.class_eval do
+  def ruedas
+    "número genérico de ruedas"
+  end
+end
+
+Coche.class_eval do
+  def ruedas
+    4
+  end
+end
+
+puts Vehiculo.new.ruedas
+puts Coche.new.ruedas
+
+# ---------------------------------------------------------------------------
+# 10. INSTANCE_EVAL Y MÓDULOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "10. INSTANCE_EVAL CON MÓDULOS"
+puts "=" * 60
+
+module Plugin
+  def self.incluir_en(clase, &bloque)
+    clase.class_eval(&bloque)
+  end
+end
+
+class MiClase
+end
+
+Plugin.incluir_en(MiClase) do
+  def saludar
+    "Hola desde Plugin!"
+  end
+end
+
+puts MiClase.new.saludar
+
+# ---------------------------------------------------------------------------
+# 11. BUILDERS CON CLASS_EVAL
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "11. BUILDERS"
+puts "=" * 60
+
+class QueryBuilder
+  def initialize(tabla)
+    @tabla = tabla
+    @select = "*"
+    @where = []
+  end
+
+  def self.para(tabla, &bloque)
+    builder = new(tabla)
+    builder.instance_eval(&bloque)
+    builder.construir
+  end
+
+  def select(campos)
+    @select = campos.join(", ")
+  end
+
+  def where(condicion)
+    @where << condicion
+  end
+
+  def construir
+    sql = "SELECT #{@select} FROM #{@tabla}"
+    sql += " WHERE #{@where.join(" AND ")}" if @where.any?
+    sql
+  end
+end
+
+query = QueryBuilder.para(:usuarios) do
+  select [:id, :nombre, :email]
+  where "activo = true"
+  where "created_at > '2024-01-01'"
+end
+
+puts query
+
+# ---------------------------------------------------------------------------
+# 12. CAMBIO DE self Y CAPTURA DE VARIABLES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "12. CAPTURA DE self"
+puts "=" * 60
+
+class Externo
+  def initialize
+    @mensaje = "desde externo"
+  end
+
+  def ejecutar(&bloque)
+    instance_eval(&bloque)
+  end
+end
+
+externo = Externo.new
+
+# Peligro: self cambia
+mensaje_original = "variable local"
+
+externo.ejecutar do
+  puts "Dentro: @mensaje = #{@mensaje}"
+  # puts mensaje_original  # No se ve desde instance_eval
+end
+
+# Solución: pasar como argumento con instance_exec
+externo.instance_exec(mensaje_original) do |local|
+  puts "Local capturada: #{local}"
+  puts "Instancia: #{@mensaje}"
+end
+
+# ---------------------------------------------------------------------------
+# 13. EVAL CON MÓDULOS (MODULE_EVAL)
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "13. MODULE_EVAL"
+puts "=" * 60
+
+module Funcionalidades
+end
+
+Funcionalidades.module_eval do
+  def metodo_compartido
+    "compartido"
+  end
+end
+
+class A
+  include Funcionalidades
+end
+
+class B
+  include Funcionalidades
+end
+
+puts A.new.metodo_compartido
+puts B.new.metodo_compartido
+
+# ---------------------------------------------------------------------------
+# 14. COMPARATIVA PRÁCTICA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "14. COMPARATIVA"
+puts "=" * 60
+
+class Prueba
+  CONSTANTE = "VALOR"
+  attr_reader :instancia_var
+
+  def initialize
+    @instancia_var = "soy privado"
+  end
+end
+
+puts "=== class_eval en Prueba ==="
+Prueba.class_eval do
+  puts "self = #{self}"
+  puts "Constante: #{CONSTANTE}"
+  # puts @instancia_var  # nil (no accede a variables de instancia)
+end
+
+puts "=== instance_eval en instancia ==="
+Prueba.new.instance_eval do
+  puts "self = #{self}"
+  # puts CONSTANTE  # NameError
+  puts "@instancia_var = #{@instancia_var}"
+end
+
+puts "=== instance_eval en clase ==="
+Prueba.instance_eval do
+  puts "self = #{self}"
+  puts "Constante: #{CONSTANTE}"  # Sí accede
+end
+
+# ---------------------------------------------------------------------------
+# 15. DSL DE CONFIGURACIÓN ANIDADA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "15. DSL ANIDADO"
+puts "=" * 60
+
+class ConfigAnidada
+  attr_reader :config
+
+  def initialize
+    @config = {}
+  end
+
+  def self.construir(&bloque)
+    c = new
+    c.instance_eval(&bloque)
+    c.config
+  end
+
+  private
+
+  def setting(nombre, valor = nil, &bloque)
+    if bloque
+      sub = ConfigAnidada.new
+      sub.instance_eval(&bloque)
+      @config[nombre] = sub.config
+    else
+      @config[nombre] = valor
+    end
+  end
+end
+
+config = ConfigAnidada.construir do
+  setting :app, "MiApp"
+  setting :database do
+    setting :host, "localhost"
+    setting :port, 5432
+    setting :credenciales do
+      setting :user, "admin"
+      setting :password, "secret"
+    end
+  end
+end
+
+puts config.inspect
+
+# ---------------------------------------------------------------------------
+# 16. DEFINIR MÉTODOS DE CLASE DINÁMICOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "16. MÉTODOS DE CLASE"
+puts "=" * 60
+
+class Servicio
+end
+
+[:get, :post, :put, :delete].each do |metodo|
+  Servicio.instance_eval do
+    define_method(metodo) do |ruta, &bloque|
+      puts "#{metodo.upcase} #{ruta}"
+    end
+  end
+end
+
+Servicio.get("/usuarios")
+Servicio.post("/usuarios")
+Servicio.put("/usuarios/1")
+
+# ---------------------------------------------------------------------------
+# 17. DEFINIR MÉTODOS DE INSTANCIA DINÁMICOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "17. MÉTODOS DE INSTANCIA"
+puts "=" * 60
+
+class Producto
+end
+
+[:nombre, :precio, :stock].each do |campo|
+  Producto.class_eval do
+    attr_accessor campo
+  end
+end
+
+p = Producto.new
+p.nombre = "Laptop"
+p.precio = 999
+p.stock = 10
+puts "#{p.nombre}: $#{p.precio} (stock: #{p.stock})"
+
+# ---------------------------------------------------------------------------
+# 18. INSTANCE_EVAL Y EVAL DE STRING
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "18. STRING EVAL"
+puts "=" * 60
+
+obj = []
+obj.instance_eval("def dinamico; 'desde string'; end")
+puts obj.dinamico
+
+# También con class_eval y string
+Array.class_eval("def medio; self[size/2]; end")
+puts [1, 2, 3, 4, 5].medio
+
+# ---------------------------------------------------------------------------
+# 19. USO EN TESTS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "19. USO EN TESTS"
+puts "=" * 60
+
+class TestSuite
+  def initialize
+    @tests = []
+  end
+
+  def self.describe(desc, &bloque)
+    suite = new
+    suite.instance_eval(&bloque)
+    suite.ejecutar
+  end
+
+  def test(desc, &bloque)
+    @tests << [desc, bloque]
+  end
+
+  def ejecutar
+    @tests.each do |desc, bloque|
+      print "  #{desc}... "
+      begin
+        resultado = instance_eval(&bloque)
+        puts resultado ? "PASS" : "FAIL"
+      rescue => e
+        puts "ERROR: #{e.message}"
+      end
+    end
+  end
+end
+
+TestSuite.describe "Matemáticas" do
+  test "suma básica" do
+    1 + 1 == 2
+  end
+
+  test "multiplicación" do
+    2 * 3 == 6
+  end
+end
+
+# ---------------------------------------------------------------------------
+# 20. EJEMPLO INTEGRADOR: FACTORY CON DSL
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "20. FACTORY DSL"
+puts "=" * 60
+
+class FactoryDSL
+  class << self
+    def define(nombre, &bloque)
+      factory = new
+      factory.instance_eval(&bloque)
+      Object.const_set(nombre.to_s.capitalize, factory.construct_class)
+    end
+  end
+
+  def initialize
+    @atributos = []
+    @metodos = {}
+  end
+
+  def attribute(nombre, tipo = nil)
+    @atributos << nombre
+  end
+
+  def method(nombre, &bloque)
+    @metodos[nombre] = bloque
+  end
+
+  def construct_class
+    attrs = @atributos.dup
+    meths = @metodos.dup
+
+    Class.new do
+      attrs.each { |a| attr_accessor a }
+
+      define_method(:initialize) do |**vals|
+        attrs.each do |a|
+          send("#{a}=", vals[a]) if vals.key?(a)
+        end
+      end
+
+      meths.each do |nombre, bloque|
+        define_method(nombre, &bloque)
+      end
+
+      define_method(:to_s) do
+        attrs.map { |a| "#{a}: #{send(a)}" }.join(", ")
+      end
+    end
+  end
+end
+
+FactoryDSL.define :persona do
+  attribute :nombre
+  attribute :edad
+  method :saludar do
+    "Hola, soy #{@nombre}"
+  end
+end
+
+p = Persona.new(nombre: "Ana", edad: 30)
+puts p.saludar
+puts p.to_s
+
+puts "=" * 60
+puts "FIN DEL EJEMPLO COMPLETO"
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+  En este capítulo hemos explorado class_eval e instance_eval:
+
+  • class_eval (module_eval) evalúa código en el contexto de una clase
+    o módulo. self es la clase. Define métodos de instancia.
+
+  • instance_eval evalúa código en el contexto de un objeto. self es
+    el objeto. Puede acceder a variables de instancia y definir métodos
+    singleton.
+
+  • instance_eval sobre una clase define métodos de clase (singleton).
+
+  • class_eval respeta constantes; instance_eval no.
+
+  • instance_eval es la base de la mayoría de DSLs en Ruby.
+
+  • instance_exec y class_exec permiten pasar argumentos al bloque.
+
+  • La forma con bloque es más segura que con string.
+
+  • instance_eval rompe encapsulamiento: accede a atributos privados.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+  Ejercicio 1: Usa class_eval para agregar un método "doble" a Integer.
+
+  Ejercicio 2: Usa instance_eval para acceder y modificar el @secreto
+  de una instancia de CajaFuerte.
+
+  Ejercicio 3: Crea una clase ConfigBuilder que use instance_eval para
+  definir valores de configuración.
+
+  Ejercicio 4: Usa instance_eval sobre una clase para definir 3 métodos
+  de clase (clase_metodo1, clase_metodo2, clase_metodo3).
+
+  Ejercicio 5: Implementa un mini framework de testing con class_eval
+  e instance_eval.
+
+  Ejercicio 6: Crea un DSL para definir árboles HTML usando instance_eval.
+
+  Ejercicio 7: Demuestra la diferencia entre class_eval e instance_eval
+  en cuanto a acceso a constantes.
+
+  Ejercicio 8: Usa instance_exec para pasar argumentos externos a un
+  bloque que se evalúa en el contexto de un objeto.
+
+  Ejercicio 9: Implementa un sistema de plugins que use class_eval para
+  agregar métodos a una clase existente.
+
+  Ejercicio 10: Crea un DSL de migraciones de base de datos usando
+  instance_eval.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  P: ¿Cuándo usar class_eval en lugar de reabrir la clase?
+  R: Cuando necesitas definir métodos dinámicamente (con variables),
+     o cuando el nombre de la clase se determina en tiempo de ejecución.
+
+  P: ¿Puedo usar instance_eval para definir métodos de instancia?
+  R: instance_eval define métodos singleton (del objeto), no de
+     instancia. Para métodos de instancia usa class_eval.
+
+  P: ¿Qué es más seguro, bloque o string?
+  R: El bloque. El string evalúa código Ruby arbitrario y puede ser
+     peligroso si incluye datos externos.
+
+  P: ¿Cómo accedo al self original dentro de un instance_eval?
+  R: Captura el self original en una variable antes del bloque, o
+     usa instance_exec para pasarlo como argumento.
+
+  P: ¿module_eval y class_eval son lo mismo?
+  R: Sí, module_eval es un alias de class_eval. Se prefiere module_eval
+     para módulos y class_eval para clases.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  Implementa un DSL para definir esquemas de base de datos similar a
+  ActiveRecord::Schema.
+
+  Requisitos:
+    • Usar instance_eval para el bloque de definición.
+    • Soportar creación de tablas con columnas.
+    • Soportar tipos de datos (string, integer, boolean).
+    • Soportar índices y claves foráneas.
+    • Generar SQL a partir de la definición.
+
+  Ejemplo:
+
+    Schema.define do
+      create_table :usuarios do
+        string :nombre
+        string :email
+        integer :edad
+        boolean :activo, default: true
+        index :email, unique: true
+      end
+
+      create_table :posts do
+        string :titulo
+        text :contenido
+        integer :usuario_id
+        foreign_key :usuario_id, :usuarios
+      end
+    end
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+  class_eval e instance_eval son dos caras de la misma moneda:
+  la capacidad de Ruby para redefinir contextos. Entender cuándo
+  usar cada uno es una de las habilidades que distingue al arquitecto
+  Ruby del programador casual.
+
+  Has aprendido que class_eval abre las puertas de la clase y que
+  instance_eval abre las entrañas del objeto. Con estas herramientas
+  puedes construir DSLs elegantes, configuraciones declarativas y
+  código que se adapta dinámicamente.
+
+  En el próximo capítulo exploraremos los métodos singleton, la
+  capacidad de Ruby para darle métodos únicos a objetos individuales.
+
+  Nos vemos en el Capítulo 66: SINGLETON METHODS.
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  → CAPÍTULO 66: SINGLETON METHODS
+  → Aprenderás a definir métodos exclusivos para objetos individuales
+    y a entender la clase singleton (eigenclass).
+
+================================================================================
+  FIN DEL CAPÍTULO 65
+================================================================================

@@ -1,0 +1,2222 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║            RUBY MASTER BOOK — MÓDULO V: MÓDULOS Y MIXINS                      ║
+║       CAPÍTULO 47: METHOD_MISSING — MÉTODOS FANTASMA Y DELEGACIÓN             ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────────
+  BIENVENIDA
+────────────────────────────────────────────────────────────────────────────────────
+
+Bienvenido al Capítulo 47 del Ruby Master Book. Hasta ahora hemos trabajado
+con métodos que existen realmente en clases y módulos. Pero Ruby tiene un
+secreto fascinante: cuando llamas a un método que no existe, Ruby no se rinde
+inmediatamente. En lugar de lanzar un error, llama a un método especial llamado
+`method_missing`.
+
+Esto abre un mundo de posibilidades: puedes crear objetos que respondan a
+cualquier mensaje, delegar llamadas dinámicamente a otros objetos, construir
+DSLs elegantes, implementar proxies, y crear estructuras de datos flexibles
+como `OpenStruct`.
+
+En este capítulo aprenderás a usar `method_missing` de forma responsable,
+a implementar `respond_to_missing?` para mantener la introspección, y a
+evitar las trampas que este poder conlleva.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FRASE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+"Method missing no es un error — es una oportunidad. Ruby no se rinde,
+  te da una segunda oportunidad para hacer algo extraordinario."
+  — _why the lucky stiff, autor de "Why's (Poignant) Guide to Ruby"
+
+────────────────────────────────────────────────────────────────────────────────────
+  OBJETIVOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+  1. Entender cómo funciona `method_missing` en la cadena de resolución.
+  2. Implementar `method_missing` para crear métodos fantasma (ghost methods).
+  3. Implementar `respond_to_missing?` para introspección correcta.
+  4. Usar `method_missing` para delegación dinámica.
+  5. Construir un proxy o delegador genérico.
+  6. Implementar un `OpenStruct` desde cero.
+  7. Construir DSLs con `method_missing`.
+  8. Conocer las trampas y mejores prácticas.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESARROLLO DEL CAPÍTULO — METHOD_MISSING
+────────────────────────────────────────────────────────────────────────────────────
+
+Cuando Ruby recibe un mensaje (llamada a método), busca en:
+  1. Métodos singleton del objeto
+  2. Métodos de instancia de la clase (y módulos prependidos)
+  3. Métodos de instancia de la superclase (y módulos)
+  4. Así sucesivamente hasta `BasicObject`
+  5. Llama a `method_missing` si no encuentra nada
+
+El `method_missing` por defecto (en `Kernel`) lanza `NoMethodError`.
+
+Al sobrescribir `method_missing`, puedes interceptar cualquier llamada a
+un método inexistente y manejarla como desees.
+
+Siempre debes sobrescribir también `respond_to_missing?` para que la
+introspección (`respond_to?`, `method`, etc.) funcione correctamente.
+
+────────────────────────────────────────────────────────────────────────────────────
+  47.1 — METHOD_MISSING BÁSICO
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 1: `method_missing` básico.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_01_method_missing_basico.rb
+# Sobrescritura básica de method_missing
+
+class Capturador
+  def method_missing(name, *args, &block)
+    puts "Método llamado: #{name}"
+    puts "Argumentos: #{args.inspect}"
+    puts "Bloque: #{block ? 'sí' : 'no'}"
+    "Has llamado a #{name} con #{args}"
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    true
+  end
+end
+
+obj = Capturador.new
+puts obj.hola
+puts obj.suma(1, 2, 3)
+puts obj.saludar("Mundo") { "bloque" }
+puts obj.any_method_you_want
+
+puts "\nrespond_to? pruebas:"
+puts "  respond_to?(:hola): #{obj.respond_to?(:hola)}"
+puts "  respond_to?(:metodo_inexistente): #{obj.respond_to?(:metodo_inexistente)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 2: Ghost methods para atributos dinámicos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_02_ghost_methods.rb
+# Atributos dinámicos con method_missing
+
+class ObjetoFlexible
+  def initialize
+    @datos = {}
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.end_with?('=')
+      clave = nombre[0..-2]
+      @datos[clave] = args.first
+    elsif @datos.key?(nombre)
+      @datos[nombre]
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.end_with?('=') || @datos.key?(nombre[0..-2]) || @datos.key?(nombre) || super
+  end
+
+  def atributos
+    @datos.keys
+  end
+
+  def to_s
+    @datos.map { |k, v| "#{k}: #{v.inspect}" }.join(", ")
+  end
+end
+
+obj = ObjetoFlexible.new
+obj.nombre = "Alice"
+obj.edad = 30
+obj.email = "alice@example.com"
+obj.activo = true
+
+puts "Nombre: #{obj.nombre}"
+puts "Edad: #{obj.edad}"
+puts "Email: #{obj.email}"
+puts "Activo: #{obj.activo}"
+puts "Atributos: #{obj.atributos.join(', ')}"
+puts "Objeto: #{obj}"
+
+puts "\nrespond_to?:"
+puts "  nombre: #{obj.respond_to?(:nombre)}"
+puts "  nombre=: #{obj.respond_to?(:nombre=)}"
+puts "  inexistente: #{obj.respond_to?(:inexistente)}"
+
+begin
+  obj.no_existe
+rescue => e
+  puts "\nError al llamar a no_existe: #{e.class}: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 3: Delegación dinámica.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_03_delegacion_dinamica.rb
+# Delegar llamadas a otro objeto
+
+class Delegador
+  def initialize(target)
+    @target = target
+  end
+
+  def method_missing(name, *args, &block)
+    if @target.respond_to?(name)
+      @target.send(name, *args, &block)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @target.respond_to?(name) || super
+  end
+
+  def delegado
+    @target
+  end
+end
+
+class ServicioReal
+  def saludar(nombre)
+    "Hola, #{nombre}!"
+  end
+
+  def sumar(a, b)
+    a + b
+  end
+
+  def longitud(texto)
+    texto.length
+  end
+end
+
+real = ServicioReal.new
+delegado = Delegador.new(real)
+
+puts delegado.saludar("Mundo")
+puts delegado.sumar(5, 3)
+puts delegado.longitud("Ruby")
+
+puts "\nrespond_to?:"
+puts "  saludar: #{delegado.respond_to?(:saludar)}"
+puts "  volar: #{delegado.respond_to?(:volar)}"
+
+begin
+  delegado.volar
+rescue => e
+  puts "Error: #{e.class}: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 4: Proxy con registro de llamadas.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_04_proxy_registro.rb
+# Proxy que registra todas las llamadas
+
+class ProxyConRegistro
+  def initialize(target, nombre = "Proxy")
+    @target = target
+    @nombre = nombre
+    @llamadas = []
+  end
+
+  def method_missing(name, *args, &block)
+    if @target.respond_to?(name)
+      timestamp = Time.now
+      resultado = @target.send(name, *args, &block)
+      @llamadas << {
+        metodo: name,
+        argumentos: args,
+        resultado: resultado,
+        tiempo: timestamp,
+        duracion: Time.now - timestamp
+      }
+      resultado
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @target.respond_to?(name) || super
+  end
+
+  def llamadas
+    @llamadas
+  end
+
+  def reporte_llamadas
+    @llamadas.map.with_index do |ll, i|
+      "#{i + 1}. #{ll[:metodo]}(#{ll[:argumentos].map(&:inspect).join(', ')}) => #{ll[:resultado].inspect}"
+    end.join("\n")
+  end
+
+  def limpiar_registro
+    @llamadas.clear
+  end
+end
+
+class Calculadora
+  def sumar(a, b)
+    a + b
+  end
+
+  def multiplicar(a, b)
+    a * b
+  end
+
+  def saludar(nombre)
+    "¡Hola #{nombre}!"
+  end
+
+  def lento
+    sleep(0.05)
+    "hecho"
+  end
+end
+
+calc = Calculadora.new
+proxy = ProxyConRegistro.new(calc, "CalcProxy")
+
+puts proxy.sumar(3, 4)
+puts proxy.multiplicar(5, 6)
+puts proxy.saludar("Ruby")
+puts proxy.lento
+
+puts "\nReporte de llamadas:"
+puts proxy.reporte_llamadas
+
+puts "\nTotal de llamadas: #{proxy.llamadas.length}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 5: OpenStruct desde cero.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_05_openstruct_casero.rb
+# Implementación de OpenStruct usando method_missing
+
+class MiOpenStruct
+  def initialize(atributos = {})
+    @datos = {}
+    atributos.each { |k, v| self[k] = v }
+  end
+
+  def [](clave)
+    @datos[clave.to_s]
+  end
+
+  def []=(clave, valor)
+    @datos[clave.to_s] = valor
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.end_with?('=')
+      clave = nombre[0..-2]
+      @datos[clave] = args.first
+    elsif @datos.key?(nombre)
+      @datos[nombre]
+    elsif nombre.end_with?('?')
+      @datos.key?(nombre[0..-2]) ? !!@datos[nombre[0..-2]] : false
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    if nombre.end_with?('=')
+      true
+    elsif nombre.end_with?('?')
+      @datos.key?(nombre[0..-2]) || super
+    else
+      @datos.key?(nombre) || super
+    end
+  end
+
+  def to_h
+    @datos.dup
+  end
+
+  def each(&block)
+    @datos.each(&block)
+  end
+
+  def delete_field(name)
+    @datos.delete(name.to_s)
+  end
+
+  def attributes
+    @datos.keys
+  end
+
+  def inspect
+    "#<MiOpenStruct #{@datos.map { |k, v| "#{k}=#{v.inspect}" }.join(', ')}>"
+  end
+
+  def ==(otro)
+    return false unless otro.is_a?(MiOpenStruct)
+    @datos == otro.to_h
+  end
+end
+
+persona = MiOpenStruct.new(nombre: "Alice", edad: 30, activo: true)
+puts persona.nombre
+puts persona.edad
+persona.email = "alice@example.com"
+puts persona.email
+puts "¿activo?: #{persona.activo?}"
+puts "¿admin?: #{persona.admin?}"
+puts "Hash: #{persona.to_h}"
+puts persona.inspect
+
+persona2 = MiOpenStruct.new(nombre: "Bob", edad: 25)
+puts "\nIterar atributos:"
+persona2.each { |k, v| puts "  #{k} => #{v}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 6: DSL con method_missing.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_06_dsl_method_missing.rb
+# Construcción de DSL usando method_missing
+
+class DSLRouter
+  def initialize
+    @rutas = []
+  end
+
+  def method_missing(name, *args, &block)
+    if [:get, :post, :put, :delete, :patch].include?(name)
+      ruta = {
+        metodo: name.upcase,
+        path: args.first,
+        bloque: block
+      }
+      @rutas << ruta
+      ruta
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    [:get, :post, :put, :delete, :patch].include?(name) || super
+  end
+
+  def rutas
+    @rutas
+  end
+
+  def mostrar_rutas
+    @rutas.each do |r|
+      puts "  #{r[:metodo]} #{r[:path]}"
+    end
+  end
+
+  def ejecutar(metodo, path)
+    ruta = @rutas.find { |r| r[:metodo] == metodo.upcase && r[:path] == path }
+    if ruta && ruta[:bloque]
+      ruta[:bloque].call
+    else
+      "404 No encontrado: #{metodo} #{path}"
+    end
+  end
+end
+
+router = DSLRouter.new
+
+router.get "/" do
+  "Bienvenido a la página principal"
+end
+
+router.get "/usuarios" do
+  "Lista de usuarios: Alice, Bob, Carlos"
+end
+
+router.post "/usuarios" do
+  "Usuario creado exitosamente"
+end
+
+router.get "/productos" do
+  "Productos: Laptop, Mouse, Teclado"
+end
+
+router.put "/usuarios/1" do
+  "Usuario #1 actualizado"
+end
+
+router.delete "/usuarios/1" do
+  "Usuario #1 eliminado"
+end
+
+puts "Rutas registradas:"
+router.mostrar_rutas
+
+puts "\nEjecutando rutas:"
+puts router.ejecutar("GET", "/")
+puts router.ejecutar("POST", "/usuarios")
+puts router.ejecutar("GET", "/productos")
+puts router.ejecutar("DELETE", "/usuarios/1")
+puts router.ejecutar("GET", "/no-existe")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 7: Builder DSL con method_missing.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_07_builder_dsl.rb
+# DSL para construir objetos complejos
+
+class QueryBuilder
+  def initialize(tabla)
+    @tabla = tabla
+    @seleccion = "*"
+    @condiciones = []
+    @orden = nil
+    @limite = nil
+    @offset = nil
+  end
+
+  def select(*campos)
+    @seleccion = campos.join(", ")
+    self
+  end
+
+  def where(**condiciones)
+    condiciones.each do |campo, valor|
+      @condiciones << "#{campo} = #{valor.is_a?(String) ? "'#{valor}'" : valor}"
+    end
+    self
+  end
+
+  def order(campo, direccion = :asc)
+    @orden = "#{campo} #{direccion.upcase}"
+    self
+  end
+
+  def limit(n)
+    @limite = n
+    self
+  end
+
+  def offset(n)
+    @offset = n
+    self
+  end
+
+  def method_missing(name, *args, &block)
+    if name.to_s.start_with?('where_')
+      campo = name.to_s.sub('where_', '')
+      valor = args.first
+      @condiciones << "#{campo} = #{valor.is_a?(String) ? "'#{valor}'" : valor}"
+      self
+    elsif name.to_s.start_with?('order_by_')
+      campo = name.to_s.sub('order_by_', '')
+      @orden = "#{campo} #{args.first || 'ASC'}"
+      self
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    name.to_s.start_with?('where_') || name.to_s.start_with?('order_by_') || super
+  end
+
+  def to_sql
+    sql = "SELECT #{@seleccion} FROM #{@tabla}"
+    sql += " WHERE #{@condiciones.join(' AND ')}" unless @condiciones.empty?
+    sql += " ORDER BY #{@orden}" if @orden
+    sql += " LIMIT #{@limite}" if @limite
+    sql += " OFFSET #{@offset}" if @offset
+    sql
+  end
+end
+
+query = QueryBuilder.new("usuarios")
+  .select(:id, :nombre, :email)
+  .where_edad(25)
+  .where_activo(true)
+  .where_ciudad("Madrid")
+  .order_by_nombre("DESC")
+  .limit(10)
+  .offset(20)
+
+puts query.to_sql
+
+puts "\nOtra consulta:"
+query2 = QueryBuilder.new("productos")
+  .where_categoria("electronica")
+  .where_precio(100)
+  .where_stock(0)
+  .order(:precio)
+
+puts query2.to_sql
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 8: Proxy de seguridad.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_08_proxy_seguridad.rb
+# Proxy de seguridad que controla acceso
+
+class ProxySeguridad
+  METODOS_PERMITIDOS = {
+    admin: [:todos],
+    editor: [:leer, :escribir, :buscar],
+    viewer: [:leer, :buscar]
+  }
+
+  def initialize(target, rol, usuario)
+    @target = target
+    @rol = rol
+    @usuario = usuario
+  end
+
+  def method_missing(name, *args, &block)
+    if @target.respond_to?(name)
+      if METODOS_PERMITIDOS[@rol]&.include?(:todos) ||
+         METODOS_PERMITIDOS[@rol]&.include?(name)
+        @target.send(name, *args, &block)
+      else
+        raise SecurityError, "#{@usuario} (#{@rol}) no tiene permiso para #{name}"
+      end
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @target.respond_to?(name) || super
+  end
+end
+
+class Documento
+  attr_reader :titulo, :contenido
+
+  def initialize(titulo, contenido)
+    @titulo = titulo
+    @contenido = contenido
+  end
+
+  def leer
+    "Contenido: #{@contenido[0..50]}..."
+  end
+
+  def escribir(nuevo_contenido)
+    @contenido = nuevo_contenido
+    "Documento actualizado"
+  end
+
+  def buscar(patron)
+    @contenido.include?(patron) ? "Encontrado" : "No encontrado"
+  end
+
+  def eliminar
+    @contenido = nil
+    "Documento eliminado"
+  end
+
+  def compartir(usuario)
+    "Compartido con #{usuario}"
+  end
+end
+
+doc = Documento.new("Secreto", "Este es el contenido confidencial del documento.")
+
+admin = ProxySeguridad.new(doc, :admin, "root")
+editor = ProxySeguridad.new(doc, :editor, "alice")
+viewer = ProxySeguridad.new(doc, :viewer, "bob")
+
+puts "Admin:"
+puts "  #{admin.leer}"
+puts "  #{admin.escribir('nuevo contenido')}"
+puts "  #{admin.eliminar}"
+
+puts "\nEditor:"
+puts "  #{editor.leer}"
+puts "  #{editor.buscar('confidencial')}"
+
+begin
+  editor.eliminar
+rescue => e
+  puts "  Error editor.eliminar: #{e.message}"
+end
+
+puts "\nViewer:"
+puts "  #{viewer.leer}"
+puts "  #{viewer.buscar('Ruby')}"
+
+begin
+  viewer.escribir("hack")
+rescue => e
+  puts "  Error viewer.escribir: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 9: Proxy de caché.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_09_proxy_cache.rb
+# Proxy que cachea resultados de métodos costosos
+
+class ProxyCache
+  def initialize(target, ttl = 60)
+    @target = target
+    @ttl = ttl
+    @cache = {}
+  end
+
+  def method_missing(name, *args, &block)
+    if @target.respond_to?(name)
+      clave = "#{name}:#{args.hash}"
+      ahora = Time.now
+
+      if @cache.key?(clave)
+        entrada = @cache[clave]
+        if ahora - entrada[:tiempo] < @ttl
+          return entrada[:valor]
+        else
+          @cache.delete(clave)
+        end
+      end
+
+      valor = @target.send(name, *args, &block)
+      @cache[clave] = { valor: valor, tiempo: ahora }
+      valor
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @target.respond_to?(name) || super
+  end
+
+  def clear_cache
+    @cache.clear
+  end
+
+  def cache_size
+    @cache.length
+  end
+
+  def cache_keys
+    @cache.keys
+  end
+end
+
+class ServicioCostoso
+  def consultar(id)
+    puts "  Consultando #{id}..."
+    sleep(0.1)
+    "Resultado para #{id}"
+  end
+
+  def calcular(x, y)
+    puts "  Calculando #{x} + #{y}..."
+    sleep(0.05)
+    x + y
+  end
+end
+
+servicio = ServicioCostoso.new
+cache = ProxyCache.new(servicio, 5)
+
+puts "Primera llamada: #{cache.consultar(1)}"
+puts "Segunda llamada (cacheada): #{cache.consultar(1)}"
+puts "Tercera llamada (cacheada): #{cache.consultar(1)}"
+
+puts "\nOperaciones:"
+puts "#{cache.calcular(3, 4)}"
+puts "#{cache.calcular(3, 4)} (cacheado)"
+
+puts "\nCache size: #{cache.cache_size}"
+puts "Cache keys: #{cache.cache_keys}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 10: method_missing para internacionalización.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_10_i18n_method_missing.rb
+# Sistema de traducción con method_missing
+
+module I18n
+  class Translator
+    def initialize(locale = :es)
+      @locale = locale
+      @traducciones = {
+        es: {
+          hola: "Hola",
+          adios: "Adiós",
+          bienvenido: "Bienvenido",
+          error: "Error",
+          exitoso: "Exitoso",
+          nombre: "Nombre",
+          email: "Correo electrónico",
+          password: "Contraseña",
+          guardar: "Guardar",
+          cancelar: "Cancelar",
+          eliminar: "Eliminar",
+          buscar: "Buscar",
+          nuevo: "Nuevo",
+          editar: "Editar",
+          usuario_no_encontrado: "Usuario no encontrado",
+          accion_no_permitida: "Acción no permitida"
+        },
+        en: {
+          hola: "Hello",
+          adios: "Goodbye",
+          bienvenido: "Welcome",
+          error: "Error",
+          exitoso: "Successful",
+          nombre: "Name",
+          email: "Email",
+          password: "Password",
+          guardar: "Save",
+          cancelar: "Cancel",
+          eliminar: "Delete",
+          buscar: "Search",
+          nuevo: "New",
+          editar: "Edit",
+          usuario_no_encontrado: "User not found",
+          accion_no_permitida: "Action not allowed"
+        },
+        pt: {
+          hola: "Olá",
+          adios: "Adeus",
+          bienvenido: "Bem-vindo",
+          error: "Erro",
+          exitoso: "Bem-sucedido",
+          nombre: "Nome",
+          email: "E-mail",
+          password: "Senha",
+          guardar: "Salvar",
+          cancelar: "Cancelar",
+          eliminar: "Excluir",
+          buscar: "Pesquisar",
+          nuevo: "Novo",
+          editar: "Editar",
+          usuario_no_encontrado: "Usuário não encontrado",
+          accion_no_permitida: "Ação não permitida"
+        }
+      }
+    end
+
+    def method_missing(name, *args, &block)
+      clave = name.to_s
+      traduccion = @traducciones[@locale]&.dig(clave.to_sym)
+      if traduccion
+        traduccion
+      elsif @traducciones[:es].key?(clave.to_sym)
+        "[#{@locale}] #{clave}"
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      @traducciones[@locale]&.key?(name.to_s.to_sym) ||
+        @traducciones[:es].key?(name.to_s.to_sym) ||
+        super
+    end
+
+    def cambiar_idioma(locale)
+      @locale = locale
+    end
+  end
+end
+
+t = I18n::Translator.new(:es)
+puts "Español:"
+puts "  #{t.hola} mundo"
+puts "  #{t.bienvenido} al sistema"
+puts "  #{t.guardar} / #{t.cancelar}"
+
+t.cambiar_idioma(:en)
+puts "\nEnglish:"
+puts "  #{t.hola} world"
+puts "  #{t.bienvenido} to the system"
+puts "  #{t.guardar} / #{t.cancelar}"
+
+t.cambiar_idioma(:pt)
+puts "\nPortuguês:"
+puts "  #{t.hola} mundo"
+puts "  #{t.buscar} usuário"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 11: method_missing para formateo automático.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_11_formato_dinamico.rb
+# Métodos dinámicos para formateo de datos
+
+class FormateadorDinamico
+  def initialize(valor)
+    @valor = valor
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.start_with?('como_')
+      tipo = nombre.sub('como_', '')
+      formatear_como(tipo, *args)
+    elsif nombre.start_with?('a_')
+      tipo = nombre.sub('a_', '')
+      convertir_a(tipo)
+    elsif nombre.end_with?('?')
+      preguntar(nombre[0..-2])
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('como_') || nombre.start_with?('a_') || nombre.end_with?('?') || super
+  end
+
+  private
+
+  def formatear_como(tipo, *args)
+    case tipo
+    when 'moneda' then "$#{format('%.2f', @valor)}"
+    when 'porcentaje' then "#{format('%.1f', @valor * 100)}%"
+    when 'cientifico' then format('%.2e', @valor)
+    when 'entero' then @valor.to_i.to_s
+    when 'decimal' then format('%.2f', @valor)
+    when 'hexadecimal' then @valor.to_s(16)
+    when 'binario' then @valor.to_s(2)
+    when 'romano' then convertir_a_romano(@valor)
+    when 'humano' then numero_humano(@valor)
+    when 'telefono' then formatear_telefono(@valor.to_s)
+    else "Formato '#{tipo}' no soportado"
+    end
+  end
+
+  def convertir_a(tipo)
+    case tipo
+    when 'string' then @valor.to_s
+    when 'entero' then @valor.to_i
+    when 'flotante' then @valor.to_f
+    when 'arreglo' then Array(@valor)
+    when 'simbolo' then @valor.to_s.to_sym
+    else "Conversión a '#{tipo}' no soportada"
+    end
+  end
+
+  def preguntar(atributo)
+    case atributo
+    when 'numero' then @valor.is_a?(Numeric)
+    when 'entero' then @valor.is_a?(Integer)
+    when 'string' then @valor.is_a?(String)
+    when 'positivo' then @valor.respond_to?(:>) && @valor > 0
+    when 'negativo' then @valor.respond_to?(:<) && @valor < 0
+    when 'par' then @valor.respond_to?(:even?) && @valor.even?
+    when 'impar' then @valor.respond_to?(:odd?) && @valor.odd?
+    else false
+    end
+  end
+
+  def convertir_a_romano(num)
+    return "0" if num == 0
+    valores = [
+      [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
+      [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
+      [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]
+    ]
+    resultado = ""
+    num = num.to_i
+    valores.each do |val, letra|
+      while num >= val
+        resultado << letra
+        num -= val
+      end
+    end
+    resultado
+  end
+
+  def numero_humano(num)
+    num = num.to_i
+    case num
+    when 0 then "cero"
+    when 1 then "uno"
+    when 2 then "dos"
+    when 3 then "tres"
+    when 4 then "cuatro"
+    when 5 then "cinco"
+    when 6 then "seis"
+    when 7 then "siete"
+    when 8 then "ocho"
+    when 9 then "nueve"
+    when 10 then "diez"
+    else num.to_s
+    end
+  end
+
+  def formatear_telefono(tel)
+    tel = tel.gsub(/[^0-9]/, '')
+    if tel.length == 10
+      "(#{tel[0..2]}) #{tel[3..5]}-#{tel[6..9]}"
+    elsif tel.length == 7
+      "#{tel[0..2]}-#{tel[3..6]}"
+    else
+      tel
+    end
+  end
+end
+
+num = FormateadorDinamico.new(42)
+puts "Número: 42"
+puts "  como moneda: #{num.como_moneda}"
+puts "  como hexadecimal: #{num.como_hexadecimal}"
+puts "  como binario: #{num.como_binario}"
+puts "  como romano: #{num.como_romano}"
+puts "  como humano: #{num.como_humano}"
+puts "  a string: #{num.a_string}"
+puts "  ¿par?: #{num.par?}"
+puts "  ¿impar?: #{num.impar?}"
+puts "  ¿positivo?: #{num.positivo?}"
+
+pct = FormateadorDinamico.new(0.15)
+puts "\nPorcentaje: 0.15"
+puts "  como porcentaje: #{pct.como_porcentaje}"
+puts "  como cientifico: #{pct.como_cientifico}"
+
+tel = FormateadorDinamico.new("5551234567")
+puts "\nTeléfono: 5551234567"
+puts "  como telefono: #{tel.como_telefono}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 12: method_missing para objetos NULL.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_12_null_object.rb
+# Null Object Pattern con method_missing
+
+class NullObject
+  def method_missing(name, *args, &block)
+    if name.to_s.end_with?('=')
+      nil
+    elsif args.empty? && !block
+      nil
+    else
+      self
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    true
+  end
+
+  def nil?
+    true
+  end
+
+  def blank?
+    true
+  end
+
+  def present?
+    false
+  end
+
+  def to_s
+    ""
+  end
+
+  def to_i
+    0
+  end
+
+  def to_f
+    0.0
+  end
+
+  def to_a
+    []
+  end
+
+  def to_h
+    {}
+  end
+
+  def length
+    0
+  end
+
+  def size
+    0
+  end
+
+  def each
+    self
+  end
+
+  def map
+    []
+  end
+
+  def select
+    []
+  end
+
+  def reduce(*)
+    nil
+  end
+
+  def ==(otro)
+    otro.nil? || otro.is_a?(NullObject)
+  end
+
+  def !=(otro)
+    !(self == otro)
+  end
+
+  def |(otro)
+    otro
+  end
+
+  def &(otro)
+    self
+  end
+
+  def !
+    true
+  end
+end
+
+NULL = NullObject.new.freeze
+
+class UsuarioRepository
+  def self.buscar(id)
+    if id > 0
+      Usuario.new(id, "Usuario #{id}", "user#{id}@test.com")
+    else
+      NULL
+    end
+  end
+end
+
+class Usuario
+  attr_reader :id, :nombre, :email
+
+  def initialize(id, nombre, email)
+    @id = id
+    @nombre = nombre
+    @email = email
+  end
+
+  def saludo
+    "Hola, soy #{@nombre}"
+  end
+
+  def to_s
+    "Usuario(#{@id}, #{@nombre}, #{@email})"
+  end
+end
+
+[1, 0, -1, 42].each do |id|
+  usuario = UsuarioRepository.buscar(id)
+  puts "ID #{id}:"
+  puts "  Existente? #{usuario.present?}"
+  puts "  Nil? #{usuario.nil?}"
+  puts "  Nombre: #{usuario.nombre.inspect}"
+  puts "  Saludo: #{usuario.saludo.inspect}"
+  puts "  to_s: '#{usuario.to_s}'"
+  puts "  to_i: #{usuario.to_i}"
+  puts "  Cada: #{usuario.each { |x| x }.inspect}"
+  puts "  Map: #{usuario.map { |x| x }.inspect}"
+  puts "  == nil: #{usuario == nil}"
+  puts "  & existente: #{usuario & UsuarioRepository.buscar(5)}"
+  puts ""
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 13: method_missing para API client.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_13_api_client.rb
+# Cliente de API dinámico con method_missing
+
+require 'net/http'
+require 'json'
+
+class ApiClient
+  def initialize(base_url, token = nil)
+    @base_url = base_url
+    @token = token
+    @headers = { 'Content-Type' => 'application/json' }
+    @headers['Authorization'] = "Bearer #{token}" if token
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+    if nombre.start_with?('get_')
+      recurso = nombre.sub('get_', '')
+      id = args.first
+      hacer_get(recurso, id)
+    elsif nombre.start_with?('post_')
+      recurso = nombre.sub('post_', '')
+      hacer_post(recurso, args.first || {})
+    elsif nombre.start_with?('put_')
+      recurso = nombre.sub('put_', '')
+      hacer_put(recurso, args.first, args.second || {})
+    elsif nombre.start_with?('delete_')
+      recurso = nombre.sub('delete_', '')
+      hacer_delete(recurso, args.first)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('get_') || nombre.start_with?('post_') ||
+      nombre.start_with?('put_') || nombre.start_with?('delete_') || super
+  end
+
+  private
+
+  def hacer_get(recurso, id = nil)
+    path = id ? "/#{recurso}/#{id}" : "/#{recurso}"
+    uri = URI("#{@base_url}#{path}")
+    puts "GET #{uri}"
+    { status: 200, data: { recurso: recurso, id: id } }
+  end
+
+  def hacer_post(recurso, datos)
+    uri = URI("#{@base_url}/#{recurso}")
+    puts "POST #{uri} #{datos.to_json}"
+    { status: 201, data: { id: rand(1000), **datos } }
+  end
+
+  def hacer_put(recurso, id, datos)
+    uri = URI("#{@base_url}/#{recurso}/#{id}")
+    puts "PUT #{uri} #{datos.to_json}"
+    { status: 200, data: { id: id, **datos } }
+  end
+
+  def hacer_delete(recurso, id)
+    uri = URI("#{@base_url}/#{recurso}/#{id}")
+    puts "DELETE #{uri}"
+    { status: 204 }
+  end
+end
+
+api = ApiClient.new("https://api.example.com/v1", "token-secreto")
+
+# Llamadas dinámicas
+puts api.get_usuarios
+puts api.get_usuario(1)
+puts api.post_usuarios({ nombre: "Alice", email: "alice@test.com" })
+puts api.put_usuario(1, { nombre: "Alice Updated" })
+puts api.delete_usuario(1)
+
+puts "\nOtras colecciones:"
+puts api.get_productos
+puts api.get_producto(42)
+puts api.post_productos({ nombre: "Laptop", precio: 1200 })
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 14: method_missing para validación declarativa.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_14_validacion_declarativa.rb
+# Validaciones declarativas con method_missing
+
+class Validador
+  attr_reader :errores
+
+  def initialize(objeto)
+    @objeto = objeto
+    @errores = []
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.start_with?('validar_que_')
+      condicion = nombre.sub('validar_que_', '')
+      unless @objeto.send(condicion, *args)
+        @errores << "Validación falló: #{condicion}"
+      end
+    elsif nombre.start_with?('validar_')
+      campo = nombre.sub('validar_', '')
+      valor = @objeto.send(campo) rescue nil
+      opciones = args.first || {}
+
+      if opciones[:presencia] && (valor.nil? || valor.to_s.empty?)
+        @errores << "#{campo} no puede estar vacío"
+      end
+
+      if opciones[:longitud]
+        min = opciones[:longitud][:min] || 0
+        max = opciones[:longitud][:max] || Float::INFINITY
+        if valor && (valor.length < min || valor.length > max)
+          @errores << "#{campo} debe tener entre #{min} y #{max} caracteres"
+        end
+      end
+
+      if opciones[:formato] && valor
+        unless valor.match?(opciones[:formato])
+          @errores << "#{campo} no tiene el formato correcto"
+        end
+      end
+
+      if opciones[:en] && valor
+        unless opciones[:en].include?(valor)
+          @errores << "#{campo} debe ser uno de: #{opciones[:en].join(', ')}"
+        end
+      end
+
+      if opciones[:numerico] && !valor.is_a?(Numeric)
+        @errores << "#{campo} debe ser numérico"
+      end
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('validar_') || super
+  end
+
+  def valido?
+    @errores.empty?
+  end
+end
+
+class FormularioRegistro
+  attr_accessor :nombre, :email, :edad, :password, :pais
+
+  def initialize(atributos = {})
+    @nombre = atributos[:nombre]
+    @email = atributos[:email]
+    @edad = atributos[:edad]
+    @password = atributos[:password]
+    @pais = atributos[:pais]
+  end
+
+  def edad_valida?(min = 18, max = 120)
+    @edad.is_a?(Numeric) && @edad >= min && @edad <= max
+  end
+
+  def email_valido?
+    @email.match?(/\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+  end
+
+  def password_fuerte?
+    @password && @password.length >= 8 &&
+      @password.match?(/[A-Z]/) &&
+      @password.match?(/[0-9]/) &&
+      @password.match?(/[^A-Za-z0-9]/)
+  end
+end
+
+form = FormularioRegistro.new(
+  nombre: "Ana",
+  email: "ana@test.com",
+  edad: 28,
+  password: "Secure1!",
+  pais: "MX"
+)
+
+val = Validador.new(form)
+val.validar_nombre(presencia: true, longitud: { min: 2, max: 50 })
+val.validar_email(presencia: true, formato: /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+val.validar_edad(numerico: true)
+val.validar_que_edad_valida?(18, 120)
+val.validar_password(presencia: true, longitud: { min: 8 })
+val.validar_que_password_fuerte?
+val.validar_pais(en: ["MX", "US", "ES", "AR"])
+
+if val.valido?
+  puts "Formulario válido. Todos los campos correctos."
+else
+  puts "Errores de validación:"
+  val.errores.each { |e| puts "  - #{e}" }
+end
+
+puts "\n--- Formulario inválido ---"
+form2 = FormularioRegistro.new(
+  nombre: "A",
+  email: "invalido",
+  edad: 15,
+  password: "corto",
+  pais: "XX"
+)
+
+val2 = Validador.new(form2)
+val2.validar_nombre(presencia: true, longitud: { min: 2, max: 50 })
+val2.validar_email(presencia: true, formato: /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+val2.validar_edad(numerico: true)
+val2.validar_que_edad_valida?(18, 120)
+val2.validar_password(presencia: true, longitud: { min: 8 })
+val2.validar_pais(en: ["MX", "US", "ES", "AR"])
+
+puts "Errores:"
+val2.errores.each { |e| puts "  - #{e}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 15: method_missing para consultas dinámicas.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_15_consultas_dinamicas.rb
+# Consultas dinámicas tipo ActiveRecord
+
+module Consultable
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def registros
+      @registros || []
+    end
+
+    def method_missing(name, *args, &block)
+      nombre = name.to_s
+
+      if nombre.start_with?('buscar_por_')
+        campos = nombre.sub('buscar_por_', '').split('_y_')
+        valor = args.first
+        if campos.length == 1
+          registros.find { |r| r.send(campos.first) == valor }
+        else
+          registros.select { |r| campos.all? { |c| r.send(c) == valor } }
+        end
+      elsif nombre.start_with?('donde_')
+        condiciones_str = nombre.sub('donde_', '')
+        condiciones = parsear_condiciones(condiciones_str)
+        registros.select do |r|
+          condiciones.all? { |campo, op, val| evaluar_condicion(r, campo, op, val) }
+        end
+      elsif nombre.start_with?('ordenar_por_')
+        campo = nombre.sub('ordenar_por_', '')
+        direccion = args.first || :asc
+        registros.sort do |a, b|
+          compare = a.send(campo) <=> b.send(campo)
+          direccion == :asc ? compare : -compare
+        end
+      elsif nombre.start_with?('contar_')
+        campo = nombre.sub('contar_', '')
+        registros.group_by { |r| r.send(campo) }.transform_values(&:length)
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      nombre = name.to_s
+      nombre.start_with?('buscar_por_') || nombre.start_with?('donde_') ||
+        nombre.start_with?('ordenar_por_') || nombre.start_with?('contar_') || super
+    end
+
+    private
+
+    def parsear_condiciones(str)
+      condiciones = []
+      str.split('_y_').each do |parte|
+        if parte.include?('_mayor_que_')
+          campos = parte.split('_mayor_que_')
+          condiciones << [campos[0], :>, campos[1].to_i]
+        elsif parte.include?('_menor_que_')
+          campos = parte.split('_menor_que_')
+          condiciones << [campos[0], :<, campos[1].to_i]
+        elsif parte.include?('_diferente_de_')
+          campos = parte.split('_diferente_de_')
+          condiciones << [campos[0], :!=, campos[1]]
+        else
+          condiciones << [parte, :==, nil]
+        end
+      end
+      condiciones
+    end
+
+    def evaluar_condicion(record, campo, op, val)
+      valor_record = record.send(campo)
+      case op
+      when :== then valor_record == val
+      when :> then valor_record > val
+      when :< then valor_record < val
+      when :!= then valor_record != val
+      else true
+      end
+    end
+  end
+end
+
+class Empleado
+  include Consultable
+
+  attr_reader :id, :nombre, :departamento, :salario, :edad
+
+  def initialize(id:, nombre:, departamento:, salario:, edad:)
+    @id = id
+    @nombre = nombre
+    @departamento = departamento
+    @salario = salario
+    @edad = edad
+    (@@registros ||= []) << self
+  end
+
+  def to_s
+    "#{@nombre} (#{@departamento}, $#{@salario}, #{@edad}a)"
+  end
+end
+
+Empleado.new(id: 1, nombre: "Ana", departamento: "IT", salario: 75000, edad: 28)
+Empleado.new(id: 2, nombre: "Bob", departamento: "Ventas", salario: 60000, edad: 35)
+Empleado.new(id: 3, nombre: "Carlos", departamento: "IT", salario: 85000, edad: 42)
+Empleado.new(id: 4, nombre: "Diana", departamento: "RH", salario: 55000, edad: 31)
+Empleado.new(id: 5, nombre: "Eva", departamento: "Ventas", salario: 65000, edad: 29)
+
+puts "Buscar por nombre 'Ana': #{Empleado.buscar_por_nombre('Ana')}"
+puts "Buscar por departamento 'IT':"
+Empleado.buscar_por_departamento('IT').each { |e| puts "  #{e}" }
+
+puts "\nOrdenar por salario descendente:"
+Empleado.ordenar_por_salario(:desc).each { |e| puts "  #{e}" }
+
+puts "\nContar por departamento:"
+Empleado.contar_departamento.each { |dep, count| puts "  #{dep}: #{count}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 16: method_missing con tracing.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_16_tracing.rb
+# Tracing de llamadas con method_missing
+
+class TrazaLlamadas
+  def initialize(obj, nombre = nil)
+    @target = obj
+    @nombre = nombre || obj.class.name
+    @trazas = []
+  end
+
+  def method_missing(name, *args, &block)
+    if @target.respond_to?(name)
+      timestamp = Time.now
+      linea = caller_locations(1, 1)&.first
+      traza = {
+        metodo: name,
+        args: args,
+        bloque: !block.nil?,
+        tiempo: timestamp,
+        origen: "#{linea&.path}:#{linea&.lineno}",
+        objeto: @nombre
+      }
+      @trazas << traza
+      resultado = @target.send(name, *args, &block)
+      traza[:resultado] = resultado
+      traza[:duracion] = Time.now - timestamp
+      resultado
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @target.respond_to?(name) || super
+  end
+
+  def trazas
+    @trazas
+  end
+
+  def informe
+    puts "=== INFORME DE TRAZAS ==="
+    puts "Objeto: #{@nombre}"
+    puts "Total llamadas: #{@trazas.length}"
+    puts ""
+
+    @trazas.group_by { |t| t[:metodo] }.each do |metodo, llamadas|
+      puts "  #{metodo}: #{llamadas.length} vez/veces"
+      puts "    Tiempo total: #{format('%.4f', llamadas.sum { |l| l[:duracion] || 0 })}s"
+    end
+  end
+
+  def limpiar
+    @trazas.clear
+  end
+end
+
+class Ordenador
+  def ordenar(lista)
+    lista.sort
+  end
+
+  def invertir(lista)
+    lista.reverse
+  end
+
+  def mezclar(lista1, lista2)
+    (lista1 + lista2).sort
+  end
+
+  def buscar(lista, elemento)
+    lista.include?(elemento)
+  end
+end
+
+ord = Ordenador.new
+traza = TrazaLlamadas.new(ord, "OrdenadorCentral")
+
+puts traza.ordenar([3, 1, 4, 1, 5])
+puts traza.invertir([1, 2, 3])
+puts traza.mezclar([1, 3, 5], [2, 4, 6])
+puts traza.buscar([1, 2, 3], 2)
+puts traza.ordenar([9, 8, 7])
+puts traza.invertir([4, 5, 6])
+
+puts "\n"
+traza.informe
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 17: method_missing para objetos compuestos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_17_objeto_compuesto.rb
+# Objeto compuesto que delega a múltiples objetos
+
+class Compuesto
+  def initialize(*objetos)
+    @objetos = objetos
+  end
+
+  def method_missing(name, *args, &block)
+    @objetos.each do |obj|
+      if obj.respond_to?(name)
+        return obj.send(name, *args, &block)
+      end
+    end
+    super
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @objetos.any? { |obj| obj.respond_to?(name) } || super
+  end
+
+  def agregar(objeto)
+    @objetos << objeto
+  end
+
+  def quitar(objeto)
+    @objetos.delete(objeto)
+  end
+
+  def componentes
+    @objetos.dup
+  end
+end
+
+class Camara
+  def tomar_foto
+    "Foto tomada"
+  end
+
+  def grabar_video
+    "Video grabado"
+  end
+end
+
+class Telefono
+  def llamar(numero)
+    "Llamando al #{numero}"
+  end
+
+  def enviar_sms(numero, mensaje)
+    "SMS a #{numero}: #{mensaje}"
+  end
+end
+
+class Navegador
+  def navegar(url)
+    "Navegando a #{url}"
+  end
+
+  def buscar(query)
+    "Buscando: #{query}"
+  end
+end
+
+class Reproductor
+  def reproducir(musica)
+    "Reproduciendo: #{musica}"
+  end
+
+  def detener
+    "Reproducción detenida"
+  end
+end
+
+smartphone = Compuesto.new(
+  Camara.new,
+  Telefono.new,
+  Navegador.new,
+  Reproductor.new
+)
+
+puts smartphone.tomar_foto
+puts smartphone.llamar("+34 612 345 678")
+puts smartphone.navegar("https://ruby-lang.org")
+puts smartphone.reproducir("Bohemian Rhapsody")
+puts smartphone.buscar("Ruby programming")
+
+puts "\nrespond_to?:"
+puts "  tomar_foto: #{smartphone.respond_to?(:tomar_foto)}"
+puts "  volar: #{smartphone.respond_to?(:volar)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 18: method_missing para estadísticas.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_18_estadisticas_dinamicas.rb
+# Métodos estadísticos dinámicos
+
+class AnalizadorDatos
+  def initialize(datos)
+    @datos = datos
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.start_with?('promedio_por_')
+      campo = nombre.sub('promedio_por_', '')
+      promedios = {}
+      @datos.group_by { |d| d.send(campo) rescue d[campo] }
+            .transform_values { |grupo| grupo.map { |d| yield(d) }.sum.to_f / grupo.length }
+    elsif nombre.start_with?('total_por_')
+      campo = nombre.sub('total_por_', '')
+      @datos.group_by { |d| d.send(campo) rescue d[campo] }
+            .transform_values(&:length)
+    elsif nombre.start_with?('suma_por_')
+      campo = nombre.sub('suma_por_', '')
+      @datos.group_by { |d| d.send(campo) rescue d[campo] }
+            .transform_values { |grupo| grupo.sum { |d| block_given? ? yield(d) : 1 } }
+    elsif nombre.start_with?('maximo_de_')
+      campo = nombre.sub('maximo_de_', '')
+      @datos.max_by { |d| d.send(campo) rescue d[campo] }
+    elsif nombre.start_with?('minimo_de_')
+      campo = nombre.sub('minimo_de_', '')
+      @datos.min_by { |d| d.send(campo) rescue d[campo] }
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('promedio_por_') || nombre.start_with?('total_por_') ||
+      nombre.start_with?('suma_por_') || nombre.start_with?('maximo_de_') ||
+      nombre.start_with?('minimo_de_') || super
+  end
+end
+
+class Venta
+  attr_reader :producto, :categoria, :monto, :cantidad, :vendedor
+
+  def initialize(producto, categoria, monto, cantidad, vendedor)
+    @producto = producto
+    @categoria = categoria
+    @monto = monto
+    @cantidad = cantidad
+    @vendedor = vendedor
+  end
+end
+
+ventas = [
+  Venta.new("Laptop", "Electrónica", 1200, 2, "Ana"),
+  Venta.new("Mouse", "Periféricos", 25, 10, "Bob"),
+  Venta.new("Teclado", "Periféricos", 80, 5, "Ana"),
+  Venta.new("Monitor", "Electrónica", 350, 3, "Carlos"),
+  Venta.new("Audífonos", "Audio", 90, 8, "Bob"),
+  Venta.new("Webcam", "Electrónica", 60, 6, "Ana")
+]
+
+analizador = AnalizadorDatos.new(ventas)
+
+puts "Total por categoría: #{analizador.total_por_categoria}"
+puts "Total por vendedor: #{analizador.total_por_vendedor}"
+puts "Suma por vendedor (cantidad): #{analizador.suma_por_vendedor { |v| v.cantidad }}"
+
+puts "\nMáximo monto: #{analizador.maximo_de_monto.monto}"
+puts "Mínimo monto: #{analizador.minimo_de_monto.monto}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 19: method_missing con persistencia.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_19_persistencia_dinamica.rb
+# Objetos con persistencia automática
+
+module PersistenciaDinamica
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def almacen
+      @almacen ||= {}
+    end
+
+    def method_missing(name, *args, &block)
+      nombre = name.to_s
+
+      if nombre.start_with?('buscar_por_')
+        campo = nombre.sub('buscar_por_', '')
+        valor = args.first
+        almacen.values.find { |obj| obj.send(campo) == valor }
+      elsif nombre.start_with?('donde_')
+        campo = nombre.sub('donde_', '')
+        valor = args.first
+        almacen.values.select { |obj| obj.send(campo) == valor }
+      elsif name == :todos
+        almacen.values
+      elsif name == :count
+        almacen.length
+      elsif name == :primero
+        almacen.values.first
+      elsif name == :ultimo
+        almacen.values.last
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      nombre = name.to_s
+      nombre.start_with?('buscar_por_') || nombre.start_with?('donde_') ||
+        [:todos, :count, :primero, :ultimo].include?(name) || super
+    end
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.end_with?('=')
+      super
+    elsif @datos&.key?(nombre)
+      @datos[nombre]
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @datos&.key?(name.to_s) || super
+  end
+
+  def initialize(atributos = {})
+    @datos = {}
+    atributos.each do |k, v|
+      @datos[k.to_s] = v
+    end
+    self.class.almacen[self.object_id] = self
+  end
+
+  def atributos
+    @datos.dup
+  end
+
+  def [](clave)
+    @datos[clave.to_s]
+  end
+
+  def []=(clave, valor)
+    @datos[clave.to_s] = valor
+  end
+
+  def to_s
+    "#{self.class.name}(#{@datos.map { |k, v| "#{k}=#{v}" }.join(', ')})"
+  end
+end
+
+class UsuarioDinamico
+  include PersistenciaDinamica
+end
+
+u1 = UsuarioDinamico.new(nombre: "Alice", email: "alice@test.com", edad: 30, activo: true)
+u2 = UsuarioDinamico.new(nombre: "Bob", email: "bob@test.com", edad: 25, activo: true)
+u3 = UsuarioDinamico.new(nombre: "Carlos", email: "carlos@test.com", edad: 35, activo: false)
+
+puts "Total: #{UsuarioDinamico.count}"
+puts "Buscar por nombre 'Alice': #{UsuarioDinamico.buscar_por_nombre('Alice')}"
+puts "Donde activo true:"
+UsuarioDinamico.donde_activo(true).each { |u| puts "  #{u}" }
+
+puts "\nAcceso a atributos dinámicos:"
+puts "  u1.nombre: #{u1.nombre}"
+puts "  u1.email: #{u1.email}"
+puts "  u1.edad: #{u1.edad}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 20: method_missing para un ORM mínimo.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 47_20_mini_orm.rb
+# Mini ORM con method_missing
+
+class MiniORM
+  def self.inherited(subclass)
+    subclass.instance_variable_set(:@tabla, subclass.name.downcase + "s")
+    subclass.instance_variable_set(:@registros, [])
+    subclass.instance_variable_set(:@columnas, [])
+  end
+
+  class << self
+    attr_accessor :tabla, :columnas
+
+    def columna(nombre, tipo = nil)
+      @columnas ||= []
+      @columnas << { nombre: nombre, tipo: tipo }
+      attr_accessor nombre
+    end
+
+    def todos
+      @registros || []
+    end
+
+    def count
+      todos.length
+    end
+
+    def primero
+      todos.first
+    end
+
+    def ultimo
+      todos.last
+    end
+
+    def crear(atributos)
+      nuevo = new(atributos)
+      @registros << nuevo
+      nuevo
+    end
+
+    def method_missing(name, *args, &block)
+      nombre = name.to_s
+
+      if nombre.start_with?('donde_')
+        campo = nombre.sub('donde_', '')
+        valor = args.first
+        todos.select { |r| r.send(campo) == valor }
+      elsif nombre.start_with?('buscar_por_')
+        campo = nombre.sub('buscar_por_', '')
+        valor = args.first
+        todos.find { |r| r.send(campo) == valor }
+      elsif nombre.start_with?('ordenar_por_')
+        campo = nombre.sub('ordenar_por_', '')
+        direccion = args.first || :asc
+        todos.sort { |a, b| direccion == :asc ? a.send(campo) <=> b.send(campo) : b.send(campo) <=> a.send(campo) }
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      nombre = name.to_s
+      nombre.start_with?('donde_') || nombre.start_with?('buscar_por_') ||
+        nombre.start_with?('ordenar_por_') || super
+    end
+  end
+
+  def initialize(atributos = {})
+    atributos.each do |k, v|
+      send("#{k}=", v) if respond_to?("#{k}=")
+    end
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+    if nombre.end_with?('=')
+      instance_variable_set("@#{nombre[0..-2]}", args.first)
+    elsif instance_variable_defined?("@#{nombre}")
+      instance_variable_get("@#{nombre}")
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.end_with?('=') || instance_variable_defined?("@#{nombre}") || super
+  end
+
+  def to_s
+    cols = self.class.columnas.map { |c| "#{c[:nombre]}=#{send(c[:nombre])}" }
+    "#{self.class.name}(#{cols.join(', ')})"
+  end
+
+  def salvar
+    self.class.todos << self unless self.class.todos.include?(self)
+    true
+  end
+end
+
+class ProductoORM < MiniORM
+  columna :nombre, String
+  columna :precio, Numeric
+  columna :categoria, String
+  columna :stock, Integer
+  columna :activo, [TrueClass, FalseClass]
+end
+
+ProductoORM.crear(nombre: "Laptop", precio: 1200, categoria: "Electrónica", stock: 10, activo: true)
+ProductoORM.crear(nombre: "Mouse", precio: 25, categoria: "Periféricos", stock: 50, activo: true)
+ProductoORM.crear(nombre: "Teclado", precio: 80, categoria: "Periféricos", stock: 30, activo: true)
+ProductoORM.crear(nombre: "Monitor", precio: 350, categoria: "Electrónica", stock: 0, activo: false)
+
+puts "Total: #{ProductoORM.count}"
+puts "Primero: #{ProductoORM.primero}"
+puts "Donde categoría 'Electrónica':"
+ProductoORM.donde_categoria('Electrónica').each { |p| puts "  #{p}" }
+puts "Buscar por nombre 'Laptop': #{ProductoORM.buscar_por_nombre('Laptop')}"
+puts "Ordenar por precio descendente:"
+ProductoORM.ordenar_por_precio(:desc).each { |p| puts "  #{p}" }
+puts "Activos con stock:"
+ProductoORM.donde_activo(true).select { |p| p.stock > 0 }.each { |p| puts "  #{p}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+  RESUMEN DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`method_missing` es una herramienta poderosa para metaprogramación:
+
+  1. Se llama cuando un método no se encuentra en la cadena de ancestros.
+  2. `respond_to_missing?` debe sobrescribirse junto con `method_missing`.
+  3. Permite crear ghost methods (métodos fantasma) dinámicamente.
+  4. Es ideal para delegación dinámica a otros objetos.
+  5. Permite construir DSLs elegantes y flexibles.
+  6. Es la base de `OpenStruct` y objetos dinámicos.
+  7. Útil para proxies (caché, seguridad, registro).
+  8. El Null Object Pattern se beneficia de `method_missing`.
+  9. Peligros: puede ocultar errores y afectar rendimiento.
+  10. Siempre llama a `super` si no manejas el método.
+
+────────────────────────────────────────────────────────────────────────────────────
+  EJERCICIOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+1. Implementa una clase `Config` que permita acceder y asignar configuración
+   dinámicamente mediante `method_missing`.
+
+2. Crea un delegador que pueda delegar a múltiples objetos, probando cada uno
+   hasta encontrar el que responda al método.
+
+3. Implementa un proxy de logging que registre cada llamada con timestamp,
+   argumentos y duración.
+
+4. Crea una clase `HTMLBuilder` que genere tags HTML dinámicamente mediante
+   `method_missing` (e.g., `html.h1("Título")` produce `<h1>Título</h1>`).
+
+5. Implementa un `method_missing` que automaticamente cree métodos setter/getter
+   para atributos almacenados en un hash interno.
+
+6. Crea un sistema de consultas dinámicas donde puedas llamar
+   `Persona.where_nombre_y_edad("Ana", 30)`.
+
+7. Implementa un proxy de caché con TTL configurable usando `method_missing`.
+
+8. Crea una clase `SafeNavigator` que permita navegar por hashes anidados
+   sin errores: `obj.a.b.c` devuelve nil si algo falta.
+
+9. Implementa un DSL para definir reglas de negocio como
+   `regla.si_cliente_vip_entonces_descuento(10)`.
+
+10. Crea un ORM mínimo con `method_missing` que soporte `find_by_*`, `where_*`,
+    `order_by_*` y `count_*`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FAQ — PREGUNTAS FRECUENTES
+────────────────────────────────────────────────────────────────────────────────────
+
+P: ¿Siempre debo sobrescribir `respond_to_missing?`?
+R: Sí. Si no lo haces, `respond_to?` devolverá false para tus métodos
+   fantasma, rompiendo la introspección.
+
+P: ¿Cuál es la diferencia entre `method_missing` y `const_missing`?
+R: `method_missing` es para métodos, `const_missing` es para constantes.
+   Ambos son hooks de resolución.
+
+P: ¿`method_missing` afecta el rendimiento?
+R: Sí, más que los métodos normales porque Ruby recorre toda la cadena
+   de ancestros antes de llamarlo. Para código crítico, define métodos
+   reales con `define_method`.
+
+P: ¿Puedo encadenar `method_missing`?
+R: Sí, puedes llamar a `super` para pasar el mensaje a la cadena de
+   ancestros, permitiendo que varios niveles manejen el missing.
+
+P: ¿Cómo evito conflictos entre métodos reales y fantasma?
+R: Verifica siempre si el método existe realmente antes de procesarlo
+   como fantasma. Usa `respond_to?` o `method_defined?`.
+
+P: ¿Por qué no usar siempre `method_missing`?
+R: Debuggeo más difícil, rendimiento inferior, y posibilidad de errores
+   silenciosos. Úsalo con moderación y documenta bien.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESAFÍO DEL ARQUITECTO
+────────────────────────────────────────────────────────────────────────────────────
+
+Construye un "Framework de Serialización Dinámica" usando `method_missing`:
+
+  1. Define un módulo `Serializable` que, cuando se incluye, permita
+     serializar cualquier objeto a múltiples formatos mediante métodos
+     dinámicos como `to_json`, `to_xml`, `to_yaml`, `to_csv`.
+
+  2. Implementa el patrón Proxy para que cualquier objeto envuelto en
+     `SerializableProxy.new(obj)` adquiera métodos de serialización
+     sin modificar la clase original.
+
+  3. Los métodos de serialización deben ser ghost methods generados por
+     `method_missing` según el formato solicitado.
+
+  4. Soporta serialización anidada: si un atributo es serializable,
+     serialízalo recursivamente.
+
+  5. Implementa `respond_to_missing?` correctamente para que la
+     introspección funcione.
+
+  6. Añade opciones de configuración por formato:
+     - JSON: pretty_print, only, except, methods
+     - XML: root_name, namespace
+     - CSV: headers, separator
+     - YAML: options
+
+  7. Implementa un cache de serialización: si los datos no han cambiado,
+     devuelve la versión cacheada.
+
+  8. Incluye un sistema de filtros: `serialize_only(:nombre, :email)`,
+     `serialize_except(:password, :token)`.
+
+Este desafío integra method_missing, respond_to_missing?, proxies, formato
+de datos, y patrones de serialización. Es similar a cómo funcionan gemas
+como `active_model_serializers` o `jbuilder`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  CIERRE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`method_missing` es una de las herramientas más fascinantes de Ruby. Te permite
+crear objetos que responden dinámicamente a cualquier mensaje, construir DSLs
+elegantes, implementar proxies y delegación, y crear sistemas flexibles que
+se adaptan en tiempo de ejecución.
+
+Pero con gran poder viene gran responsabilidad. Úsalo con moderación, siempre
+acompañado de `respond_to_missing?`, y documenta claramente qué métodos son
+reales y cuáles son fantasma.
+
+El verdadero arte está en saber cuándo usar `method_missing` y cuándo es mejor
+definir métodos explícitamente. Ambas herramientas tienen su lugar.
+
+────────────────────────────────────────────────────────────────────────────────────
+  PREVIEW DEL PRÓXIMO CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+En el Capítulo 48: Send y Dynamic Dispatch, exploraremos cómo llamar métodos
+dinámicamente usando `send` y `public_send`. Veremos cómo el dispatch dinámico
+permite patrones como el Strategy, Command, y cómo frameworks como Rails
+usan `send` internamente para callbacks, validaciones y asociaciones.
+También cubriremos `respond_to?`, `method`, `public_method` y `__send__`.
+═══════════════════════════════════════════════════════════════════════════════════

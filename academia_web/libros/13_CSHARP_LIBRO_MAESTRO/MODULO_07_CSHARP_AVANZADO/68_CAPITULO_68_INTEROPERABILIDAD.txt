@@ -1,0 +1,1511 @@
+================================================================================
+  CAPITULO 68: INTEROPERABILIDAD (P/INVOKE)
+  MODULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+!Bienvenido al Capitulo 68! La interoperabilidad permite que el codigo
+.NET llame a funciones nativas de DLLs escritas en C/C++, Win32 API,
+y otras bibliotecas no administradas. P/Invoke (Platform Invocation
+Services) es el mecanismo principal para lograr esto.
+
+FRASE DEL DIA
+-------------
+"La verdadera maestria no esta en aislarse, sino en saber comunicarse con
+cualquier sistema." — Anonimo
+
+OBJETIVOS DEL CAPITULO
+----------------------
+1. Comprender P/Invoke y el atributo DllImport.
+2. Declarar funciones nativas con marshaling de parametros.
+3. Usar SafeHandle para recursos nativos.
+4. Manejar estructuras y callbacks con codigo nativo.
+5. Conocer las estrategias de marshaling y optimizacion.
+6. Aplicar P/Invoke en escenarios reales.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. INTRODUCCION A P/INVOKE ---
+
+P/Invoke permite a codigo administrado llamar a funciones exportadas
+desde DLLs no administradas. El CLR se encarga de:
+- Cargar la DLL
+- Buscar la funcion
+- Marshall los parametros (convertir tipos managed a nativos)
+- Ejecutar la funcion
+- Marshall el valor de retorno
+- Descargar la DLL (opcional)
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // Declaracion P/Invoke simple
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int MessageBox(
+        IntPtr hWnd,
+        string text,
+        string caption,
+        uint type);
+
+    static void Main()
+    {
+        Console.WriteLine("=== P/INVOKE BASICO ===\n");
+
+        // Llamar a MessageBox de Win32
+        MessageBox(IntPtr.Zero,
+            "!Hola desde C# via P/Invoke!",
+            "P/Invoke Demo",
+            0);
+
+        Console.WriteLine("MessageBox mostrado exitosamente.");
+    }
+}
+```
+
+--- 2. ATRIBUTO DLLIMPORT ---
+
+DllImport configura como se realiza la llamada P/Invoke:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // Parametros comunes de DllImport
+    [DllImport(
+        "kernel32.dll",           // Nombre de la DLL
+        EntryPoint = "Beep",      // Nombre de la funcion (opcional si coincide)
+        CharSet = CharSet.Auto,   // Juego de caracteres (Ansi/Unicode/Auto)
+        CallingConvention = CallingConvention.Winapi, // Convencion de llamada
+        SetLastError = true,      // Guardar codigo de error (GetLastError)
+        ExactSpelling = false,    // Buscar variantes (BeepA/BeepW)
+        PreserveSig = false,      // Convertir HRESULT en excepcion
+        BestFitMapping = false,   // Mapeo de caracteres
+        ThrowOnUnmappableChar = false // Lanzar excepcion si caracter no mapeable
+    )]
+    public static extern bool Beep(uint dwFreq, uint dwDuration);
+
+    static void Main()
+    {
+        Console.WriteLine("=== DLLIMPORT EN DETALLE ===\n");
+
+        Console.WriteLine("Llamando a Beep (kernel32):");
+        Beep(800, 300);
+        Beep(1200, 300);
+        Beep(800, 500);
+
+        Console.WriteLine("Beep completado.");
+    }
+}
+```
+
+--- 3. MARSHALING DE TIPOS BASICOS ---
+
+El marshaling convierte automaticamente tipos .NET a tipos nativos C:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+class Program
+{
+    // Tipos basicos
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int puts(string str);  // string -> char*
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int printf(string format, __arglist);  // params variables
+
+    [DllImport("kernel32.dll")]
+    public static extern int GetCurrentProcessId();  // retorna DWORD
+
+    [DllImport("kernel32.dll")]
+    public static extern long GetTickCount64();  // retorna ULONGLONG
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetComputerName(
+        StringBuilder lpBuffer,
+        ref uint nSize);
+
+    static void Main()
+    {
+        Console.WriteLine("=== MARSHALING DE TIPOS BASICOS ===\n");
+
+        // Enteros
+        int pid = GetCurrentProcessId();
+        Console.WriteLine($"PID: {pid}");
+
+        long ticks = GetTickCount64();
+        Console.WriteLine($"Ticks desde inicio: {ticks}ms");
+
+        // Strings con StringBuilder
+        StringBuilder computerName = new StringBuilder(256);
+        uint size = 256;
+        if (GetComputerName(computerName, ref size))
+            Console.WriteLine($"Nombre del equipo: {computerName}");
+
+        // Mapa de tipos .NET a nativos:
+        Console.WriteLine("\nMapa de tipos:");
+        Console.WriteLine("  bool   -> BOOL (int)");
+        Console.WriteLine("  byte   -> BYTE");
+        Console.WriteLine("  short  -> SHORT");
+        Console.WriteLine("  int    -> INT / DWORD");
+        Console.WriteLine("  long   -> LONG / ULONGLONG");
+        Console.WriteLine("  float  -> FLOAT");
+        Console.WriteLine("  double -> DOUBLE");
+        Console.WriteLine("  string -> char* (LPSTR/LPWSTR)");
+        Console.WriteLine("  char[] -> char*");
+        Console.WriteLine("  StringBuilder -> char* (modificable)");
+    }
+}
+```
+
+--- 4. MARSHALING DE ESTRUCTURAS ---
+
+Las estructuras deben tener un layout compatible con C:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+// Estructura con layout secuencial (default para structs en C#)
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT
+{
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+}
+
+// Estructura con layout explicito (union)
+[StructLayout(LayoutKind.Explicit)]
+public struct SYSTEM_INFO_UNION
+{
+    [FieldOffset(0)]
+    public uint OemId;
+    [FieldOffset(0)]
+    public ushort ProcessorArchitecture;
+    [FieldOffset(2)]
+    public ushort Reserved;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_INFO
+{
+    public SYSTEM_INFO_UNION CpuInfo;
+    public uint PageSize;
+    public uint MinimumApplicationAddress;
+    public uint MaximumApplicationAddress;
+    public uint ActiveProcessorMask;
+    public uint NumberOfProcessors;
+    public uint ProcessorType;
+    public uint AllocationGranularity;
+    public ushort ProcessorLevel;
+    public ushort ProcessorRevision;
+}
+
+class Program
+{
+    [DllImport("kernel32.dll")]
+    public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    static void Main()
+    {
+        Console.WriteLine("=== MARSHALING DE ESTRUCTURAS ===\n");
+
+        // SYSTEM_INFO
+        GetSystemInfo(out SYSTEM_INFO si);
+        Console.WriteLine("System Info:");
+        Console.WriteLine($"  Paginas: {si.PageSize} bytes");
+        Console.WriteLine($"  Procesadores: {si.NumberOfProcessors}");
+        Console.WriteLine($"  Granularidad: {si.AllocationGranularity}");
+
+        // RECT (ventana de consola)
+        IntPtr consoleWnd = GetConsoleWindow();
+        if (consoleWnd != IntPtr.Zero)
+        {
+            GetWindowRect(consoleWnd, out RECT rect);
+            Console.WriteLine("\nVentana de consola:");
+            Console.WriteLine($"  Pos: ({rect.Left}, {rect.Top}) - ({rect.Right}, {rect.Bottom})");
+            Console.WriteLine($"  Tam: {rect.Right - rect.Left} x {rect.Bottom - rect.Top} px");
+        }
+    }
+
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetConsoleWindow();
+}
+```
+
+--- 5. MARSHALAS (PERSONALIZACION DE MARSHALING) ---
+
+MarshalAsAttribute permite controlar como se marshallan los parametros:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct WIN32_FIND_DATA
+{
+    public uint dwFileAttributes;
+    public FILETIME ftCreationTime;
+    public FILETIME ftLastAccessTime;
+    public FILETIME ftLastWriteTime;
+    public uint nFileSizeHigh;
+    public uint nFileSizeLow;
+    public uint dwReserved0;
+    public uint dwReserved1;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string cFileName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
+    public string cAlternateFileName;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct FILETIME
+{
+    public uint dwLowDateTime;
+    public uint dwHighDateTime;
+
+    public DateTime ToDateTime()
+    {
+        long fileTime = ((long)dwHighDateTime << 32) | dwLowDateTime;
+        return DateTime.FromFileTimeUtc(fileTime);
+    }
+}
+
+class Program
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr FindFirstFile(
+        string lpFileName,
+        out WIN32_FIND_DATA lpFindFileData);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool FindNextFile(
+        IntPtr hFindFile,
+        out WIN32_FIND_DATA lpFindFileData);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool FindClose(IntPtr hFindFile);
+
+    static void Main()
+    {
+        Console.WriteLine("=== MARSHALAS Y ESTRUCTURAS COMPLEJAS ===\n");
+
+        string directorio = @"C:\Windows\System32\*.dll";
+        Console.WriteLine($"Buscando: {directorio}");
+
+        WIN32_FIND_DATA data;
+        IntPtr handle = FindFirstFile(directorio, out data);
+
+        if (handle == new IntPtr(-1))  // INVALID_HANDLE_VALUE
+        {
+            Console.WriteLine("No se encontraron archivos.");
+            return;
+        }
+
+        int count = 0;
+        do
+        {
+            Console.WriteLine($"  {data.cFileName} - {data.nFileSizeLow} bytes - {data.ftLastWriteTime.ToDateTime()}");
+            count++;
+        }
+        while (FindNextFile(handle, out data) && count < 10);
+
+        if (count >= 10)
+            Console.WriteLine("  ... (mostrando primeros 10)");
+
+        FindClose(handle);
+        Console.WriteLine($"\nTotal mostrados: {Math.Min(count, 10)}");
+    }
+}
+```
+
+--- 6. CALLBACKS Y DELEGADOS CON CODIGO NATIVO ---
+
+Se pueden pasar funciones de C# a DLLs nativas mediante delegados:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // Definir el callback como delegado
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    // EnumWindows recibe un callback
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam);
+
+    // GetWindowText requiere StringBuilder
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetWindowText(
+        IntPtr hWnd,
+        System.Text.StringBuilder lpString,
+        int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    static void Main()
+    {
+        Console.WriteLine("=== CALLBACKS CON CODIGO NATIVO ===\n");
+
+        Console.WriteLine("Listando ventanas visibles:");
+
+        // Crear delegado
+        EnumWindowsProc callback = new EnumWindowsProc(EnumWindowCallback);
+
+        // Pasar delegado a funcion nativa
+        EnumWindows(callback, IntPtr.Zero);
+
+        // Mantener referencia al delegado para que no sea recolectado
+        GC.KeepAlive(callback);
+    }
+
+    static bool EnumWindowCallback(IntPtr hWnd, IntPtr lParam)
+    {
+        if (IsWindowVisible(hWnd))
+        {
+            var sb = new System.Text.StringBuilder(256);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            string title = sb.ToString();
+
+            if (!string.IsNullOrEmpty(title))
+                Console.WriteLine($"  [0x{hWnd:X8}] {title}");
+        }
+        return true;  // Continuar enumerando
+    }
+}
+```
+
+--- 7. SAFEHANDLE Y RECURSOS NATIVOS ---
+
+SafeHandle provee manejo seguro de recursos nativos con finalizacion
+automatica:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+class Program
+{
+    // SafeFileHandle (proporcionado por .NET)
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern SafeFileHandle CreateFile(
+        string lpFileName,
+        uint dwDesiredAccess,
+        uint dwShareMode,
+        IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool ReadFile(
+        SafeFileHandle hFile,
+        byte[] lpBuffer,
+        uint nNumberOfBytesToRead,
+        out uint lpNumberOfBytesRead,
+        IntPtr lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool WriteFile(
+        SafeFileHandle hFile,
+        byte[] lpBuffer,
+        uint nNumberOfBytesToWrite,
+        out uint lpNumberOfBytesWritten,
+        IntPtr lpOverlapped);
+
+    // SafeHandle personalizado
+    public class SafeFindHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeFindHandle() : base(true) { }
+
+        protected override bool ReleaseHandle()
+        {
+            return FindClose(handle);
+        }
+
+        [DllImport("kernel32.dll")]
+        private static extern bool FindClose(IntPtr hFindFile);
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern SafeFindHandle FindFirstFile(
+        string lpFileName,
+        out WIN32_FIND_DATA lpFindFileData);
+
+    static void Main()
+    {
+        Console.WriteLine("=== SAFEHANDLE ===\n");
+
+        // Usar SafeFileHandle con CreateFile
+        string path = @"C:\Windows\System32\drivers\etc\hosts";
+        using (SafeFileHandle handle = CreateFile(
+            path,
+            0x80000000, // GENERIC_READ
+            3,           // FILE_SHARE_READ | FILE_SHARE_WRITE
+            IntPtr.Zero,
+            3,           // OPEN_EXISTING
+            0,
+            IntPtr.Zero))
+        {
+            if (!handle.IsInvalid)
+            {
+                Console.WriteLine($"Archivo abierto: {path}");
+                byte[] buffer = new byte[1024];
+                if (ReadFile(handle, buffer, 1024, out uint bytesRead, IntPtr.Zero))
+                {
+                    string contenido = System.Text.Encoding.UTF8.GetString(buffer, 0, (int)bytesRead);
+                    Console.WriteLine($"Leidos {bytesRead} bytes:\n{contenido.Substring(0, 200)}...");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"No se pudo abrir {path}");
+            }
+        } // using libera el handle automaticamente
+
+        // SafeFindHandle personalizado
+        Console.WriteLine("\nSafeFindHandle personalizado:");
+        WIN32_FIND_DATA data;
+        using (SafeFindHandle findHandle = FindFirstFile(@"C:\Windows\*.txt", out data))
+        {
+            if (!findHandle.IsInvalid)
+            {
+                Console.WriteLine($"  Primer archivo: {data.cFileName}");
+            }
+        } // findHandle se cierra automaticamente via ReleaseHandle
+    }
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct WIN32_FIND_DATA
+{
+    public uint dwFileAttributes;
+    public FILETIME ftCreationTime;
+    public FILETIME ftLastAccessTime;
+    public FILETIME ftLastWriteTime;
+    public uint nFileSizeHigh;
+    public uint nFileSizeLow;
+    public uint dwReserved0;
+    public uint dwReserved1;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string cFileName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)]
+    public string cAlternateFileName;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct FILETIME
+{
+    public uint dwLowDateTime;
+    public uint dwHighDateTime;
+}
+```
+
+--- 8. MANEJO DE ERRORES EN P/INVOKE ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetProcessWorkingSetSize(
+        IntPtr hProcess,
+        IntPtr dwMinimumWorkingSetSize,
+        IntPtr dwMaximumWorkingSetSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetCurrentProcess();
+
+    static void Main()
+    {
+        Console.WriteLine("=== MANEJO DE ERRORES ===\n");
+
+        // Obtener ultimo error con SetLastError = true
+        IntPtr kernel32 = GetModuleHandle("kernel32.dll");
+        Console.WriteLine($"ModuleHandle: {kernel32}");
+
+        if (kernel32 == IntPtr.Zero)
+        {
+            int error = Marshal.GetLastWin32Error();
+            Console.WriteLine($"Error {error}: {GetErrorMessage(error)}");
+        }
+
+        // Intentar operacion que falla
+        IntPtr process = GetCurrentProcess();
+        bool result = SetProcessWorkingSetSize(process,
+            new IntPtr(-1), new IntPtr(-1));
+
+        if (!result)
+        {
+            int error = Marshal.GetLastWin32Error();
+            Console.WriteLine($"\nSetProcessWorkingSetSize fallo con error {error}");
+            Console.WriteLine($"  Mensaje: {GetErrorMessage(error)}");
+        }
+
+        // Marshal.ThrowExceptionForHR
+        Console.WriteLine("\nUsando ThrowExceptionForHR:");
+        try
+        {
+            // Simular un HRESULT de error
+            Marshal.ThrowExceptionForHR(unchecked((int)0x80070005)); // E_ACCESSDENIED
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Excepcion: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    static string GetErrorMessage(int errorCode)
+    {
+        // Formatear mensaje de error del sistema
+        IntPtr lpMsgBuf = IntPtr.Zero;
+        int len = FormatMessage(
+            0x00001000, // FORMAT_MESSAGE_ALLOCATE_BUFFER
+            IntPtr.Zero,
+            (uint)errorCode,
+            0,
+            ref lpMsgBuf,
+            0,
+            IntPtr.Zero);
+
+        if (len > 0)
+        {
+            string msg = Marshal.PtrToStringAnsi(lpMsgBuf);
+            Marshal.FreeHGlobal(lpMsgBuf);
+            return msg;
+        }
+        return $"Error desconocido ({errorCode})";
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern int FormatMessage(
+        uint dwFlags,
+        IntPtr lpSource,
+        uint dwMessageId,
+        uint dwLanguageId,
+        ref IntPtr lpBuffer,
+        uint nSize,
+        IntPtr Arguments);
+}
+```
+
+--- 9. STRING BUILDER Y BUFFERS ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+class Program
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern int GetModuleFileName(
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        uint nSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetWindowsDirectory(
+        StringBuilder lpBuffer,
+        uint uSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetSystemDirectory(
+        StringBuilder lpBuffer,
+        uint uSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetTempPath(
+        uint nBufferLength,
+        StringBuilder lpBuffer);
+
+    static void Main()
+    {
+        Console.WriteLine("=== STRING BUILDER Y BUFFERS ===\n");
+
+        var sb = new StringBuilder(260);
+
+        // Path del modulo actual
+        GetModuleFileName(IntPtr.Zero, sb, (uint)sb.Capacity);
+        Console.WriteLine($"Modulo actual: {sb}");
+
+        // Windows directory
+        sb.Clear();
+        GetWindowsDirectory(sb, (uint)sb.Capacity);
+        Console.WriteLine($"Windows: {sb}");
+
+        // System directory
+        sb.Clear();
+        GetSystemDirectory(sb, (uint)sb.Capacity);
+        Console.WriteLine($"System: {sb}");
+
+        // Temp path
+        sb.Clear();
+        GetTempPath((uint)sb.Capacity, sb);
+        Console.WriteLine($"Temp: {sb}");
+
+        // Buffer con bytes (memoria nativa)
+        Console.WriteLine("\nBuffer nativo:");
+        IntPtr buffer = Marshal.AllocHGlobal(100);
+        try
+        {
+            // Llenar con datos
+            for (int i = 0; i < 10; i++)
+                Marshal.WriteByte(buffer, i, (byte)i);
+
+            // Leer como array
+            byte[] datos = new byte[10];
+            Marshal.Copy(buffer, datos, 0, 10);
+            Console.WriteLine($"  Datos: [{string.Join(", ", datos)}]");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+}
+```
+
+--- 10. UNICODE VS ANSI ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+class Program
+{
+    // Version ANSI (A)
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi)]
+    public static extern int GetModuleFileNameA(
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        uint nSize);
+
+    // Version Unicode (W)
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetModuleFileNameW(
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        uint nSize);
+
+    // Version Auto (elige segun plataforma)
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetModuleFileName(
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        uint nSize);
+
+    static void Main()
+    {
+        Console.WriteLine("=== UNICODE VS ANSI ===\n");
+
+        var sb = new StringBuilder(260);
+
+        GetModuleFileNameA(IntPtr.Zero, sb, (uint)sb.Capacity);
+        string ansi = sb.ToString();
+        Console.WriteLine($"ANSI (A): {ansi}");
+
+        sb.Clear();
+        GetModuleFileNameW(IntPtr.Zero, sb, (uint)sb.Capacity);
+        string unicode = sb.ToString();
+        Console.WriteLine($"Unicode (W): {unicode}");
+
+        sb.Clear();
+        GetModuleFileName(IntPtr.Zero, sb, (uint)sb.Capacity);
+        string auto = sb.ToString();
+        Console.WriteLine($"Auto: {auto}");
+
+        // Diferencia en bytes
+        int ansiBytes = Encoding.ASCII.GetByteCount(ansi);
+        int unicodeBytes = Encoding.Unicode.GetByteCount(unicode);
+        Console.WriteLine($"\nANSI: {ansiBytes} bytes, Unicode: {unicodeBytes} bytes");
+        Console.WriteLine($"\nRecomendacion: Siempre use CharSet.Auto para portabilidad.");
+    }
+}
+```
+
+--- 11. P/INVOKE CON CALLING CONVENTION ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // __cdecl (C default) - el caller limpia la pila
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int puts(string str);
+
+    // __stdcall (Win32 API) - el callee limpia la pila
+    [DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
+    public static extern bool Beep(uint dwFreq, uint dwDuration);
+
+    // __fastcall (pocos parametros, registros)
+    [DllImport("some.dll", CallingConvention = CallingConvention.FastCall)]
+    public static extern int FastFunc(int a, int b);
+
+    // ThisCall (C++ member function)
+    [DllImport("some.dll", CallingConvention = CallingConvention.ThisCall)]
+    public static extern int MemberFunc(IntPtr thisPtr, int param);
+
+    // Winapi (default: StdCall en Windows, Cdecl en otros)
+    [DllImport("kernel32.dll", CallingConvention = CallingConvention.Winapi)]
+    public static extern IntPtr GetCurrentProcess();
+
+    static void Main()
+    {
+        Console.WriteLine("=== CALLING CONVENTIONS ===\n");
+
+        Console.WriteLine("Convenciones:");
+        Console.WriteLine("  Cdecl  - C default, caller limpia pila");
+        Console.WriteLine("  StdCall - Win32 API, callee limpia pila");
+        Console.WriteLine("  FastCall - usa registros (menos usado)");
+        Console.WriteLine("  ThisCall - C++ member (this en ecx)");
+        Console.WriteLine("  Winapi  - plataforma default");
+
+        puts("Texto desde puts (Cdecl)");
+        Beep(500, 200);
+
+        Console.WriteLine("\nRegla general:");
+        Console.WriteLine("  - Win32 API: CallingConvention.Winapi o StdCall");
+        Console.WriteLine("  - Bibliotecas C: CallingConvention.Cdecl");
+        Console.WriteLine("  - Si no sabe, pruebe Cdecl primero");
+    }
+}
+```
+
+--- 12. ESTRUCTURAS CON CAMPOS ANIDADOS ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct POINT
+{
+    public int X;
+    public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct MSG
+{
+    public IntPtr hwnd;
+    public uint message;
+    public IntPtr wParam;
+    public IntPtr lParam;
+    public uint time;
+    public POINT pt;
+}
+
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+public struct LOGFONT
+{
+    public int lfHeight;
+    public int lfWidth;
+    public int lfEscapement;
+    public int lfOrientation;
+    public int lfWeight;
+    public byte lfItalic;
+    public byte lfUnderline;
+    public byte lfStrikeOut;
+    public byte lfCharSet;
+    public byte lfOutPrecision;
+    public byte lfClipPrecision;
+    public byte lfQuality;
+    public byte lfPitchAndFamily;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+    public string lfFaceName;
+}
+
+class Program
+{
+    [DllImport("user32.dll")]
+    public static extern bool GetMessage(
+        out MSG lpMsg,
+        IntPtr hWnd,
+        uint wMsgFilterMin,
+        uint wMsgFilterMax);
+
+    [DllImport("gdi32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr CreateFontIndirect(
+        ref LOGFONT lf);
+
+    static void Main()
+    {
+        Console.WriteLine("=== ESTRUCTURAS ANIDADAS ===\n");
+
+        // Crear fuente logica
+        var lf = new LOGFONT
+        {
+            lfHeight = 20,
+            lfWeight = 400,
+            lfFaceName = "Arial",
+            lfCharSet = 0
+        };
+
+        IntPtr hFont = CreateFontIndirect(ref lf);
+        if (hFont != IntPtr.Zero)
+        {
+            Console.WriteLine($"Fuente creada: {lf.lfFaceName} a {lf.lfHeight}px");
+        }
+        else
+        {
+            Console.WriteLine("No se pudo crear la fuente.");
+        }
+
+        // MSG con POINT anidado
+        Console.WriteLine("\nLayout de MSG (con POINT anidado):");
+        Console.WriteLine($"  Tamano MSG: {Marshal.SizeOf<MSG>()} bytes");
+        Console.WriteLine($"  Tamano POINT: {Marshal.SizeOf<POINT>()} bytes");
+        Console.WriteLine($"  Offset de pt en MSG: {Marshal.OffsetOf<MSG>("pt")}");
+    }
+}
+```
+
+--- 13. ARRAYS Y MEMORIA NATIVA ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr memcpy(IntPtr dest, IntPtr src, int count);
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr memset(IntPtr dest, int c, int count);
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int memcmp(IntPtr buf1, IntPtr buf2, int count);
+
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== ARRAYS Y MEMORIA NATIVA ===\n");
+
+        // Copiar array managed a nativo y viceversa
+        byte[] managedArray = new byte[100];
+        for (int i = 0; i < managedArray.Length; i++)
+            managedArray[i] = (byte)i;
+
+        IntPtr nativeBuffer = Marshal.AllocHGlobal(100);
+
+        // Managed -> Native
+        Marshal.Copy(managedArray, 0, nativeBuffer, managedArray.Length);
+        Console.WriteLine($"Copiados {managedArray.Length} bytes a memoria nativa");
+
+        // memset en nativo
+        memset(nativeBuffer, 0xFF, 50);
+        Console.WriteLine("Primeros 50 bytes puestos a 0xFF via memset");
+
+        // Native -> Managed
+        byte[] readBack = new byte[100];
+        Marshal.Copy(nativeBuffer, readBack, 0, 100);
+
+        Console.WriteLine("\nComparacion de array original vs modificado:");
+        for (int i = 0; i < 10; i++)
+            Console.Write($"  [{i}] orig={managedArray[i]} now={readBack[i]}");
+        Console.WriteLine();
+
+        Marshal.FreeHGlobal(nativeBuffer);
+
+        // Array de estructuras
+        Console.WriteLine("\nArray de structs:");
+        POINT[] puntos = { new POINT { X = 1, Y = 2 }, new POINT { X = 3, Y = 4 } };
+        int structSize = Marshal.SizeOf<POINT>();
+        IntPtr pArray = Marshal.AllocHGlobal(puntos.Length * structSize);
+
+        for (int i = 0; i < puntos.Length; i++)
+            Marshal.StructureToPtr(puntos[i], pArray + i * structSize, false);
+
+        POINT[] leidos = new POINT[puntos.Length];
+        for (int i = 0; i < leidos.Length; i++)
+            leidos[i] = Marshal.PtrToStructure<POINT>(pArray + i * structSize);
+
+        foreach (var p in leidos)
+            Console.WriteLine($"  Point: ({p.X}, {p.Y})");
+
+        Marshal.FreeHGlobal(pArray);
+    }
+}
+```
+
+--- 14. P/INVOKE CON TIPOS COMPLEJOS ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+class Program
+{
+    [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern bool GetUserName(
+        StringBuilder lpBuffer,
+        ref uint nSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public static extern int GetLocaleInfo(
+        uint Locale,
+        uint LCType,
+        StringBuilder lpLCData,
+        int cchData);
+
+    [DllImport("kernel32.dll")]
+    public static extern int GetDateFormat(
+        uint Locale,
+        uint dwFlags,
+        ref SYSTEMTIME lpDate,
+        string lpFormat,
+        StringBuilder lpDateStr,
+        int cchDate);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEMTIME
+    {
+        public ushort wYear;
+        public ushort wMonth;
+        public ushort wDayOfWeek;
+        public ushort wDay;
+        public ushort wHour;
+        public ushort wMinute;
+        public ushort wSecond;
+        public ushort wMilliseconds;
+    }
+
+    [DllImport("kernel32.dll")]
+    public static extern void GetSystemTime(out SYSTEMTIME lpSystemTime);
+
+    static void Main()
+    {
+        Console.WriteLine("=== P/INVOKE CON TIPOS COMPLEJOS ===\n");
+
+        // GetUserName
+        StringBuilder sb = new StringBuilder(256);
+        uint size = 256;
+        if (GetUserName(sb, ref size))
+            Console.WriteLine($"Usuario: {sb}");
+
+        // Fecha formateada con locale
+        GetSystemTime(out SYSTEMTIME st);
+        sb.Clear();
+        GetDateFormat(0, 0, ref st, "dddd, MMMM dd, yyyy", sb, sb.Capacity);
+        Console.WriteLine($"Fecha: {sb}");
+
+        sb.Clear();
+        GetDateFormat(0, 0, ref st, "HH:mm:ss", sb, sb.Capacity);
+        Console.WriteLine($"Hora: {sb}");
+
+        // Obtener informacion del locale
+        sb.Clear();
+        GetLocaleInfo(0, 0x00001003, sb, sb.Capacity); // LOCALE_SCOUNTRY
+        Console.WriteLine($"Pais: {sb}");
+
+        sb.Clear();
+        GetLocaleInfo(0, 0x00000009, sb, sb.Capacity); // LOCALE_SISO639LANGNAME
+        Console.WriteLine($"Idioma: {sb}");
+    }
+}
+```
+
+--- 15. DLLIMPORT AVANZADO ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // EntryPoint con nombre diferente
+    [DllImport("kernel32.dll", EntryPoint = "Beep")]
+    public static extern bool SystemBeep(uint frequency, uint duration);
+
+    // PreserveSig = false (HRESULT a excepcion)
+    [DllImport("ole32.dll", PreserveSig = false)]
+    public static extern void CoInitialize(IntPtr pvReserved);
+
+    // BestFitMapping y ThrowOnUnmappableChar
+    [DllImport("some.dll", CharSet = CharSet.Ansi,
+        BestFitMapping = false,
+        ThrowOnUnmappableChar = true)]
+    public static extern int ProcessString([MarshalAs(UnmanagedType.LPStr)] string text);
+
+    // CallingConvention personalizado
+    [DllImport("kernel32.dll",
+        CallingConvention = CallingConvention.StdCall,
+        CharSet = CharSet.Unicode,
+        ExactSpelling = true,
+        SetLastError = true)]
+    public static extern uint GetModuleFileNameW(
+        IntPtr hModule,
+        [Out] char[] lpFilename,
+        uint nSize);
+
+    static void Main()
+    {
+        Console.WriteLine("=== DLLIMPORT AVANZADO ===\n");
+
+        // EntryPoint
+        SystemBeep(800, 300);
+
+        // CoInitialize con PreserveSig
+        try
+        {
+            CoInitialize(IntPtr.Zero);
+            Console.WriteLine("COM inicializado.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"COM init: {ex.Message}");
+        }
+
+        // GetModuleFileName con char[]
+        char[] buffer = new char[260];
+        uint result = GetModuleFileNameW(IntPtr.Zero, buffer, (uint)buffer.Length);
+        if (result > 0)
+            Console.WriteLine($"\nModulo: {new string(buffer, 0, (int)result)}");
+
+        // Propiedades de DllImport
+        var attr = typeof(Program).GetMethod("SystemBeep")
+            .GetCustomAttributes(typeof(DllImportAttribute), false)[0] as DllImportAttribute;
+
+        Console.WriteLine("\nPropiedades DllImport de SystemBeep:");
+        Console.WriteLine($"  DLL: {attr.Value}");
+        Console.WriteLine($"  EntryPoint: {attr.EntryPoint}");
+        Console.WriteLine($"  CharSet: {attr.CharSet}");
+        Console.WriteLine($"  CallingConvention: {attr.CallingConvention}");
+        Console.WriteLine($"  SetLastError: {attr.SetLastError}");
+        Console.WriteLine($"  ExactSpelling: {attr.ExactSpelling}");
+        Console.WriteLine($"  PreserveSig: {attr.PreserveSig}");
+    }
+}
+```
+
+--- 16. CARGA DINAMICA DE DLLS ---
+
+No siempre se conoce la DLL en compilacion. Se puede cargar en runtime:
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr LoadLibrary(string lpFileName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool FreeLibrary(IntPtr hModule);
+
+    // Delegado para la funcion que cargaremos dinamicamente
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int MessageBoxDelegate(IntPtr hWnd, string text, string caption, uint type);
+
+    static void Main()
+    {
+        Console.WriteLine("=== CARGA DINAMICA DE DLLS ===\n");
+
+        // Cargar DLL en runtime
+        IntPtr hModule = LoadLibrary("user32.dll");
+
+        if (hModule == IntPtr.Zero)
+        {
+            Console.WriteLine($"Error cargando DLL: {Marshal.GetLastWin32Error()}");
+            return;
+        }
+
+        Console.WriteLine($"DLL cargada: 0x{hModule:X8}");
+
+        // Obtener direccion de la funcion
+        IntPtr pFunc = GetProcAddress(hModule, "MessageBoxW");
+
+        if (pFunc == IntPtr.Zero)
+        {
+            Console.WriteLine($"Error obteniendo funcion: {Marshal.GetLastWin32Error()}");
+            FreeLibrary(hModule);
+            return;
+        }
+
+        Console.WriteLine($"Funcion en: 0x{pFunc:X8}");
+
+        // Crear delegado desde el puntero a funcion
+        MessageBoxDelegate messageBox = (MessageBoxDelegate)
+            Marshal.GetDelegateForFunctionPointer(pFunc, typeof(MessageBoxDelegate));
+
+        // Llamar a la funcion
+        messageBox(IntPtr.Zero, "Cargado dinamicamente!", "P/Invoke Dinamico", 0);
+
+        // Liberar DLL
+        FreeLibrary(hModule);
+        Console.WriteLine("DLL liberada.");
+    }
+}
+```
+
+--- 17. CALLBACK CON FUNCION NATIVA ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // Definir callback
+    public delegate int CompareFunction(IntPtr a, IntPtr b);
+
+    // Funcion qsort de C
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void qsort(
+        IntPtr base,
+        int num,
+        int size,
+        CompareFunction compare);
+
+    static void Main()
+    {
+        Console.WriteLine("=== CALLBACK NATIVO (QSORT) ===\n");
+
+        // Preparar array de enteros
+        int[] numeros = { 9, 3, 7, 1, 8, 2, 6, 4, 5, 0 };
+        Console.WriteLine($"Original: [{string.Join(", ", numeros)}]");
+
+        // Copiar a memoria nativa
+        int size = Marshal.SizeOf<int>();
+        IntPtr array = Marshal.AllocHGlobal(numeros.Length * size);
+        Marshal.Copy(numeros, 0, array, numeros.Length);
+
+        // Crear callback
+        CompareFunction comparer = CompareInts;
+
+        // Llamar a qsort nativo
+        qsort(array, numeros.Length, size, comparer);
+
+        // Copiar de vuelta
+        Marshal.Copy(array, numeros, 0, numeros.Length);
+        Marshal.FreeHGlobal(array);
+
+        // Mantener referencia al delegado
+        GC.KeepAlive(comparer);
+
+        Console.WriteLine($"Ordenado:  [{string.Join(", ", numeros)}]");
+    }
+
+    static int CompareInts(IntPtr a, IntPtr b)
+    {
+        int va = Marshal.ReadInt32(a);
+        int vb = Marshal.ReadInt32(b);
+        return va.CompareTo(vb);
+    }
+}
+```
+
+--- 18. P/INVOKE CON OUT Y REF ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetExitCodeProcess(
+        IntPtr hProcess,
+        out uint lpExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool DuplicateHandle(
+        IntPtr hSourceProcessHandle,
+        IntPtr hSourceHandle,
+        IntPtr hTargetProcessHandle,
+        out IntPtr lpTargetHandle,
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        uint dwOptions);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentThread();
+
+    [DllImport("kernel32.dll")]
+    public static extern void GetSystemInfo(ref SYSTEM_INFO lpSystemInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEM_INFO
+    {
+        public ushort wProcessorArchitecture;
+        public ushort wReserved;
+        public uint dwPageSize;
+        public IntPtr lpMinimumApplicationAddress;
+        public IntPtr lpMaximumApplicationAddress;
+        public IntPtr dwActiveProcessorMask;
+        public uint dwNumberOfProcessors;
+        public uint dwProcessorType;
+        public uint dwAllocationGranularity;
+        public ushort wProcessorLevel;
+        public ushort wProcessorRevision;
+    }
+
+    static void Main()
+    {
+        Console.WriteLine("=== P/INVOKE CON OUT Y REF ===\n");
+
+        // out parameter
+        IntPtr hProcess = GetCurrentProcess();
+        uint exitCode;
+        if (GetExitCodeProcess(hProcess, out exitCode))
+            Console.WriteLine($"Exit code del proceso actual: {exitCode}");
+
+        // out IntPtr
+        IntPtr hThread = GetCurrentThread();
+        IntPtr hDup;
+        if (DuplicateHandle(hProcess, hThread, hProcess, out hDup,
+            0x001F03FF, true, 0)) // MAXIMUM_ALLOWED
+        {
+            Console.WriteLine($"Handle duplicado: 0x{hDup:X8}");
+        }
+        else
+        {
+            Console.WriteLine($"Error duplicando handle: {Marshal.GetLastWin32Error()}");
+        }
+
+        // ref parameter (in/out)
+        SYSTEM_INFO si = default;
+        GetSystemInfo(ref si);
+        Console.WriteLine($"\nSystem Info (via ref):");
+        Console.WriteLine($"  Pagina: {si.dwPageSize} bytes");
+        Console.WriteLine($"  Procesadores: {si.dwNumberOfProcessors}");
+        Console.WriteLine($"  Granularidad: {si.dwAllocationGranularity}");
+    }
+}
+```
+
+--- 19. BUENAS PRACTICAS EN P/INVOKE ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class BuenasPracticas
+{
+    // 1. Declaraciones en clases staticas internas
+    internal static class NativeMethods
+    {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern bool Beep(uint freq, uint dur);
+    }
+
+    // 2. Usar SafeHandle en lugar de IntPtr
+    // (ver seccion 7)
+
+    // 3. Verificar SetLastError
+    public static void LlamadaSegura()
+    {
+        if (!NativeMethods.Beep(800, 200))
+        {
+            int error = Marshal.GetLastWin32Error();
+            // Manejar error
+        }
+    }
+
+    // 4. Dispose correcto de recursos nativos
+    public class RecursoNativo : IDisposable
+    {
+        private IntPtr _handle;
+        private bool _disposed;
+
+        public RecursoNativo()
+        {
+            _handle = Marshal.AllocHGlobal(100);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        ~RecursoNativo() => Dispose(false);
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (_handle != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(_handle);
+                    _handle = IntPtr.Zero;
+                }
+                _disposed = true;
+            }
+        }
+    }
+
+    // 5. Usar using para recursos IDisposable
+    public void UsarRecurso()
+    {
+        using (var recurso = new RecursoNativo())
+        {
+            // Usar recurso
+        } // Dispose automatico
+    }
+
+    // 6. Evitar P/Invoke cuando exista alternativa managed
+    // En lugar de GetComputerName, use Environment.MachineName
+    // En lugar de GetSystemInfo, use Environment.ProcessorCount
+
+    // 7. Documentar las declaraciones P/Invoke
+    /// <summary>
+    /// Obtiene el nombre del equipo.
+    /// </summary>
+    /// <param name="buffer">Buffer de salida (min 256 chars)</param>
+    /// <param name="size">Tamano del buffer</param>
+    /// <returns>true si exitoso</returns>
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern bool GetComputerName(
+        System.Text.StringBuilder buffer,
+        ref uint size);
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPITULO
+================================================================================
+
+1. P/Invoke permite llamar funciones de DLLs nativas desde .NET.
+2. DllImport configura nombre DLL, EntryPoint, CharSet, CallingConvention.
+3. El marshaling convierte automaticamente tipos managed a nativos.
+4. SafeHandle gestiona recursos nativos con finalizacion automatica.
+5. Los delegados permiten pasar callbacks de C# a codigo nativo.
+6. SetLastError y Marshal.GetLastWin32Error manejan errores nativos.
+7. StructLayout controla la disposicion en memoria de las estructuras.
+8. Prefiera alternativas managed cuando existan (Environment, File, etc.)
+9. Use LoadLibrary/GetProcAddress para carga dinamica de DLLs.
+10. Siempre libere recursos nativos con Dispose o SafeHandle.
+
+================================================================================
+  EJERCICIOS PRACTICOS
+================================================================================
+
+Ejercicio 1: Declare y llame a GetSystemMetrics de user32.dll para
+obtener el tamano de pantalla y resolucion.
+
+Ejercicio 2: Use CreateFile, ReadFile y CloseHandle para leer un archivo
+binario usando P/Invoke directamente (sin FileStream).
+
+Ejercicio 3: Implemente un callback para EnumWindows que liste todas las
+ventanas con su titulo y clase.
+
+Ejercicio 4: Cree una estructura con LayoutKind.Explicit (como una union
+C) y demuestre como diferentes campos ocupan la misma memoria.
+
+Ejercicio 5: Use LoadLibrary/GetProcAddress para cargar una funcion
+de una DLL de sistema y llamarla dinamicamente.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Que es marshaling? R: El proceso de convertir tipos entre el mundo
+administrado (.NET) y el no administrado (C/C++).
+
+P: Cuando debo usar P/Invoke en lugar de C++/CLI? R: P/Invoke es mas
+simple para llamar funciones individuales. C++/CLI es mejor para integrar
+bibliotecas C++ completas.
+
+P: Como manejo errores de DLL no encontrada? R: Use try/catch alrededor
+de la primera llamada. DllNotFoundException se lanza si la DLL falta.
+
+P: P/Invoke es seguro? R: Puede causar corruption de memoria si los
+parametros no se marshallan correctamente. Verifique tipos y tamaños.
+
+P: Hay alternativas a P/Invoke? R: Si. Para Windows, use las bibliotecas
+managed equivalentes. Para C/C++, considere C++/CLI o Roslyn P/Invoke.
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+Construya una biblioteca de interoperabilidad Win32 con P/Invoke:
+
+1. Implemente envoltorios managed para estas funciones de Win32:
+   - Procesos: CreateProcess, TerminateProcess, GetProcessTimes
+   - Memoria: VirtualAlloc, VirtualFree, VirtualProtect
+   - Archivos: CreateFileMapping, MapViewOfFile, UnmapViewOfFile
+   - Ventanas: CreateWindowEx, SetWindowLong, GetWindowLong
+   - Hilos: CreateThread, SuspendThread, ResumeThread
+
+2. Para cada grupo, cree:
+   - Declaracion P/Invoke con DllImport completo
+   - Clase wrapper segura con SafeHandle
+   - Metodos managed que encapsulen la funcionalidad
+   - Manejo de errores con SetLastError
+   - Dispose pattern para liberar recursos
+
+3. Implemente una calculadora de offsets de struct:
+   - Dado un struct, calcule el offset de cada campo
+   - Use Marshal.OffsetOf para verificar
+   - Soporte LayoutKind.Sequential y Explicit
+
+4. Cree un generador de codigo P/Invoke que:
+   - Tome una definicion JSON de funcion
+   - Genere la clase C# con DllImport
+   - Genere las estructuras necesarias
+   - Genere los wrappers managed
+
+5. Implemente un monitor de recursos del sistema:
+   - Memoria: GlobalMemoryStatusEx
+   - CPU: GetSystemTimes
+   - Disco: GetDiskFreeSpaceEx
+   - Red: GetAdaptersInfo (iphlpapi)
+   - Muestre actualizaciones en tiempo real cada segundo
+
+Extension: Use Source Generators para generar automaticamente las
+declaraciones P/Invoke a partir de archivos de cabecera C.
+
+================================================================================
+  CIERRE DEL CAPITULO
+================================================================================
+
+La interoperabilidad es esencial para aprovechar bibliotecas nativas
+existentes y el sistema operativo. P/Invoke es la herramienta principal
+para esta tarea en .NET. En el proximo capitulo exploraremos patrones
+de diseno avanzados que todo arquitecto debe conocer.
+
+!Felicidades! Domina P/Invoke e interoperabilidad.
+
+PROXIMO CAPITULO: 69 - Patrones Avanzados
+================================================================================

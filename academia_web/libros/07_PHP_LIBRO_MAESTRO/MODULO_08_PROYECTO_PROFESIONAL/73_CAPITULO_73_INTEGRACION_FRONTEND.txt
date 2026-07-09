@@ -1,0 +1,1076 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 73
+##
+##                   INTEGRACIÓN FRONT-END
+##
+################################################################################
+################################################################################
+
+"El frontend es el rostro, el backend es el corazón. Juntos forman un
+organismo digital perfecto."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido full-stack developer, hasta ahora hemos trabajado exclusivamente en
+el backend. Pero una aplicación sin interfaz de usuario es como un motor sin
+auto: potente pero inútil. En este capítulo uniremos nuestro backend PHP con
+un frontend moderno construido en React.
+
+La integración frontend-backend se realiza mediante **APIs REST**. Nuestro
+servidor PHP expone endpoints que devuelven JSON, y el frontend React
+consume esos endpoints para renderizar la interfaz de usuario.
+
+Aprenderás a configurar CORS correctamente, manejar autenticación con tokens
+JWT desde el frontend, gestionar estados de carga y error, y estructurar una
+SPA (Single Page Application) que se comunique eficientemente con tu backend
+PHP.
+
+No importa si nunca has usado React; nos enfocaremos en la comunicación
+entre ambas tecnologías. El frontend que construiremos será profesional,
+responsive y perfectamente integrado con tu API PHP.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un backend sin frontend es una biblioteca sin puertas. Un frontend sin
+backend es una puerta sin biblioteca. Juntos crean conocimiento."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Configurar CORS en PHP para permitir peticiones desde un frontend React.
+✓ Implementar autenticación JWT y enviar tokens desde el frontend.
+✓ Consumir APIs REST desde JavaScript usando fetch y axios.
+✓ Manejar estados de carga, error y datos vacíos en el frontend.
+✓ Estructurar una aplicación React que consuma tu backend PHP.
+✓ Implementar formularios que envíen datos al servidor PHP.
+✓ Desplegar la integración frontend-backend en un entorno de producción.
+
+===============================================================================
+1. CONFIGURACIÓN DE CORS EN PHP
+===============================================================================
+
+CORS (Cross-Origin Resource Sharing) es un mecanismo de seguridad del
+navegador que controla qué dominios pueden acceder a los recursos de tu
+API. Cuando tu frontend React corre en un puerto diferente al backend PHP,
+necesitas configurar CORS explícitamente.
+
+```php
+<?php
+// src/Middleware/CorsMiddleware.php - Configuración CORS completa
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+
+class CorsMiddleware
+{
+    private array $allowedOrigins;
+    private array $allowedMethods;
+    private array $allowedHeaders;
+    private int $maxAge;
+
+    public function __construct()
+    {
+        $this->allowedOrigins = [
+            'http://localhost:3000',
+            'http://localhost:5173',
+            'http://127.0.0.1:3000',
+            'https://tu-dominio-produccion.com',
+        ];
+
+        $this->allowedMethods = [
+            'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'
+        ];
+
+        $this->allowedHeaders = [
+            'Content-Type',
+            'Authorization',
+            'X-CSRF-Token',
+            'Accept',
+            'Origin',
+            'X-Requested-With',
+        ];
+
+        $this->maxAge = 86400; // 24 horas
+    }
+
+    public function handle(Request $request, callable $next): Response
+    {
+        $origin = $request->getHeader('Origin') ?? '*';
+
+        if (in_array($origin, $this->allowedOrigins)) {
+            header("Access-Control-Allow-Origin: {$origin}");
+            header('Access-Control-Allow-Credentials: true');
+        } elseif (in_array('*', $this->allowedOrigins)) {
+            header('Access-Control-Allow-Origin: *');
+        }
+
+        header("Access-Control-Allow-Methods: " . implode(', ', $this->allowedMethods));
+        header("Access-Control-Allow-Headers: " . implode(', ', $this->allowedHeaders));
+        header("Access-Control-Max-Age: {$this->maxAge}");
+        header('Content-Type: application/json; charset=UTF-8');
+
+        // Manejar preflight (OPTIONS)
+        if ($request->getMethod() === 'OPTIONS') {
+            http_response_code(204);
+            exit;
+        }
+
+        return $next($request);
+    }
+}
+?>
+```
+
+```php
+<?php
+// Configuración CORS simplificada para desarrollo
+// Se coloca al inicio de public/index.php
+
+// Permitir desde cualquier origen en desarrollo
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-Token');
+header('Content-Type: application/json; charset=UTF-8');
+
+// Manejar preflight
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+?>
+```
+
+===============================================================================
+2. API REST CON JWT: LOGIN Y AUTENTICACIÓN
+===============================================================================
+
+JWT (JSON Web Token) es el estándar moderno para autenticación en APIs.
+El servidor PHP genera un token firmado que el frontend envía en cada
+petición para identificarse.
+
+```php
+<?php
+// src/Controllers/AuthController.php
+declare(strict_types=1);
+
+namespace App\Controllers;
+
+use App\Core\Request;
+use App\Core\Response;
+use App\Core\Database;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use PDO;
+
+class AuthController
+{
+    private PDO $db;
+    private string $jwtSecret;
+    private int $jwtExpiration;
+
+    public function __construct()
+    {
+        $this->db = Database::getInstance()->getConnection();
+        $this->jwtSecret = $_ENV['JWT_SECRET'] ?? 'default_secret';
+        $this->jwtExpiration = (int)($_ENV['JWT_EXPIRATION'] ?? 3600);
+    }
+
+    public function login(Request $request): Response
+    {
+        $data = $request->getJsonBody();
+        $email = $data['email'] ?? '';
+        $password = $data['password'] ?? '';
+
+        if (empty($email) || empty($password)) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Email y contraseña son obligatorios',
+            ]), 400);
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT id, nombre, email, password_hash, rol
+             FROM usuarios WHERE email = :email AND activo = 1 LIMIT 1'
+        );
+        $stmt->execute(['email' => $email]);
+        $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$usuario || !password_verify($password, $usuario['password_hash'])) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Credenciales inválidas',
+            ]), 401);
+        }
+
+        $now = time();
+        $payload = [
+            'iss' => 'php-master-book',
+            'iat' => $now,
+            'exp' => $now + $this->jwtExpiration,
+            'sub' => $usuario['id'],
+            'data' => [
+                'nombre' => $usuario['nombre'],
+                'email' => $usuario['email'],
+                'rol' => $usuario['rol'],
+            ],
+        ];
+
+        $token = JWT::encode($payload, $this->jwtSecret, 'HS256');
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'message' => 'Inicio de sesión exitoso',
+            'data' => [
+                'token' => $token,
+                'token_type' => 'Bearer',
+                'expires_in' => $this->jwtExpiration,
+                'usuario' => [
+                    'id' => $usuario['id'],
+                    'nombre' => $usuario['nombre'],
+                    'email' => $usuario['email'],
+                    'rol' => $usuario['rol'],
+                ],
+            ],
+        ]), 200);
+    }
+
+    public function register(Request $request): Response
+    {
+        $data = $request->getJsonBody();
+        $nombre = trim($data['nombre'] ?? '');
+        $email = trim($data['email'] ?? '');
+        $password = $data['password'] ?? '';
+        $passwordConfirm = $data['password_confirm'] ?? '';
+
+        // Validaciones
+        if (empty($nombre) || empty($email) || empty($password)) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Todos los campos son obligatorios',
+            ]), 400);
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Email inválido',
+            ]), 400);
+        }
+
+        if (strlen($password) < 8) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'La contraseña debe tener al menos 8 caracteres',
+            ]), 400);
+        }
+
+        if ($password !== $passwordConfirm) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Las contraseñas no coinciden',
+            ]), 400);
+        }
+
+        // Verificar email único
+        $stmt = $this->db->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
+        $stmt->execute(['email' => $email]);
+        if ($stmt->fetch()) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'El email ya está registrado',
+            ]), 409);
+        }
+
+        // Crear usuario
+        $passwordHash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+        $stmt = $this->db->prepare(
+            'INSERT INTO usuarios (nombre, email, password_hash, rol)
+             VALUES (:nombre, :email, :password_hash, :rol)'
+        );
+        $stmt->execute([
+            'nombre' => $nombre,
+            'email' => $email,
+            'password_hash' => $passwordHash,
+            'rol' => 'usuario',
+        ]);
+
+        $usuarioId = (int)$this->db->lastInsertId();
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'message' => 'Usuario registrado exitosamente',
+            'data' => ['id' => $usuarioId],
+        ]), 201);
+    }
+
+    public function me(Request $request): Response
+    {
+        $usuarioId = $request->getAttribute('usuario_id');
+
+        $stmt = $this->db->prepare(
+            'SELECT id, nombre, email, rol, created_at
+             FROM usuarios WHERE id = :id AND activo = 1'
+        );
+        $stmt->execute(['id' => $usuarioId]);
+        $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$usuario) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Usuario no encontrado',
+            ]), 404);
+        }
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'data' => $usuario,
+        ]), 200);
+    }
+}
+?>
+```
+
+===============================================================================
+3. FRONTEND REACT: CONSUMO DE API
+===============================================================================
+
+Ahora veamos cómo consumir nuestra API PHP desde una aplicación React.
+Usaremos axios para las peticiones HTTP y Context API para gestionar el
+estado de autenticación.
+
+```javascript
+// frontend/src/services/api.js
+import axios from 'axios';
+
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  },
+});
+
+// Interceptor para añadir token JWT
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Interceptor para manejar errores de autenticación
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Servicio de autenticación
+export const authService = {
+  login: (email, password) =>
+    api.post('/auth/login', { email, password }),
+
+  register: (data) =>
+    api.post('/auth/register', data),
+
+  me: () =>
+    api.get('/auth/me'),
+};
+
+// Servicio de productos
+export const productService = {
+  getAll: (params = {}) =>
+    api.get('/productos', { params }),
+
+  getById: (id) =>
+    api.get(`/productos/${id}`),
+
+  create: (data) =>
+    api.post('/productos', data),
+
+  update: (id, data) =>
+    api.put(`/productos/${id}`, data),
+
+  delete: (id) =>
+    api.delete(`/productos/${id}`),
+};
+
+export default api;
+```
+
+```javascript
+// frontend/src/context/AuthContext.jsx
+import { createContext, useState, useEffect, useContext } from 'react';
+import { authService } from '../services/api';
+
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      authService.me()
+        .then((res) => setUser(res.data.data))
+        .catch(() => {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('auth_user');
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  const login = async (email, password) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await authService.login(email, password);
+      const { token, usuario } = res.data.data;
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_user', JSON.stringify(usuario));
+      setUser(usuario);
+      return usuario;
+    } catch (err) {
+      const message = err.response?.data?.message || 'Error al iniciar sesión';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const register = async (data) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await authService.register(data);
+    } catch (err) {
+      const message = err.response?.data?.message || 'Error al registrarse';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{
+      user, loading, error, login, register, logout, isAuthenticated: !!user,
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth debe usarse dentro de AuthProvider');
+  return context;
+};
+```
+
+===============================================================================
+4. COMPONENTES REACT: CRUD FRONTEND
+===============================================================================
+
+```javascript
+// frontend/src/pages/Productos/ProductoLista.jsx
+import { useState, useEffect, useCallback } from 'react';
+import { productService } from '../../services/api';
+import ProductoTabla from './ProductoTabla';
+import Paginacion from '../../components/Paginacion';
+import Busqueda from '../../components/Busqueda';
+
+export default function ProductoLista() {
+  const [productos, setProductos] = useState([]);
+  const [pagination, setPagination] = useState({
+    page: 1, limit: 10, total: 0, pages: 0,
+  });
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchProductos = useCallback(async (page = 1) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await productService.getAll({ page, limit: 10, search });
+      setProductos(res.data.data);
+      setPagination(res.data.pagination);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Error al cargar productos');
+    } finally {
+      setLoading(false);
+    }
+  }, [search]);
+
+  useEffect(() => {
+    fetchProductos(1);
+  }, [fetchProductos]);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('¿Estás seguro de eliminar este producto?')) return;
+    try {
+      await productService.delete(id);
+      fetchProductos(pagination.page);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al eliminar');
+    }
+  };
+
+  if (loading) return <div className="cargando">Cargando productos...</div>;
+  if (error) return <div className="error">{error}</div>;
+
+  return (
+    <div className="producto-lista">
+      <h1>Productos</h1>
+      <Busqueda valor={search} onChange={setSearch} placeholder="Buscar productos..." />
+      <ProductoTabla productos={productos} onDelete={handleDelete} />
+      <Paginacion pagination={pagination} onPageChange={fetchProductos} />
+    </div>
+  );
+}
+```
+
+```javascript
+// frontend/src/pages/Productos/ProductoFormulario.jsx
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { productService } from '../../services/api';
+
+export default function ProductoFormulario() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const isEditing = Boolean(id);
+
+  const [formData, setFormData] = useState({
+    codigo: '', nombre: '', descripcion: '', precio: '',
+    stock: '0', categoria_id: '', proveedor_id: '',
+  });
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      productService.getById(id)
+        .then((res) => {
+          const p = res.data.data;
+          setFormData({
+            codigo: p.codigo, nombre: p.nombre, descripcion: p.descripcion || '',
+            precio: String(p.precio), stock: String(p.stock),
+            categoria_id: String(p.categoria_id), proveedor_id: String(p.proveedor_id || ''),
+          });
+        })
+        .catch(() => navigate('/productos'));
+    }
+  }, [id, isEditing, navigate]);
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+    setErrors({ ...errors, [e.target.name]: '' });
+  };
+
+  const validate = () => {
+    const newErrors = {};
+    if (!formData.codigo.trim()) newErrors.codigo = 'El código es obligatorio';
+    if (!formData.nombre.trim()) newErrors.nombre = 'El nombre es obligatorio';
+    if (!formData.precio || parseFloat(formData.precio) <= 0)
+      newErrors.precio = 'El precio debe ser mayor a 0';
+    if (!formData.categoria_id) newErrors.categoria_id = 'Selecciona una categoría';
+    return newErrors;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const validationErrors = validate();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const data = {
+        ...formData,
+        precio: parseFloat(formData.precio),
+        stock: parseInt(formData.stock, 10) || 0,
+        categoria_id: parseInt(formData.categoria_id, 10),
+        proveedor_id: formData.proveedor_id ? parseInt(formData.proveedor_id, 10) : null,
+      };
+
+      if (isEditing) {
+        await productService.update(id, data);
+      } else {
+        await productService.create(data);
+      }
+      navigate('/productos');
+    } catch (err) {
+      const serverErrors = err.response?.data?.errors || {};
+      setErrors(serverErrors);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="producto-form">
+      <h1>{isEditing ? 'Editar Producto' : 'Nuevo Producto'}</h1>
+
+      <div className="campo">
+        <label>Código:</label>
+        <input name="codigo" value={formData.codigo} onChange={handleChange} />
+        {errors.codigo && <span className="error-campo">{errors.codigo}</span>}
+      </div>
+
+      <div className="campo">
+        <label>Nombre:</label>
+        <input name="nombre" value={formData.nombre} onChange={handleChange} />
+        {errors.nombre && <span className="error-campo">{errors.nombre}</span>}
+      </div>
+
+      <div className="campo">
+        <label>Descripción:</label>
+        <textarea name="descripcion" value={formData.descripcion} onChange={handleChange} />
+      </div>
+
+      <div className="campo">
+        <label>Precio:</label>
+        <input type="number" step="0.01" name="precio" value={formData.precio}
+               onChange={handleChange} />
+        {errors.precio && <span className="error-campo">{errors.precio}</span>}
+      </div>
+
+      <div className="campo">
+        <label>Stock:</label>
+        <input type="number" name="stock" value={formData.stock} onChange={handleChange} />
+      </div>
+
+      <div className="campo">
+        <label>Categoría:</label>
+        <select name="categoria_id" value={formData.categoria_id} onChange={handleChange}>
+          <option value="">Seleccionar...</option>
+          <option value="1">Electrónica</option>
+          <option value="2">Ropa</option>
+          <option value="3">Hogar</option>
+          <option value="4">Deportes</option>
+          <option value="5">Libros</option>
+        </select>
+        {errors.categoria_id && <span className="error-campo">{errors.categoria_id}</span>}
+      </div>
+
+      <button type="submit" disabled={submitting}>
+        {submitting ? 'Guardando...' : isEditing ? 'Actualizar' : 'Crear'}
+      </button>
+    </form>
+  );
+}
+```
+
+===============================================================================
+5. MANEJO DE ESTADOS: CARGA, ERROR Y VACÍO
+===============================================================================
+
+Una aplicación profesional debe manejar correctamente los tres estados de
+cualquier operación asíncrona: carga, éxito y error.
+
+```javascript
+// frontend/src/components/EstadoGlobal.jsx
+// Componente que maneja los tres estados de cualquier operación
+
+export function EstadoCargando({ mensaje = 'Cargando...' }) {
+  return (
+    <div className="estado-cargando">
+      <div className="spinner" />
+      <p>{mensaje}</p>
+    </div>
+  );
+}
+
+export function EstadoError({ mensaje, onReintentar }) {
+  return (
+    <div className="estado-error">
+      <span className="icono-error">⚠️</span>
+      <p>{mensaje}</p>
+      {onReintentar && (
+        <button onClick={onReintentar} className="btn-reintentar">
+          Reintentar
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function EstadoVacio({ mensaje = 'No hay datos disponibles', icono = '📭' }) {
+  return (
+    <div className="estado-vacio">
+      <span className="icono-vacio">{icono}</span>
+      <p>{mensaje}</p>
+    </div>
+  );
+}
+
+// Hook personalizado para manejar los estados
+export function useAsync(asyncFn, deps = []) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const execute = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await asyncFn();
+      setData(result);
+    } catch (err) {
+      setError(err.message || 'Error inesperado');
+    } finally {
+      setLoading(false);
+    }
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { execute(); }, [execute]);
+
+  return { data, loading, error, execute, setData };
+}
+```
+
+===============================================================================
+6. ENRUTAMIENTO EN REACT
+===============================================================================
+
+Configuramos React Router para que las rutas del frontend correspondan a
+las vistas de nuestra aplicación.
+
+```javascript
+// frontend/src/App.jsx
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Layout from './components/Layout';
+import Login from './pages/Auth/Login';
+import Register from './pages/Auth/Register';
+import ProductoLista from './pages/Productos/ProductoLista';
+import ProductoFormulario from './pages/Productos/ProductoFormulario';
+import Dashboard from './pages/Dashboard';
+
+function RutaProtegida({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+  if (loading) return <div>Cargando...</div>;
+  return isAuthenticated ? children : <Navigate to="/login" />;
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/" element={<RutaProtegida><Layout /></RutaProtegida>}>
+            <Route index element={<Dashboard />} />
+            <Route path="productos" element={<ProductoLista />} />
+            <Route path="productos/nuevo" element={<ProductoFormulario />} />
+            <Route path="productos/editar/:id" element={<ProductoFormulario />} />
+          </Route>
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
+
+export default App;
+```
+
+```javascript
+// frontend/src/config.js
+const config = {
+  API_URL: process.env.REACT_APP_API_URL || 'http://localhost:8000/api',
+  APP_NAME: 'PHP Master Pro',
+  VERSION: '1.0.0',
+  PAGINATION: {
+    DEFAULT_LIMIT: 10,
+    MAX_LIMIT: 100,
+  },
+};
+
+export default config;
+```
+
+===============================================================================
+7. DESPLIEGUE FRONTEND + BACKEND
+===============================================================================
+
+Para producción, el frontend compilado se sirve desde el mismo servidor PHP
+o desde un CDN separado.
+
+```bash
+# 1. Compilar el frontend React
+cd frontend
+npm install
+npm run build
+
+# 2. Los archivos compilados estarán en frontend/build/
+#    Copiar al directorio público de PHP
+cp -r frontend/build/* ../public/
+
+# 3. Opción 2: Servir desde subdominio separado
+#    Frontend: https://app.tudominio.com (Netlify, Vercel)
+#    Backend:  https://api.tudominio.com (servidor PHP)
+```
+
+```nginx
+# nginx.conf - Servir frontend y backend desde el mismo dominio
+server {
+    listen 80;
+    server_name tudominio.com;
+
+    root /var/www/php-master-pro/public;
+    index index.php index.html;
+
+    # Rutas del frontend (SPA) - todas al index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Rutas de la API - redirigir a PHP
+    location /api/ {
+        try_files $uri /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+```
+
+===============================================================================
+8. PRUEBAS DE INTEGRACIÓN
+===============================================================================
+
+Probemos la comunicación completa entre frontend y backend:
+
+```php
+<?php
+// tests/Feature/ApiIntegrationTest.php
+declare(strict_types=1);
+
+namespace Tests\Feature;
+
+use PHPUnit\Framework\TestCase;
+
+class ApiIntegrationTest extends TestCase
+{
+    private string $baseUrl = 'http://localhost:8000/api';
+
+    public function testListarProductos(): void
+    {
+        $response = file_get_contents("{$this->baseUrl}/productos");
+        $data = json_decode($response, true);
+
+        $this->assertArrayHasKey('status', $data);
+        $this->assertEquals('success', $data['status']);
+        $this->assertArrayHasKey('data', $data);
+        $this->assertArrayHasKey('pagination', $data);
+    }
+
+    public function testCrearYeliminarProducto(): void
+    {
+        // Crear producto
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => 'Content-Type: application/json',
+                'content' => json_encode([
+                    'codigo' => 'TEST-001',
+                    'nombre' => 'Producto de Prueba',
+                    'precio' => 100.00,
+                    'categoria_id' => 1,
+                ]),
+            ],
+        ]);
+
+        $response = file_get_contents("{$this->baseUrl}/productos", false, $context);
+        $data = json_decode($response, true);
+
+        $this->assertEquals('success', $data['status']);
+        $this->assertArrayHasKey('data', $data);
+        $productoId = $data['data']['id'];
+
+        // Eliminar producto
+        $context = stream_context_create([
+            'http' => ['method' => 'DELETE'],
+        ]);
+
+        $response = file_get_contents("{$this->baseUrl}/productos/{$productoId}", false, $context);
+        $data = json_decode($response, true);
+
+        $this->assertEquals('success', $data['status']);
+    }
+
+    public function testAutenticacion(): void
+    {
+        // Registrar
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => 'Content-Type: application/json',
+                'content' => json_encode([
+                    'nombre' => 'Test User',
+                    'email' => 'test_' . time() . '@test.com',
+                    'password' => 'password123',
+                    'password_confirm' => 'password123',
+                ]),
+            ],
+        ]);
+
+        $response = file_get_contents("{$this->baseUrl}/auth/register", false, $context);
+        $data = json_decode($response, true);
+        $this->assertEquals('success', $data['status']);
+    }
+}
+?>
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- CORS debe configurarse en el servidor PHP para permitir peticiones desde
+  el frontend. Incluye cabeceras Access-Control-Allow-Origin, Methods y
+  Headers.
+- JWT es el estándar para autenticación en APIs REST. El token se envía en
+  el header Authorization como Bearer token.
+- axios simplifica el consumo de APIs con interceptores para añadir tokens
+  automáticamente y manejar errores globalmente.
+- Los estados de carga, error y vacío deben manejarse explícitamente en
+  cada componente para una buena experiencia de usuario.
+- Context API en React permite compartir el estado de autenticación entre
+  todos los componentes sin prop drilling.
+- React Router organiza la navegación del frontend, con rutas protegidas
+  que redirigen al login si el usuario no está autenticado.
+- En producción, el frontend compilado se sirve estáticamente mientras la
+  API PHP procesa las peticiones dinámicas.
+- Las pruebas de integración verifican que frontend y backend se comuniquen
+  correctamente.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un componente React que muestre el perfil del
+usuario autenticado usando el endpoint `/auth/me`. Incluye avatar, nombre,
+email y fecha de registro.
+
+🧩 **Ejercicio 2:** Implementa la funcionalidad de subida de imágenes para
+productos. El frontend debe enviar FormData con la imagen al endpoint
+POST `/api/productos/{id}/imagen`.
+
+🧩 **Ejercicio 3:** Añade un interceptor en axios que muestre una
+notificación toast cada vez que ocurra un error en la API.
+
+🧩 **Ejercicio 4:** Configura un proxy en React (en package.json) para
+redirigir las peticiones `/api/*` al backend PHP durante el desarrollo.
+
+🧩 **Ejercicio 5:** Escribe una prueba E2E con Cypress que pruebe el flujo
+completo: registro, login, crear producto, editar producto y eliminar
+producto.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué mi frontend no puede conectarse al backend?**
+Probablemente es un problema de CORS. Verifica que el backend incluya las
+cabeceras correctas y que el origen del frontend esté en la lista blanca.
+
+❓ **¿Es seguro almacenar el token JWT en localStorage?**
+LocalStorage es vulnerable a XSS. Para máxima seguridad, usa cookies
+httpOnly. Para la mayoría de aplicaciones, localStorage con buenas
+prácticas de seguridad es aceptable.
+
+❓ **¿Debo usar fetch nativo o axios?**
+axios ofrece mejor experiencia: interceptores, cancelación de peticiones,
+transformación automática de JSON, y manejo de errores más limpio.
+
+❓ **¿Cómo manejo la expiración del token?**
+El interceptor de respuesta debe detectar el código 401, limpiar el token
+expirado y redirigir al login. Opcionalmente, implementa refresh tokens.
+
+❓ **¿Puedo usar Vue o Angular en lugar de React?**
+Sí. Los principios son los mismos: consumir APIs REST desde cualquier
+framework moderno. Solo cambia la sintaxis de los componentes.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto Full-Stack** — Diseña la integración completa de un
+marketplace en línea con las siguientes características: backend PHP con
+microservicios (catálogo, carrito, pagos, usuarios, notificaciones),
+frontend React con Server-Side Rendering (Next.js), autenticación con
+OAuth2 (Google, Facebook), pasarela de pagos (Stripe/PayPal), notificaciones
+en tiempo real con WebSockets (Pusher), y despliegue en Kubernetes con
+autoescalado. Describe cómo se comunican cada microservicio con el frontend,
+cómo gestionas la sesión entre microservicios, y qué estrategia usas para
+mantener la consistencia de datos en un entorno distribuido.
+
+===============================================================================
+FIN DEL CAPÍTULO 73
+===============================================================================
+
+"La magia del desarrollo web no está en el frontend ni en el backend, sino
+en el puente que los une. Sé un gran arquitecto de puentes."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+74_CAPITULO_74_OPTIMIZACION.txt
+===============================================================================

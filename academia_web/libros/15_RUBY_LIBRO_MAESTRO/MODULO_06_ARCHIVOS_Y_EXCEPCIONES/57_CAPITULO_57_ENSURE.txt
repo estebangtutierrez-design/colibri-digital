@@ -1,0 +1,1293 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 57: ENSURE Y ELSE
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 57! En el capítulo anterior aprendiste a
+capturar excepciones con begin/rescue. Pero hay un problema: ¿qué
+pasa si necesitas ejecutar código de limpieza que debe ocurrir
+SIEMPRE, haya o no excepción?
+
+Imagina que abres un archivo, ocurre un error, y el archivo queda
+abierto. O que adquieres un lock y nunca lo liberas. O que reservas
+memoria en un servicio externo y nunca la liberas.
+
+Para estos casos existe ensure: un bloque que se ejecuta siempre,
+sin importar si hubo excepción, si hubo return, o si todo salió bien.
+
+Y existe else: un bloque que se ejecuta solo cuando NO hubo excepción.
+
+Juntos, begin/rescue/else/ensure/end forman la estructura completa
+de manejo de excepciones en Ruby. En este capítulo dominarás estos
+dos componentes esenciales.
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"Ensure es la red de seguridad que garantiza que siempre hagas lo
+correcto, incluso cuando todo sale mal." — Anónimo
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Usar ensure para código que siempre se ejecuta.
+2. Usar else para código que solo se ejecuta sin errores.
+3. Combinar begin/rescue/else/ensure/end correctamente.
+4. Implementar patrones de limpieza con ensure.
+5. Cerrar archivos y liberar recursos con ensure.
+6. Entender el orden de ejecución de las cláusulas.
+7. Usar ensure en métodos y bloques.
+8. Diferenciar ensure, else, y código normal.
+9. Aplicar ensure en contextos de bloque (File.open, etc.).
+10. Escribir código robusto que no deje recursos colgados.
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. EL PROBLEMA DE LA LIMPIEZA
+----------------------------------------------------------------------
+
+Cuando trabajamos con recursos externos (archivos, conexiones de red,
+locks, memoria compartida), debemos asegurarnos de liberarlos después
+de usarlos, incluso si ocurre un error.
+
+Sin ensure, tendríamos que duplicar el código de limpieza:
+
+  archivo = File.open("datos.txt", "w")
+  begin
+    archivo.puts "datos"
+    # ... más operaciones que pueden fallar
+    archivo.close  # cerrar si todo OK
+  rescue
+    archivo.close  # cerrar también si hay error
+    raise
+  end
+
+Con ensure, el cierre se escribe una sola vez:
+
+  archivo = File.open("datos.txt", "w")
+  begin
+    archivo.puts "datos"
+    # ...
+  ensure
+    archivo.close  # siempre se ejecuta
+  end
+
+================================================================================
+EJEMPLO 1: El problema de la limpieza
+================================================================================
+
+#------ archivo: ej01_limpieza.rb ------
+puts "=== EL PROBLEMA DE LA LIMPIEZA ==="
+
+# Sin ensure - código duplicado
+def escribir_sin_ensure
+  archivo = File.open("sin_ensure.txt", "w")
+  begin
+    archivo.puts "Línea 1"
+    raise "Error simulado"  # simular error
+    archivo.puts "Línea 2"  # no se ejecuta
+  rescue => e
+    puts "  Error capturado: #{e.message}"
+    archivo.close
+    raise
+  end
+  archivo.close
+end
+
+begin
+  escribir_sin_ensure
+rescue
+  puts "  (error propagado)"
+end
+
+# Con ensure - código limpio
+def escribir_con_ensure
+  archivo = File.open("con_ensure.txt", "w")
+  begin
+    archivo.puts "Línea 1"
+    raise "Error simulado"
+    archivo.puts "Línea 2"
+  rescue => e
+    puts "  Error capturado: #{e.message}"
+    raise
+  ensure
+    puts "  Ensure: cerrando archivo"
+    archivo.close
+  end
+end
+
+begin
+  escribir_con_ensure
+rescue
+  puts "  (error propagado)"
+end
+
+# Verificar que el archivo se cerró en ambos casos
+puts "\n¿Archivo cerrado después de ensure? (no podemos verificarlo"
+puts "directamente porque close no deja rastro, pero el file descriptor"
+puts "se liberó correctamente)"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+2. ESTRUCTURA COMPLETA: BEGIN/RESCUE/ELSE/ENSURE/END
+----------------------------------------------------------------------
+
+La estructura completa del manejo de excepciones en Ruby:
+
+  begin
+    # código que puede fallar
+  rescue Tipo1 => e
+    # se ejecuta si hay Tipo1
+  rescue Tipo2 => e
+    # se ejecuta si hay Tipo2
+  else
+    # se ejecuta solo si NO hubo excepción
+  ensure
+    # se ejecuta SIEMPRE
+  end
+
+Orden de ejecución:
+  1. Se ejecuta el bloque begin.
+  2. Si ocurre una excepción → se ejecuta rescue correspondiente.
+  3. Si NO ocurre excepción → se ejecuta else.
+  4. Siempre, al final, se ejecuta ensure.
+
+================================================================================
+EJEMPLO 2: Estructura completa
+================================================================================
+
+#------ archivo: ej02_estructura_completa.rb ------
+puts "=== ESTRUCTURA COMPLETA ==="
+
+def probar_estructura(valor)
+  puts "\n--- probar_estructura(#{valor.inspect}) ---"
+  begin
+    puts "  BEGIN: intentando convertir..."
+    resultado = Integer(valor)
+    puts "  BEGIN: convertido a #{resultado}"
+    resultado
+  rescue ArgumentError, TypeError => e
+    puts "  RESCUE: error de conversión: #{e.message}"
+    nil
+  rescue => e
+    puts "  RESCUE: error inesperado: #{e.message}"
+    nil
+  else
+    puts "  ELSE: conversión exitosa (no hubo error)"
+    resultado
+  ensure
+    puts "  ENSURE: esto siempre se ejecuta"
+  end
+end
+
+probar_estructura("42")
+probar_estructura("hola")
+probar_estructura(nil)
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+3. ENSURE — GARANTÍA DE EJECUCIÓN
+----------------------------------------------------------------------
+
+Ensure se ejecuta en TODAS las circunstancias:
+  - Si el bloque begin se completa normalmente.
+  - Si ocurre una excepción (aunque no haya rescue).
+  - Si hay un return dentro de begin o rescue.
+  - Si hay un break, next, o redo.
+  - Si hay un throw/catch.
+
+Solo hay DOS casos en que ensure NO se ejecuta:
+  - Si el proceso recibe SIGKILL (kill -9).
+  - Si ocurre un SystemExit (exit!) — pero sí se ejecuta con exit.
+
+================================================================================
+EJEMPLO 3: Ensure siempre se ejecuta
+================================================================================
+
+#------ archivo: ej03_ensure_siempre.rb ------
+puts "=== ENSURE SIEMPRE SE EJECUTA ==="
+
+def demostrar_ensure
+  begin
+    puts "  BEGIN: dentro del bloque"
+    return "RETURN desde begin"
+  ensure
+    puts "  ENSURE: esto se ejecuta ANTES del return"
+  end
+end
+
+puts "Resultado: #{demostrar_ensure}"
+
+# Ensure con excepción no capturada
+puts "\n--- Ensure con excepción no capturada ---"
+begin
+  begin
+    puts "  BEGIN anidado"
+    raise "Error no capturado aquí"
+  ensure
+    puts "  ENSURE: esto se ejecuta antes de propagar el error"
+  end
+rescue => e
+  puts "  RESCUE externo: #{e.message}"
+end
+
+# Ensure con break en bloque
+puts "\n--- Ensure con break ---"
+resultado = loop do
+  begin
+    puts "  Iteración"
+    break 42
+  ensure
+    puts "  ENSURE en loop: se ejecuta antes del break"
+  end
+end
+puts "Resultado del loop: #{resultado}"
+
+# Ensure con exit
+puts "\n--- Ensure con exit ---"
+begin
+  begin
+    puts "  BEGIN: antes de exit"
+    exit 0
+  ensure
+    puts "  ENSURE: se ejecuta incluso con exit!"
+  end
+rescue SystemExit
+  puts "  RESCUE: SystemExit capturado"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+4. ENSURE EN MÉTODOS (SIN BEGIN EXPLÍCITO)
+----------------------------------------------------------------------
+
+En Ruby, el cuerpo de un método actúa como un bloque begin implícito.
+Puedes usar rescue y ensure directamente en un método sin begin.
+
+  def metodo
+    # código
+  rescue Tipo => e
+    # manejo
+  else
+    # sin error
+  ensure
+    # siempre
+  end
+
+Esto es más limpio que anidar begin...end dentro del método.
+
+================================================================================
+EJEMPLO 4: Ensure en métodos
+================================================================================
+
+#------ archivo: ej04_ensure_metodo.rb ------
+puts "=== ENSURE EN MÉTODOS ==="
+
+def leer_archivo(ruta)
+  archivo = File.open(ruta, "r")
+  contenido = archivo.read
+  puts "  Leído: #{contenido.chomp}"
+  contenido
+rescue Errno::ENOENT => e
+  puts "  Error: #{e.message}"
+  nil
+else
+  puts "  (lectura exitosa)"
+ensure
+  puts "  Ensure: cerrando archivo"
+  archivo.close if archivo && !archivo.closed?
+end
+
+puts "\n--- Archivo existe ---"
+File.write("test_ensure.txt", "Hola Mundo")
+leer_archivo("test_ensure.txt")
+
+puts "\n--- Archivo no existe ---"
+leer_archivo("no_existe.txt")
+
+File.delete("test_ensure.txt") if File.exist?("test_ensure.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+5. ELSE — EJECUCIÓN CONDICIONAL SIN ERROR
+----------------------------------------------------------------------
+
+else se ejecuta solo si NO ocurrió ninguna excepción en el bloque
+begin. Es útil para código que debe ejecutarse solo cuando todo
+salió bien.
+
+  begin
+    # operación
+  rescue
+    # error
+  else
+    # solo si no hay error
+  end
+
+La diferencia entre poner código en begin y en else:
+  - Código en begin: si falla, es capturado por rescue.
+  - Código en else: si falla, NO es capturado por el rescue anterior
+    (se propaga a un nivel superior).
+
+Esto permite separar la lógica "principal" de la lógica de "éxito".
+
+================================================================================
+EJEMPLO 5: Else en acción
+================================================================================
+
+#------ archivo: ej05_else.rb ------
+puts "=== ELSE EN ACCIÓN ==="
+
+def procesar_pedido(id)
+  pedido = buscar_pedido(id)
+
+  begin
+    validar_pedido(pedido)
+    cobrar(pedido)
+  rescue => e
+    puts "  Error al procesar pedido: #{e.message}"
+    registrar_error(e)
+    false
+  else
+    # Solo si no hubo error
+    puts "  Pedido procesado exitosamente"
+    enviar_confirmacion(pedido)
+    actualizar_inventario(pedido)
+    true
+  ensure
+    puts "  (Ensure: liberando recursos del pedido #{id})"
+  end
+end
+
+def buscar_pedido(id)
+  {id: id, items: ["curso_ruby", "curso_rails"], total: 99.99}
+end
+
+def validar_pedido(pedido)
+  raise "Pedido vacío" if pedido[:items].empty?
+  puts "  Pedido validado"
+end
+
+def cobrar(pedido)
+  puts "  Cobro realizado: $#{pedido[:total]}"
+end
+
+def enviar_confirmacion(pedido)
+  puts "  Confirmación enviada al cliente"
+end
+
+def actualizar_inventario(pedido)
+  puts "  Inventario actualizado"
+end
+
+def registrar_error(error)
+  puts "  [LOG] Error registrado: #{error.message}"
+end
+
+puts "\n--- Pedido exitoso ---"
+procesar_pedido(123)
+
+puts "\n--- Pedido con error ---"
+# Simular error modificando el pedido
+def validar_pedido(pedido)
+  raise "Error de validación: tarjeta rechazada"
+end
+
+procesar_pedido(456)
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+6. ORDEN DE EJECUCIÓN DETALLADO
+----------------------------------------------------------------------
+
+El orden exacto de ejecución:
+
+  1. begin
+  2. Si excepción → rescue
+  3. Si NO excepción → else
+  4. ensure (siempre)
+
+Importante: si rescue maneja la excepción sin relanzar, else NO se
+ejecuta (porque hubo excepción). Si rescue relanza, ensure se ejecuta
+antes de que la excepción se propague.
+
+================================================================================
+EJEMPLO 6: Orden de ejecución detallado
+================================================================================
+
+#------ archivo: ej06_orden_ejecucion.rb ------
+puts "=== ORDEN DE EJECUCIÓN ==="
+
+def caso_1  # todo OK
+  puts "\n--- Caso 1: Todo OK ---"
+  begin
+    puts "  [1] BEGIN"
+  rescue => e
+    puts "  [2] RESCUE"
+  else
+    puts "  [3] ELSE"
+  ensure
+    puts "  [4] ENSURE"
+  end
+end
+
+def caso_2  # error capturado
+  puts "\n--- Caso 2: Error capturado ---"
+  begin
+    puts "  [1] BEGIN"
+    raise "Error!"
+    puts "  [1] BEGIN (después de raise - no se ejecuta)"
+  rescue => e
+    puts "  [2] RESCUE: #{e.message}"
+  else
+    puts "  [3] ELSE (no se ejecuta porque hubo error)"
+  ensure
+    puts "  [4] ENSURE"
+  end
+end
+
+def caso_3  # error no capturado
+  puts "\n--- Caso 3: Error relanzado ---"
+  begin
+    begin
+      puts "  [1] BEGIN interno"
+      raise "Error interno!"
+    rescue => e
+      puts "  [2] RESCUE interno"
+      puts "  [2] Relanzando..."
+      raise
+    else
+      puts "  [3] ELSE interno"
+    ensure
+      puts "  [4] ENSURE interno (se ejecuta ANTES de propagar)"
+    end
+  rescue => e
+    puts "  [5] RESCUE externo: #{e.message}"
+  end
+end
+
+def caso_4  # return en begin
+  puts "\n--- Caso 4: return en begin ---"
+  begin
+    puts "  [1] BEGIN"
+    return "VALOR"
+  rescue => e
+    puts "  [2] RESCUE"
+  else
+    puts "  [3] ELSE"
+  ensure
+    puts "  [4] ENSURE (se ejecuta ANTES del return)"
+  end
+end
+
+caso_1
+caso_2
+caso_3
+resultado = caso_4
+puts "  Resultado del return: #{resultado}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+7. PATRONES DE LIMPIEZA CON ENSURE
+----------------------------------------------------------------------
+
+Ensure se usa típicamente para liberar recursos:
+
+  1. Cerrar archivos:
+     archivo.close
+
+  2. Cerrar conexiones de red:
+     socket.close
+
+  3. Liberar locks:
+     mutex.unlock  o  flock.unlock
+
+  4. Eliminar archivos temporales:
+     File.delete(tempfile)
+
+  5. Restaurar estado global:
+     Dir.chdir(original_dir)
+
+  6. Cerrar bases de datos:
+     db.connection.close
+
+  7. Liberar memoria externa:
+     buffer.release
+
+================================================================================
+EJEMPLO 7: Patrones de limpieza
+================================================================================
+
+#------ archivo: ej07_patrones_limpieza.rb ------
+puts "=== PATRONES DE LIMPIEZA ==="
+
+# Patrón 1: Archivos
+def leer_con_respaldo(ruta_principal, ruta_respaldo)
+  archivo = nil
+  begin
+    archivo = File.open(ruta_principal, "r")
+    archivo.read
+  rescue Errno::ENOENT
+    archivo = File.open(ruta_respaldo, "r") if File.exist?(ruta_respaldo)
+    archivo&.read
+  ensure
+    archivo.close if archivo && !archivo.closed?
+  end
+end
+
+puts "--- Archivos ---"
+File.write("principal.txt", "Datos principales")
+File.write("respaldo.txt", "Datos de respaldo")
+puts "  Principal: #{leer_con_respaldo('principal.txt', 'respaldo.txt')}"
+puts "  Solo respaldo: #{leer_con_respaldo(' inexistente.txt', 'respaldo.txt')}"
+File.delete("principal.txt") if File.exist?("principal.txt")
+File.delete("respaldo.txt") if File.exist?("respaldo.txt")
+
+# Patrón 2: Directorio temporal
+require 'fileutils'
+def trabajar_en_temporal
+  dir_original = Dir.pwd
+  dir_temporal = File.join(Dir.tmpdir, "trabajo_#{Time.now.to_i}")
+  FileUtils.mkdir_p(dir_temporal)
+
+  begin
+    Dir.chdir(dir_temporal)
+    puts "  Trabajando en: #{Dir.pwd}"
+    File.write("temp.txt", "trabajo temporal")
+    puts "  Creado: temp.txt"
+  ensure
+    Dir.chdir(dir_original)
+    FileUtils.rm_rf(dir_temporal)
+    puts "  Limpieza: volvimos a #{Dir.pwd}"
+    puts "  Limpieza: temporal eliminado"
+  end
+end
+
+puts "\n--- Directorio temporal ---"
+trabajar_en_temporal
+
+# Patrón 3: Mutex (simulado)
+class RecursoCompartido
+  def initialize
+    @bloqueado = false
+  end
+
+  def usar
+    adquirir_lock
+    begin
+      puts "  Recurso adquirido, trabajando..."
+      yield if block_given?
+    ensure
+      liberar_lock
+      puts "  Recurso liberado"
+    end
+  end
+
+  private
+
+  def adquirir_lock
+    @bloqueado = true
+  end
+
+  def liberar_lock
+    @bloqueado = false
+  end
+end
+
+puts "\n--- Lock ---"
+recurso = RecursoCompartido.new
+recurso.usar do
+  puts "  Dentro del recurso protegido"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+8. ENSURE CON VALOR DE RETORNO
+----------------------------------------------------------------------
+
+Importante: si ensure tiene un valor de retorno explícito, este
+SOBREESCRIBE el valor de retorno del bloque begin/rescue.
+
+  def metodo
+    begin
+      42
+    ensure
+      "hola"  # ← esto SOBREESCRIBE el 42
+    end
+  end
+
+  metodo  # => "hola" (no 42)
+
+Esto es una fuente común de bugs. Ensure debe usarse para limpieza,
+no para retornar valores.
+
+================================================================================
+EJEMPLO 8: Ensure y valor de retorno
+================================================================================
+
+#------ archivo: ej08_ensure_retorno.rb ------
+puts "=== ENSURE Y VALOR DE RETORNO ==="
+
+# Ensure sobreescribe el retorno
+def ejemplo_1
+  begin
+    42
+  ensure
+    "sobrescrito"
+  end
+end
+
+puts "ejemplo_1: #{ejemplo_1.inspect}"
+puts "  (esperado: 42, real: #{ejemplo_1})"
+puts "  ¡Ensure sobreescribe el retorno!"
+
+# Con rescue
+def ejemplo_2
+  begin
+    "éxito"
+  rescue
+    "error"
+  ensure
+    "ensure"
+  end
+end
+
+puts "\nejemplo_2: #{ejemplo_2.inspect}"
+puts "  (ensure NO interfiere si no hay return explícito en ensure)"
+
+# return explícito en ensure
+def ejemplo_3
+  begin
+    return "begin"
+  ensure
+    return "ensure"  # ← esto sobreescribe
+  end
+end
+
+puts "\nejemplo_3: #{ejemplo_3.inspect}"
+puts "  (return en ensure sobreescribe cualquier retorno anterior)"
+
+# Mejor práctica: ensure solo para limpieza
+def leer_config(ruta)
+  archivo = File.open(ruta, "r")
+  YAML.safe_load(archivo.read)
+rescue => e
+  puts "Error: #{e.message}"
+  {}
+ensure
+  archivo.close if archivo && !archivo.closed?
+  # Sin return aquí
+end
+
+require 'yaml'
+puts "\n--- Buen uso de ensure ---"
+File.write("config_test.yml", "clave: valor\n")
+resultado = leer_config("config_test.yml")
+puts "Resultado: #{resultado.inspect}"
+File.delete("config_test.yml") if File.exist?("config_test.yml")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+9. ENSURE EN BLOQUES (FILE.OPEN, ETC.)
+----------------------------------------------------------------------
+
+Muchos métodos de Ruby que aceptan bloques implementan ensure
+internamente. Por ejemplo, File.open con bloque:
+
+  File.open("ruta", "w") do |f|
+    f.puts "datos"
+  end
+  # f.close se llama en ensure automáticamente
+
+Esto es equivalente a:
+
+  f = File.open("ruta", "w")
+  begin
+    f.puts "datos"
+  ensure
+    f.close
+  end
+
+Al usar la forma con bloque, no necesitas escribir ensure manualmente.
+
+================================================================================
+EJEMPLO 9: Ensure implícito en bloques
+================================================================================
+
+#------ archivo: ej09_ensure_implicito.rb ------
+puts "=== ENSURE IMPLÍCITO EN BLOQUES ==="
+
+# File.open con bloque (ensure implícito)
+puts "--- File.open con bloque ---"
+File.open("test_bloque.txt", "w") do |f|
+  puts "  Archivo abierto, escribiendo..."
+  f.puts "Datos con ensure implícito"
+  raise "Error simulado"  # incluso con error
+  puts "  Esto no se ejecuta"
+end
+puts "  (El archivo se cerró automáticamente en el ensure)"
+
+# Implementar nuestro propio método con bloque + ensure
+class GestorConexion
+  def self.conectar(nombre)
+    conexion = new(nombre)
+    puts "  Conectado a: #{nombre}"
+    begin
+      yield conexion if block_given?
+    ensure
+      conexion.desconectar
+      puts "  Desconectado (ensure)"
+    end
+  end
+
+  def initialize(nombre)
+    @nombre = nombre
+    @conectado = true
+  end
+
+  def ejecutar(sql)
+    puts "  Ejecutando: #{sql}"
+  end
+
+  def desconectar
+    @conectado = false
+  end
+end
+
+puts "\n--- GestorConexion con bloque ---"
+GestorConexion.conectar("DB_Principal") do |db|
+  db.ejecutar("SELECT * FROM usuarios")
+  db.ejecutar("INSERT INTO logs VALUES ('ok')")
+  # raise "Error de BD"  # descomentar para probar
+end
+puts "  (La conexión se cerró automáticamente)"
+
+GestorConexion.conectar("DB_Secundaria") do |db|
+  db.ejecutar("SELECT 1")
+  raise "Error simulado de red"
+  db.ejecutar("Esto no se ejecuta")
+end
+puts "  (Incluso con error, la conexión se cerró)"
+
+File.delete("test_bloque.txt") if File.exist?("test_bloque.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+10. ENSURE ANIDADO
+----------------------------------------------------------------------
+
+Puedes tener bloques begin/rescue/ensure anidados. Cada nivel tiene
+su propio ensure. El ensure interno se ejecuta antes que el externo.
+
+================================================================================
+EJEMPLO 10: Ensure anidado
+================================================================================
+
+#------ archivo: ej10_ensure_anidado.rb ------
+puts "=== ENSURE ANIDADO ==="
+
+def operacion_compleja
+  archivo1 = nil
+  archivo2 = nil
+
+  begin  # nivel externo
+    archivo1 = File.open("externo.txt", "w")
+    archivo1.puts "Archivo externo"
+
+    begin  # nivel interno
+      archivo2 = File.open("interno.txt", "w")
+      archivo2.puts "Archivo interno"
+      raise "Error en operación interna"
+      archivo2.puts "Esto no se escribe"
+    rescue => e
+      puts "  [Interno] Error: #{e.message}"
+      raise  # relanzar
+    ensure
+      puts "  [Interno] Ensure: cerrando archivo2"
+      archivo2.close if archivo2 && !archivo2.closed?
+    end
+
+  rescue => e
+    puts "  [Externo] Error capturado: #{e.message}"
+  ensure
+    puts "  [Externo] Ensure: cerrando archivo1"
+    archivo1.close if archivo1 && !archivo1.closed?
+  end
+end
+
+operacion_compleja
+
+puts "\nOrden de ejecución:"
+puts "  1. BEGIN externo"
+puts "  2. BEGIN interno"
+puts "  3. RESCUE interno"
+puts "  4. ENSURE interno (cierra archivo2)"
+puts "  5. RESCUE externo (captura el error relanzado)"
+puts "  6. ENSURE externo (cierra archivo1)"
+
+File.delete("externo.txt") if File.exist?("externo.txt")
+File.delete("interno.txt") if File.exist?("interno.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+11. CASOS DE USO REALES DE ENSURE
+----------------------------------------------------------------------
+
+Ensure se usa en toda la stdlib de Ruby:
+
+  - File.open (cierra el archivo)
+  - Dir.chdir con bloque (restaura el directorio)
+  - Mutex#synchronize (libera el lock)
+  - Tempfile (elimina el archivo)
+  - Socket (cierra la conexión)
+  - DB drivers (cierra la conexión)
+
+Ejemplos de la stdlib:
+
+  # Dir.chdir con bloque
+  Dir.chdir("/tmp") { ... }  # ensure restaura Dir.pwd
+
+  # Mutex#synchronize
+  mutex.synchronize { ... }  # ensure libera el mutex
+
+  # File.open con bloque
+  File.open("ruta") { |f| ... }  # ensure cierra f
+
+================================================================================
+EJEMPLO 11: Caso real - backup de base de datos
+================================================================================
+
+#------ archivo: ej11_backup.rb ------
+require 'fileutils'
+
+puts "=== CASO REAL: BACKUP ==="
+
+class BackupManager
+  def initialize(db_path, backup_path)
+    @db_path = db_path
+    @backup_path = backup_path
+    @temp_files = []
+  end
+
+  def realizar_backup
+    puts "Iniciando backup..."
+    FileUtils.mkdir_p(File.dirname(@backup_path))
+
+    begin
+      # 1. Crear dump temporal
+      dump_path = "#{@backup_path}.tmp"
+      @temp_files << dump_path
+      File.write(dump_path, "DUMP_DATA:#{Time.now}")
+
+      # 2. Comprimir
+      compressed = "#{dump_path}.gz"
+      @temp_files << compressed
+      File.write(compressed, "COMPRESSED_DATA")
+
+      # 3. Cifrar
+      encrypted = "#{compressed}.enc"
+      @temp_files << encrypted
+      File.write(encrypted, "ENCRYPTED_DATA")
+
+      # 4. Mover a destino final
+      File.rename(encrypted, @backup_path)
+      puts "Backup completado: #{@backup_path}"
+
+    rescue => e
+      puts "ERROR durante backup: #{e.message}"
+      raise
+    else
+      puts "Backup verificado y exitoso"
+    ensure
+      puts "Limpieza: eliminando archivos temporales..."
+      @temp_files.each do |f|
+        if File.exist?(f)
+          File.delete(f)
+          puts "  Eliminado: #{f}"
+        end
+      end
+      puts "Limpieza completada"
+    end
+  end
+end
+
+bm = BackupManager.new("datos.db", "/tmp/backup_datos.db.bak")
+begin
+  bm.realizar_backup
+rescue => e
+  puts "Backup falló: #{e.message}"
+end
+
+File.delete("/tmp/backup_datos.db.bak") if File.exist?("/tmp/backup_datos.db.bak")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+12. ENSURE Y RETURN: CASOS ESPECIALES
+----------------------------------------------------------------------
+
+Return dentro de begin:
+  - ensure se ejecuta ANTES de que el return tenga efecto.
+  - Si ensure tiene su propio return, este prevalece.
+
+Return dentro de rescue:
+  - Misma regla: ensure se ejecuta antes del return.
+  - ensure con return sobreescribe.
+
+================================================================================
+EJEMPLO 12: Ensure y return
+================================================================================
+
+#------ archivo: ej12_ensure_return.rb ------
+puts "=== ENSURE Y RETURN ==="
+
+def sin_return_ensure
+  begin
+    :begin_valor
+  ensure
+    :ensure_valor  # no interfiere (no es return)
+  end
+end
+
+def con_return_ensure
+  begin
+    return :begin_valor
+  ensure
+    return :ensure_valor  # SOBREESCRIBE
+  end
+end
+
+def rescue_con_return
+  begin
+    raise "error"
+  rescue
+    return :rescue_valor
+  ensure
+    return :ensure_valor  # SOBREESCRIBE
+  end
+end
+
+puts "sin_return_ensure: #{sin_return_ensure}"
+puts "con_return_ensure: #{con_return_ensure}"
+puts "rescue_con_return: #{rescue_con_return}"
+
+# Demostrar que ensure se ejecuta antes del return
+def ensure_antes_return
+  puts "  (inicio del método)"
+  begin
+    puts "  (begin: antes de return)"
+    return "RETURN"
+  ensure
+    puts "  (ENSURE: esto se imprime ANTES de que el return salga)"
+  end
+end
+
+puts "\n--- Orden ---"
+resultado = ensure_antes_return
+puts "  Resultado: #{resultado}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+13. BUENAS PRÁCTICAS CON ENSURE
+----------------------------------------------------------------------
+
+1. Usa ensure para limpieza, no para lógica de negocio.
+2. No pongas return en ensure a menos que sea absolutamente necesario.
+3. Prefiere File.open con bloque en lugar de ensure manual.
+4. Libera los recursos en orden inverso a como los adquiriste.
+5. Verifica que el recurso existe antes de liberarlo (archivo&.close).
+6. Ensure debe ser simple y rápido (no hacer operaciones pesadas).
+7. Si el propio ensure puede fallar, considera esa posibilidad.
+8. Usa ensure también para restaurar estado global (chdir, etc.).
+9. No uses ensure para silenciar excepciones (para eso está rescue).
+10. Asegúrate de que ensure no lance nuevas excepciones.
+
+================================================================================
+EJEMPLO 13: Buenas prácticas
+================================================================================
+
+#------ archivo: ej13_buenas_practicas.rb ------
+puts "=== BUENAS PRÁCTICAS ==="
+
+# Mala práctica: return en ensure
+def mal_ensure
+  begin
+    archivo = File.open("mal.txt", "w")
+    archivo.puts "datos"
+    "éxito"
+  ensure
+    archivo.close if archivo
+    return "ensure_return"  # ← mal: sobreescribe
+  end
+end
+puts "Mal: #{mal_ensure}"
+
+# Buena práctica: ensure sin return
+def bien_ensure
+  archivo = File.open("bien.txt", "w")
+  archivo.puts "datos"
+  "éxito"
+ensure
+  archivo.close if archivo
+end
+puts "Bien: #{bien_ensure}"
+
+# Mala práctica: lógica de negocio en ensure
+def procesar_con_ensure
+  resultado = nil
+  begin
+    resultado = "valor calculado"
+  ensure
+    # No: lógica aquí
+    resultado = "modificado en ensure"
+  end
+  resultado
+end
+
+# Buena práctica: código limpio
+def adquirir_recurso
+  recurso = Recurso.new
+  yield recurso
+ensure
+  recurso&.liberar
+end
+
+# Verificación segura en ensure
+def leer_seguro(ruta)
+  archivo = File.open(ruta, "r") rescue nil
+  return nil unless archivo
+
+  begin
+    archivo.read
+  ensure
+    archivo.close if archivo && !archivo.closed?
+  end
+end
+
+puts "\nlectura_segura (existe): #{leer_seguro('/etc/hostname').inspect}"
+puts "lectura_segura (no existe): #{leer_seguro('/no/existe').inspect}"
+
+File.delete("mal.txt") if File.exist?("mal.txt")
+File.delete("bien.txt") if File.exist?("bien.txt")
+
+#------ fin del ejemplo ------
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. ensure: código que SIEMPRE se ejecuta, haya o no excepción.
+2. else: código que se ejecuta solo si NO hubo excepción.
+3. Estructura completa: begin...rescue...else...ensure...end.
+4. ensure en métodos: se puede usar sin begin explícito.
+5. ensure se ejecuta incluso con return, break, next, raise.
+6. ensure con return SOBREESCRIBE el valor de retorno.
+7. Los bloques (File.open, Dir.chdir) tienen ensure implícito.
+8. Ensure se usa para liberar recursos: archivos, locks, conexiones.
+9. Ensure anidado: el interno se ejecuta antes que el externo.
+10. Buenas prácticas: ensure para limpieza, no para lógica.
+
+Regla de oro: "Ensure es para liberar recursos, no para modificar
+el flujo del programa. Si tu ensure tiene un return, algo está mal."
+
+================================================================================
+EJERCICIOS
+================================================================================
+
+1. ENSURE BÁSICO: Crea un método que abra un archivo, escriba algo,
+   y use ensure para cerrarlo. Incluye un raise en el medio.
+
+2. ELSE: Crea un método que procese un número (convertir a entero)
+   y use else para mostrar "Conversión exitosa" solo si no hay error.
+
+3. ESTRUCTURA COMPLETA: Escribe un programa que pida al usuario un
+   número, lo convierta a entero, lo divida por 2, y use toda la
+   estructura (begin, rescue, else, ensure).
+
+4. ENSURE EN MÉTODO: Crea un método sin begin explícito que abra un
+   archivo, lea su contenido, y tenga ensure para cerrarlo.
+
+5. RETURN: Demuestra cómo un return en ensure sobreescribe el valor
+   de retorno de begin. Muestra el resultado inesperado.
+
+6. LIMPIEZA: Crea un programa que adquiera dos archivos, los use,
+   y los cierre en ensure. Si uno falla, el otro debe cerrarse.
+
+7. ENSURE ANIDADO: Escribe un método con tres niveles de anidación
+   y muestra en qué orden se ejecutan los ensures.
+
+8. BLOQUE: Implementa un método propio que acepte un bloque y tenga
+   ensure para liberar un recurso (similar a File.open).
+
+9. DIR.CHDIR: Usa Dir.chdir con bloque para cambiar a /tmp, crear
+   un archivo, y verificar que al salir estés en el directorio
+   original (usa ensure implícito de chdir).
+
+10. DESAFÍO: Escribe un gestor de transacciones que:
+    - Abra un archivo de log.
+    - Ejecute un bloque de código.
+    - Si el bloque tiene éxito, escriba "COMMIT" en el log.
+    - Si falla, escriba "ROLLBACK" en el log.
+    - Siempre cierre el archivo en ensure.
+
+================================================================================
+PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Qué se ejecuta primero, else o ensure?
+R: else se ejecuta antes que ensure. Orden: begin → rescue? → else? → ensure.
+
+P: ¿Ensure se ejecuta si hay un return?
+R: Sí. Ensure se ejecuta ANTES de que el return tenga efecto.
+
+P: ¿Ensure se ejecuta si hay un exit?
+R: Sí, exit lanza SystemExit, que es una excepción. Ensure la captura
+   y se ejecuta. (Pero exit! no, porque sale inmediatamente.)
+
+P: ¿Ensure se ejecuta si hay un throw/catch?
+R: Sí, throw también pasa por ensure.
+
+P: ¿Ensure se ejecuta si hay un error en rescue?
+R: Sí. Si rescue mismo lanza un error, ensure se ejecuta antes de
+   propagar ese nuevo error.
+
+P: ¿Puedo tener ensure sin begin?
+R: En el cuerpo de un método sí (el método es un begin implícito).
+   Fuera de un método, necesitas begin explícito.
+
+P: ¿Qué pasa si ensure lanza una excepción?
+R: Si ensure lanza una excepción, esta reemplazará cualquier excepción
+   anterior. Es una mala práctica.
+
+P: ¿Ensure es como finally en otros lenguajes?
+R: Sí, es equivalente a finally en Java, Python, etc.
+
+P: ¿Puedo tener múltiples ensures?
+R: No, solo un ensure por bloque begin. Pero puedes anidar begins.
+
+P: ¿Else puede tener rescue propio?
+R: No. Si else lanza una excepción, esta se propaga al nivel superior.
+   Si necesitas capturarla, pon otro begin/rescue dentro de else.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Construye un gestor de recursos llamado "ResourceManager" que
+garantice la liberación correcta de recursos incluso en caso de
+errores.
+
+Requisitos funcionales:
+
+1. ResourceManager.new
+   - Inicializa el gestor con una lista vacía de recursos.
+
+2. ResourceManager#adquirir(recurso, &bloque)
+   - Registra un recurso y ejecuta un bloque opcional.
+   - Devuelve el recurso.
+   - Si el bloque falla, el recurso se libera automáticamente.
+
+3. ResourceManager#liberar_todos
+   - Libera todos los recursos registrados (en orden inverso).
+   - Se llama automáticamente en un ensure global.
+
+4. ResourceManager#recurso?(nombre)
+   - Verifica si un recurso está registrado.
+
+5. ResourceManager#con_recursos(&bloque)
+   - Ejecuta un bloque con garantía de que todos los recursos
+     adquiridos dentro se liberarán al final.
+
+Además, implementa un Recurso simulado:
+
+  class Recurso
+    attr_reader :nombre, :activo
+    def initialize(nombre)
+      @nombre = nombre
+      @activo = true
+    end
+    def usar; end
+    def liberar
+      @activo = false
+    end
+  end
+
+Ejemplo de uso:
+
+  rm = ResourceManager.new
+  rm.con_recursos do
+    r1 = rm.adquirir(Recurso.new("DB"))
+    r2 = rm.adquirir(Recurso.new("Cache"))
+    r1.usar
+    r2.usar
+    raise "Error!"  # ambos recursos se liberan
+  end
+
+Requisitos técnicos:
+  - Usa ensure para garantizar la liberación.
+  - Libera en orden inverso al de adquisición (LIFO).
+  - Si liberar un recurso falla, registra el error pero continúa
+    liberando los demás.
+  - Implementa logging de adquisiciones y liberaciones.
+  - Incluye pruebas unitarias.
+
+Este desafío integra ensure, manejo de errores, y diseño de API
+para gestión de recursos, un patrón común en sistemas complejos.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+================================================================================
+
+Has dominado ensure y else, dos componentes esenciales del sistema
+de manejo de excepciones de Ruby. Ahora sabes cómo garantizar que
+los recursos se liberen siempre, cómo ejecutar código condicional
+según el éxito o fracaso, y cómo estructurar bloques de manejo de
+errores completos.
+
+La combinación de begin, rescue, else, y ensure te da un control
+preciso sobre el flujo de tu programa ante situaciones excepcionales.
+Úsala con sabiduría y tu código será robusto, predecible y elegante.
+
+En el próximo capítulo exploraremos raise y retry: cómo lanzar tus
+propias excepciones y cómo reintentar operaciones fallidas.
+
+¡Nos vemos en el Capítulo 58!
+
+================================================================================
+PRÓXIMO CAPÍTULO
+================================================================================
+
+Capítulo 58: RETRY Y RAISE
+  - raise: lanzar excepciones manualmente
+  - raise con mensaje personalizado
+  - raise con tipo específico
+  - retry: reintentar bloques begin
+  - retry con límite de intentos
+  - $! y $@ después de raise
+  - raise dentro de rescue (relanzar)
+
+================================================================================
+FIN DEL CAPÍTULO 57
+================================================================================

@@ -1,0 +1,1100 @@
+================================================================================
+  CAPÍTULO 64: RVALUE REFERENCES
+  MÓDULO VII: C++ MODERNO
+  C++ MASTER BOOK
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo sobre referencias rvalue (&&). Este mecanismo
+es el fundamento técnico de la semántica de movimiento y del perfect
+forwarding. Entender las referencias rvalue es crucial para dominar
+el C++ moderno y escribir bibliotecas eficientes.
+
+FRASE DEL CAPÍTULO
+------------------
+"Las referencias rvalue resuelven el problema del forwarding perfecto
+y permiten implementar move semantics de forma segura y eficiente."
+— Howard Hinnant
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Distinguir entre lvalues y rvalues en C++.
+2. Comprender la sintaxis T&& como referencia rvalue.
+3. Implementar perfect forwarding con std::forward.
+4. Dominar las reglas de reference collapsing.
+5. Usar referencias universales (forwarding references).
+6. Aplicar std::forward en plantillas variádicas.
+7. Reconocer las sobrecargas con & y && (ref-qualifiers).
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--- 1. LVALUES Y RVALUES ---
+
+Todo valor en C++ es lvalue o rvalue. Los lvalues tienen dirección
+persistente; los rvalues son temporales.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <utility>
+
+// Funciones para distinguir lvalues de rvalues
+void categorizar(int& x) {
+    std::cout << "lvalue: " << x << "\n";
+}
+
+void categorizar(int&& x) {
+    std::cout << "rvalue: " << x << "\n";
+}
+
+int main() {
+    // lvalues: tienen nombre, dirección, & funciona
+    int x = 42;
+    int& ref = x;
+
+    categorizar(x);       // lvalue
+    categorizar(ref);     // lvalue
+
+    // rvalues: temporales, no tienen nombre persistente
+    categorizar(42);           // rvalue literal
+    categorizar(x + 10);       // rvalue resultado de expresión
+    categorizar(std::move(x)); // rvalue (convertido)
+
+    // Strings
+    std::string s = "Hola";
+    categorizar(s[0]);  // lvalue (char&)
+
+    // Regla general:
+    // - Si puedes tomar su dirección (&x), es un lvalue
+    // - Si no, es un rvalue
+
+    std::cout << "&x = " << &x << "\n";     // OK: lvalue
+    // std::cout << &(x + 10);  // Error: no se puede tomar dirección de rvalue
+
+    return 0;
+}
+```
+
+--- 2. SINTAXIS T&& COMO REFERENCIA RVALUE ---
+
+T&& puede vincularse a rvalues pero no a lvalues.
+
+```cpp
+#include <iostream>
+#include <string>
+
+void soloRvalue(int&& x) {
+    std::cout << "Recibido rvalue: " << x << "\n";
+}
+
+void soloLvalue(int& x) {
+    std::cout << "Recibido lvalue: " << x << "\n";
+}
+
+void ambos(const int& x) {  // const& acepta ambos
+    std::cout << "Recibido (const&): " << x << "\n";
+}
+
+int main() {
+    int a = 10;
+
+    soloLvalue(a);       // OK: a es lvalue
+    // soloLvalue(20);   // Error: 20 es rvalue
+
+    soloRvalue(20);      // OK: 20 es rvalue
+    // soloRvalue(a);    // Error: a es lvalue
+
+    ambos(a);            // OK: const& acepta lvalue
+    ambos(30);           // OK: const& acepta rvalue
+
+    // Una vez que un rvalue tiene nombre, ES UN LVALUE
+    auto func = [](int&& param) {
+        // Aquí param es un lvalue (tiene nombre)
+        soloLvalue(param);     // OK
+        // soloRvalue(param);  // Error: param es lvalue
+        soloRvalue(std::move(param));  // OK: convertir a rvalue
+    };
+
+    func(40);
+
+    return 0;
+}
+```
+
+--- 3. REFERENCIAS UNIVERSALES (FORWARDING REFERENCES) ---
+
+Cuando T&& aparece en un contexto de deducción de tipos, es una
+referencia universal (forwarding reference), no una rvalue reference.
+
+```cpp
+#include <iostream>
+#include <utility>
+
+// T&& aquí es forwarding reference (no rvalue reference)
+template<typename T>
+void forwardingReference(T&& param) {
+    if (std::is_lvalue_reference<T>::value) {
+        std::cout << "T es lvalue reference: T&& colapsa a T&\n";
+    } else {
+        std::cout << "T no es referencia: T&& es rvalue reference\n";
+    }
+}
+
+// T&& aquí es rvalue reference (no hay deducción)
+template<typename T>
+class Wrapper {
+public:
+    void procesar(T&& param) {
+        // T&& es rvalue reference porque T ya está definido
+        std::cout << "T&& en clase (rvalue reference)\n";
+    }
+};
+
+int main() {
+    std::cout << "=== FORWARDING REFERENCES ===\n";
+
+    int x = 42;
+
+    // Llamada con lvalue: T se deduce como int&, T&& colapsa a int&
+    forwardingReference(x);
+
+    // Llamada con rvalue: T se deduce como int, T&& es int&&
+    forwardingReference(42);
+
+    // Con const
+    const int cx = 10;
+    forwardingReference(cx);  // T = const int&
+
+    // Regla de deducción:
+    // - Si argumento es lvalue de tipo U → T = U& → T&& = U& (colapso)
+    // - Si argumento es rvalue de tipo U → T = U → T&& = U&&
+
+    // auto&& también es forwarding reference
+    auto&& ref1 = x;   // auto = int& → auto&& = int&
+    auto&& ref2 = 42;  // auto = int → auto&& = int&&
+
+    std::cout << "ref1 es lvalue: " << std::is_lvalue_reference<decltype(ref1)>::value << "\n";
+    std::cout << "ref2 es rvalue: " << std::is_rvalue_reference<decltype(ref2)>::value << "\n";
+
+    return 0;
+}
+```
+
+--- 4. REFERENCE COLLAPSING ---
+
+Las reglas de colapso de referencias determinan qué sucede con T&, T&&, etc.
+
+```cpp
+#include <iostream>
+#include <type_traits>
+
+// Reglas de Reference Collapsing:
+// T&  &  → T&
+// T&  && → T&
+// T&& &  → T&
+// T&& && → T&&
+
+template<typename T>
+void mostrarColapso() {
+    std::cout << "T = " << typeid(T).name() << "\n";
+    std::cout << "  T&  : " << std::is_lvalue_reference<T&>::value << "\n";
+    std::cout << "  T&& : " << std::is_rvalue_reference<T&&>::value << "\n";
+}
+
+int main() {
+    std::cout << "=== REFERENCE COLLAPSING ===\n";
+
+    // Caso 1: T = int
+    // T&  = int&
+    // T&& = int&&
+    std::cout << "T = int:\n";
+    std::cout << "  int&  &  → int& : " << std::is_lvalue_reference<int&>::value << "\n";
+    std::cout << "  int&  && → int& : " << std::is_lvalue_reference<int&>::value << "\n";
+    std::cout << "  int&& &  → int& : " << std::is_lvalue_reference<int&>::value << "\n";
+    std::cout << "  int&& && → int&& : " << std::is_rvalue_reference<int&&>::value << "\n";
+
+    // Demostración práctica con typedef
+    using T1 = int&;
+    using T2 = T1&;    // int& & → int&
+    using T3 = T1&&;   // int& && → int&
+    std::cout << "\nT1 = int&:\n";
+    std::cout << "  T1& = int&: " << std::is_same<T2, int&>::value << "\n";
+    std::cout << "  T1&& = int&: " << std::is_same<T3, int&>::value << "\n";
+
+    using U1 = int&&;
+    using U2 = U1&;    // int&& & → int&
+    using U3 = U1&&;   // int&& && → int&&
+    std::cout << "\nU1 = int&&:\n";
+    std::cout << "  U1& = int&: " << std::is_same<U2, int&>::value << "\n";
+    std::cout << "  U1&& = int&&: " << std::is_same<U3, int&&>::value << "\n";
+
+    // Aplicación en plantillas
+    auto demo = []<typename T>(T&&) {
+        using NoRef = std::remove_reference_t<T>;
+        if constexpr (std::is_lvalue_reference_v<T>) {
+            std::cout << "  Lvalue reference\n";
+        } else {
+            std::cout << "  Rvalue reference\n";
+        }
+    };
+
+    int x = 5;
+    std::cout << "\nDemo con lvalue: ";
+    demo(x);
+    std::cout << "Demo con rvalue: ";
+    demo(5);
+
+    return 0;
+}
+```
+
+--- 5. PERFECT FORWARDING CON STD::FORWARD ---
+
+std::forward preserva la categoría de valor (lvalue/rvalue) de un argumento.
+
+```cpp
+#include <iostream>
+#include <utility>
+#include <string>
+#include <memory>
+
+struct Widget {
+    std::string nombre;
+    int id;
+
+    Widget(std::string n, int i) : nombre(std::move(n)), id(i) {
+        std::cout << "Widget(\"" << nombre << "\", " << id << ")\n";
+    }
+
+    Widget(const Widget& o) : nombre(o.nombre), id(o.id) {
+        std::cout << "Widget(copy: " << nombre << ")\n";
+    }
+
+    Widget(Widget&& o) noexcept
+        : nombre(std::move(o.nombre)), id(o.id) {
+        std::cout << "Widget(move: " << nombre << ")\n";
+    }
+};
+
+// Sin forwarding: siempre copia
+template<typename T>
+void wrapSinForward(T param) {
+    Widget w(param, 1);  // Siempre copia
+}
+
+// Con forwarding: preserva lvalue/rvalue
+template<typename T>
+void wrapConForward(T&& param) {
+    Widget w(std::forward<T>(param), 2);  // Forwarding perfecto
+}
+
+// Ejemplo más realista: make_unique-like
+template<typename T, typename... Args>
+auto makeWidget(Args&&... args) {
+    return std::make_unique<T>(std::forward<Args>(args)...);
+}
+
+int main() {
+    std::cout << "=== PERFECT FORWARDING ===\n";
+
+    std::string nombre = "Objeto";
+
+    std::cout << "\nSin forward (siempre copia):\n";
+    wrapSinForward(nombre);          // Copia
+    wrapSinForward(std::move(nombre));  // Copia también!
+
+    nombre = "Objeto2";
+    std::cout << "\nCon forward (perfecto):\n";
+    wrapConForward(nombre);                   // Lvalue → copia
+    wrapConForward(std::move(nombre));         // Rvalue → move
+
+    std::cout << "\nmakeWidget (forwarding variadico):\n";
+    auto w1 = makeWidget<Widget>("Directo", 10);
+    std::string s = "Con move";
+    auto w2 = makeWidget<Widget>(std::move(s), 20);
+
+    return 0;
+}
+```
+
+--- 6. STD::FORWARD VS STD::MOVE ---
+
+Diferencias clave entre std::forward y std::move.
+
+```cpp
+#include <iostream>
+#include <utility>
+#include <string>
+
+void procesar(int& x) {
+    std::cout << "procesar lvalue: " << x << "\n";
+}
+
+void procesar(int&& x) {
+    std::cout << "procesar rvalue: " << x << "\n";
+}
+
+template<typename T>
+void forwarding(T&& x) {
+    // std::move: siempre convierte a rvalue
+    procesar(std::move(x));   // Siempre rvalue
+
+    // std::forward: preserva la categoría original
+    procesar(std::forward<T>(x));  // Lvalue si T es T&, rvalue si T es T&&
+}
+
+// Implementación conceptual de std::forward
+namespace mi {
+    template<typename T>
+    T&& forward(std::remove_reference_t<T>& param) {
+        return static_cast<T&&>(param);
+    }
+
+    template<typename T>
+    std::remove_reference_t<T>&& move(T&& param) {
+        return static_cast<std::remove_reference_t<T>&&>(param);
+    }
+}
+
+int main() {
+    std::cout << "=== STD::FORWARD vs STD::MOVE ===\n";
+
+    int a = 10;
+
+    std::cout << "\nLlamada con lvalue (a):\n";
+    std::cout << "  std::move: ";
+    procesar(std::move(a));       // Rvalue
+    std::cout << "  std::forward: ";
+    procesar(std::forward<int&>(a)); // Lvalue (forzamos T = int&)
+
+    std::cout << "\nVia forwarding funcion:\n";
+    std::cout << "  Con lvalue:\n";
+    forwarding(a);     // T = int&
+
+    std::cout << "  Con rvalue:\n";
+    forwarding(42);    // T = int
+
+    // Regla práctica:
+    // - std::move: "Quiero mover este objeto, sea lo que sea"
+    // - std::forward: "Quiero pasar este argumento manteniendo su
+    //   categoría de valor original"
+
+    return 0;
+}
+```
+
+--- 7. FORWARDING EN CLASES Y CONSTRUCTORES ---
+
+Forwarding en constructores y funciones miembro.
+
+```cpp
+#include <iostream>
+#include <utility>
+#include <string>
+#include <vector>
+
+template<typename T>
+class Contenedor {
+    T dato;
+
+public:
+    // Constructor con forwarding
+    template<typename U>
+    Contenedor(U&& val) : dato(std::forward<U>(val)) {
+        std::cout << "Contenedor construido\n";
+    }
+
+    // Setter con forwarding
+    template<typename U>
+    void set(U&& val) {
+        dato = std::forward<U>(val);
+    }
+
+    T& get() { return dato; }
+};
+
+// Constructor variádico con forwarding
+class Punto {
+    double x, y;
+    std::string etiqueta;
+
+public:
+    template<typename... Args>
+    Punto(double px, double py, Args&&... args)
+        : x(px), y(py), etiqueta(std::forward<Args>(args)...) {
+        std::cout << "Punto(" << x << ", " << y << ", \"" << etiqueta << "\")\n";
+    }
+};
+
+// Emplace_back-like manual
+template<typename T>
+class MiVector {
+    T* datos;
+    size_t tam;
+    size_t cap;
+
+public:
+    MiVector() : datos(nullptr), tam(0), cap(0) {}
+
+    template<typename... Args>
+    void emplace_back(Args&&... args) {
+        if (tam == cap) {
+            // Redimensionar...
+        }
+        datos[tam++] = T(std::forward<Args>(args)...);
+    }
+};
+
+int main() {
+    std::cout << "=== FORWARDING EN CLASES ===\n";
+
+    std::string texto = "Hola Mundo";
+
+    Contenedor<std::string> c1(texto);            // Lvalue → copia
+    Contenedor<std::string> c2(std::move(texto)); // Rvalue → move
+    Contenedor<std::string> c3("Temporal");       // Rvalue → move
+
+    std::cout << "c1: " << c1.get() << "\n";
+    std::cout << "c2: " << c2.get() << "\n";
+    std::cout << "texto: '" << texto << "'\n";  // Vacio
+
+    // Set con forwarding
+    c1.set("Nuevo valor");
+    std::cout << "c1 actualizado: " << c1.get() << "\n";
+
+    // Constructor variádico
+    Punto p(3.0, 4.0, "origen");
+    Punto p2(1.0, 2.0, std::string("destino"));
+
+    // std::vector::emplace_back usa forwarding
+    std::vector<std::string> vec;
+    vec.emplace_back(10, 'A');  // Construye string(10, 'A') in-place
+    std::cout << "vec[0]: " << vec[0] << "\n";
+
+    return 0;
+}
+```
+
+--- 8. REF-QUALIFIERS (& y && EN MÉTODOS) ---
+
+Los ref-qualifiers permiten sobrecargar métodos según el tipo de
+valor del objeto (lvalue o rvalue).
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <utility>
+
+class Recurso {
+    std::vector<int> datos;
+
+public:
+    explicit Recurso(size_t n) : datos(n) {
+        std::cout << "Recurso(" << n << ")\n";
+    }
+
+    // Para objetos lvalue: retorna referencia
+    const std::vector<int>& obtener() const& {
+        std::cout << "obtener() const& (lvalue)\n";
+        return datos;
+    }
+
+    std::vector<int>& obtener() & {
+        std::cout << "obtener() & (lvalue)\n";
+        return datos;
+    }
+
+    // Para objetos rvalue: retorna por movimiento
+    std::vector<int> obtener() && {
+        std::cout << "obtener() && (rvalue) — moviendo datos\n";
+        return std::move(datos);
+    }
+
+    // Versión const&& (raro)
+    const std::vector<int>& obtener() const&& {
+        std::cout << "obtener() const&&\n";
+        return datos;
+    }
+};
+
+class Logger {
+    std::string buffer;
+public:
+    Logger& operator<<(const std::string& msg) & {
+        buffer += msg;
+        return *this;
+    }
+
+    // Para rvalue: permite mover el buffer final
+    std::string extraer() && {
+        return std::move(buffer);
+    }
+};
+
+int main() {
+    std::cout << "=== REF-QUALIFIERS ===\n";
+
+    Recurso r(10);
+
+    std::cout << "\nLlamada en lvalue:\n";
+    auto& ref = r.obtener();       // Llama a & version
+    std::cout << "Size: " << ref.size() << "\n";
+
+    std::cout << "\nLlamada en rvalue:\n";
+    auto vec = Recurso(5).obtener();  // Llama a && version
+    std::cout << "Size: " << vec.size() << "\n";
+
+    std::cout << "\n--- Logger ---\n";
+    Logger log;
+    log << "Hola ";
+    log << "Mundo";
+    // std::cout << log.extraer();  // Error: extraer() solo para rvalue
+
+    std::string resultado = Logger() << "Temporal " << "Logger" << std::move(log).extraer();
+    // Hmm, eso es complicado... mejor así:
+    Logger temp;
+    temp << "Log ";
+    temp << "final";
+    std::string msg = std::move(temp).extraer();  // OK: rvalue
+    std::cout << "Mensaje: " << msg << "\n";
+
+    // Aplicación práctica: evitar copias en cadenas de métodos
+    class Builder {
+        std::string resultado;
+    public:
+        Builder& add(const std::string& s) & {
+            resultado += s;
+            return *this;
+        }
+
+        Builder&& add(const std::string& s) && {
+            resultado += s;
+            return std::move(*this);
+        }
+
+        std::string build() && { return std::move(resultado); }
+    };
+
+    std::string final = Builder().add("Hola ").add("Mundo").build();
+    std::cout << "Builder: " << final << "\n";
+
+    return 0;
+}
+```
+
+--- 9. PATRONES AVANZADOS CON RVALUE REFERENCES ---
+
+Aplicaciones más complejas de rvalue references.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <utility>
+#include <memory>
+#include <tuple>
+
+// 1. Tag dispatch: elegir sobrecarga según categoría de valor
+struct LvalueTag {};
+struct RvalueTag {};
+
+template<typename T>
+void procesarImpl(T&& val, LvalueTag) {
+    std::cout << "Procesando lvalue\n";
+}
+
+template<typename T>
+void procesarImpl(T&& val, RvalueTag) {
+    std::cout << "Procesando rvalue (podemos mover!)\n";
+}
+
+template<typename T>
+void procesar(T&& val) {
+    using Category = std::conditional_t<
+        std::is_lvalue_reference<T>::value,
+        LvalueTag,
+        RvalueTag
+    >;
+    procesarImpl(std::forward<T>(val), Category{});
+}
+
+// 2. Forwarding de grupos de parámetros
+template<typename... Args>
+auto crearTupla(Args&&... args) {
+    return std::make_tuple(std::forward<Args>(args)...);
+}
+
+// 3. Almacenamiento de objetos in-place
+template<typename T>
+class Almacen {
+    typename std::aligned_storage<sizeof(T), alignof(T)>::type storage;
+    bool inicializado;
+
+public:
+    Almacen() : inicializado(false) {}
+
+    template<typename... Args>
+    void construir(Args&&... args) {
+        new (&storage) T(std::forward<Args>(args)...);
+        inicializado = true;
+    }
+
+    void destruir() {
+        if (inicializado) {
+            reinterpret_cast<T*>(&storage)->~T();
+            inicializado = false;
+        }
+    }
+
+    T& get() {
+        return *reinterpret_cast<T*>(&storage);
+    }
+};
+
+// 4. Función con forwarding de calificadores
+template<typename T>
+decltype(auto) moverSiRvalue(T&& obj) {
+    if constexpr (std::is_lvalue_reference<T>::value) {
+        return obj;  // Lvalue: retorna referencia
+    } else {
+        return std::move(obj);  // Rvalue: mueve
+    }
+}
+
+int main() {
+    std::cout << "=== PATRONES AVANZADOS ===\n";
+
+    // Tag dispatch
+    int a = 10;
+    procesar(a);         // LvalueTag
+    procesar(20);        // RvalueTag
+
+    // Forwarding variádico
+    auto t = crearTupla(1, std::string("hola"), 3.14);
+    std::cout << "Tupla: " << std::get<0>(t) << ", "
+              << std::get<1>(t) << ", "
+              << std::get<2>(t) << "\n";
+
+    // Storage in-place
+    Almacen<std::string> alm;
+    alm.construir(10, 'X');
+    std::cout << "Almacen: " << alm.get() << "\n";
+    alm.destruir();
+
+    // moverSiRvalue
+    std::string s1 = "Hola";
+    std::string s2 = moverSiRvalue(s1);       // Lvalue: copia
+    std::string s3 = moverSiRvalue(std::move(s1)); // Rvalue: move
+    std::cout << "s2: " << s2 << ", s3: " << s3 << "\n";
+
+    return 0;
+}
+```
+
+--- 10. FORWARDING EN LAMBDAS (C++14/20) ---
+
+Lambdas genéricas con forwarding.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <utility>
+#include <functional>
+
+// C++14: lambda genérica con forward
+auto crearEmplaceBack = []<typename T>(std::vector<T>& vec) {
+    return [&vec](auto&&... args) {
+        vec.emplace_back(std::forward<decltype(args)>(args)...);
+    };
+};
+
+// C++20: lambda con template syntax explícita
+auto makeWrapper = []<typename T>(T&& value) {
+    return [val = std::forward<T>(value)]() -> decltype(auto) {
+        return val;
+    };
+};
+
+// Forwarding factory con lambda
+template<typename T, typename... Args>
+auto crearObjeto(Args&&... args) {
+    return T(std::forward<Args>(args)...);
+}
+
+class Persona {
+    std::string nombre;
+    int edad;
+public:
+    Persona(std::string n, int e)
+        : nombre(std::move(n)), edad(e) {}
+
+    void mostrar() const {
+        std::cout << nombre << " (" << edad << " anios)\n";
+    }
+};
+
+int main() {
+    std::cout << "=== FORWARDING EN LAMBDAS ===\n";
+
+    // EmplaceBack factory
+    std::vector<std::string> palabras;
+    auto emplaceStr = crearEmplaceBack(palabras);
+
+    emplaceStr(5, 'A');  // Construye string(5, 'A') in-place
+    emplaceStr("Hola");
+    emplaceStr(std::string("Mundo"));
+
+    for (const auto& p : palabras) {
+        std::cout << p << " ";
+    }
+    std::cout << "\n";
+
+    // Wrapper que preserva categoría de valor
+    std::string s = "Hola";
+    auto wrapper = makeWrapper(std::move(s));  // Mueve s al wrapper
+    // s está vacío aquí
+    std::cout << "Wrapper: " << wrapper() << "\n";
+
+    // Factory con forwarding
+    auto p = crearObjeto<Persona>("Ana", 30);
+    p.mostrar();
+
+    // Forwarding de parámetros a constructor
+    auto factory = []<typename T, typename... Args>(Args&&... args) {
+        return T(std::forward<Args>(args)...);
+    };
+
+    auto p2 = factory.operator()<Persona>("Luis", 25);
+    p2.mostrar();
+
+    return 0;
+}
+```
+
+--- 11. ERRORES COMUNES CON RVALUE REFERENCES ---
+
+Problemas típicos y cómo evitarlos.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <utility>
+#include <vector>
+
+// Error 1: Múltiples usos de std::forward
+template<typename T>
+void errorMultipleForward(T&& param) {
+    // auto copia = std::forward<T>(param);  // Primer forward (ok)
+    // usar(param);  // ¡Error! param está movido
+    // auto copia2 = std::forward<T>(param); // ¡Error! Usar después de move
+}
+
+// Error 2: std::move con const
+void errorConstMove() {
+    const std::string s = "Hola";
+    // std::string moved = std::move(s);  // Copia, no move! (const T&)
+}
+
+// Error 3: Retornar referencia a temporal
+template<typename T>
+auto&& errorReturningRef(T&& param) {
+    return std::forward<T>(param);  // OK si el parámetro sobrevive
+}
+
+// Error 4: Forward desde función que no es plantilla
+class Ejemplo {
+public:
+    template<typename T>
+    void buenForward(T&& x) {
+        otro(std::forward<T>(x));  // OK: T es deducido
+    }
+
+    void malForward(int&& x) {
+        // otro(std::forward<int>(x));  // No es forwarding, es rvalue ref
+        otro(std::move(x));  // Mejor usar move directamente
+    }
+
+    void otro(int&&) {}
+};
+
+// Error 5: Sobrecargar con T&& y const T&
+template<typename T>
+void universal(T&&) {
+    std::cout << "Universal (forwarding ref)\n";
+}
+
+// template<typename T>
+// void universal(const T&) {  // ¡Ambigüedad!
+//     std::cout << "Const ref\n";
+// }
+
+int main() {
+    std::cout << "=== ERRORES COMUNES ===\n";
+
+    // Uso seguro: forward solo una vez
+    auto procesar = [](auto&& param) {
+        // Forward una sola vez
+        auto recurso = std::forward<decltype(param)>(param);
+        // Usar recurso (no param)
+    };
+
+    // auto&& deduce correctamente
+    std::vector<int> vec = {1, 2, 3};
+    auto&& ref1 = vec;        // auto = std::vector<int>& → int&
+    auto&& ref2 = std::move(vec);  // auto = std::vector<int> → int&&
+
+    // Regla de oro:
+    // - Forwarding reference T&& solo en contexto de deducción (template o auto)
+    // - Rvalue reference T&& cuando T es un tipo concreto
+    // - std::forward para forwarding (preservar categoría)
+    // - std::move para convertir a rvalue (descartar categoría)
+
+    std::cout << "ref1 lvalue: " << std::is_lvalue_reference<decltype(ref1)>::value << "\n";
+    std::cout << "ref2 rvalue: " << std::is_rvalue_reference<decltype(ref2)>::value << "\n";
+
+    return 0;
+}
+```
+
+--- 12. EJEMPLO INTEGRADOR ---
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <memory>
+#include <utility>
+#include <tuple>
+
+// Fábrica con forwarding perfecto
+class Factory {
+public:
+    template<typename T, typename... Args>
+    static std::unique_ptr<T> make(Args&&... args) {
+        return std::make_unique<T>(std::forward<Args>(args)...);
+    }
+};
+
+// Clase con ref-qualifiers
+class DataBuffer {
+    std::vector<int> buffer;
+    std::string nombre;
+
+public:
+    DataBuffer(std::string nom, std::vector<int> datos)
+        : nombre(std::move(nom)), buffer(std::move(datos)) {}
+
+    // Para lvalues: acceso de solo lectura
+    const std::vector<int>& datos() const& {
+        std::cout << "datos() const& — " << nombre << "\n";
+        return buffer;
+    }
+
+    // Para lvalues no-const: lectura/escritura
+    std::vector<int>& datos() & {
+        std::cout << "datos() & — " << nombre << "\n";
+        return buffer;
+    }
+
+    // Para rvalues: mover datos fuera
+    std::vector<int> datos() && {
+        std::cout << "datos() && — moviendo " << nombre << "\n";
+        return std::move(buffer);
+    }
+
+    // Método que usa forwarding internamente
+    template<typename T>
+    void setEtiqueta(T&& etiqueta) {
+        nombre = std::forward<T>(etiqueta);
+    }
+
+    void mostrar() const {
+        std::cout << nombre << " [" << buffer.size() << " elementos]\n";
+    }
+};
+
+// Función que procesa lvalues y rvalues de forma óptima
+template<typename T>
+void procesarDatos(T&& db) {
+    // Si es rvalue, podemos mover; si es lvalue, copiamos
+    auto datos = std::forward<T>(db).datos();  // Ref-qualifier dispatch!
+    std::cout << "Procesando " << datos.size() << " elementos\n";
+}
+
+// Forwarding tuple factory
+template<typename... Types>
+auto crearPaquete(Types&&... args) {
+    return std::make_tuple(
+        std::make_unique<std::remove_reference_t<Types>>(
+            std::forward<Types>(args)
+        )...
+    );
+}
+
+int main() {
+    std::cout << "=== EJEMPLO INTEGRADOR ===\n";
+
+    // Factory
+    auto p = Factory::make<DataBuffer>("Buffer1", std::vector<int>{1,2,3,4,5});
+    p->mostrar();
+
+    // Ref-qualifiers en acción
+    DataBuffer db("Original", {10, 20, 30});
+
+    std::cout << "\nAcceso lvalue:\n";
+    auto& ref = db.datos();  // &
+    std::cout << "Primer elemento: " << ref[0] << "\n";
+
+    std::cout << "\nAcceso lvalue const:\n";
+    const DataBuffer& cdb = db;
+    auto& cref = cdb.datos();  // const&
+
+    std::cout << "\nAcceso rvalue:\n";
+    auto vec = DataBuffer("Temporal", {100, 200}).datos();  // &&
+    std::cout << "Temporal size: " << vec.size() << "\n";
+
+    // Forwarding con ref-qualifiers
+    std::cout << "\nprocesarDatos con lvalue:\n";
+    procesarDatos(db);
+
+    std::cout << "\nprocesarDatos con rvalue:\n";
+    procesarDatos(DataBuffer("Temp2", {1,2,3}));
+
+    // set con forwarding
+    db.setEtiqueta("Modificado");
+    db.setEtiqueta(std::string("Movido"));
+    db.mostrar();
+
+    // Tuple factory con forwarding
+    auto paquete = crearPaquete(42, std::string("Hola"), 3.14);
+    std::cout << "\nPaquete: "
+              << *std::get<0>(paquete) << ", "
+              << *std::get<1>(paquete) << ", "
+              << *std::get<2>(paquete) << "\n";
+
+    return 0;
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+Las referencias rvalue (&&) habilitan move semantics y perfect forwarding:
+
+• Lvalues: tienen nombre y dirección persistente.
+• Rvalues: temporales sin identidad persistente.
+• T&& en contexto de deducción = forwarding reference (universal reference).
+• T&& sin deducción = rvalue reference.
+• Reference collapsing: & + cualquier → &; && + && → &&.
+• std::forward preserva la categoría de valor para forwarding.
+• std::move convierte incondicionalmente a rvalue.
+• Ref-qualifiers (& y && en métodos) permiten optimizar según el tipo
+  de objeto (lvalue/rvalue).
+• Perfect forwarding permite pasar argumentos manteniendo su categoría
+  a través de capas de funciones.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+1. Escribe funciones sobrecargadas que tomen int& e int&& y demuestra
+   la diferencia entre lvalues y rvalues.
+
+2. Implementa una función "forwarder" que reciba un parámetro T&& y
+   lo pase a otra función preservando su categoría de valor.
+
+3. Crea una clase que tenga métodos con & y && ref-qualifiers, mostrando
+   cómo se comportan con lvalues y rvalues.
+
+4. Escribe una plantilla que demuestre las 4 reglas de reference collapsing.
+
+5. Implementa tu propia versión de std::forward y std::move.
+
+6. Crea una función "emplaceInVector" que use forwarding variádico
+   para construir elementos in-place en un vector.
+
+7. Escribe una lambda genérica con forwarding para sus parámetros.
+
+8. Implementa un "decorator" que envuelva una función y forwardee
+   sus argumentos.
+
+9. Crea una jerarquía de clases con constructores que usen forwarding
+   para inicializar miembros.
+
+10. Escribe un programa que demuestre la diferencia entre std::move
+    y std::forward con tipos const y no-const.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Cuál es la diferencia entre T&& en template y T&& como parámetro
+concreto?
+R: En un template (contexto de deducción), T&& es forwarding reference.
+Sin deducción, T&& es rvalue reference. Ej: template<typename T> void
+f(T&&) es forwarding; void f(int&&) es rvalue reference.
+
+P: ¿Cuándo debo usar std::forward vs std::move?
+R: Usa std::forward cuando quieras preservar la categoría de valor
+original (en templates). Usa std::move cuando quieras mover
+incondicionalmente.
+
+P: ¿Qué son los ref-qualifiers?
+R: Permiten sobrecargar un método según el tipo de valor del objeto:
+void foo() &; → solo para lvalues; void foo() &&; → solo para rvalues.
+
+P: ¿Las reglas de reference collapsing son difíciles?
+R: Solo recuerda: & siempre gana. Si alguna de las referencias es &,
+el resultado es &. Solo && con && da &&.
+
+P: ¿Puedo usar auto&& siempre?
+R: auto&& es forwarding reference. Úsalo en rangos for (for (auto&& x : c))
+para capturar cualquier categoría. No lo uses si necesitas un tipo
+específico.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseña un "Serializador Genérico" en C++ que:
+
+1. Use forwarding references en todas las funciones serialize/deserialize.
+2. Implemente ref-qualifiers para optimizar serialización de temporales.
+3. Use perfect forwarding para pasar argumentos a constructores.
+4. Implemente un "tuple_for_each" con forwarding variádico.
+5. Use reference collapsing correctamente en toda la implementación.
+6. Distinga entre lvalues (serializar con copia) y rvalues (serializar con move).
+7. Proporcione una interfaz fluida (method chaining) con ref-qualifiers.
+
+El serializador debe manejar tipos built-in, strings, contenedores
+STL, y tipos definidos por el usuario con sobrecarga de serialize/deserialize.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Las referencias rvalue son el mecanismo fundamental que permite la
+semántica de movimiento y el forwarding perfecto en C++ moderno.
+Comprender T&&, reference collapsing, std::forward y ref-qualifiers
+es esencial para escribir bibliotecas eficientes y código genérico.
+
+En el próximo capítulo exploraremos las plantillas variádicas, que
+permiten trabajar con un número arbitrario de argumentos de tipo.
+
+================================================================================
+  PRÓXIMO CAPÍTULO: VARIADIC TEMPLATES
+================================================================================
+
+Las plantillas variádicas (template<typename... Args>) permiten crear
+funciones y clases que aceptan cualquier número de argumentos de
+cualquier tipo, combinadas con forwarding perfecto.
+
+================================================================================
+  FIN DEL CAPÍTULO 64
+================================================================================

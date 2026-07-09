@@ -1,0 +1,1317 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO II: ESTRUCTURAS DE CONTROL Y FUNCIONES
+  CAPÍTULO 17: DEFER
+  IDIOMA: Español (Spanish)
+  CÓDIGO: Go (Golang)
+================================================================================
+
+  "El orden no es un lujo, es una necesidad para la confiabilidad."
+  — Anónimo
+
+================================================================================
+
+                    BIENVENIDA AL CAPÍTULO 17
+
+  ¡Bienvenido, arquitecto del código!
+
+  En el capítulo anterior exploramos las funciones variádicas. Ahora
+  veremos una de las palabras clave más útiles de Go: defer.
+
+  defer permite posponer la ejecución de una función hasta que la
+  función contenedora termine. Es como decir "pase lo que pase,
+  asegúrate de ejecutar esto al final".
+
+  Los usos principales de defer son:
+  1. Cerrar archivos, conexiones, y otros recursos.
+  2. Liberar locks (mutexes).
+  3. Registrar tiempo de ejecución.
+  4. Capturar panics (con recover).
+  5. Cualquier tarea de limpieza que debe ocurrir sí o sí.
+
+  defer es elegante porque coloca el código de limpieza justo al
+  lado del código de apertura/adquisición, haciendo el programa más
+  legible y menos propenso a errores.
+
+  En este capítulo exploraremos defer a fondo: su sintaxis, el orden
+  LIFO, casos de uso, defer + recover, y buenas prácticas.
+
+  ¡Comencemos!
+
+================================================================================
+  ÍNDICE DEL CAPÍTULO
+================================================================================
+
+  17.1  Introducción teórica
+  17.2  Sintaxis de defer
+  17.3  Orden LIFO (Last In, First Out)
+  17.4  Cierre de archivos y recursos
+  17.5  defer con funciones anónimas
+  17.6  defer + recover
+  17.7  defer y evaluación de argumentos
+  17.8  defer en bucles
+  17.9  Patrones comunes con defer
+  17.10 Buenas prácticas
+  17.11 Errores comunes
+  17.12 Código profesional: ejemplos completos
+  17.13 Resumen del capítulo
+  17.14 Ejercicios propuestos
+  17.15 Preguntas frecuentes (FAQ)
+  17.16 Desafío del Arquitecto
+  17.17 Cierre del capítulo
+  17.18 Próximo capítulo
+
+================================================================================
+  17.1 INTRODUCCIÓN TEÓRICA
+================================================================================
+
+  La palabra clave defer en Go se usa para asegurar que una llamada
+  a función se ejecute cuando la función contenedora termine, ya sea
+  por un return normal, por llegar al final, o por un panic.
+
+  Características clave:
+
+  1. La función diferida se ejecuta cuando la función contenedora
+     termina (después del return, pero antes de que el valor se
+     entregue al llamante).
+
+  2. Si hay múltiples defers, se ejecutan en orden LIFO (Last In,
+     First Out) — el último defer declarado es el primero en
+     ejecutarse.
+
+  3. Los argumentos de la función diferida se evalúan en el momento
+     del defer, no cuando se ejecuta.
+
+  4. defer es ideal para emparejar "abrir/cerrar" y
+     "bloquear/desbloquear".
+
+  5. defer + recover permite capturar panics, similar a try-catch
+     en otros lenguajes.
+
+  ```go
+  func leerArchivo(ruta string) error {
+      archivo, err := os.Open(ruta)
+      if err != nil {
+          return err
+      }
+      defer archivo.Close() // Se ejecuta al final
+
+      // Procesar el archivo...
+      return nil
+  }
+  ```
+
+  Este patrón es ubicuo en Go: abres un recurso y defer inmediata-
+  mente su cierre. Así no olvidas cerrarlo, incluso si hay errores.
+
+================================================================================
+  17.2 SINTAXIS DE DEFER
+================================================================================
+
+  La sintaxis es simple:
+
+    defer función(argumentos)
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      defer fmt.Println("Esto se ejecuta al final")
+      fmt.Println("Esto se ejecuta primero")
+      fmt.Println("Esto se ejecuta segundo")
+  }
+  ```
+
+  Output:
+    Esto se ejecuta primero
+    Esto se ejecuta segundo
+    Esto se ejecuta al final
+
+  Puedes diferir cualquier función:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func saludar() {
+      fmt.Println("¡Hola desde defer!")
+  }
+
+  func main() {
+      defer saludar()
+      defer fmt.Println("Otro defer")
+      fmt.Println("Ejecutando main...")
+  }
+  ```
+
+  Output:
+    Ejecutando main...
+    Otro defer
+    ¡Hola desde defer!
+
+  defer funciona con métodos también:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  type Recurso struct {
+      Nombre string
+  }
+
+  func (r *Recurso) Abrir() {
+      fmt.Println("Abriendo", r.Nombre)
+  }
+
+  func (r *Recurso) Cerrar() {
+      fmt.Println("Cerrando", r.Nombre)
+  }
+
+  func main() {
+      r := &Recurso{Nombre: "db-conn"}
+      r.Abrir()
+      defer r.Cerrar()
+      fmt.Println("Usando el recurso...")
+  }
+  ```
+
+  Output:
+    Abriendo db-conn
+    Usando el recurso...
+    Cerrando db-conn
+
+================================================================================
+  17.3 ORDEN LIFO (LAST IN, FIRST OUT)
+================================================================================
+
+  Cuando tienes múltiples defers, se ejecutan en orden inverso a su
+  declaración: el último declarado es el primero en ejecutarse.
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      defer fmt.Println("Primer defer")
+      defer fmt.Println("Segundo defer")
+      defer fmt.Println("Tercer defer")
+      fmt.Println("Cuerpo de main")
+  }
+  ```
+
+  Output:
+    Cuerpo de main
+    Tercer defer
+    Segundo defer
+    Primer defer
+
+  Esto es útil cuando tienes recursos que deben cerrarse en orden
+  inverso a como se abrieron:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func procesar() {
+      fmt.Println("Abrir conexión BD")
+      defer fmt.Println("Cerrar conexión BD")
+
+      fmt.Println("Abrir archivo")
+      defer fmt.Println("Cerrar archivo")
+
+      fmt.Println("Adquirir lock")
+      defer fmt.Println("Liberar lock")
+
+      fmt.Println("Procesando datos...")
+  }
+
+  func main() {
+      procesar()
+  }
+  ```
+
+  Output:
+    Abrir conexión BD
+    Abrir archivo
+    Adquirir lock
+    Procesando datos...
+    Liberar lock
+    Cerrar archivo
+    Cerrar conexión BD
+
+  LIFO garantiza que los recursos se liberen en el orden correcto:
+  lock → archivo → conexión BD.
+
+================================================================================
+  17.4 CIERRE DE ARCHIVOS Y RECURSOS
+================================================================================
+
+  El uso más común de defer es cerrar archivos y otros recursos:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func leerArchivoSeguro(ruta string) (string, error) {
+      archivo, err := os.Open(ruta)
+      if err != nil {
+          return "", err
+      }
+      defer archivo.Close() // Se cierra sí o sí
+
+      // Leer contenido...
+      buffer := make([]byte, 100)
+      n, err := archivo.Read(buffer)
+      if err != nil {
+          return "", err
+      }
+
+      return string(buffer[:n]), nil
+  }
+
+  func main() {
+      contenido, err := leerArchivoSeguro("ejemplo.txt")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Contenido:", contenido)
+  }
+  ```
+
+  Otros recursos que se cierran con defer:
+
+  ```go
+  package main
+
+  import (
+      "database/sql"
+      "fmt"
+      "net/http"
+      "os"
+  )
+
+  func ejemplosDefer() {
+      // Archivo
+      f, _ := os.Open("archivo.txt")
+      defer f.Close()
+
+      // HTTP Body
+      resp, _ := http.Get("http://example.com")
+      defer resp.Body.Close()
+
+      // Base de datos
+      db, _ := sql.Open("mysql", "user:pass@/dbname")
+      defer db.Close()
+
+      // Mutex (simulado)
+      // mutex.Lock()
+      // defer mutex.Unlock()
+
+      fmt.Println("Recursos abiertos y con defer para cerrar")
+  }
+
+  func main() {
+      ejemplosDefer()
+  }
+  ```
+
+  El patrón es siempre el mismo: abrir/adquirir, defer cerrar/liberar.
+
+================================================================================
+  17.5 DEFER CON FUNCIONES ANÓNIMAS
+================================================================================
+
+  Puedes diferir funciones anónimas para ejecutar múltiples
+  operaciones al final:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      x := 10
+      defer func() {
+          fmt.Println("x al final:", x)
+      }()
+
+      x = 20
+      fmt.Println("x ahora:", x)
+  }
+  ```
+
+  Output:
+    x ahora: 20
+    x al final: 20
+
+  Las funciones anónimas diferidas capturan las variables del entorno
+  (closure). A diferencia de los argumentos, que se evalúan en el
+  momento del defer, las variables del closure se evalúan cuando el
+  defer se ejecuta.
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      x := 1
+      y := 2
+
+      // y se evalúa ahora (2)
+      defer fmt.Println("y=", y)
+
+      // x se evalúa cuando se ejecuta el defer (después de x=10)
+      defer func() {
+          fmt.Println("x=", x)
+      }()
+
+      x = 10
+      y = 20
+      fmt.Println("x e y modificados")
+  }
+  ```
+
+  Output:
+    x e y modificados
+    x= 10
+    y= 2
+
+  Esto es importante: los argumentos de fmt.Println(y) se evalúan
+  en el momento del defer (y=2). La variable x dentro del closure
+  se evalúa cuando el defer se ejecuta (x=10).
+
+  Uso común: medir tiempo de ejecución
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "time"
+  )
+
+  func medirTiempo(nombre string) func() {
+      inicio := time.Now()
+      return func() {
+          duracion := time.Since(inicio)
+          fmt.Printf("%s tardó %v\n", nombre, duracion)
+      }
+  }
+
+  func operacionLenta() {
+      defer medirTiempo("operacionLenta")()
+      time.Sleep(100 * time.Millisecond)
+      fmt.Println("Operación completada")
+  }
+
+  func main() {
+      operacionLenta()
+  }
+  ```
+
+================================================================================
+  17.6 DEFER + RECOVER
+================================================================================
+
+  recover es una función que permite recuperarse de un panic. Solo
+  tiene efecto dentro de una función diferida.
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func recuperar() {
+      if r := recover(); r != nil {
+          fmt.Println("Recuperado de:", r)
+      }
+  }
+
+  func funcionQuePaniquea() {
+      defer recuperar()
+      fmt.Println("Antes del panic")
+      panic("¡algo salió muy mal!")
+      fmt.Println("Esto nunca se ejecuta")
+  }
+
+  func main() {
+      funcionQuePaniquea()
+      fmt.Println("El programa continúa normalmente")
+  }
+  ```
+
+  Output:
+    Antes del panic
+    Recuperado de: ¡algo salió muy mal!
+    El programa continúa normalmente
+
+  Sin el defer+recover, el panic terminaría el programa con un
+  stack trace.
+
+  Patrón típico con función anónima:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func dividirSeguro(a, b int) (resultado int, err error) {
+      defer func() {
+          if r := recover(); r != nil {
+              err = fmt.Errorf("panic recuperado: %v", r)
+          }
+      }()
+
+      resultado = a / b
+      return resultado, nil
+  }
+
+  func main() {
+      r, err := dividirSeguro(10, 0)
+      if err != nil {
+          fmt.Println("Error:", err)
+      } else {
+          fmt.Println("Resultado:", r)
+      }
+
+      r2, err2 := dividirSeguro(10, 2)
+      if err2 != nil {
+          fmt.Println("Error:", err2)
+      } else {
+          fmt.Println("Resultado:", r2)
+      }
+  }
+  ```
+
+  Output:
+    Error: panic recuperado: runtime error: integer divide by zero
+    Resultado: 5
+
+  IMPORTANTE: recover solo funciona dentro de un defer. Si llamas
+  a recover fuera de un defer, no hace nada y retorna nil.
+
+  ```go
+  // INCORRECTO - recover fuera de defer no funciona
+  func malEjemplo() {
+      recover() // Esto retorna nil y no hace nada
+      panic("test")
+  }
+  ```
+
+================================================================================
+  17.7 DEFER Y EVALUACIÓN DE ARGUMENTOS
+================================================================================
+
+  Los argumentos de la función diferida se evalúan en el momento
+  de la declaración defer, NO cuando se ejecutan.
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      x := 5
+      defer fmt.Println("x =", x) // x se evalúa ahora (5)
+
+      x = 10
+      fmt.Println("x modificado a", x)
+  }
+  ```
+
+  Output:
+    x modificado a 10
+    x = 5
+
+  Para capturar el valor final de una variable, usa una función
+  anónima:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  func main() {
+      x := 5
+      defer func() {
+          fmt.Println("x final =", x)
+      }()
+
+      x = 10
+      fmt.Println("x modificado a", x)
+  }
+  ```
+
+  Output:
+    x modificado a 10
+    x final = 10
+
+  Esto es especialmente importante con punteros:
+
+  ```go
+  package main
+
+  import "fmt"
+
+  type Usuario struct {
+      Nombre string
+  }
+
+  func main() {
+      u := &Usuario{Nombre: "Ana"}
+      defer fmt.Println("Defer 1:", u.Nombre) // "Ana" (se evalúa ahora)
+      defer func() {
+          fmt.Println("Defer 2:", u.Nombre) // "Juan" (se evalúa al ejecutar)
+      }()
+
+      u.Nombre = "Juan"
+      fmt.Println("Nombre cambiado a", u.Nombre)
+  }
+  ```
+
+  Output:
+    Nombre cambiado a Juan
+    Defer 2: Juan
+    Defer 1: Ana
+
+================================================================================
+  17.8 DEFER EN BUCLES
+================================================================================
+
+  Cuidado con defer dentro de bucles. Los defers no se ejecutan hasta
+  que la función contenedora termine, por lo que se acumulan.
+
+  ```go
+  // INCORRECTO - Acumula N defers
+  func procesarArchivos(nombres []string) {
+      for _, nombre := range nombres {
+          f, err := os.Open(nombre)
+          if err != nil {
+              continue
+          }
+          defer f.Close() // ¡Esto no se ejecuta hasta que la función termine!
+          // Procesar f...
+      }
+      // Todos los archivos se cierran aquí, no al final de cada iteración
+  }
+  ```
+
+  Solución: Envuelve el cuerpo del bucle en una función anónima
+  para que defer se ejecute al final de cada iteración:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func procesarArchivosCorrecto(nombres []string) {
+      for _, nombre := range nombres {
+          func() {
+              f, err := os.Open(nombre)
+              if err != nil {
+                  fmt.Printf("Error abriendo %s: %v\n", nombre, err)
+                  return
+              }
+              defer f.Close() // Se cierra al salir de esta función anónima
+
+              fmt.Printf("Procesando: %s\n", nombre)
+              // Procesar f...
+          }()
+      }
+  }
+
+  func main() {
+      archivos := []string{"a.txt", "b.txt", "c.txt"}
+      procesarArchivosCorrecto(archivos)
+  }
+  ```
+
+  O simplemente no uses defer dentro del bucle:
+
+  ```go
+  for _, nombre := range nombres {
+      f, err := os.Open(nombre)
+      if err != nil {
+          continue
+      }
+      // Procesar...
+      f.Close() // Cerrar manualmente
+  }
+  ```
+
+================================================================================
+  17.9 PATRONES COMUNES CON DEFER
+================================================================================
+
+  Patrón 1: Medición de tiempo
+
+  ```go
+  func medirTiempo(nombre string) func() {
+      inicio := time.Now()
+      return func() {
+          fmt.Printf("%s: %v\n", nombre, time.Since(inicio))
+      }
+  }
+
+  func miFuncion() {
+      defer medirTiempo("miFuncion")()
+      // ...
+  }
+  ```
+
+  Patrón 2: Logging de entrada/salida
+
+  ```go
+  func logEntrada(nombre string, args ...interface{}) func() {
+      fmt.Printf("→ %s(%v)\n", nombre, args)
+      return func() {
+          fmt.Printf("← %s terminó\n", nombre)
+      }
+  }
+
+  func calcular(x, y int) int {
+      defer logEntrada("calcular", x, y)()
+      return x + y
+  }
+  ```
+
+  Patrón 3: Mutex (bloqueo)
+
+  ```go
+  var mu sync.Mutex
+
+  func operacionSegura() {
+      mu.Lock()
+      defer mu.Unlock()
+      // Operación segura...
+  }
+  ```
+
+  Patrón 4: Recuperación de panic
+
+  ```go
+  func handler(w http.ResponseWriter, r *http.Request) {
+      defer func() {
+          if err := recover(); err != nil {
+              http.Error(w, "Error interno", 500)
+          }
+      }()
+      // ...
+  }
+  ```
+
+  Patrón 5: Validación de retorno
+
+  ```go
+  func guardar() (err error) {
+      defer func() {
+          if err != nil {
+              fmt.Println("Error al guardar:", err)
+          }
+      }()
+      // ...
+      return nil
+  }
+  ```
+
+  Patrón 6: Transacciones
+
+  ```go
+  func transferir(origen, destino string, monto float64) error {
+      tx, _ := db.Begin()
+      defer func() {
+          if err != nil {
+              tx.Rollback()
+          }
+      }()
+      // ...
+      return tx.Commit()
+  }
+  ```
+
+================================================================================
+  17.10 BUENAS PRÁCTICAS
+================================================================================
+
+  1. Pon defer inmediatamente después de abrir/adquirir el recurso.
+     Así es fácil ver que el recurso se cerrará.
+
+  2. No uses defer dentro de bucles. Los defers se acumulan hasta
+     que la función termine. Usa una función anónima como wrapper.
+
+  3. Usa defer para emparejar operaciones: Lock/Unlock, Open/Close,
+     Begin/Commit o Rollback.
+
+  4. Los argumentos de defer se evalúan en el momento de la
+     declaración. Si necesitas el valor final, usa closure.
+
+  5. defer + recover es la forma de capturar panics. Úsalo en
+     goroutines y handlers HTTP.
+
+  6. No abuses de defer. Si una función solo tiene una línea
+     después de abrir un recurso, el defer añade overhead innecesario.
+
+  7. El orden LIFO es útil para limpieza en orden inverso.
+
+  8. defer puede modificar retornos nombrados.
+
+  9. No uses defer para tareas críticas de rendimiento en bucles
+     muy ajustados. Tiene un pequeño overhead.
+
+  10. Documenta por qué usas defer si no es obvio.
+
+================================================================================
+  17.11 ERRORES COMUNES
+================================================================================
+
+  Error 1: defer en bucle (acumulación)
+  ```go
+  for _, archivo := range archivos {
+      f, _ := os.Open(archivo)
+      defer f.Close() // ¡Todos los archivos se cierran al final!
+      // Procesar...
+  }
+  ```
+
+  Error 2: Asumir que los argumentos se evalúan al ejecutar
+  ```go
+  x := 1
+  defer fmt.Println(x) // Imprime 1, no el valor final
+  x = 100
+  ```
+
+  Error 3: Olvidar recover dentro de defer
+  ```go
+  // INCORRECTO
+  func ejemplo() {
+      recover() // Fuera de defer, no funciona
+      panic("error")
+  }
+
+  // CORRECTO
+  func ejemplo() {
+      defer func() { recover() }()
+      panic("error")
+  }
+  ```
+
+  Error 4: Usar defer con return explícito confuso
+  ```go
+  func ejemplo() (r int) {
+      defer func() {
+          r *= 2 // Modifica el retorno
+      }()
+      return 5 // Retorna 10 (5 * 2)
+  }
+  ```
+
+  Error 5: Cerrar el recurso dos veces
+  ```go
+  f, _ := os.Open("archivo.txt")
+  defer f.Close()
+  // ...
+  f.Close() // Cerrar dos veces puede causar error
+  ```
+
+  Error 6: defer en función que puede panic antes de llegar
+  ```go
+  // Si thisFunctionMayPanic() paniquea, el defer nunca se ejecuta
+  peligro()
+  defer limpia()
+  ```
+
+  Error 7: Confiar en defer para operaciones críticas de timeout
+  ```go
+  // defer no tiene timeout. Si la función se cuelga, defer espera.
+  ```
+
+================================================================================
+  17.12 CÓDIGO PROFESIONAL: EJEMPLOS COMPLETOS
+================================================================================
+
+  Ejemplo 1: Servidor con logging y recuperación
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "time"
+  )
+
+  type Servidor struct {
+      Nombre string
+  }
+
+  func (s *Servidor) Iniciar() {
+      defer func() {
+          if r := recover(); r != nil {
+              log.Printf("Servidor %s se recuperó de: %v", s.Nombre, r)
+          }
+      }()
+
+      defer func() {
+          log.Printf("Servidor %s detenido", s.Nombre)
+      }()
+
+      log.Printf("Servidor %s iniciado", s.Nombre)
+      s.procesarPeticiones()
+  }
+
+  func (s *Servidor) procesarPeticiones() {
+      for i := 1; i <= 5; i++ {
+          func(id int) {
+              defer func() {
+                  if r := recover(); r != nil {
+                      log.Printf("Petición %d recuperada: %v", id, r)
+                  }
+              }()
+
+              defer log.Printf("Petición %d completada", id)
+              log.Printf("Procesando petición %d...", id)
+
+              if id == 3 {
+                  panic(fmt.Sprintf("error simulado en petición %d", id))
+              }
+
+              time.Sleep(50 * time.Millisecond)
+          }(i)
+      }
+  }
+
+  func main() {
+      srv := &Servidor{Nombre: "API-Main"}
+      srv.Iniciar()
+      fmt.Println("Servidor finalizado correctamente")
+  }
+  ```
+
+  Ejemplo 2: Gestor de transacciones
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+  )
+
+  type Transaccion struct {
+      ID     string
+      Pasos  []string
+      Estado string
+  }
+
+  func NuevaTransaccion(id string) *Transaccion {
+      return &Transaccion{
+          ID:     id,
+          Pasos:  []string{},
+          Estado: "iniciada",
+      }
+  }
+
+  func (t *Transaccion) Ejecutar(pasos ...func() error) (err error) {
+      defer func() {
+          if err != nil {
+              t.Estado = "fallida"
+              log.Printf("Transacción %s falló: %v", t.ID, err)
+          } else {
+              t.Estado = "completada"
+              log.Printf("Transacción %s completada exitosamente", t.ID)
+          }
+      }()
+
+      defer func() {
+          if r := recover(); r != nil {
+              err = fmt.Errorf("panic en transacción: %v", r)
+          }
+      }()
+
+      for i, paso := range pasos {
+          t.Pasos = append(t.Pasos, fmt.Sprintf("Paso %d", i+1))
+
+          if err = paso(); err != nil {
+              return fmt.Errorf("paso %d falló: %v", i+1, err)
+          }
+      }
+
+      return nil
+  }
+
+  func main() {
+      tx := NuevaTransaccion("TXN-001")
+
+      err := tx.Ejecutar(
+          func() error {
+              fmt.Println("  Paso 1: Validar datos...")
+              return nil
+          },
+          func() error {
+              fmt.Println("  Paso 2: Procesar pago...")
+              return nil
+          },
+          func() error {
+              fmt.Println("  Paso 3: Enviar notificación...")
+              return fmt.Errorf("servidor de email caído")
+          },
+      )
+
+      if err != nil {
+          fmt.Printf("Error final: %v\n", err)
+      }
+      fmt.Printf("Estado: %s, Pasos: %v\n", tx.Estado, tx.Pasos)
+  }
+  ```
+
+  Ejemplo 3: Pool de conexiones seguro
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "sync"
+      "time"
+  )
+
+  type Conexion struct {
+      ID int
+      EnUso bool
+  }
+
+  type Pool struct {
+      sync.Mutex
+      conexiones []*Conexion
+      maxSize    int
+  }
+
+  func NuevoPool(size int) *Pool {
+      pool := &Pool{maxSize: size}
+      for i := 0; i < size; i++ {
+          pool.conexiones = append(pool.conexiones, &Conexion{ID: i + 1})
+      }
+      return pool
+  }
+
+  func (p *Pool) Obtener() *Conexion {
+      p.Lock()
+      defer p.Unlock()
+
+      for _, c := range p.conexiones {
+          if !c.EnUso {
+              c.EnUso = true
+              fmt.Printf("[Pool] Conexión %d asignada\n", c.ID)
+              return c
+          }
+      }
+      return nil
+  }
+
+  func (p *Pool) Liberar(c *Conexion) {
+      p.Lock()
+      defer p.Unlock()
+
+      c.EnUso = false
+      fmt.Printf("[Pool] Conexión %d liberada\n", c.ID)
+  }
+
+  func usarPool(pool *Pool, id int) {
+      conn := pool.Obtener()
+      if conn == nil {
+          fmt.Printf("[Tarea %d] No hay conexiones disponibles\n", id)
+          return
+      }
+
+      defer pool.Liberar(conn)
+
+      fmt.Printf("[Tarea %d] Usando conexión %d...\n", id, conn.ID)
+      time.Sleep(time.Duration(100+id*10) * time.Millisecond)
+      fmt.Printf("[Tarea %d] Terminó con conexión %d\n", id, conn.ID)
+  }
+
+  func main() {
+      pool := NuevoPool(3)
+
+      var wg sync.WaitGroup
+      for i := 1; i <= 5; i++ {
+          wg.Add(1)
+          go func(id int) {
+              defer wg.Done()
+              usarPool(pool, id)
+          }(i)
+      }
+      wg.Wait()
+  }
+  ```
+
+  Ejemplo 4: Wrapper con pre/post condiciones
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "time"
+  )
+
+  type Accion func()
+
+  func ConLog(nombre string, accion Accion) Accion {
+      return func() {
+          fmt.Printf("[INICIO] %s\n", nombre)
+          inicio := time.Now()
+
+          defer func() {
+              duracion := time.Since(inicio)
+              if r := recover(); r != nil {
+                  fmt.Printf("[PANIC] %s: %v (duración: %v)\n", nombre, r, duracion)
+                  panic(r) // Re-lanzar
+              }
+              fmt.Printf("[FIN] %s (duración: %v)\n", nombre, duracion)
+          }()
+
+          accion()
+      }
+  }
+
+  func ConTimeout(limite time.Duration, accion Accion) Accion {
+      return func() {
+          hecho := make(chan bool, 1)
+
+          go func() {
+              accion()
+              hecho <- true
+          }()
+
+          select {
+          case <-hecho:
+          case <-time.After(limite):
+              fmt.Printf("[TIMEOUT] Excedió %v\n", limite)
+          }
+      }
+  }
+
+  func tareaNormal() {
+      time.Sleep(50 * time.Millisecond)
+      fmt.Println("  Tarea ejecutada")
+  }
+
+  func tareaLenta() {
+      time.Sleep(200 * time.Millisecond)
+      fmt.Println("  Tarea lenta ejecutada")
+  }
+
+  func main() {
+      normal := ConLog("Tarea Normal", tareaNormal)
+      lenta := ConLog("Tarea Lenta", tareaLenta)
+      conTimeout := ConTimeout(100*time.Millisecond, lenta)
+
+      fmt.Println("=== Ejecutando tarea normal ===")
+      normal()
+
+      fmt.Println("\n=== Ejecutando tarea lenta con timeout ===")
+      conTimeout()
+  }
+  ```
+
+================================================================================
+  17.13 RESUMEN DEL CAPÍTULO
+================================================================================
+
+  En este capítulo hemos aprendido:
+
+  ✓ Qué es defer y cómo se usa.
+  ✓ El orden LIFO de ejecución de defers.
+  ✓ Cómo cerrar archivos y recursos con defer.
+  ✓ defer con funciones anónimas para closures.
+  ✓ defer + recover para capturar panics.
+  ✓ Evaluación temprana de argumentos en defer.
+  ✓ Peligros de defer en bucles.
+  ✓ Patrones comunes: medición de tiempo, logging, mutex.
+  ✓ Buenas prácticas y errores comunes.
+
+  Puntos clave:
+  - defer ejecuta código al final de la función.
+  - Los defers se ejecutan en orden LIFO.
+  - Los argumentos se evalúan en el momento del defer.
+  - recover solo funciona dentro de un defer.
+  - No uses defer dentro de bucles.
+
+================================================================================
+  17.14 EJERCICIOS PROPUESTOS
+================================================================================
+
+  Ejercicio 1: Archivo seguro
+  Escribe una función que lea un archivo y asegure su cierre con
+  defer.
+
+  Ejercicio 2: Medición con defer
+  Escribe una función que mida el tiempo de ejecución de otra
+  función usando defer.
+
+  Ejercicio 3: Logger de entrada/salida
+  Implementa un logger que imprima "→ función(args)" al inicio
+  y "← función → resultado" al final usando defer.
+
+  Ejercicio 4: Recuperación de panic
+  Escribe una función que capture panics y los convierta en errores
+  usando defer+recover.
+
+  Ejercicio 5: Orden LIFO
+  Crea una función con 5 defers que impriman números del 1 al 5
+  en orden inverso.
+
+  Ejercicio 6: Contador con defer
+  Implementa un contador que incremente un valor con defer.
+
+  Ejercicio 7: Pool de recursos
+  Implementa un pool simple con adquisición y liberación usando
+  defer.
+
+  Ejercicio 8: Transacción con rollback
+  Implementa una transacción simulada que haga rollback si hay
+  error, usando defer.
+
+  Ejercicio 9: defer con retornos nombrados
+  Escribe una función con retornos nombrados que un defer modifique
+  el valor de retorno.
+
+  Ejercicio 10: Servidor web con recovery
+  Implementa un manejador HTTP que capture panics con defer+recover.
+
+================================================================================
+  17.15 PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  P: ¿Cuándo se ejecuta exactamente el defer?
+  R: Después de que la función evalúa la expresión de return, pero
+     antes de que el valor se entregue al llamante. La función
+     diferida puede modificar los valores de retorno nombrados.
+
+  P: ¿Puedo defer una función con argumentos?
+  R: Sí. Los argumentos se evalúan en el momento del defer, no
+     cuando se ejecuta.
+
+  P: ¿Qué pasa si defer y panic coexisten?
+  R: Los defers se ejecutan incluso durante un panic. Esto permite
+     que defer+recover capture el panic.
+
+  P: ¿Cuántos defers puedo tener?
+  R: No hay límite teórico, pero cada defer tiene un pequeño
+     overhead. No abuses de ellos.
+
+  P: ¿Puedo defer un método?
+  R: Sí. defer objeto.método() funciona perfectamente.
+
+  P: ¿Puedo defer una función anónima?
+  R: Sí. defer func() { ... }() es un patrón muy común.
+
+  P: ¿Puedo usar return dentro de un defer?
+  R: No. defer ejecuta una función, y return dentro de esa función
+     solo sale de la función diferida, no de la contenedora.
+
+  P: ¿Es defer caro en rendimiento?
+  R: Tiene un pequeño overhead, pero en la mayoría de las
+     aplicaciones es insignificante. No lo evites a menos que
+     estés en código crítico de rendimiento.
+
+================================================================================
+  17.16 DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                     DESAFÍO DEL ARQUITECTO                         │
+  │                                                                     │
+  │  Crea un "Framework de Middleware para Línea de Comandos" usando    │
+  │  defer extensivamente.                                              │
+  │                                                                     │
+  │  Implementa:                                                        │
+  │                                                                     │
+  │  1. Tipo Contexto con: nombre comando, argumentos [], inicio        │
+  │     time.Time, y un mapa para compartir datos entre middlewares.    │
+  │                                                                     │
+  │  2. Tipo Middleware func(ctx *Contexto)                             │
+  │                                                                     │
+  │  3. Función Pipeline que ejecute middlewares en cadena:             │
+  │     func Pipeline(ctx *Contexto, middlewares ...Middleware)         │
+  │     Cada middleware debe:                                           │
+  │     - Usar defer para medir su tiempo de ejecución                  │
+  │     - Usar defer para logging de entrada/salida                    │
+  │     - Usar defer para recuperarse de panics                        │
+  │     - Usar defer para modificar el contexto si es necesario         │
+  │                                                                     │
+  │  4. Middlewares concretos:                                          │
+  │     - Logger: imprime antes/después de cada comando                 │
+  │     - Timer: mide duración total                                    │
+  │     - Recovery: captura panics y continúa                           │
+  │     - Auth: verifica si el usuario está autenticado                 │
+  │     - Validator: valida argumentos mínimos                         │
+  │                                                                     │
+  │  REQUISITOS:                                                        │
+  │  ✓ Cada middleware debe usar al menos 2 defers                      │
+  │  ✓ Usa defer+recover en al menos un middleware                      │
+  │  ✓ Usa defer para modificar retornos nombrados                     │
+  │  ✓ Usa defer en LIFO para mostrar orden correcto                   │
+  │  ✓ Demuestra evaluación temprana de argumentos vs closure          │
+  └─────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  17.17 CIERRE DEL CAPÍTULO
+======================
+
+  Has completado el Capítulo 17: DEFER.
+
+  defer es una de las características que hace que Go sea un lenguaje
+  elegante para la gestión de recursos. El patrón "abrir recurso, defer
+  cerrar" es simple, seguro y ubicuo en el código Go profesional.
+
+  Recuerda: los argumentos se evalúan en el momento del defer, los
+  defers se ejecutan en LIFO, y defer+recover es la forma Go de
+  manejar panics.
+
+  "La limpieza no es una ocurrencia tardía, es parte del diseño."
+  — Anónimo
+
+  Nos vemos en el Capítulo 18: PUNTEROS.
+
+================================================================================
+  17.18 PRÓXIMO CAPÍTULO
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                     CAPÍTULO 18: PUNTEROS                          │
+  ├─────────────────────────────────────────────────────────────────────┤
+  │                                                                     │
+  │  En el próximo capítulo exploraremos los punteros, una de las       │
+  │  características más importantes de Go.                             │
+  │                                                                     │
+  │  Aprenderás:                                                        │
+  │  ✓ Qué son los punteros (*T)                                       │
+  │  ✓ El operador & (dirección)                                       │
+  │  ✓ El operador * (desreferencia)                                   │
+  │  ✓ Go no tiene aritmética de punteros                              │
+  │  ✓ Puntero nil                                                     │
+  │  ✓ Pasar por valor vs pasar por puntero                            │
+  │  ✓ Punteros a structs y métodos                                    │
+  │                                                                     │
+  │  ¡Nos vemos allí!                                                   │
+  └─────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  FIN DEL CAPÍTULO 17 — GO MASTER BOOK
+================================================================================

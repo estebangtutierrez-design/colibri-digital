@@ -1,0 +1,1156 @@
+================================================================================
+                  C# MASTER BOOK — MÓDULO II: POO EN C#
+================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║         CAPÍTULO 13: DESTRUCTORES Y DISPOSE                                 ║
+║         "La limpieza es tan importante como la construcción"                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+En los capítulos anteriores aprendiste a crear objetos con constructores y a
+gestionar su estado. Pero, ¿qué sucede cuando un objeto termina su vida útil?
+¿Quién limpia los recursos que usó?
+
+C# cuenta con un Garbage Collector (GC) que gestiona automáticamente la
+memoria de los objetos en el heap. Sin embargo, hay recursos que el GC no
+puede gestionar: archivos abiertos, conexiones de base de datos, sockets de
+red, handles de ventanas, etc. Estos recursos NO gestionados (unmanaged
+resources) deben liberarse explícitamente.
+
+En este capítulo exploraremos:
+
+  • El destructor (finalizador) y cuándo se ejecuta.
+  • La interfaz IDisposable y el patrón Dispose.
+  • La sentencia `using` para garantizar la limpieza.
+  • El patrón Dispose completo (con y sin finalizador).
+  • El funcionamiento interno del Garbage Collector.
+  • Buenas prácticas para la gestión de recursos.
+
+Dominar la limpieza de recursos es lo que separa a un programador competente
+de uno excelente. ¡Comencemos!
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+"El Garbage Collector es como un mayordomo invisible: limpia lo que
+olvidaste, pero no debes abusar de su paciencia."
+  — Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✔ Comprender el rol del destructor (finalizador) en C#.
+  ✔ Implementar la interfaz IDisposable.
+  ✔ Usar la sentencia `using` correctamente.
+  ✔ Aplicar el patrón Dispose completo.
+  ✔ Entender el funcionamiento del Garbage Collector.
+  ✔ Diferenciar entre recursos gestionados y no gestionados.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--------------------------------------------------------------------
+  1. RECURSOS GESTIONADOS vs NO GESTIONADOS
+--------------------------------------------------------------------
+
+Antes de hablar de destructores, debemos entender qué tipos de recursos
+existen en .NET:
+
+  • RECURSOS GESTIONADOS (managed):
+      - Memoria en el heap (objetos).
+      - Son gestionados automáticamente por el GC.
+      - No requieren limpieza explícita.
+
+  • RECURSOS NO GESTIONADOS (unmanaged):
+      - Handles de archivos (FileStream).
+      - Conexiones de base de datos (SqlConnection).
+      - Sockets de red.
+      - Handles de ventanas (GDI+).
+      - Memoria no gestionada (Marshal.AllocHGlobal).
+      - Componentes COM.
+      - Bloqueos (Lock, Mutex).
+      - REQUIEREN limpieza explícita.
+
+```csharp
+public class GestorArchivo
+{
+    private FileStream _archivo;  // Recurso gestionado (pero envuelve uno no gestionado)
+    private IntPtr _bufferNoGestionado;  // Recurso NO gestionado
+
+    public GestorArchivo(string ruta)
+    {
+        _archivo = new FileStream(ruta, FileMode.Open);
+        _bufferNoGestionado = System.Runtime.InteropServices.Marshal.AllocHGlobal(1024);
+    }
+
+    // Debemos liberar ambos recursos explícitamente
+}
+```
+
+--------------------------------------------------------------------
+  2. EL DESTRUCTOR (FINALIZADOR)
+--------------------------------------------------------------------
+
+En C#, el destructor (también llamado "finalizador") es un método especial
+que el Garbage Collector llama antes de liberar la memoria de un objeto.
+
+Sintaxis:
+
+```csharp
+public class MiClase
+{
+    ~MiClase()
+    {
+        // Código de limpieza
+    }
+}
+```
+
+Características del destructor:
+
+  • Se declara con el prefijo `~` seguido del nombre de la clase.
+  • NO tiene modificadores de acceso (ni public, ni private).
+  • NO tiene parámetros.
+  • NO se puede llamar explícitamente desde el código.
+  • NO se sabe CUÁNDO se ejecutará (es no determinista).
+  • El compilador lo traduce internamente a una sobreescritura de
+    `Finalize()`.
+
+```csharp
+public class DemostracionDestructor
+{
+    public int Id { get; set; }
+
+    public DemostracionDestructor(int id)
+    {
+        Id = id;
+        Console.WriteLine($"Objeto {Id} creado.");
+    }
+
+    ~DemostracionDestructor()
+    {
+        Console.WriteLine($"Objeto {Id} destruido (finalizado).");
+    }
+}
+
+// Uso:
+public class Programa
+{
+    public static void Main()
+    {
+        CrearYOlvidar();
+        GC.Collect();  // Forzar GC (solo para demostración)
+        GC.WaitForPendingFinalizers();
+        Console.WriteLine("Fin del programa.");
+    }
+
+    static void CrearYOlvidar()
+    {
+        DemostracionDestructor obj = new DemostracionDestructor(1);
+        DemostracionDestructor obj2 = new DemostracionDestructor(2);
+        // Al salir del método, los objetos quedan sin referencia
+    }
+}
+```
+
+Salida posible:
+
+  Objeto 1 creado.
+  Objeto 2 creado.
+  Objeto 2 destruido (finalizado).
+  Objeto 1 destruido (finalizado).
+  Fin del programa.
+
+IMPORTANTE: No se garantiza el orden ni el momento exacto de ejecución.
+
+Limitaciones del destructor:
+
+  • NO se puede saber cuándo se ejecutará.
+  • Se ejecuta en un hilo dedicado del GC (no en el hilo principal).
+  • Si el destructor lanza una excepción, el proceso puede terminar.
+  • Los destructores alargan la vida del objeto (pasa a la "finalization
+    queue").
+  • No se deben usar para liberar recursos escasos (conexiones, archivos).
+
+```csharp
+// MAL: No uses destructores para recursos que deben liberarse rápido
+public class ConexionBD
+{
+    private SqlConnection _conexion;
+
+    public ConexionBD()
+    {
+        _conexion = new SqlConnection("...");
+        _conexion.Open();
+    }
+
+    ~ConexionBD()
+    {
+        // ¡MAL! No sabemos cuándo se ejecutará esto.
+        // La conexión puede estar abierta por minutos u horas.
+        _conexion?.Dispose();
+    }
+}
+```
+
+--------------------------------------------------------------------
+  3. LA INTERFAZ IDisposable
+--------------------------------------------------------------------
+
+`IDisposable` es la interfaz estándar en .NET para liberar recursos
+de manera determinista (inmediata, controlada).
+
+Definición:
+
+```csharp
+public interface IDisposable
+{
+    void Dispose();
+}
+```
+
+Cuando implementas IDisposable, el llamante puede invocar `Dispose()`
+para liberar los recursos del objeto en el momento que desee.
+
+```csharp
+public class GestorArchivo : IDisposable
+{
+    private FileStream _archivo;
+    private bool _disposed = false;
+
+    public GestorArchivo(string ruta)
+    {
+        _archivo = new FileStream(ruta, FileMode.Open);
+        Console.WriteLine($"Archivo {ruta} abierto.");
+    }
+
+    public void Leer()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(GestorArchivo));
+
+        byte[] buffer = new byte[1024];
+        int bytesLeidos = _archivo.Read(buffer, 0, buffer.Length);
+        Console.WriteLine($"Leídos {bytesLeidos} bytes.");
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+
+        _archivo?.Dispose();  // Liberar recurso gestionado
+        _archivo = null;
+        _disposed = true;
+
+        Console.WriteLine("Recursos liberados.");
+    }
+}
+
+// Uso:
+GestorArchivo gestor = new GestorArchivo("datos.txt");
+gestor.Leer();
+gestor.Dispose();  // Liberamos inmediatamente
+```
+
+--------------------------------------------------------------------
+  4. LA SENTENCIA `using`
+--------------------------------------------------------------------
+
+La sentencia `using` garantiza que `Dispose()` se llame automáticamente
+al final del bloque, incluso si se lanza una excepción.
+
+Sintaxis:
+
+```csharp
+using (TipoVariable variable = new TipoVariable())
+{
+    // Usar la variable
+}  // Dispose() se llama automáticamente aquí
+```
+
+Equivalente a:
+
+```csharp
+TipoVariable variable = new TipoVariable();
+try
+{
+    // Usar la variable
+}
+finally
+{
+    if (variable != null)
+        variable.Dispose();
+}
+```
+
+Ejemplo:
+
+```csharp
+public class Recurso : IDisposable
+{
+    public string Nombre { get; }
+    public Recurso(string nombre)
+    {
+        Nombre = nombre;
+        Console.WriteLine($"{Nombre}: recurso adquirido.");
+    }
+
+    public void Dispose()
+    {
+        Console.WriteLine($"{Nombre}: recurso liberado.");
+    }
+}
+
+// Uso con using:
+using (Recurso r1 = new Recurso("Archivo"))
+using (Recurso r2 = new Recurso("Conexión BD"))
+{
+    Console.WriteLine("Trabajando con los recursos...");
+    // r1 y r2 se liberan al salir del bloque
+}
+
+// Salida:
+// Archivo: recurso adquirido.
+// Conexión BD: recurso adquirido.
+// Trabajando con los recursos...
+// Conexión BD: recurso liberado.
+// Archivo: recurso liberado.
+```
+
+Desde C# 8.0, también podemos usar declaraciones `using` sin llaves:
+
+```csharp
+public void ProcesarArchivo()
+{
+    using var archivo = new Recurso("Archivo temporal");
+    using var conexion = new Recurso("Conexión");
+
+    // Usar recursos...
+    // Dispose() se llama al final del método automáticamente
+}
+```
+
+La sentencia `using` también funciona con cualquier tipo que implemente
+`IDisposable`. Todas estas clases de .NET son IDisposable:
+
+  • System.IO.FileStream, StreamReader, StreamWriter
+  • System.Data.SqlClient.SqlConnection, SqlCommand
+  • System.Net.Sockets.TcpClient, UdpClient
+  • System.Drawing.Bitmap, Font, Pen, Brush
+  • System.Threading.Mutex, Semaphore
+  • System.Net.Http.HttpClient
+  • System.IO.Compression.GZipStream, DeflateStream
+  • System.Security.Cryptography的各种算法类
+
+```csharp
+using (var reader = new StreamReader("archivo.txt"))
+{
+    string contenido = reader.ReadToEnd();
+    Console.WriteLine(contenido);
+}  // reader.Dispose() automático
+
+using (var writer = new StreamWriter("salida.txt"))
+{
+    writer.WriteLine("Hola, mundo!");
+}  // writer.Dispose() automático
+
+using (var conexion = new SqlConnection("cadena"))
+{
+    conexion.Open();
+    using (var comando = new SqlCommand("SELECT * FROM Tabla", conexion))
+    using (var reader = comando.ExecuteReader())
+    {
+        while (reader.Read())
+            Console.WriteLine(reader[0]);
+    }
+}
+```
+
+--------------------------------------------------------------------
+  5. EL PATRÓN DISPOSE COMPLETO
+--------------------------------------------------------------------
+
+El patrón Dispose completo combina IDisposable con un finalizador para
+garantizar que los recursos se liberen en ambos escenarios:
+
+  1. Llamada explícita a Dispose() → liberación inmediata.
+  2. Olvido de Dispose() → el finalizador libera tarde pero seguro.
+
+El patrón estándar recomendado por Microsoft:
+
+```csharp
+public class RecursoComplejo : IDisposable
+{
+    private bool _disposed = false;
+
+    // Recurso gestionado (managed)
+    private FileStream _archivo;
+
+    // Recurso no gestionado (unmanaged)
+    private IntPtr _handleNoGestionado;
+
+    public RecursoComplejo(string ruta)
+    {
+        _archivo = new FileStream(ruta, FileMode.Open);
+        _handleNoGestionado = System.Runtime.InteropServices.Marshal.AllocHGlobal(1024);
+    }
+
+    // Implementación pública de Dispose
+    public void Dispose()
+    {
+        Dispose(true);
+        // Suprimir el finalizador (el objeto ya no necesita finalización)
+        GC.SuppressFinalize(this);
+    }
+
+    // Método protegido virtual (puede ser sobreescrito por clases derivadas)
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Liberar recursos GESTIONADOS (que implementan IDisposable)
+            _archivo?.Dispose();
+            _archivo = null;
+        }
+
+        // Liberar recursos NO GESTIONADOS
+        if (_handleNoGestionado != IntPtr.Zero)
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(_handleNoGestionado);
+            _handleNoGestionado = IntPtr.Zero;
+        }
+
+        _disposed = true;
+    }
+
+    // Finalizador (destructor)
+    ~RecursoComplejo()
+    {
+        Dispose(false);  // Solo libera recursos no gestionados
+    }
+
+    // Método público para verificar si el objeto fue dispuesto
+    public void RealizarOperacion()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(RecursoComplejo));
+
+        Console.WriteLine("Operación realizada.");
+    }
+}
+```
+
+Explicación del patrón:
+
+┌──────────────────────────────────────────────────────────────────┐
+│                      PATRÓN DISPOSE                              │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Dispose() público:                                              │
+│    → Llama a Dispose(true)                                       │
+│    → Suprime el finalizador (GC.SuppressFinalize)               │
+│    → El objeto ya no necesita ser finalizado                     │
+│                                                                  │
+│  Dispose(bool disposing):                                        │
+│    → Si disposing=true: libera recursos gestionados Y no         │
+│      gestionados (llamado EXPLÍCITAMENTE por Dispose())          │
+│    → Si disposing=false: libera solo recursos no gestionados     │
+│      (llamado desde el FINALIZADOR)                              │
+│                                                                  │
+│  Finalizador (~Recurso):                                         │
+│    → Llama a Dispose(false)                                      │
+│    → Solo libera no gestionados (los gestionados ya fueron       │
+│      recolectados por el GC)                                     │
+│                                                                  │
+│  ObjectDisposedException:                                        │
+│    → Se lanza si se usa el objeto después de Dispose()           │
+└──────────────────────────────────────────────────────────────────┘
+
+Ejemplo completo con herencia:
+
+```csharp
+public class RecursoBase : IDisposable
+{
+    private bool _disposed = false;
+    private FileStream _archivo;
+
+    public RecursoBase()
+    {
+        _archivo = new FileStream("base.dat", FileMode.Create);
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            _archivo?.Dispose();
+            _archivo = null;
+        }
+
+        _disposed = true;
+    }
+
+    ~RecursoBase() => Dispose(false);
+}
+
+public class RecursoDerivado : RecursoBase
+{
+    private bool _disposed = false;
+    private SqlConnection _conexion;
+
+    public RecursoDerivado()
+    {
+        _conexion = new SqlConnection("...");
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            _conexion?.Dispose();
+            _conexion = null;
+        }
+
+        // Llamar al base
+        base.Dispose(disposing);
+        _disposed = true;
+    }
+
+    ~RecursoDerivado() => Dispose(false);
+}
+```
+
+--------------------------------------------------------------------
+  6. GC.SuppressFinalize
+--------------------------------------------------------------------
+
+`GC.SuppressFinalize(this)` es crucial en el patrón Dispose.
+
+¿Qué hace? Le indica al GC que NO llame al finalizador de este objeto
+porque ya se liberaron los recursos manualmente.
+
+¿Por qué es importante?
+  • Los objetos con finalizador tardan MÁS en ser recolectados.
+  • Pasan por la "finalization queue" y luego por la "freachable queue".
+  • El GC debe hacer al menos 2 pasadas para liberarlos.
+  • Suprimir el finalizador acelera la recolección.
+
+```csharp
+public class DemoSuppress
+{
+    ~DemoSuppress()
+    {
+        Console.WriteLine("Finalizador ejecutado.");
+    }
+
+    public void Dispose()
+    {
+        Console.WriteLine("Dispose() llamado.");
+        GC.SuppressFinalize(this);  // El finalizador NO se ejecutará
+    }
+}
+
+// Sin SuppressFinalize:
+DemoSuppress obj = new DemoSuppress();
+obj.Dispose();
+// El finalizador aún se ejecutará cuando el GC decida
+// (si no se suprimió)
+
+// Con SuppressFinalize:
+// El finalizador se "cancela" y el objeto se recolecta normalmente
+```
+
+--------------------------------------------------------------------
+  7. EL GARBAGE COLLECTOR (GC) EN PROFUNDIDAD
+--------------------------------------------------------------------
+
+El Garbage Collector de .NET es un recolector generacional, compactador
+y de marcas-y-barridos (mark-and-sweep).
+
+Generaciones:
+
+  • Gen 0:   Objetos nuevos y de corta vida (se recolecta frecuentemente).
+  • Gen 1:   Objetos que sobreviven a Gen 0 (puente entre corta y larga).
+  • Gen 2:   Objetos de larga vida (se recolecta raramente).
+  • Large Object Heap (LOH): Objetos > 85KB (se recolecta como Gen 2).
+
+```csharp
+public class DemoGeneraciones
+{
+    public static void Main()
+    {
+        object obj = new object();
+        Console.WriteLine($"Gen inicial: {GC.GetGeneration(obj)}");
+
+        GC.Collect(0);
+        Console.WriteLine($"Después de Gen 0: {GC.GetGeneration(obj)}");
+
+        GC.Collect(1);
+        Console.WriteLine($"Después de Gen 1: {GC.GetGeneration(obj)}");
+
+        GC.Collect(2);
+        Console.WriteLine($"Después de Gen 2: {GC.GetGeneration(obj)}");
+    }
+}
+```
+
+Estadísticas del GC:
+
+```csharp
+public static void MostrarInfoGC()
+{
+    Console.WriteLine($"Memoria total: {GC.GetTotalMemory(false):N0} bytes");
+    Console.WriteLine($"Generaciones: {GC.MaxGeneration + 1}");
+    Console.WriteLine($"Gen 0 collections: {GC.CollectionCount(0)}");
+    Console.WriteLine($"Gen 1 collections: {GC.CollectionCount(1)}");
+    Console.WriteLine($"Gen 2 collections: {GC.CollectionCount(2)}");
+    Console.WriteLine($"LOH compactado: {GCSettings.LargeObjectHeapCompactionMode}");
+    Console.WriteLine($"Modo latencia: {GCSettings.LatencyMode}");
+}
+```
+
+Modos de GC:
+
+  • Workstation:   Para aplicaciones de escritorio (baja latencia).
+  • Server:        Para servidores (mayor rendimiento, más hilos).
+  • Concurrent:    Recolección en segundo plano (menos pausas).
+
+Forzar GC (solo para diagnóstico):
+
+```csharp
+// Forzar recolección de todas las generaciones
+GC.Collect();
+GC.WaitForPendingFinalizers();  // Esperar a que terminen finalizadores
+
+// O más específico:
+GC.Collect(2, GCCollectionMode.Optimized);
+```
+
+ADVERTENCIA: NO fuerces el GC en producción. Solo para diagnóstico.
+
+--------------------------------------------------------------------
+  8. EJEMPLO COMPLETO: GESTOR DE CONEXIONES
+--------------------------------------------------------------------
+
+```csharp
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+namespace GestionRecursos
+{
+    // Simula una conexión a base de datos
+    public class ConexionBaseDatos : IDisposable
+    {
+        private bool _disposed = false;
+        private string _cadenaConexion;
+        private IntPtr _handleConexion;  // Recurso no gestionado simulado
+        private StreamWriter _log;       // Recurso gestionado
+
+        public string Estado { get; private set; }
+
+        public ConexionBaseDatos(string cadenaConexion, string rutaLog = null)
+        {
+            _cadenaConexion = cadenaConexion;
+            Estado = "Desconectada";
+
+            // Simular asignación de handle no gestionado
+            _handleConexion = Marshal.AllocHGlobal(256);
+            Console.WriteLine("Handle no gestionado asignado.");
+
+            // Abrir archivo de log si se proporcionó
+            if (!string.IsNullOrEmpty(rutaLog))
+            {
+                _log = new StreamWriter(rutaLog, append: true);
+                _log.WriteLine($"[{DateTime.Now}] Nueva conexión creada: {cadenaConexion}");
+                _log.Flush();
+            }
+
+            Estado = "Conectada";
+            Console.WriteLine($"Conexión establecida: {cadenaConexion}");
+        }
+
+        public void EjecutarComando(string sql)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(ConexionBaseDatos));
+
+            if (Estado != "Conectada")
+                throw new InvalidOperationException("La conexión no está activa.");
+
+            Console.WriteLine($"Ejecutando: {sql}");
+
+            _log?.WriteLine($"[{DateTime.Now}] SQL: {sql}");
+            _log?.Flush();
+        }
+
+        public void Cerrar()
+        {
+            if (Estado == "Conectada")
+            {
+                Console.WriteLine("Conexión cerrada manualmente.");
+                Estado = "Cerrada";
+            }
+        }
+
+        // Implementación de IDisposable
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+            Console.WriteLine("Dispose() completado.");
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+
+            if (disposing)
+            {
+                // Liberar recursos gestionados
+                Console.WriteLine("Liberando recursos gestionados...");
+                Cerrar();
+
+                if (_log != null)
+                {
+                    _log.WriteLine($"[{DateTime.Now}] Conexión liberada vía Dispose.");
+                    _log.Dispose();
+                    _log = null;
+                }
+            }
+
+            // Liberar recursos no gestionados
+            if (_handleConexion != IntPtr.Zero)
+            {
+                Console.WriteLine("Liberando handle no gestionado...");
+                Marshal.FreeHGlobal(_handleConexion);
+                _handleConexion = IntPtr.Zero;
+            }
+
+            _disposed = true;
+        }
+
+        ~ConexionBaseDatos()
+        {
+            Console.WriteLine("*** Finalizador ejecutado ***");
+            Dispose(false);
+        }
+    }
+
+    public class Programa
+    {
+        public static void Main()
+        {
+            Console.WriteLine("=== Demostración 1: Uso correcto con using ===");
+            DemostrarUsing();
+
+            Console.WriteLine("\n=== Demostración 2: Olvido de Dispose (finalizador) ===");
+            DemostrarSinDispose();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+
+            Console.WriteLine("\n=== Demostración 3: Excepción y using ===");
+            DemostrarExcepcion();
+
+            Console.WriteLine("\n=== Información del GC ===");
+            MostrarInfoGC();
+
+            Console.WriteLine("\nPrograma finalizado.");
+        }
+
+        static void DemostrarUsing()
+        {
+            using (var conexion = new ConexionBaseDatos(
+                "Server=local;DB=test",
+                "conexiones.log"))
+            {
+                conexion.EjecutarComando("SELECT * FROM Usuarios");
+                conexion.EjecutarComando("INSERT INTO Log VALUES ('test')");
+            }  // Dispose automático aquí
+            Console.WriteLine("Recursos liberados automáticamente.");
+        }
+
+        static void DemostrarSinDispose()
+        {
+            var conexion = new ConexionBaseDatos(
+                "Server=local;DB=test2",
+                "conexiones2.log");
+            conexion.EjecutarComando("SELECT 1");
+            // NO llamamos a Dispose ni usamos using
+            // El finalizador se ejecutará cuando el GC decida
+            Console.WriteLine("Objeto olvidado (sin Dispose).");
+        }
+
+        static void DemostrarExcepcion()
+        {
+            try
+            {
+                using (var conexion = new ConexionBaseDatos(
+                    "Server=local;DB=test3",
+                    "conexiones3.log"))
+                {
+                    conexion.EjecutarComando("SELECT * FROM Datos");
+                    throw new InvalidOperationException("Error simulado!");
+                    // Aun con la excepción, Dispose() se llama
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Excepción capturada: {ex.Message}");
+            }
+            Console.WriteLine("Recursos liberados a pesar de la excepción.");
+        }
+
+        static void MostrarInfoGC()
+        {
+            Console.WriteLine($"Memoria actual: {GC.GetTotalMemory(false):N0} bytes");
+            Console.WriteLine($"Collects Gen 0: {GC.CollectionCount(0)}");
+            Console.WriteLine($"Collects Gen 1: {GC.CollectionCount(1)}");
+            Console.WriteLine($"Collects Gen 2: {GC.CollectionCount(2)}");
+        }
+    }
+}
+```
+
+--------------------------------------------------------------------
+  9. BUENAS PRÁCTICAS
+--------------------------------------------------------------------
+
+  ✓ Siempre implementa IDisposable si tu clase posee recursos no
+    gestionados o recursos gestionados que son IDisposable.
+
+  ✓ Siempre usa `using` para objetos IDisposable.
+
+  ✓ Implementa el patrón Dispose completo si tienes recursos no
+    gestionados.
+
+  ✓ Llama a `GC.SuppressFinalize(this)` en Dispose() para optimizar.
+
+  ✓ No hagas que el finalizador sea tu única estrategia de limpieza.
+    Usa IDisposable + using para liberación determinista.
+
+  ✓ Lanza `ObjectDisposedException` si se usa el objeto después de
+    Dispose().
+
+  ✓ No implementes IDisposable si solo tienes recursos gestionados
+    que no son IDisposable.
+
+  ✓ Documenta que la clase implementa IDisposable.
+
+  ✓ No uses destructores en clases que no tengan recursos no
+    gestionados.
+
+  ✓ Si heredas de una clase que implementa IDisposable, llama al
+    base.Dispose(disposing).
+
+```csharp
+// EJEMPLO DE BUENA PRÁCTICA
+public class GestorSeguro : IDisposable
+{
+    private bool _disposed;
+    private FileStream _archivo;
+    private IntPtr _buffer;
+
+    public GestorSeguro(string ruta)
+    {
+        _archivo = File.OpenRead(ruta);
+        _buffer = Marshal.AllocHGlobal(4096);
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing) _archivo?.Dispose();
+        if (_buffer != IntPtr.Zero) { Marshal.FreeHGlobal(_buffer); _buffer = IntPtr.Zero; }
+        _disposed = true;
+    }
+
+    ~GestorSeguro() => Dispose(false);
+}
+```
+
+--------------------------------------------------------------------
+  10. REGLAS DEL ANÁLISIS DE CÓDIGO (CA1063)
+--------------------------------------------------------------------
+
+Microsoft define reglas específicas para IDisposable (CA1063):
+
+  • Dispose() debe ser pública y sellada (no virtual).
+  • Proveer un método protegido virtual Dispose(bool).
+  • No permitir que Dispose() lance excepciones.
+  • Llamar a GC.SuppressFinalize(this).
+  • No sobrecargar Dispose() (solo el sin parámetros).
+
+```csharp
+// Cumpliendo CA1063
+public class CorrectoDispose : IDisposable
+{
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        // limpiar...
+        _disposed = true;
+    }
+
+    ~CorrectoDispose() => Dispose(false);
+}
+```
+
+--------------------------------------------------------------------
+  11. COMPARATIVA: DESTRUCTOR vs IDisposable
+--------------------------------------------------------------------
+
+┌─────────────────────────┬──────────────────────┬─────────────────────┐
+│      CARACTERÍSTICA      │     DESTRUCTOR (~)    │     IDisposable     │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Control de cuándo se    │ No (no determinista)  │ Sí (llamada expl.)  │
+│ ejecuta                 │                       │                     │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Sintaxis                │ ~NombreClase()        │ void Dispose()      │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Cláusula using          │ No aplica             │ Sí                  │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Riesgo de excepciones   │ Alto (termina proc.)  │ Bajo (controlado)   │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Uso principal           │ Respaldo de seguridad │ Liberación          │
+│                         │ (si olvidan Dispose)  │ determinista        │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Impacto en rendimiento  │ Alto (2+ pasadas GC)  │ Mínimo              │
+├─────────────────────────┼──────────────────────┼─────────────────────┤
+│ Recomendado             │ Solo si hay recursos  │ Siempre que haya    │
+│                         │ no gestionados        │ recursos que liberar │
+└─────────────────────────┴──────────────────────┴─────────────────────┘
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+  • Los RECURSOS GESTIONADOS son liberados por el GC automáticamente.
+  • Los RECURSOS NO GESTIONADOS requieren liberación explícita.
+  • El DESTRUCTOR (~) es un finalizador que el GC ejecuta antes de
+    liberar memoria. Es no determinista.
+  • IDisposable es la interfaz estándar para liberación determinista
+    de recursos mediante el método Dispose().
+  • La sentencia `using` garantiza que Dispose() se llame al final
+    del bloque, incluso con excepciones.
+  • El PATRÓN DISPOSE combina IDisposable + finalizador para robustez.
+  • GC.SuppressFinalize optimiza la recolección cuando ya se llamó a
+    Dispose().
+  • El GC es generacional (Gen 0, 1, 2) y NO debe forzarse en producción.
+  • Siempre usa `using` para objetos que implementen IDisposable.
+
+================================================================================
+  EJERCICIOS
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  EJERCICIO 1: Implementar IDisposable simple                    │
+  │                                                                  │
+  │  Crea una clase `GestorArchivo` que:                             │
+  │    • Implemente IDisposable.                                     │
+  │    • Tenga un campo FileStream interno.                          │
+  │    • Dispose() cierre el FileStream.                             │
+  │    • Tenga un método Escribir(string texto).                    │
+  │  En el Main, usa `using` para escribir y demostrar que se       │
+  │  libera.                                                         │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  EJERCICIO 2: Using con múltiples recursos                       │
+  │                                                                  │
+  │  Crea un programa que:                                           │
+  │    • Abra un archivo de origen con StreamReader (using).        │
+  │    • Abra un archivo de destino con StreamWriter (using).       │
+  │    • Copie el contenido del origen al destino.                  │
+  │    • Maneje posibles excepciones.                                │
+  │  Verifica que ambos archivos se cierren correctamente incluso   │
+  │  si ocurre un error.                                             │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  EJERCICIO 3: Patrón Dispose completo                           │
+  │                                                                  │
+  │  Crea la clase `RecursoMixto` que:                               │
+  │    • Tenga un StreamWriter (gestionado) y un IntPtr (no gest.). │
+  │    • Implemente el patrón Dispose completo.                      │
+  │    • Tenga un finalizador.                                       │
+  │    • Loguee cada paso (creación, Dispose, finalización).        │
+  │  Crea y desecha el objeto con y sin using, observa la dif.     │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  EJERCICIO 4: ObjectDisposedException                           │
+  │                                                                  │
+  │  Crea una clase `Conexion` que:                                  │
+  │    • Implemente IDisposable.                                     │
+  │    • Después de Dispose(), cualquier llamada a métodos lance    │
+  │      ObjectDisposedException.                                    │
+  │  Demuestra en el Main que la excepción se lanza correctamente.  │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  EJERCICIO 5: Análisis del GC                                   │
+  │                                                                  │
+  │  Escribe un programa que:                                        │
+  │    • Cree muchos objetos en un ciclo (ej: 100,000).             │
+  │    • Mida la memoria antes y después con GC.GetTotalMemory().    │
+  │    • Llame a GC.Collect() y mida la memoria de nuevo.           │
+  │    • Muestre CollectionCount para cada generación.              │
+  │    • Comenta los resultados.                                     │
+  └─────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  ❓ ¿Siempre debo implementar IDisposable?
+  ───
+  No. Solo si tu clase posee recursos que necesitan liberación
+  explícita (archivos, conexiones, handles, etc.).
+
+  ❓ ¿Puedo usar `using` con tipos que no implementan IDisposable?
+  ───
+  No. La sentencia `using` solo acepta tipos que implementen
+  IDisposable. El compilador dará error si no.
+
+  ❓ ¿Qué pasa si llamo a Dispose() varias veces?
+  ───
+  Debe ser seguro (no debe lanzar excepción). Usa una bandera
+  `_disposed` para evitar múltiples liberaciones.
+
+  ❓ ¿El finalizador se ejecuta siempre?
+  ───
+  Sí, si no se suprimió con GC.SuppressFinalize. Pero NO se puede
+  garantizar el orden o el momento exacto.
+
+  ❓ ¿Puedo tener propiedades IDisposable?
+  ───
+  Sí, pero la clase que las contiene debe implementar IDisposable
+  y liberar esas propiedades en Dispose().
+
+  ❓ ¿Los eventos causan memory leaks?
+  ───
+  Sí. Un objeto suscrito a un evento de un objeto más longevo no
+  será recolectado hasta que se desuscriba. Es un "leak" común.
+
+  ❓ ¿Qué es un "managed resource" exactamente?
+  ───
+  Un recurso gestionado es cualquier objeto .NET que vive en el heap
+  y es gestionado por el GC. Incluso si internamente contiene un
+  handle no gestionado (como FileStream), el recurso "gestionado" es
+  el objeto mismo.
+
+  ❓ ¿Vale la pena implementar IAsyncDisposable?
+  ───
+  Sí, si tienes operaciones de limpieza asíncronas (cerrar conexiones
+  de red, flush de streams). Disponible desde C# 8.0 / .NET Core 3.0.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  ██████╗ ███████╗███████╗ █████╗ ███████╗██╗ ██████╗                │
+  │  ██╔══██╗██╔════╝██╔════╝██╔══██╗██╔════╝██║██╔════╝                │
+  │  ██║  ██║█████╗  ███████╗███████║███████╗██║██║                     │
+  │  ██║  ██║██╔══╝  ╚════██║██╔══██║╚════██║██║██║                     │
+  │  ██████╔╝███████╗███████║██║  ██║███████║██║╚██████╗                │
+  │  ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝ ╚═════╝                │
+  │                                                                      │
+  │  SISTEMA DE GESTIÓN DE ARCHIVOS SEGURO                               │
+  │                                                                      │
+  │  Diseña un sistema de gestión de archivos que:                       │
+  │                                                                      │
+  │  Clase `ArchivoSeguro` : IDisposable                                  │
+  │    • Envuelve un FileStream y un MemoryStream como buffer.           │
+  │    • Implementa el patrón Dispose completo.                          │
+  │    • Tiene un finalizador que registra en un log global.             │
+  │    • Métodos: LeerTodo(), EscribirTodo(string), ObtenerTamaño().    │
+  │    • Después de Dispose(), lanza ObjectDisposedException.            │
+  │                                                                      │
+  │  Clase `GestorLog` (Singleton) : IDisposable                         │
+  │    • Mantiene un StreamWriter para escribir logs de actividad.       │
+  │    • Constructor privado, método GetInstancia().                     │
+  │    • Método Registrar(string mensaje).                               │
+  │    • Implementa IDisposable (libera el StreamWriter).                │
+  │    • En el finalizador, escribe "LOG CERRADO POR FINALIZADOR".      │
+  │                                                                      │
+  │  Clase `Programa`:                                                   │
+  │    • En el Main:                                                     │
+  │      1. Crea 3 archivos seguros y escribe/lee datos en ellos.       │
+  │      2. Usa `using` para 2 de ellos y olvida Dispose del 3ro.       │
+  │      3. Fuerza GC.Collect + WaitForPendingFinalizers.               │
+  │      4. Muestra estadísticas del GC antes y después.                │
+  │      5. Muestra el contenido del log al final.                      │
+  │      6. Demuestra que el archivo sin using igual se limpia          │
+  │         (por el finalizador) pero más tarde.                         │
+  │                                                                      │
+  │  ENTREGA: Código completo, salida de consola explicando             │
+  │  el orden de las operaciones y por qué el patrón Dispose            │
+  │  es importante para la gestión de recursos.                          │
+  └──────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Hemos explorado el ciclo de finalización de los objetos en C#: desde el
+destructor no determinista hasta el patrón Dispose completo y determinista.
+
+La gestión de recursos es uno de los temas más importantes en la programación
+profesional. Un mal manejo de archivos, conexiones o memoria no gestionada
+puede llevar a fugas de recursos, degradación del rendimiento y caídas del
+sistema.
+
+Domina el patrón Dispose, úsalo siempre con `using`, y tus aplicaciones
+serán más robustas y predecibles.
+
+En el próximo capítulo exploraremos la ENCAPSULACIÓN, uno de los cuatro
+pilares de la POO, que nos permite controlar el acceso a los miembros de
+nuestras clases.
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  ▶ CAPÍTULO 14: ENCAPSULACIÓN
+    Modificadores de acceso (public, private, protected, internal),
+    encapsulación de campos, propiedades frente a campos públicos.
+
+================================================================================
+  C# MASTER BOOK — MÓDULO II: POO EN C#
+  Capítulo 13 de 10 — FIN DEL CAPÍTULO
+================================================================================

@@ -1,0 +1,989 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                     CAPÍTULO 52
+##
+##                       CALLOC
+##
+################################################################################
+################################################################################
+
+"calloc es malloc con conciencia: no solo reserva, sino que también limpia
+el espacio antes de entregártelo." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Hola de nuevo, aprendiz del heap!
+
+En el capítulo anterior dominaste malloc. Ahora es momento de conocer a su
+primo ordenado: calloc. La principal diferencia es que calloc inicializa
+cada byte a cero. Pero hay más: calloc recibe dos argumentos en lugar de uno,
+y tiene una protección implícita contra desbordamientos que malloc no tiene.
+
+En este capítulo exploraremos cuándo usar calloc, cuándo preferir malloc +
+memset, y cómo la inicialización a cero puede hacer tu código más seguro y
+predecible. No te confíes: la memoria inicializada no es gratis, y en
+aplicaciones de alto rendimiento puede haber razones para evitarla.
+
+¡Comencemos!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un programador sabio no solo reserva memoria; la deja en un estado conocido.
+calloc es la herramienta de la certeza." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Conocer la firma de calloc: void *calloc(size_t nmemb, size_t size).
+✓ Entender que calloc reserva nmemb * size bytes y los inicializa a cero.
+✓ Distinguir entre malloc + memset y calloc para elegir la opción adecuada.
+✓ Aprender que calloc protege contra el desbordamiento en la multiplicación.
+✓ Identificar cuándo la inicialización a cero es necesaria y cuándo es
+  redundante.
+✓ Implementar ejemplos con arrays, estructuras y matrices bidimensionales.
+✓ Reconocer el costo de rendimiento de la inicialización a cero en bloques
+  grandes.
+
+===============================================================================
+1. INTRODUCCIÓN A CALLOC
+===============================================================================
+
+calloc (contiguous allocation) es una función de la biblioteca estándar de C
+declarada en <stdlib.h>:
+
+```c
+#include <stdlib.h>
+
+void *calloc(size_t nmemb, size_t size);
+```
+
+Argumentos:
+- nmemb: número de elementos.
+- size: tamaño de cada elemento en bytes.
+
+Retorno:
+- Puntero void* al inicio del bloque de memoria reservado.
+- El bloque está inicializado a cero (todos los bits en 0).
+- NULL si la reserva falla.
+
+La principal diferencia con malloc es doble:
+1. Recibe dos argumentos (número de elementos y tamaño de cada uno).
+2. Inicializa toda la memoria a cero.
+
+```c
+// Equivalencia aproximada:
+void *mi_calloc(size_t nmemb, size_t size) {
+    void *ptr = malloc(nmemb * size);
+    if (ptr != NULL) {
+        memset(ptr, 0, nmemb * size);
+    }
+    return ptr;
+}
+```
+
+Sin embargo, calloc tiene una ventaja crucial sobre esta implementación
+ingenua: detecta el desbordamiento en la multiplicación nmemb * size. Si el
+producto excede SIZE_MAX, calloc devuelve NULL, mientras que malloc con
+una multiplicación desbordada reservaría un bloque más pequeño de lo
+esperado.
+
+```c
+// Con malloc: desbordamiento silencioso
+size_t nmemb = SIZE_MAX / 2 + 2;
+size_t size = 2;
+int *p = (int *)malloc(nmemb * size);
+// nmemb * size desborda, malloc recibe un número pequeño
+// POSIBLE: p no es NULL, pero el bloque es diminuto
+
+// Con calloc: detección de desbordamiento
+int *q = (int *)calloc(nmemb, size);
+// calloc detecta que nmemb * size > SIZE_MAX y devuelve NULL
+```
+
+===============================================================================
+2. CALLOC VS MALLOC + MEMSET
+===============================================================================
+
+Veamos las tres estrategias para obtener un bloque de memoria inicializado:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    int n = 100;
+
+    // Estrategia 1: malloc sin inicializar (basura)
+    int *a = (int *)malloc(n * sizeof(int));
+    // a[0] hasta a[n-1] contienen valores indeterminados
+
+    // Estrategia 2: malloc + memset
+    int *b = (int *)malloc(n * sizeof(int));
+    if (b != NULL) memset(b, 0, n * sizeof(int));
+
+    // Estrategia 3: calloc (reserva e inicializa a cero)
+    int *c = (int *)calloc(n, sizeof(int));
+    if (c != NULL) {
+        // c[0] hasta c[n-1] son 0
+    }
+
+    free(a); free(b); free(c);
+    return EXIT_SUCCESS;
+}
+```
+
+¿Cuándo usar cada uno?
+
+Usa calloc cuando:
+- Necesitas que la memoria comience en cero (arrays de contadores, buffers
+  que se llenarán parcialmente, matrices dispersas).
+- La inicialización a cero es parte de la semántica del programa.
+- El tamaño total es grande y la multiplicación podría desbordar.
+- La legibilidad es importante (código autodocumentado).
+
+Usa malloc + memset cuando:
+- Necesitas inicializar a un valor distinto de cero (por ejemplo, 0xFF
+  para buffers de red).
+- Ya tienes el puntero y quieres reinicializarlo más tarde.
+- Estás en un bucle de rendimiento crítico y quieres controlar exactamente
+  cuándo ocurre la inicialización.
+
+Usa malloc sin inicializar cuando:
+- Vas a escribir inmediatamente todos los elementos (no tiene sentido
+  pagar el costo de poner ceros que luego sobrescribirás).
+- El rendimiento es crítico y el bloque es muy grande.
+
+```c
+// Buen uso de malloc (sin inicializar): buffer que se llena con fread
+FILE *f = fopen("datos.bin", "rb");
+if (f == NULL) return EXIT_FAILURE;
+fseek(f, 0, SEEK_END);
+long tam = ftell(f);
+rewind(f);
+
+char *buffer = (char *)malloc(tam);
+if (buffer == NULL) { fclose(f); return EXIT_FAILURE; }
+fread(buffer, 1, tam, f);  // Sobrescribimos todos los bytes
+// No tenía sentido usar calloc aquí
+fclose(f);
+free(buffer);
+```
+
+===============================================================================
+3. COMPROBACIÓN DE DESBORDAMIENTO EN CALLOC
+===============================================================================
+
+El estándar C dice que calloc debe devolver NULL si el tamaño solicitado no
+puede ser representado en size_t. Esta es una característica de seguridad
+importante que malloc no tiene.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
+
+int main(void) {
+    // Prueba de desbordamiento
+    size_t nmemb = SIZE_MAX / 2 + 1;
+    size_t size = 2;
+
+    printf("Intentando calloc(%zu, %zu)...\n", nmemb, size);
+    void *p = calloc(nmemb, size);
+    if (p == NULL) {
+        printf("calloc detectó desbordamiento y devolvió NULL (correcto)\n");
+    } else {
+        printf("calloc tuvo éxito (inesperado en esta plataforma)\n");
+        free(p);
+    }
+
+    // Comparación con malloc
+    printf("\nIntentando malloc(%zu * %zu)...\n", nmemb, size);
+    size_t total = nmemb * size;  // Esto SÍ desborda en size_t
+    void *q = malloc(total);
+    if (q == NULL) {
+        printf("malloc devolvió NULL\n");
+    } else {
+        printf("malloc tuvo éxito (¡peligro! el tamaño real es pequeño)\n");
+        free(q);
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+
+En sistemas donde size_t es de 64 bits, el desbordamiento es raro en la
+práctica, pero en sistemas embebidos de 32 bits es un riesgo real. calloc
+es la opción más segura.
+
+===============================================================================
+4. ARRAY DINÁMICO DE ENTEROS CON CALLOC
+===============================================================================
+
+Crear un array de enteros inicializado a cero es muy útil para tablas de
+frecuencia, contadores, y memorias intermedias.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+int main(void) {
+    int n;
+    printf("¿Cuántos números aleatorios vas a generar? ");
+    if (scanf("%d", &n) != 1 || n <= 0) {
+        fprintf(stderr, "Error: número inválido\n");
+        return EXIT_FAILURE;
+    }
+
+    // Reservar array de contadores inicializado a cero
+    int *conteo = (int *)calloc(100, sizeof(int));
+    if (conteo == NULL) {
+        fprintf(stderr, "Error: no se pudo reservar memoria\n");
+        return EXIT_FAILURE;
+    }
+
+    srand((unsigned int)time(NULL));
+
+    printf("Generando %d números entre 0 y 99:\n", n);
+    for (int i = 0; i < n; i++) {
+        int num = rand() % 100;
+        conteo[num]++;
+        printf("%d ", num);
+    }
+    printf("\n\n");
+
+    printf("Frecuencia de cada número:\n");
+    for (int i = 0; i < 100; i++) {
+        if (conteo[i] > 0) {
+            printf("  %d: %d veces\n", i, conteo[i]);
+        }
+    }
+
+    free(conteo);
+    return EXIT_SUCCESS;
+}
+```
+
+Gracias a calloc, todos los contadores comienzan en cero sin necesidad de
+un bucle de inicialización explícito.
+
+===============================================================================
+5. CALLOC CON ESTRUCTURAS
+===============================================================================
+
+Cuando trabajas con arrays de estructuras, calloc asegura que todos los
+campos numéricos comiencen en cero y los punteros en NULL.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    int id;
+    char nombre[50];
+    float saldo;
+    int activo;
+} Cliente;
+
+int main(void) {
+    int n;
+    printf("¿Cuántos clientes deseas crear? ");
+    if (scanf("%d", &n) != 1 || n <= 0) {
+        fprintf(stderr, "Error: número inválido\n");
+        return EXIT_FAILURE;
+    }
+
+    // calloc inicializa id=0, nombre="", saldo=0.0, activo=0
+    Cliente *clientes = (Cliente *)calloc(n, sizeof(Cliente));
+    if (clientes == NULL) {
+        fprintf(stderr, "Error: no se pudo reservar memoria\n");
+        return EXIT_FAILURE;
+    }
+
+    // Solo necesitamos llenar los campos que nos interesan
+    for (int i = 0; i < n; i++) {
+        clientes[i].id = i + 1000;
+        printf("Nombre del cliente %d: ", i + 1);
+        scanf("%49s", clientes[i].nombre);
+        printf("Saldo inicial: ");
+        scanf("%f", &clientes[i].saldo);
+        clientes[i].activo = 1;
+    }
+
+    printf("\n=== LISTA DE CLIENTES ===\n");
+    for (int i = 0; i < n; i++) {
+        printf("ID: %d | Nombre: %s | Saldo: %.2f | Activo: %s\n",
+               clientes[i].id,
+               clientes[i].nombre,
+               clientes[i].saldo,
+               clientes[i].activo ? "Sí" : "No");
+    }
+
+    free(clientes);
+    return EXIT_SUCCESS;
+}
+```
+
+Nota importante: el campo nombre se inicializa como cadena vacía (primer byte
+en '\0'). Esto es correcto: un bloque de memoria puesto a cero equivale a una
+cadena vacía para char[].
+
+===============================================================================
+6. MATRIZ BIDIMENSIONAL CON CALLOC
+===============================================================================
+
+calloc es especialmente útil para matrices bidimensionales donde queremos que
+todos los elementos comiencen en cero.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int filas, columnas;
+
+    printf("Filas: ");
+    scanf("%d", &filas);
+    printf("Columnas: ");
+    scanf("%d", &columnas);
+
+    if (filas <= 0 || columnas <= 0) {
+        fprintf(stderr, "Error: dimensiones inválidas\n");
+        return EXIT_FAILURE;
+    }
+
+    // Reservar array de punteros a filas
+    int **matriz = (int **)calloc(filas, sizeof(int *));
+    if (matriz == NULL) {
+        fprintf(stderr, "Error: no se pudieron reservar las filas\n");
+        return EXIT_FAILURE;
+    }
+
+    // Reservar cada fila
+    for (int i = 0; i < filas; i++) {
+        matriz[i] = (int *)calloc(columnas, sizeof(int));
+        if (matriz[i] == NULL) {
+            fprintf(stderr, "Error en fila %d\n", i);
+            // Liberar lo ya reservado
+            for (int j = 0; j < i; j++) free(matriz[j]);
+            free(matriz);
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Llenar algunos valores
+    for (int i = 0; i < filas && i < columnas; i++) {
+        matriz[i][i] = 1;  // Diagonal principal
+    }
+
+    printf("\nMatriz resultante:\n");
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            printf("%3d ", matriz[i][j]);
+        }
+        printf("\n");
+    }
+
+    // Liberación ordenada
+    for (int i = 0; i < filas; i++) free(matriz[i]);
+    free(matriz);
+
+    return EXIT_SUCCESS;
+}
+```
+
+Con calloc, todos los elementos fuera de la diagonal son cero automáticamente.
+
+===============================================================================
+7. CALLOC PARA CADENAS DE CARACTERES
+===============================================================================
+
+calloc es ideal para buffers de cadenas donde queremos garantizar que la
+cadena esté correctamente terminada en nulo, incluso si nunca se llena
+completamente.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+char *leer_linea_dinamica(void) {
+    size_t capacidad = 128;
+    size_t longitud = 0;
+    char *buffer = (char *)calloc(capacidad, sizeof(char));
+    if (buffer == NULL) return NULL;
+
+    int c;
+    while ((c = getchar()) != EOF && c != '\n') {
+        if (longitud + 1 >= capacidad) {
+            capacidad *= 2;
+            char *nuevo = (char *)realloc(buffer, capacidad);
+            if (nuevo == NULL) {
+                free(buffer);
+                return NULL;
+            }
+            buffer = nuevo;
+            // Cero desde la mitad anterior hasta la nueva capacidad
+            memset(buffer + capacidad / 2, 0, capacidad / 2);
+        }
+        buffer[longitud++] = (char)c;
+    }
+    // buffer[longitud] ya es '\0' por calloc
+    return buffer;
+}
+
+int main(void) {
+    printf("Escribe algo: ");
+    char *linea = leer_linea_dinamica();
+    if (linea == NULL) {
+        fprintf(stderr, "Error al leer línea\n");
+        return EXIT_FAILURE;
+    }
+
+    printf("Leído: \"%s\" (longitud: %zu)\n", linea, strlen(linea));
+    free(linea);
+    return EXIT_SUCCESS;
+}
+```
+
+Gracias a que calloc inicializa a cero, no necesitamos agregar explícitamente
+el '\0' al final del buffer.
+
+===============================================================================
+8. RENDIMIENTO: CALLOC VS MALLOC EN BLOQUES GRANDES
+===============================================================================
+
+La inicialización a cero tiene un costo. Para bloques grandes, calloc puede
+ser significativamente más lento que malloc porque necesita escribir en cada
+byte.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+int main(void) {
+    size_t tam = 100 * 1024 * 1024;  // 100 MB
+    clock_t inicio, fin;
+    double tiempo_malloc, tiempo_calloc;
+
+    // Prueba con malloc
+    inicio = clock();
+    void *p = malloc(tam);
+    if (p == NULL) { fprintf(stderr, "malloc falló\n"); return 1; }
+    fin = clock();
+    tiempo_malloc = (double)(fin - inicio) / CLOCKS_PER_SEC;
+    printf("malloc(%zu):   %.4f segundos (sin inicializar)\n", tam, tiempo_malloc);
+    free(p);
+
+    // Prueba con calloc
+    inicio = clock();
+    void *q = calloc(1, tam);
+    if (q == NULL) { fprintf(stderr, "calloc falló\n"); return 1; }
+    fin = clock();
+    tiempo_calloc = (double)(fin - inicio) / CLOCKS_PER_SEC;
+    printf("calloc(1, %zu): %.4f segundos (inicializado a cero)\n", tam, tiempo_calloc);
+    free(q);
+
+    // Prueba con malloc + memset
+    inicio = clock();
+    void *r = malloc(tam);
+    if (r == NULL) { fprintf(stderr, "malloc falló\n"); return 1; }
+    memset(r, 0, tam);
+    fin = clock();
+    double tiempo_malloc_memset = (double)(fin - inicio) / CLOCKS_PER_SEC;
+    printf("malloc + memset: %.4f segundos\n", tiempo_malloc_memset);
+    free(r);
+
+    printf("\nDiferencia calloc vs malloc: %.2fx más lento\n",
+           tiempo_calloc / tiempo_malloc);
+
+    return 0;
+}
+```
+
+En la práctica, los sistemas operativos modernos usan optimizaciones:
+- Las páginas de memoria nuevas suelen ser páginas cero (copy-on-write).
+- calloc puede reutilizar páginas cero del sistema sin escribirlas.
+- malloc + memset fuerza la escritura página por página.
+
+Por eso, en muchos sistemas, calloc no es tan lento como malloc + memset para
+bloques grandes, porque el kernel ya ha puesto a cero las páginas.
+
+===============================================================================
+9. CALLOC CON TIPOS ANIDADOS Y PADDING
+===============================================================================
+
+Una ventaja sutil de calloc es que inicializa a cero el padding entre
+miembros de una estructura, algo que no ocurre si inicializas campo por
+campo después de malloc.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stddef.h>
+
+typedef struct {
+    char c;       // 1 byte
+    // 3 bytes de padding
+    int i;        // 4 bytes
+    // 0 bytes de padding (i está alineado)
+    short s;      // 2 bytes
+    // 6 bytes de padding
+    double d;     // 8 bytes
+} Datos;
+
+int main(void) {
+    printf("sizeof(Datos) = %zu\n", sizeof(Datos));
+    printf("offsetof(Datos, c) = %zu\n", offsetof(Datos, c));
+    printf("offsetof(Datos, i) = %zu\n", offsetof(Datos, i));
+    printf("offsetof(Datos, s) = %zu\n", offsetof(Datos, s));
+    printf("offsetof(Datos, d) = %zu\n", offsetof(Datos, d));
+
+    // malloc: el padding contiene basura
+    Datos *p = (Datos *)malloc(sizeof(Datos));
+    p->c = 'A';
+    p->i = 42;
+    p->s = 7;
+    p->d = 3.14;
+    // Los bytes de padding entre c e i, y entre s y d, son basura
+    free(p);
+
+    // calloc: todo, incluyendo el padding, es cero
+    Datos *q = (Datos *)calloc(1, sizeof(Datos));
+    q->c = 'A';
+    q->i = 42;
+    q->s = 7;
+    q->d = 3.14;
+    // Los bytes de padding son cero
+    free(q);
+
+    return EXIT_SUCCESS;
+}
+```
+
+Esto es relevante si escribes estructuras a un archivo o las envías por red:
+con malloc, los bytes de padding podrían contener datos residuales sensibles.
+calloc asegura que todo el bloque sea predecible.
+
+===============================================================================
+10. EJEMPLO PRÁCTICO: TABLA DE FRECUENCIA DE CARACTERES
+===============================================================================
+
+Un uso clásico de calloc es una tabla de frecuencia con 256 entradas (una
+por cada valor de byte).
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    char texto[] = "El lenguaje C es poderoso y elegante. "
+                   "calloc inicializa la memoria a cero, "
+                   "lo que es perfecto para tablas de frecuencia.";
+
+    size_t len = strlen(texto);
+
+    // Tabla de frecuencia para los 256 valores de char
+    unsigned int *frecuencia = (unsigned int *)calloc(256, sizeof(unsigned int));
+    if (frecuencia == NULL) {
+        fprintf(stderr, "Error de memoria\n");
+        return EXIT_FAILURE;
+    }
+
+    // Contar frecuencias
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)texto[i];
+        frecuencia[c]++;
+    }
+
+    // Mostrar resultados (solo caracteres imprimibles con frecuencia > 0)
+    printf("Frecuencia de caracteres:\n");
+    for (int i = 32; i <= 126; i++) {
+        if (frecuencia[i] > 0) {
+            printf("  '%c' (%3d): %u veces\n", i, i, frecuencia[i]);
+        }
+    }
+
+    free(frecuencia);
+    return EXIT_SUCCESS;
+}
+```
+
+Con malloc tendríamos que hacer un memset manual o un bucle de inicialización.
+calloc simplifica el código y elimina un posible error.
+
+===============================================================================
+11. CALLOC Y SEGURIDAD: EVITAR INFORMACIÓN SENSIBLE
+===============================================================================
+
+En aplicaciones que manejan datos sensibles (contraseñas, claves criptográficas),
+calloc ayuda a evitar que datos residuales de otras partes del programa
+aparezcan en la memoria recién asignada.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void limpiar_memoria_sensible(volatile void *ptr, size_t tam) {
+    volatile unsigned char *p = (volatile unsigned char *)ptr;
+    for (size_t i = 0; i < tam; i++) {
+        p[i] = 0;
+    }
+}
+
+int main(void) {
+    char password[50];
+
+    printf("Ingresa tu contraseña: ");
+    // En un sistema real, usar getpass() o similar
+    fgets(password, sizeof(password), stdin);
+    password[strcspn(password, "\n")] = '\0';
+
+    size_t len = strlen(password);
+
+    // Buffer dinámico para procesar la contraseña
+    // Usamos calloc para que no haya datos residuales
+    char *buffer = (char *)calloc(len + 1, sizeof(char));
+    if (buffer == NULL) return EXIT_FAILURE;
+
+    strcpy(buffer, password);
+
+    // ... procesamiento ...
+
+    // Antes de liberar, sobrescribir con ceros usando memset volátil
+    limpiar_memoria_sensible(buffer, len + 1);
+    free(buffer);
+
+    return EXIT_SUCCESS;
+}
+```
+
+Nota: free NO pone a cero la memoria. Después de free, el bloque puede ser
+re-asignado a otro proceso que podría leer los datos. Por eso, para datos
+sensibles, debes limpiar explícitamente antes de liberar.
+
+===============================================================================
+12. PATRÓN: ARRAY REDIMENSIONABLE CON CALLOC
+===============================================================================
+
+calloc es útil cuando implementas arrays dinámicos que crecen por duplicación:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+    int *datos;
+    size_t tam;       // Número de elementos usados
+    size_t capacidad; // Capacidad máxima actual (siempre múltiplo de 2)
+} ArrayDinamico;
+
+ArrayDinamico *crear_array(void) {
+    ArrayDinamico *arr = (ArrayDinamico *)malloc(sizeof(ArrayDinamico));
+    if (arr == NULL) return NULL;
+
+    arr->capacidad = 16;
+    arr->datos = (int *)calloc(arr->capacidad, sizeof(int));
+    if (arr->datos == NULL) {
+        free(arr);
+        return NULL;
+    }
+    arr->tam = 0;
+    return arr;
+}
+
+int insertar(ArrayDinamico *arr, int valor) {
+    if (arr->tam >= arr->capacidad) {
+        size_t nueva_cap = arr->capacidad * 2;
+        int *nuevos = (int *)realloc(arr->datos, nueva_cap * sizeof(int));
+        if (nuevos == NULL) return -1;
+
+        // Poner a cero la nueva mitad (realloc no inicializa)
+        memset(nuevos + arr->capacidad, 0, arr->capacidad * sizeof(int));
+
+        arr->datos = nuevos;
+        arr->capacidad = nueva_cap;
+    }
+    arr->datos[arr->tam++] = valor;
+    return 0;
+}
+
+void destruir_array(ArrayDinamico *arr) {
+    if (arr) {
+        free(arr->datos);
+        free(arr);
+    }
+}
+
+int main(void) {
+    ArrayDinamico *arr = crear_array();
+    if (arr == NULL) return EXIT_FAILURE;
+
+    for (int i = 0; i < 100; i++) {
+        insertar(arr, i * i);
+    }
+
+    printf("Array con %zu elementos (capacidad: %zu):\n", arr->tam, arr->capacidad);
+    for (size_t i = 0; i < arr->tam; i++) {
+        printf("%d ", arr->datos[i]);
+    }
+    printf("\n");
+
+    destruir_array(arr);
+    return EXIT_SUCCESS;
+}
+```
+
+Este patrón combina calloc para la asignación inicial y realloc + memset
+para el crecimiento, manteniendo siempre inicializada la memoria no usada.
+
+===============================================================================
+13. COMPARATIVA DETALLADA: MALLOC VS CALLOC
+===============================================================================
+
+┌─────────────────────┬─────────────────────────────┬─────────────────────────────┐
+│ Aspecto             │ malloc                      │ calloc                      │
+├─────────────────────┼─────────────────────────────┼─────────────────────────────┤
+│ Firma               │ void *malloc(size_t size)   │ void *calloc(size_t nmemb,  │
+│                     │                             │           size_t size)       │
+│ Inicialización      │ No (basura)                 │ Sí (todos los bytes = 0)    │
+│ Argumentos          │ 1 (bytes totales)           │ 2 (nmemb, size)             │
+│ Detección overflow  │ No                           │ Sí                          │
+│ Velocidad           │ Más rápido                  │ Más lento (inicializa)      │
+│ Uso típico          │ Arrays que se llenarán      │ Arrays que necesitan ceros  │
+│ Legibilidad         │ Baja (hay que calcular      │ Alta (separa cuenta         │
+│                     │ el tamaño total)            │ y tamaño)                   │
+└─────────────────────┴─────────────────────────────┴─────────────────────────────┘
+
+===============================================================================
+14. CALLOC CON PUNTEROS NULOS
+===============================================================================
+
+calloc inicializa a cero, lo que para punteros significa NULL en la mayoría
+de las plataformas (el NULL suele ser 0). Esto es útil para arrays de
+punteros.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    int n;
+
+    printf("¿Cuántas cadenas vas a almacenar? ");
+    if (scanf("%d", &n) != 1 || n <= 0) return EXIT_FAILURE;
+    getchar();
+
+    // Array de punteros a char, todos inicializados a NULL
+    char **cadenas = (char **)calloc(n, sizeof(char *));
+    if (cadenas == NULL) return EXIT_FAILURE;
+
+    char buffer[256];
+    for (int i = 0; i < n; i++) {
+        printf("Cadena %d: ", i + 1);
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        cadenas[i] = (char *)malloc((strlen(buffer) + 1) * sizeof(char));
+        if (cadenas[i] == NULL) {
+            // Limpieza parcial
+            for (int j = 0; j < i; j++) free(cadenas[j]);
+            free(cadenas);
+            return EXIT_FAILURE;
+        }
+        strcpy(cadenas[i], buffer);
+    }
+
+    printf("\nCadenas almacenadas:\n");
+    for (int i = 0; i < n; i++) {
+        if (cadenas[i] != NULL) {
+            printf("  %d: \"%s\"\n", i + 1, cadenas[i]);
+        }
+    }
+
+    for (int i = 0; i < n; i++) free(cadenas[i]);
+    free(cadenas);
+    return EXIT_SUCCESS;
+}
+```
+
+Sabemos que cualquier puntero en cadenas que no hayamos asignado sigue siendo
+NULL, gracias a calloc.
+
+===============================================================================
+15. EJEMPLO INTEGRADOR: HISTOGRAMA DINÁMICO
+===============================================================================
+
+Programa completo que lee números, genera un histograma dinámico y lo
+muestra visualmente.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int num_valores;
+    printf("¿Cuántos valores vas a ingresar? ");
+    if (scanf("%d", &num_valores) != 1 || num_valores <= 0) {
+        fprintf(stderr, "Número inválido\n");
+        return EXIT_FAILURE;
+    }
+
+    int *valores = (int *)malloc(num_valores * sizeof(int));
+    if (valores == NULL) return EXIT_FAILURE;
+
+    int max_valor = 0;
+    printf("Ingresa %d números enteros (entre 0 y 100):\n", num_valores);
+    for (int i = 0; i < num_valores; i++) {
+        if (scanf("%d", &valores[i]) != 1) {
+            fprintf(stderr, "Error de entrada\n");
+            free(valores);
+            return EXIT_FAILURE;
+        }
+        if (valores[i] > max_valor) max_valor = valores[i];
+    }
+
+    // Histograma con calloc: rango 0..max_valor
+    int *histograma = (int *)calloc(max_valor + 1, sizeof(int));
+    if (histograma == NULL) {
+        free(valores);
+        return EXIT_FAILURE;
+    }
+
+    for (int i = 0; i < num_valores; i++) {
+        histograma[valores[i]]++;
+    }
+
+    printf("\nHistograma:\n");
+    for (int i = 0; i <= max_valor; i++) {
+        if (histograma[i] > 0) {
+            printf("%4d | ", i);
+            for (int j = 0; j < histograma[i]; j++) {
+                printf("█");
+            }
+            printf(" (%d)\n", histograma[i]);
+        }
+    }
+
+    free(histograma);
+    free(valores);
+    return EXIT_SUCCESS;
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- calloc(nmemb, size) reserva nmemb * size bytes y los inicializa a cero.
+- calloc devuelve NULL si la multiplicación nmemb * size desborda size_t.
+- malloc + memset es equivalente pero no detecta desbordamiento.
+- Usa calloc cuando necesites ceros, malloc cuando vayas a sobrescribir todo.
+- calloc es ideal para tablas de frecuencia, contadores y matrices dispersas.
+- El padding en estructuras también se inicializa a cero con calloc.
+- En sistemas modernos, calloc puede ser eficiente gracias a la asignación
+  de páginas cero del kernel.
+- Para datos sensibles, limpia explícitamente la memoria antes de free.
+- calloc es la opción más segura para arrays de punteros.
+- El costo de inicialización de calloc es O(n) y puede ser relevante en
+  bloques muy grandes.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Escribe un programa que use calloc para crear una tabla
+de 256 enteros sin signo y cuente la frecuencia de cada byte en un archivo
+binario. El nombre del archivo se lee desde argv[1].
+
+🧩 **Ejercicio 2:** Implementa una función matriz_identidad que reciba n y
+devuelva una matriz n×n de enteros con la diagonal principal en 1 y el resto
+en 0. Usa calloc para la asignación.
+
+🧩 **Ejercicio 3:** Escribe un programa que lea una lista de palabras (máximo
+100) y las almacene en un array dinámico de cadenas. Usa calloc para el
+array de punteros. Luego ordena las palabras alfabéticamente y las imprime.
+
+🧩 **Ejercicio 4:** Crea un programa que calcule los primeros 1000 números
+primos usando una criba de Eratóstenes. Usa calloc para el array de booleanos
+(como chars) y demuestra cómo la inicialización a cero simplifica el código.
+
+🧩 **Ejercicio 5:** Implementa un programa que lea las calificaciones de
+n estudiantes (promedios de 0 a 100), use calloc para crear un histograma
+con intervalos de 10 puntos (0-9, 10-19, ..., 90-100), y muestre un gráfico
+de barras horizontal.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Es calloc más lento que malloc?** Sí, porque escribe ceros en toda la
+memoria reservada. Sin embargo, en sistemas modernos con páginas cero, la
+diferencia es menor de lo esperado. Si el rendimiento es crítico y no
+necesitas ceros, usa malloc.
+
+❓ **¿Puedo usar calloc para cualquier tipo de datos?** Sí, calloc funciona
+con cualquier tipo. Para tipos enteros, el valor cero es el esperado. Para
+punteros, el cero suele ser NULL. Para flotantes, el cero en punto flotante.
+
+❓ **¿Qué pasa si nmemb o size son 0?** El comportamiento es definido por la
+implementación: puede devolver NULL o un puntero único que no debe ser
+desreferenciado pero debe ser liberado.
+
+❓ **¿Debo liberar la memoria de calloc con free?** Sí. calloc y malloc usan
+el mismo sistema de asignación. La memoria se libera con free exactamente
+igual.
+
+❓ **¿calloc detecta todos los desbordamientos?** Sí, devuelve NULL si
+nmemb * size excede SIZE_MAX. Esta es una ventaja de seguridad importante
+sobre malloc.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Caché LRU (Least Recently Used)** — Diseña e implementa un
+sistema de caché con política de reemplazo LRU usando memoria dinámica. La
+caché almacena pares clave-valor (clave: entero, valor: cadena). Cuando la
+caché está llena y se inserta un nuevo elemento, se elimina el menos usado
+recientemente. Debes usar calloc para las estructuras internas y asegurar
+que los punteros no usados sean NULL. El programa debe soportar:
+- put(clave, valor): inserta o actualiza.
+- get(clave): recupera un valor (marca como usado).
+- stats(): imprime estadísticas (aciertos, fallos, tamaño actual).
+El desafío: implementar la caché con una complejidad O(1) promedio en get
+y put.
+
+===============================================================================
+FIN DEL CAPÍTULO 52
+===============================================================================
+
+"calloc te da memoria nueva, limpia, sin pasado. Trátala con el respeto que
+merece: cada byte es una oportunidad para construir algo correcto."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+53_CAPITULO_53_REALLOC.txt
+===============================================================================

@@ -1,0 +1,1795 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 49: PATRONES DE CONCURRENCIA
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A LOS PATRONES DE CONCURRENCIA
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto maestro de la concurrencia. Has recorrido un largo
+camino: gorutinas, channels, select, WaitGroup, Mutex, Atomic. Ahora es
+momento de elevar el nivel y aprender los patrones de concurrencia que
+todo arquitecto de software debe conocer.
+
+Los patrones de concurrencia son soluciones reutilizables a problemas
+recurrentes en sistemas concurrentes. No son código específico, sino
+arquitecturas y enfoques que puedes adaptar a tus necesidades.
+
+En este capítulo exploraremos:
+  • Pipeline: Múltiples etapas conectadas por channels.
+  • Fan-Out / Fan-In: Distribuir trabajo y recolectar resultados.
+  • Generator: Producir secuencias de datos bajo demanda.
+  • Worker Pool: Grupo de workers procesando tareas.
+  • Timeout con select: Control de tiempo en operaciones.
+  • Or-Channel: Combinar canales de terminación.
+  • Tee-Channel: Dividir un flujo en múltiples flujos.
+  • Bridge-Channel: Consumir canales de canales.
+
+Estos patrones son el repertorio estándar para construir sistemas
+concurrentes robustos, escalables y mantenibles en Go.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"Los patrones de concurrencia son el lenguaje con el que los arquitectos
+diseñan sistemas que bailan al ritmo de múltiples hilos." — Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Implementar el patrón Pipeline con múltiples etapas.
+  • Dominar Fan-Out (distribuir trabajo) y Fan-In (recolectar).
+  • Crear Generadores de datos infinitos o finitos.
+  • Diseñar Worker Pools con distintos niveles de concurrencia.
+  • Implementar Timeouts con select y context.
+  • Construir Or-Channels para composición de cancelación.
+  • Implementar Tee-Channels para dividir flujos.
+  • Usar Bridge-Channels para canales de canales.
+  • Combinar múltiples patrones en un diseño completo.
+  • Conocer las buenas prácticas y errores comunes.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — PATRONES DE CONCURRENCIA
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. PATRÓN PIPELINE
+----------------------------------------------------------------------
+
+Un pipeline es una serie de etapas conectadas por channels. Cada etapa es
+una gorutina que recibe datos de entrada, los procesa, y envía resultados
+a la siguiente etapa.
+
+    etapa1 := generar(datos)
+    etapa2 := procesar(etapa1)
+    etapa3 := recolectar(etapa2)
+
+Ventajas: modularidad, reutilización, concurrencia natural.
+
+----------------------------------------------------------------------
+  2. PATRÓN FAN-OUT / FAN-IN
+----------------------------------------------------------------------
+
+Fan-Out: Distribuir datos de un channel a múltiples gorutinas workers.
+Fan-In: Recolectar resultados de múltiples channels en uno solo.
+
+    // Fan-Out
+    workers := make([]<-chan Resultado, N)
+    for i := 0; i < N; i++ {
+        workers[i] = worker(i, tareas)
+    }
+
+    // Fan-In
+    resultados := fanIn(workers...)
+
+----------------------------------------------------------------------
+  3. PATRÓN GENERATOR
+----------------------------------------------------------------------
+
+Un generator es una función que devuelve un channel y produce valores en
+una gorutina. Puede ser finito o infinito.
+
+    func generadorInts() <-chan int {
+        ch := make(chan int)
+        go func() {
+            for i := 0; ; i++ {
+                ch <- i
+            }
+        }()
+        return ch
+    }
+
+----------------------------------------------------------------------
+  4. PATRÓN TIMEOUT CON SELECT
+----------------------------------------------------------------------
+
+Combina un channel de datos con time.After para limitar el tiempo de espera:
+
+    select {
+    case v := <-ch:
+        // Procesar
+    case <-time.After(1 * time.Second):
+        // Timeout
+    }
+
+----------------------------------------------------------------------
+  5. OR-CHANNEL
+----------------------------------------------------------------------
+
+Combina múltiples canales de terminación en uno. Se cierra cuando
+cualquier canal de entrada se cierra.
+
+    func orChannel(cs ...<-chan struct{}) <-chan struct{} {
+        // Implementación recursiva con select
+    }
+
+----------------------------------------------------------------------
+  6. TEE-CHANNEL
+----------------------------------------------------------------------
+
+Divide un channel de entrada en dos channels de salida idénticos:
+
+    func tee(input <-chan int) (_, _ <-chan int) {
+        // Cada valor de entrada se envía a ambas salidas
+    }
+
+----------------------------------------------------------------------
+  7. BRIDGE-CHANNEL
+----------------------------------------------------------------------
+
+Consume un channel de canales, extrayendo los valores de cada canal hijo:
+
+    func bridge(input <-chan <-chan int) <-chan int {
+        // Itera sobre canales, y dentro de cada canal, sobre valores
+    }
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: PIPELINE BÁSICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func numeros(done <-chan struct{}) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for i := 1; i <= 10; i++ {
+            select {
+            case out <- i:
+            case <-done:
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func cuadrado(done <-chan struct{}, in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for n := range in {
+            select {
+            case out <- n * n:
+            case <-done:
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func imprimir(done <-chan struct{}, in <-chan int) {
+    for n := range in {
+        select {
+        case <-done:
+            return
+        default:
+            fmt.Printf("Resultado: %d\n", n)
+        }
+    }
+}
+
+func main() {
+    done := make(chan struct{})
+    defer close(done)
+
+    // Pipeline: numeros -> cuadrado -> imprimir
+    nums := numeros(done)
+    cuadrados := cuadrado(done, nums)
+    imprimir(done, cuadrados)
+
+    fmt.Println("Pipeline completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 2: PIPELINE CON TIEMPO SIMULADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Etapa func(<-chan int) <-chan int
+
+func pipeline(done <-chan struct{}, etapas ...Etapa) <-chan int {
+    // No implementado aquí, es conceptual
+    return nil
+}
+
+func etapaDuplicar(in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for v := range in {
+            time.Sleep(10 * time.Millisecond)
+            out <- v * 2
+        }
+    }()
+    return out
+}
+
+func etapaIncrementar(in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for v := range in {
+            time.Sleep(15 * time.Millisecond)
+            out <- v + 1
+        }
+    }()
+    return out
+}
+
+func etapaFiltrar(in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for v := range in {
+            if v%3 == 0 {
+                out <- v
+            }
+        }
+    }()
+    return out
+}
+
+func main() {
+    datos := make(chan int)
+    go func() {
+        defer close(datos)
+        for i := 1; i <= 20; i++ {
+            datos <- i
+        }
+    }()
+
+    // Pipeline de 3 etapas
+    etapa1 := etapaDuplicar(datos)
+    etapa2 := etapaIncrementar(etapa1)
+    etapa3 := etapaFiltrar(etapa2)
+
+    for v := range etapa3 {
+        fmt.Printf("Pipeline: %d\n", v)
+    }
+    fmt.Println("Pipeline de 3 etapas completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 3: FAN-OUT / FAN-IN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(tareas chan<- int) {
+    for i := 1; i <= 20; i++ {
+        tareas <- i
+        time.Sleep(10 * time.Millisecond)
+    }
+    close(tareas)
+}
+
+func worker(id int, tareas <-chan int, resultados chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for t := range tareas {
+        time.Sleep(50 * time.Millisecond)
+        resultado := t * t
+        fmt.Printf("Worker %d: %d^2 = %d\n", id, t, resultado)
+        resultados <- resultado
+    }
+}
+
+func fanIn(canales ...<-chan int) <-chan int {
+    var wg sync.WaitGroup
+    out := make(chan int)
+
+    multiplexor := func(ch <-chan int) {
+        defer wg.Done()
+        for v := range ch {
+            out <- v
+        }
+    }
+
+    wg.Add(len(canales))
+    for _, ch := range canales {
+        go multiplexor(ch)
+    }
+
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+
+    return out
+}
+
+func main() {
+    tareas := make(chan int, 10)
+    resultados1 := make(chan int, 10)
+    resultados2 := make(chan int, 10)
+    resultados3 := make(chan int, 10)
+
+    var wg sync.WaitGroup
+
+    // Fan-Out: 3 workers
+    wg.Add(1)
+    go worker(1, tareas, resultados1, &wg)
+    wg.Add(1)
+    go worker(2, tareas, resultados2, &wg)
+    wg.Add(1)
+    go worker(3, tareas, resultados3, &wg)
+
+    go productor(tareas)
+
+    // Esperar workers en background
+    go func() {
+        wg.Wait()
+        close(resultados1)
+        close(resultados2)
+        close(resultados3)
+    }()
+
+    // Fan-In: combinar resultados
+    final := fanIn(resultados1, resultados2, resultados3)
+
+    total := 0
+    for v := range final {
+        total += v
+        fmt.Printf("  Recolectado: %d (acumulado: %d)\n", v, total)
+    }
+
+    fmt.Printf("Fan-Out/Fan-In completado. Total: %d\n", total)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: GENERATOR — NÚMEROS PRIMOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func generadorPrimos() <-chan int {
+    out := make(chan int)
+    go func() {
+        out <- 2
+        for n := 3; ; n += 2 {
+            esPrimo := true
+            for i := 3; i*i <= n; i += 2 {
+                if n%i == 0 {
+                    esPrimo = false
+                    break
+                }
+            }
+            if esPrimo {
+                out <- n
+            }
+        }
+    }()
+    return out
+}
+
+func generadorFinito(n int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for i := 0; i < n; i++ {
+            out <- i
+        }
+    }()
+    return out
+}
+
+func main() {
+    primos := generadorPrimos()
+
+    fmt.Println("Primeros 10 números primos:")
+    for i := 0; i < 10; i++ {
+        fmt.Printf("  Primo %d: %d\n", i+1, <-primos)
+        time.Sleep(10 * time.Millisecond)
+    }
+
+    fmt.Println("\nGenerador finito (0-4):")
+    for v := range generadorFinito(5) {
+        fmt.Printf("  %d\n", v)
+    }
+    fmt.Println("Generadores demostrados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: WORKER POOL GENÉRICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Pool struct {
+    tareas    chan func()
+    wg        sync.WaitGroup
+}
+
+func NewPool(tamano, bufferTareas int) *Pool {
+    p := &Pool{
+        tareas: make(chan func(), bufferTareas),
+    }
+
+    for i := 0; i < tamano; i++ {
+        p.wg.Add(1)
+        go p.worker(i)
+    }
+
+    return p
+}
+
+func (p *Pool) worker(id int) {
+    defer p.wg.Done()
+    for tarea := range p.tareas {
+        fmt.Printf("[Worker %d] Ejecutando tarea...\n", id)
+        tarea()
+        fmt.Printf("[Worker %d] Tarea completada\n", id)
+    }
+}
+
+func (p *Pool) Enqueue(tarea func()) {
+    p.tareas <- tarea
+}
+
+func (p *Pool) Shutdown() {
+    close(p.tareas)
+    p.wg.Wait()
+    fmt.Println("Pool cerrado")
+}
+
+func main() {
+    pool := NewPool(3, 10)
+
+    for i := 0; i < 8; i++ {
+        id := i
+        pool.Enqueue(func() {
+            fmt.Printf("    Procesando tarea %d...\n", id)
+            time.Sleep(100 * time.Millisecond)
+        })
+    }
+
+    pool.Shutdown()
+    fmt.Println("Worker pool genérico completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 6: TIMEOUT CON SELECT EN PIPELINE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func operacionLenta() <-chan string {
+    ch := make(chan string)
+    go func() {
+        time.Sleep(2 * time.Second)
+        ch <- "resultado"
+    }()
+    return ch
+}
+
+func operacionRapida() <-chan string {
+    ch := make(chan string)
+    go func() {
+        time.Sleep(200 * time.Millisecond)
+        ch <- "resultado rápido"
+    }()
+    return ch
+}
+
+func main() {
+    fmt.Println("=== Timeout en operación ===")
+    select {
+    case res := <-operacionLenta():
+        fmt.Println("Operación lenta:", res)
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: operación lenta cancelada")
+    }
+
+    select {
+    case res := <-operacionRapida():
+        fmt.Println("Operación rápida:", res)
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: esto no debería ocurrir")
+    }
+
+    // Timeout por operación con bucle
+    fmt.Println("\n=== Timeout por operación en bucle ===")
+    ch := make(chan int)
+    go func() {
+        for i := 0; i < 5; i++ {
+            ch <- i
+            time.Sleep(300 * time.Millisecond)
+        }
+        close(ch)
+    }()
+
+    for {
+        select {
+        case v, ok := <-ch:
+            if !ok {
+                fmt.Println("Canal cerrado")
+                return
+            }
+            fmt.Printf("Procesado: %d\n", v)
+        case <-time.After(500 * time.Millisecond):
+            fmt.Println("Timeout: no hay datos en 500ms")
+            return
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 7: OR-CHANNEL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func orChannel(canales ...<-chan struct{}) <-chan struct{} {
+    switch len(canales) {
+    case 0:
+        return nil
+    case 1:
+        return canales[0]
+    }
+
+    orDone := make(chan struct{})
+    go func() {
+        defer close(orDone)
+
+        switch len(canales) {
+        case 2:
+            select {
+            case <-canales[0]:
+            case <-canales[1]:
+            }
+        default:
+            select {
+            case <-canales[0]:
+            case <-canales[1]:
+            case <-canales[2]:
+            case <-orChannel(canales[3:]...):
+            }
+        }
+    }()
+    return orDone
+}
+
+func ejemplo(d time.Duration) <-chan struct{} {
+    ch := make(chan struct{})
+    go func() {
+        time.Sleep(d)
+        close(ch)
+    }()
+    return ch
+}
+
+func main() {
+    inicio := time.Now()
+
+    <-orChannel(
+        ejemplo(2*time.Second),
+        ejemplo(1*time.Second),
+        ejemplo(3*time.Second),
+    )
+
+    fmt.Printf("Or-Channel completado en %v\n", time.Since(inicio))
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 8: TEE-CHANNEL (DIVIDIR FLUJO)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func tee(input <-chan int) (<-chan int, <-chan int) {
+    out1 := make(chan int)
+    out2 := make(chan int)
+
+    go func() {
+        defer close(out1)
+        defer close(out2)
+
+        for v := range input {
+            for i := 0; i < 2; i++ {
+                select {
+                case out1 <- v:
+                case out2 <- v:
+                }
+            }
+        }
+    }()
+
+    return out1, out2
+}
+
+func main() {
+    input := make(chan int)
+
+    go func() {
+        defer close(input)
+        for i := 1; i <= 5; i++ {
+            input <- i
+            time.Sleep(50 * time.Millisecond)
+        }
+    }()
+
+    salida1, salida2 := tee(input)
+
+    var wg sync.WaitGroup
+    wg.Add(2)
+
+    go func() {
+        defer wg.Done()
+        for v := range salida1 {
+            fmt.Printf("Tee-1: %d\n", v)
+        }
+    }()
+
+    go func() {
+        defer wg.Done()
+        for v := range salida2 {
+            fmt.Printf("Tee-2: %d\n", v)
+        }
+    }()
+
+    wg.Wait()
+    fmt.Println("Tee-Channel completado")
+}
+```
+
+Nota: Este tee-channel envía cada valor alternando entre los dos canales.
+Para enviar a ambos simultáneamente, necesitas gorutinas separadas.
+
+----------------------------------------------------------------------
+  EJEMPLO 9: BRIDGE-CHANNEL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func bridge(input <-chan <-chan int) <-chan int {
+    out := make(chan int)
+
+    go func() {
+        defer close(out)
+
+        for ch := range input {
+            for v := range ch {
+                out <- v
+            }
+        }
+    }()
+
+    return out
+}
+
+func generarCanales() <-chan <-chan int {
+    out := make(chan (<-chan int))
+
+    go func() {
+        defer close(out)
+
+        for i := 0; i < 3; i++ {
+            ch := make(chan int)
+            out <- ch
+
+            go func(id int, c chan int) {
+                defer close(c)
+                for j := 0; j < 3; j++ {
+                    c <- id*10 + j
+                    time.Sleep(20 * time.Millisecond)
+                }
+            }(i, ch)
+        }
+    }()
+
+    return out
+}
+
+func main() {
+    canales := generarCanales()
+    valores := bridge(canales)
+
+    for v := range valores {
+        fmt.Printf("Bridge: %d\n", v)
+    }
+    fmt.Println("Bridge-Channel completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: PIPELINE DE PROCESAMIENTO DE STRINGS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+    "time"
+)
+
+func generarPalabras(palabras ...string) <-chan string {
+    out := make(chan string)
+    go func() {
+        defer close(out)
+        for _, p := range palabras {
+            out <- p
+            time.Sleep(30 * time.Millisecond)
+        }
+    }()
+    return out
+}
+
+func mayusculas(in <-chan string) <-chan string {
+    out := make(chan string)
+    go func() {
+        defer close(out)
+        for p := range in {
+            out <- strings.ToUpper(p)
+        }
+    }()
+    return out
+}
+
+func prefijo(prefijo string, in <-chan string) <-chan string {
+    out := make(chan string)
+    go func() {
+        defer close(out)
+        for p := range in {
+            out <- prefijo + p
+        }
+    }()
+    return out
+}
+
+func imprimir(in <-chan string) {
+    for p := range in {
+        fmt.Println("  Pipeline:", p)
+    }
+}
+
+func main() {
+    palabras := generarPalabras("hola", "mundo", "go", "concurrencia", "patrones")
+    mayus := mayusculas(palabras)
+    prefijado := prefijo(">>> ", mayus)
+    imprimir(prefijado)
+    fmt.Println("Pipeline de strings completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: FAN-OUT CON ERROR HANDLING
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    "sync"
+    "time"
+)
+
+type Result struct {
+    Value int
+    Error error
+}
+
+func procesarConError(valor int) Result {
+    time.Sleep(time.Duration(20+rand.Intn(50)) * time.Millisecond)
+    if valor%5 == 0 {
+        return Result{Error: fmt.Errorf("error en valor %d", valor)}
+    }
+    return Result{Value: valor * 2}
+}
+
+func worker(id int, tareas <-chan int, resultados chan<- Result, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for t := range tareas {
+        fmt.Printf("Worker %d procesando %d\n", id, t)
+        resultados <- procesarConError(t)
+    }
+}
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    tareas := make(chan int, 20)
+    resultados := make(chan Result, 20)
+
+    var wg sync.WaitGroup
+
+    // Fan-Out: 4 workers
+    for w := 1; w <= 4; w++ {
+        wg.Add(1)
+        go worker(w, tareas, resultados, &wg)
+    }
+
+    // Enviar tareas
+    go func() {
+        for i := 1; i <= 20; i++ {
+            tareas <- i
+        }
+        close(tareas)
+    }()
+
+    // Cerrar resultados cuando workers terminen
+    go func() {
+        wg.Wait()
+        close(resultados)
+    }()
+
+    // Recolectar
+    exitos := 0
+    fallos := 0
+    for r := range resultados {
+        if r.Error != nil {
+            fmt.Printf("  ERROR: %v\n", r.Error)
+            fallos++
+        } else {
+            fmt.Printf("  ÉXITO: %d\n", r.Value)
+            exitos++
+        }
+    }
+
+    fmt.Printf("\nResumen: %d éxitos, %d fallos\n", exitos, fallos)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: PIPELINE CON CANCELACIÓN POR CONTEXT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+)
+
+func etapaGenerador(ctx context.Context, nums ...int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for _, n := range nums {
+            select {
+            case out <- n:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func etapaDuplicador(ctx context.Context, in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for n := range in {
+            select {
+            case out <- n * 2:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func etapaConsumidor(ctx context.Context, in <-chan int) {
+    for n := range in {
+        select {
+        case <-ctx.Done():
+            fmt.Println("Consumidor cancelado")
+            return
+        default:
+            fmt.Printf("Consumido: %d\n", n)
+            time.Sleep(100 * time.Millisecond)
+        }
+    }
+}
+
+func main() {
+    ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+    defer cancel()
+
+    nums := etapaGenerador(ctx, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    duplicados := etapaDuplicador(ctx, nums)
+    etapaConsumidor(ctx, duplicados)
+
+    fmt.Println("Pipeline con context cancelación completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: GENERADOR CON TICKER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func tickerGenerator(intervalo time.Duration) <-chan time.Time {
+    return time.Tick(intervalo)
+}
+
+func contadorInfinito(inicio int) <-chan int {
+    out := make(chan int)
+    go func() {
+        for i := inicio; ; i++ {
+            out <- i
+        }
+    }()
+    return out
+}
+
+func tomar[N any](n int, in <-chan N) <-chan N {
+    out := make(chan N)
+    go func() {
+        defer close(out)
+        for i := 0; i < n; i++ {
+            out <- <-in
+        }
+    }()
+    return out
+}
+
+func main() {
+    ticks := tickerGenerator(200 * time.Millisecond)
+    contador := contadorInfinito(1)
+
+    fmt.Println("Tomando 5 valores cada 200ms:")
+    for v := range tomar(5, contador) {
+        t := <-ticks
+        fmt.Printf("  t=%s, valor=%d\n", t.Format("15:04:05.000"), v)
+    }
+    fmt.Println("Generador con ticker completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: PIPELINE DE TRANSFORMACIONES MÚLTIPLES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+    "time"
+)
+
+type TransformFunc func(string) string
+
+func pipelineTexto(entrada []string, transformaciones ...TransformFunc) <-chan string {
+    out := make(chan string)
+    go func() {
+        defer close(out)
+        for _, item := range entrada {
+            resultado := item
+            for _, tf := range transformaciones {
+                resultado = tf(resultado)
+                time.Sleep(10 * time.Millisecond)
+            }
+            out <- resultado
+        }
+    }()
+    return out
+}
+
+func main() {
+    entradas := []string{"hola mundo", "go es genial", "concurrencia total"}
+
+    pipeline := pipelineTexto(entradas,
+        strings.ToUpper,
+        func(s string) string { return ">>> " + s },
+        func(s string) string { return s + " <<<" },
+    )
+
+    for v := range pipeline {
+        fmt.Println("Resultado:", v)
+    }
+    fmt.Println("Pipeline de transformaciones completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: FAN-IN CON PRIORIDAD
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func fanInPrioridad(alta, baja <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for {
+            select {
+            case v, ok := <-alta:
+                if ok {
+                    out <- v
+                } else {
+                    alta = nil // Deshabilitar caso
+                    if baja == nil {
+                        return
+                    }
+                }
+            case v, ok := <-baja:
+                if ok {
+                    out <- v
+                } else {
+                    baja = nil
+                    if alta == nil {
+                        return
+                    }
+                }
+            }
+        }
+    }()
+    return out
+}
+
+func main() {
+    alta := make(chan int)
+    baja := make(chan int)
+
+    go func() {
+        for i := 1; i <= 5; i++ {
+            alta <- i * 100
+            time.Sleep(100 * time.Millisecond)
+        }
+        close(alta)
+    }()
+
+    go func() {
+        for i := 1; i <= 5; i++ {
+            baja <- i
+            time.Sleep(30 * time.Millisecond)
+        }
+        close(baja)
+    }()
+
+    for v := range fanInPrioridad(alta, baja) {
+        fmt.Printf("FanIn: %d\n", v)
+    }
+    fmt.Println("Fan-In con prioridad completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: PIPELINE CON MÉTRICAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync/atomic"
+    "time"
+)
+
+type EtapaConMetrica struct {
+    procesados int64
+    nombre     string
+}
+
+func (e *EtapaConMetrica) Procesar(in <-chan int, fn func(int) int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for v := range in {
+            atomic.AddInt64(&e.procesados, 1)
+            out <- fn(v)
+            time.Sleep(10 * time.Millisecond)
+        }
+    }()
+    return out
+}
+
+func main() {
+    var eta1, eta2 EtapaConMetrica
+    eta1.nombre = "Duplicar"
+    eta2.nombre = "Incrementar"
+
+    datos := make(chan int)
+    go func() {
+        defer close(datos)
+        for i := 1; i <= 10; i++ {
+            datos <- i
+        }
+    }()
+
+    salida := eta1.Procesar(datos, func(v int) int { return v * 2 })
+    salida = eta2.Procesar(salida, func(v int) int { return v + 1 })
+
+    for v := range salida {
+        fmt.Printf("Resultado: %d\n", v)
+    }
+
+    fmt.Printf("\nMétricas:\n")
+    fmt.Printf("  %s: %d procesados\n", eta1.nombre, atomic.LoadInt64(&eta1.procesados))
+    fmt.Printf("  %s: %d procesados\n", eta2.nombre, atomic.LoadInt64(&eta2.procesados))
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: FAN-OUT LIMITADO (SEMÁFORO + PIPELINE)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func trabajoPesado(id int) int {
+    time.Sleep(50 * time.Millisecond)
+    return id * id
+}
+
+func fanOutLimitado(tareas []int, maxConcurrentes int) []int {
+    sem := make(chan struct{}, maxConcurrentes)
+    resultados := make(chan struct {
+        idx int
+        val int
+    }, len(tareas))
+
+    for i, t := range tareas {
+        sem <- struct{}{}
+        go func(idx, valor int) {
+            defer func() { <-sem }()
+            resultados <- struct {
+                idx int
+                val int
+            }{idx, trabajoPesado(valor)}
+        }(i, t)
+    }
+
+    // Esperar a que todos terminen
+    for i := 0; i < cap(sem); i++ {
+        sem <- struct{}{}
+    }
+
+    final := make([]int, len(tareas))
+    for i := 0; i < len(tareas); i++ {
+        r := <-resultados
+        final[r.idx] = r.val
+    }
+
+    return final
+}
+
+func main() {
+    tareas := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+    inicio := time.Now()
+    resultados := fanOutLimitado(tareas, 3)
+    duracion := time.Since(inicio)
+
+    fmt.Printf("Resultados: %v\n", resultados)
+    fmt.Printf("Tiempo: %v (con 3 concurrentes de %d tareas)\n",
+        duracion, len(tareas))
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: PIPELINE DE ARCHIVOS (SIMULADO)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Archivo struct {
+    Nombre   string
+    Contenido string
+    Tamanio  int
+}
+
+type ArchivoProcesado struct {
+    Archivo
+    Lineas   int
+    Palabras int
+    OK       bool
+}
+
+func leerArchivos(nombres ...string) <-chan Archivo {
+    out := make(chan Archivo)
+    go func() {
+        defer close(out)
+        for _, nombre := range nombres {
+            out <- Archivo{
+                Nombre:    nombre,
+                Contenido: "contenido simulado del archivo " + nombre,
+                Tamanio:   len(nombre) * 100,
+            }
+            time.Sleep(20 * time.Millisecond)
+        }
+    }()
+    return out
+}
+
+func procesarArchivo(in <-chan Archivo, workers int) <-chan ArchivoProcesado {
+    out := make(chan ArchivoProcesado)
+    var wg sync.WaitGroup
+
+    for i := 0; i < workers; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for archivo := range in {
+                lineas := archivo.Tamanio / 20
+                palabras := archivo.Tamanio / 5
+                fmt.Printf("[Worker %d] Procesado: %s (%d líneas, %d palabras)\n",
+                    id, archivo.Nombre, lineas, palabras)
+                time.Sleep(50 * time.Millisecond)
+                out <- ArchivoProcesado{
+                    Archivo:  archivo,
+                    Lineas:   lineas,
+                    Palabras: palabras,
+                    OK:       true,
+                }
+            }
+        }(i)
+    }
+
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+
+    return out
+}
+
+func main() {
+    archivos := []string{
+        "main.go", "utils.go", "models.go",
+        "routes.go", "handlers.go", "config.go",
+    }
+
+    // Pipeline: leer -> procesar (2 workers)
+    entrada := leerArchivos(archivos...)
+    salida := procesarArchivo(entrada, 2)
+
+    totalLineas := 0
+    totalPalabras := 0
+    count := 0
+
+    for ap := range salida {
+        totalLineas += ap.Lineas
+        totalPalabras += ap.Palabras
+        count++
+        fmt.Printf("  Resultado: %s - %d líneas, %d palabras\n",
+            ap.Nombre, ap.Lineas, ap.Palabras)
+    }
+
+    fmt.Printf("\nResumen: %d archivos, %d líneas, %d palabras\n",
+        count, totalLineas, totalPalabras)
+    fmt.Println("Pipeline de archivos completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: SHUTDOWN GRACEFUL CON PIPELINE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Pipeline struct {
+    done     chan struct{}
+    wg       sync.WaitGroup
+    numIn    int64
+    numOut   int64
+}
+
+func NewPipeline() *Pipeline {
+    return &Pipeline{done: make(chan struct{})}
+}
+
+func (p *Pipeline) Stop() {
+    close(p.done)
+    p.wg.Wait()
+    fmt.Printf("Pipeline detenido. In: %d, Out: %d\n",
+        atomic.LoadInt64(&p.numIn), atomic.LoadInt64(&p.numOut))
+}
+
+func (p *Pipeline) Etapa1(in <-chan int) <-chan int {
+    out := make(chan int)
+    p.wg.Add(1)
+    go func() {
+        defer p.wg.Done()
+        defer close(out)
+        for v := range in {
+            select {
+            case out <- v * 2:
+                atomic.AddInt64(&p.numIn, 1)
+            case <-p.done:
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func (p *Pipeline) Etapa2(in <-chan int) <-chan int {
+    out := make(chan int)
+    p.wg.Add(1)
+    go func() {
+        defer p.wg.Done()
+        defer close(out)
+        for v := range in {
+            select {
+            case out <- v + 1:
+                atomic.AddInt64(&p.numOut, 1)
+            case <-p.done:
+                return
+            }
+        }
+    }()
+    return out
+}
+
+func (p *Pipeline) Etapa3(in <-chan int) {
+    p.wg.Add(1)
+    go func() {
+        defer p.wg.Done()
+        for v := range in {
+            select {
+            case <-p.done:
+                return
+            default:
+                fmt.Printf("Resultado: %d\n", v)
+            }
+        }
+    }()
+}
+
+func main() {
+    pipeline := NewPipeline()
+
+    datos := make(chan int)
+    go func() {
+        for i := 1; i <= 20; i++ {
+            datos <- i
+            time.Sleep(20 * time.Millisecond)
+        }
+        close(datos)
+    }()
+
+    etapa1 := pipeline.Etapa1(datos)
+    etapa2 := pipeline.Etapa2(etapa1)
+    pipeline.Etapa3(etapa2)
+
+    // Detener después de 500ms
+    time.Sleep(500 * time.Millisecond)
+    pipeline.Stop()
+    fmt.Println("Shutdown graceful completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SISTEMA DE PROCESAMIENTO DE PEDIDOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Pedido struct {
+    ID      int
+    Cliente string
+    Items   []string
+}
+
+type PedidoProcesado struct {
+    Pedido
+    Total   float64
+    Tiempo  time.Duration
+}
+
+var currentID atomic.Int64
+
+func generarPedidos(clientes ...string) <-chan Pedido {
+    out := make(chan Pedido)
+    go func() {
+        defer close(out)
+        for _, cliente := range clientes {
+            for i := 0; i < 3; i++ {
+                id := int(currentID.Add(1))
+                items := []string{
+                    fmt.Sprintf("item-%d-a", id),
+                    fmt.Sprintf("item-%d-b", id),
+                }
+                out <- Pedido{
+                    ID:      id,
+                    Cliente: cliente,
+                    Items:   items,
+                }
+                time.Sleep(30 * time.Millisecond)
+            }
+        }
+    }()
+    return out
+}
+
+// Etapa: Validar
+func validar(in <-chan Pedido) <-chan Pedido {
+    out := make(chan Pedido)
+    go func() {
+        defer close(out)
+        for p := range in {
+            if p.Cliente != "" {
+                out <- p
+            } else {
+                fmt.Printf("[VALIDAR] Pedido %d: cliente inválido, descartado\n", p.ID)
+            }
+        }
+    }()
+    return out
+}
+
+// Etapa: Procesar (múltiples workers - Fan-Out)
+func procesar(in <-chan Pedido, numWorkers int) <-chan PedidoProcesado {
+    out := make(chan PedidoProcesado)
+    var wg sync.WaitGroup
+
+    for w := 0; w < numWorkers; w++ {
+        wg.Add(1)
+        go func(workerID int) {
+            defer wg.Done()
+            for p := range in {
+                inicio := time.Now()
+                total := float64(len(p.Items)) * 29.99
+                time.Sleep(50 * time.Millisecond) // Simular procesamiento
+                pp := PedidoProcesado{
+                    Pedido: p,
+                    Total:  total,
+                    Tiempo: time.Since(inicio),
+                }
+                fmt.Printf("[WORKER %d] Pedido %d procesado: $%.2f en %v\n",
+                    workerID, p.ID, total, pp.Tiempo)
+                out <- pp
+            }
+        }(w)
+    }
+
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+
+    return out
+}
+
+// Etapa: Recolectar (Fan-In nativo)
+func recolectar(in <-chan PedidoProcesado, done chan struct{}) {
+    totalPedidos := 0
+    totalVentas := 0.0
+
+    for pp := range in {
+        totalPedidos++
+        totalVentas += pp.Total
+        fmt.Printf("[RECOLECTOR] Pedido %d (%s): $%.2f\n",
+            pp.ID, pp.Cliente, pp.Total)
+    }
+
+    fmt.Printf("\n=== RESUMEN ===\n")
+    fmt.Printf("Pedidos procesados: %d\n", totalPedidos)
+    fmt.Printf("Ventas totales: $%.2f\n", totalVentas)
+    close(done)
+}
+
+func main() {
+    fmt.Println("=== SISTEMA DE PROCESAMIENTO DE PEDIDOS ===")
+
+    done := make(chan struct{})
+
+    // Pipeline completo
+    pedidos := generarPedidos("Alice", "Bob", "Charlie", "Diana")
+    validados := validar(pedidos)
+    procesados := procesar(validados, 3)
+    go recolectar(procesados, done)
+
+    <-done
+    fmt.Println("Sistema de pedidos completado")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Pipeline: Múltiples etapas en gorutinas conectadas por channels.
+  • Fan-Out: Distribuir trabajo entre múltiples gorutinas workers.
+  • Fan-In: Recolectar resultados de múltiples canales en uno.
+  • Generator: Función que produce valores a través de un channel.
+  • Timeout: Select con time.After para limitar espera.
+  • Or-Channel: Combinar canales de terminación.
+  • Tee-Channel: Dividir un flujo en dos salidas.
+  • Bridge-Channel: Consumir canales de canales.
+  • Worker Pool: Grupo fijo de workers procesando tareas.
+  • La composición de patrones permite sistemas concurrentes complejos.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Implementa un pipeline de 3 etapas: genera números, filtra
+   pares, eleva al cuadrado. Usa 3 gorutinas conectadas por channels.
+
+2. INTERMEDIO — Implementa un worker pool con fan-out y fan-in.
+   5 workers procesan 30 tareas. Cada tarea es un string que se convierte
+   a mayúsculas.
+
+3. AVANZADO — Implementa un or-channel genérico que acepte N canales
+   de terminación. Cuando cualquiera se cierra, el or-channel se cierra.
+
+4. INTERMEDIO — Crea un generador de números Fibonacci infinito. Usa
+   el patrón "take" para tomar solo los primeros N.
+
+5. AVANZADO — Implementa un tee-channel que envíe cada valor a dos
+   canales de salida simultáneamente (no alternando).
+
+6. INTERMEDIO — Crea un pipeline con timeout global: si el pipeline
+   tarda más de 2 segundos, se cancela todo.
+
+7. AVANZADO — Implementa un bridge-channel para consumir canales de
+   canales. Combínalo con un generador que cree canales dinámicamente.
+
+8. BÁSICO — Implementa un generador que produzca los números del 1 al 100
+   y los envíe por un channel. Consume con range.
+
+9. INTERMEDIO — Combina fan-out y fan-in con manejo de errores. Los workers
+   pueden fallar y los errores deben propagarse al recolector.
+
+10. AVANZADO — Diseña un sistema completo: pipeline con 4 etapas, fan-out
+    en la etapa 3 (3 workers), fan-in al final, shutdown graceful.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Cuándo usar pipeline vs worker pool?
+R: Pipeline cuando cada etapa es una transformación diferente. Worker pool
+cuando tienes muchas tareas iguales que distribuir.
+
+❓ ¿Puedo tener fan-out sin fan-in?
+R: Sí. A veces distribuyes trabajo y cada worker maneja su propia salida
+(por ejemplo, escribiendo a un archivo o base de datos).
+
+❓ ¿Cómo manejo errores en un pipeline?
+R: Puedes propagar errores junto con los datos (struct con campo Error)
+o usar un channel separado para errores.
+
+❓ ¿Qué es el backpressure en un pipeline?
+R: Es la capacidad de una etapa lenta de frenar a las etapas anteriores.
+Los channels bufferizados pueden ocultar backpressure; los no bufferizados
+la transmiten inmediatamente.
+
+❓ ¿Cuántos workers debo tener en un pool?
+R: Depende: para CPU-bound, usa runtime.NumCPU(). Para IO-bound, puedes
+tener más, dependiendo de la latencia de IO.
+
+❓ ¿El patrón generator siempre usa una gorutina?
+R: Sí. El generator lanza una gorutina que produce valores. Si no hay
+consumidor, la gorutina se bloquea en el envío (fuga potencial).
+
+❓ ¿Cómo detengo un generator infinito?
+R: Puedes pasar un channel done al generator y usar select para detectar
+su cierre. O usar context con cancelación.
+
+❓ ¿Qué es el patrón or-channel?
+R: Combina múltiples canales de terminación. Se cierra cuando cualquiera
+de los canales de entrada se cierra. Útil para jerarquías de cancelación.
+
+❓ ¿Puedo tener un pipeline dinámico?
+R: Sí. Puedes añadir o quitar etapas dinámicamente usando slices de
+canales y select para multiplexar.
+
+❓ ¿Cómo evito fugas de gorutinas en pipelines?
+R: Siempre pasa un channel de cancelación (done o context) a cada etapa
+y verifícalo en los selects. Asegúrate de cerrar los canales de salida.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: DISEÑAR UN SISTEMA DE ANÁLISIS DE LOGS EN TIEMPO REAL        │
+│                                                                          │
+│  Diseña un sistema completo de análisis de logs que use múltiples       │
+│  patrones de concurrencia para procesar millones de líneas de log.      │
+│                                                                          │
+│  ESPECIFICACIONES:                                                       │
+│  • 10,000 líneas de log simuladas (generadas con patrón generator).     │
+│  • Cada línea tiene: timestamp, nivel (INFO/WARN/ERROR), mensaje.      │
+│                                                                          │
+│  COMPONENTES Y PATRONES:                                                 │
+│  1. GENERADOR DE LOGS (Generator): Produce líneas de log cada 50μs.    │
+│     Distribuye en ráfagas de 100 líneas cada 500ms.                     │
+│                                                                          │
+│  2. PARSER (Pipeline Etapa 1): Parsea cada línea en un struct LogEntry. │
+│                                                                          │
+│  3. FILTRO (Pipeline Etapa 2): Filtra solo líneas WARN y ERROR.        │
+│                                                                          │
+│  4. PROCESADOR (Fan-Out): 5 workers que analizan las líneas filtradas:  │
+│     - Cuentan ocurrencias por nivel                                      │
+│     - Detectan patrones (palabras clave)                                │
+│     - Calculan estadísticas por ventana de 1 segundo                    │
+│                                                                          │
+│  5. RECOLECTOR (Fan-In): Recolecta resultados de los workers y calcula: │
+│     - Total líneas procesadas                                           │
+│     - Proporción INFO/WARN/ERROR                                        │
+│     - Top 5 palabras más frecuentes en mensajes ERROR                   │
+│     - Throughput (líneas/segundo)                                       │
+│                                                                          │
+│  6. MONITOR (Ticker): Cada 500ms imprime estadísticas parciales.        │
+│                                                                          │
+│  7. SHUTDOWN GRACEFUL: Después de procesar todos los logs o al         │
+│     alcanzar un timeout de 5 segundos, el sistema se detiene            │
+│     ordenadamente con todas las etapas cerradas.                        │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Usa al menos 5 patrones de concurrencia.                             │
+│  • Cada etapa debe estar en su propia gorutina.                         │
+│  • Los canales deben cerrarse correctamente.                            │
+│  • Implementa cancelación con context o done channel.                   │
+│  • Usa WaitGroup para coordinar workers.                                │
+│  • Usa atomic para contadores compartidos.                              │
+│  • El sistema debe ser race-free (verificar con -race).                │
+│  • Documenta qué patrones usaste y dónde.                               │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra TODOS los patrones del capítulo y TODOS los conceptos
+del módulo. Es el desafío culminante del Módulo V.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has completado el estudio de los patrones de concurrencia más importantes
+de Go. Ahora tienes un repertorio completo de arquitecturas para diseñar
+sistemas concurrentes robustos, escalables y mantenibles.
+
+Estos patrones no son recetas rígidas, sino herramientas conceptuales que
+puedes combinar y adaptar. El verdadero arte está en saber qué patrón usar
+en cada situación y cómo combinarlos efectivamente.
+
+En el próximo capítulo, el proyecto final del Módulo V, pondrás en práctica
+todo lo aprendido construyendo una aplicación concurrente completa.
+
+"Los patrones son el lenguaje de los arquitectos; la concurrencia, su
+sinfonía." — Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 50: PROYECTO MÓDULO V → Aplicación concurrente completa
+
+══════════════════════════════════════════════════════════════════════════════

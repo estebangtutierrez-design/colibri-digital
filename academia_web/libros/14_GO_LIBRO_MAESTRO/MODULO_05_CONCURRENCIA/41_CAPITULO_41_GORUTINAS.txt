@@ -1,0 +1,1050 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 41: GORUTINAS
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA AL MUNDO DE LA CONCURRENCIA
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de software, al Módulo V de Go Master Book. Hasta ahora
+has dominado los fundamentos del lenguaje, la programación orientada a objetos
+con interfaces, el manejo de errores, los punteros, las estructuras de datos
+compuestas y el testing. Has construido cimientos sólidos. Pero llega el momento
+de cruzar el umbral hacia lo que realmente distingue a Go de otros lenguajes:
+la concurrencia.
+
+La concurrencia no es paralelismo. La concurrencia es la composición de tareas
+independientes que pueden ejecutarse de forma entrelazada. El paralelismo es la
+ejecución simultánea de múltiples tareas. Go te brinda las herramientas para
+pensar en términos de concurrencia desde el diseño. Y en el centro de todo
+ello se encuentran las gorutinas.
+
+En este capítulo plantarás la bandera en la cima de la gorutina: la unidad
+fundamental de ejecución ligera en Go. Entenderás qué son, cómo se crean,
+cómo se comportan, cómo el scheduler de Go las gestiona, y por qué son tan
+increíblemente eficientes comparadas con los hilos del sistema operativo.
+
+Prepárate para dejar atrás el mundo secuencial y abrazar un nuevo paradigma.
+Cada vez que lances una gorutina, estarás creando un universo paralelo dentro
+de tu programa. Bienvenido a la verdadera potencia de Go.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"La concurrencia es la forma en que estructuramos nuestro programa para
+resolver múltiples tareas al mismo tiempo, no para ejecutarlas más rápido,
+sino para escribirlas mejor." — Rob Pike
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender qué es una gorutina y cómo difiere de un hilo del SO.
+  • Aprender a lanzar gorutinas con la palabra clave 'go'.
+  • Entender el modelo de memoria de las gorutinas (stack ~4KB).
+  • Conocer el scheduler de Go (M:P:G) y su funcionamiento interno.
+  • Identificar el ciclo de vida de una gorutina.
+  • Lanzar gorutinas con funciones anónimas y closures.
+  • Sincronizar la finalización de gorutinas (sin channels aún).
+  • Practicar la ejecución concurrente de múltiples gorutinas.
+  • Detectar problemas comunes: gorutinas huérfanas y condiciones de carrera.
+  • Sentar las bases para los capítulos subsiguientes sobre channels y sync.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — GORUTINAS
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ¿QUÉ ES UNA GORUTINA?
+----------------------------------------------------------------------
+
+Una gorutina es una función o método que se ejecuta concurrentemente con otras
+gorutinas en el mismo espacio de direcciones. Es un hilo ligero gestionado por
+el runtime de Go, no por el sistema operativo.
+
+Características fundamentales:
+
+  • Stack inicial extremadamente pequeño (~4 KB) que crece y se encoge según
+    sea necesario. Un hilo del SO típico tiene un stack de ~1-8 MB.
+  • Miles o incluso millones de gorutinas pueden coexistir en un programa sin
+    agotar la memoria.
+  • La comunicación entre gorutinas se hace mediante channels (próximo capítulo)
+    evitando la programación con memoria compartida y locks.
+  • El costo de creación de una gorutina es mínimo: ~4 KB de memoria.
+
+----------------------------------------------------------------------
+  2. LA PALABRA CLAVE 'go'
+----------------------------------------------------------------------
+
+Para lanzar una gorutina, simplemente anteponemos la palabra clave 'go' a una
+invocación de función:
+
+    go miFuncion()
+
+Esto le dice al runtime: "Ejecuta esta función de manera concurrente". La
+gorutina se programa para ejecutarse en el futuro. El programa principal
+continúa inmediatamente sin esperar a que la gorutina termine.
+
+----------------------------------------------------------------------
+  3. EL SCHEDULER M:P:G DE GO
+----------------------------------------------------------------------
+
+El runtime de Go implementa su propio scheduler basado en el modelo M:P:G:
+
+  • M (Machine): Un hilo del sistema operativo.
+  • P (Processor): Un contexto de ejecución que sostiene una cola de gorutinas
+    listas para ejecutar. GOMAXPROCS define el número de P's.
+  • G (Goroutine): Una gorutina.
+
+El scheduler reparte las gorutinas (G) entre los procesadores (P) que a su vez
+se ejecutan sobre los hilos del SO (M). Cuando una gorutina hace una operación
+de bloqueo (I/O, channel, sleep), el P la reemplaza por otra gorutina lista.
+
+Esto permite que Go maneje decenas de miles de gorutinas con solo unos pocos
+hilos del SO, optimizando el uso de la CPU.
+
+----------------------------------------------------------------------
+  4. CICLO DE VIDA DE UNA GORUTINA
+----------------------------------------------------------------------
+
+Una gorutina pasa por varios estados:
+
+  1. Creación: Se lanza con 'go' y se coloca en la cola del scheduler.
+  2. Ejecución: El scheduler asigna un P y la gorutina se ejecuta.
+  3. Bloqueo: La gorutina se bloquea esperando I/O, channel, sleep, etc.
+  4. Reanudación: Cuando el recurso está disponible, vuelve a la cola.
+  5. Finalización: La gorutina termina cuando su función retorna.
+
+Si el programa principal (main) termina, todas las gorutinas restantes son
+abortadas abruptamente. Por eso necesitamos mecanismos de sincronización.
+
+----------------------------------------------------------------------
+  5. FUNCIONES ANÓNIMAS Y CLOSURES EN GORUTINAS
+----------------------------------------------------------------------
+
+Podemos lanzar gorutinas con funciones anónimas, lo que permite capturar
+variables del entorno circundante:
+
+    go func() {
+        fmt.Println("Hola desde gorutina anónima")
+    }()
+
+Cuidado con los closures: si capturas una variable que cambia, todas las
+gorutinas podrían ver el último valor. La solución clásica es pasar la
+variable como argumento:
+
+    for i := 0; i < 10; i++ {
+        go func(n int) {
+            fmt.Println(n)
+        }(i)
+    }
+
+----------------------------------------------------------------------
+  6. GORUTINAS HUÉRFANAS Y LIMPIEZA
+----------------------------------------------------------------------
+
+Una gorutina huérfana es aquella que sigue ejecutándose después de que el
+programa principal ha terminado, o que no tiene forma de ser notificada para
+terminar. Esto puede provocar fugas de gorutinas (goroutine leaks).
+
+Siempre debemos tener un plan de terminación para cada gorutina que creamos.
+En capítulos posteriores veremos cómo usar channels y context para esto.
+
+----------------------------------------------------------------------
+  7. GOMAXPROCS
+----------------------------------------------------------------------
+
+GOMAXPROCS controla el número de procesadores (P) que el scheduler puede usar.
+Por defecto es igual al número de CPUs lógicas disponibles.
+
+    runtime.GOMAXPROCS(4)  // Establece a 4 procesadores lógicos
+    n := runtime.GOMAXPROCS(0)  // Consulta el valor actual
+
+Aumentar GOMAXPROCS no siempre mejora el rendimiento. Para tareas intensivas
+en CPU, usar GOMAXPROCS = NumCPU suele ser óptimo. Para tareas mixtas, puede
+ser beneficioso aumentar ligeramente.
+
+══════════════════════════════════════════════════════════════════════════════
+  CÓDIGO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  EJEMPLO 1: PRIMERA GORUTINA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func saludar() {
+    fmt.Println("¡Hola desde una gorutina!")
+}
+
+func main() {
+    // Lanzamos la gorutina
+    go saludar()
+
+    // Dormimos un poco para dar tiempo a que la gorutina se ejecute
+    time.Sleep(100 * time.Millisecond)
+
+    fmt.Println("Programa principal finalizado")
+}
+```
+
+Salida esperada (el orden puede variar):
+    ¡Hola desde una gorutina!
+    Programa principal finalizado
+
+----------------------------------------------------------------------
+  EJEMPLO 2: SIN ESPERA — GORUTINA HUÉRFANA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    go func() {
+        fmt.Println("¿Me verás?")
+    }()
+    // Sin time.Sleep o sincronización, el programa termina inmediatamente
+    // La gorutina probablemente no alcanzará a ejecutarse
+    fmt.Println("Fin del programa principal")
+}
+```
+
+Salida esperada (solo una línea):
+    Fin del programa principal
+
+La gorutina rara vez alcanzará a ejecutarse porque el programa principal
+termina antes de que el scheduler la programme.
+
+----------------------------------------------------------------------
+  EJEMPLO 3: MÚLTIPLES GORUTINAS CON FUNCIÓN ANÓNIMA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    fmt.Println("Lanzando múltiples gorutinas...")
+
+    for i := 1; i <= 5; i++ {
+        // Pasamos i como argumento para evitar el problema del closure
+        go func(id int) {
+            fmt.Printf("Gorutina %d ejecutándose\n", id)
+        }(i)
+    }
+
+    // Damos tiempo para que todas terminen
+    time.Sleep(500 * time.Millisecond)
+    fmt.Println("Todas las gorutinas han finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: EL PROBLEMA DEL CLOSURE EN BUCLE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    fmt.Println("SIN corrección del closure:")
+    for i := 1; i <= 5; i++ {
+        go func() {
+            // i se captura por referencia, todas ven el último valor
+            fmt.Printf("Gorutina %d\n", i)
+        }()
+    }
+    time.Sleep(200 * time.Millisecond)
+
+    fmt.Println("\nCON corrección del closure:")
+    for i := 1; i <= 5; i++ {
+        go func(n int) {
+            fmt.Printf("Gorutina %d\n", n)
+        }(i)
+    }
+    time.Sleep(200 * time.Millisecond)
+}
+```
+
+Salida esperada (aproximada):
+    SIN corrección del closure:
+    Gorutina 6
+    Gorutina 6
+    Gorutina 6
+    Gorutina 6
+    Gorutina 6
+
+    CON corrección del closure:
+    Gorutina 1
+    Gorutina 3
+    Gorutina 5
+    Gorutina 2
+    Gorutina 4
+
+Nótese que sin la corrección, todas las gorutinas ven i=6 (el valor tras salir
+del bucle). Con la corrección, cada una recibe su propio valor.
+
+----------------------------------------------------------------------
+  EJEMPLO 5: EXPLORANDO EL STACK DE LAS GORUTINAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "time"
+)
+
+func main() {
+    var m runtime.MemStats
+    runtime.ReadMemStats(&m)
+    fmt.Printf("Memoria inicial: %d KB\n", m.HeapAlloc/1024)
+
+    // Lanzamos 100,000 gorutinas para ver el impacto
+    for i := 0; i < 100000; i++ {
+        go func(id int) {
+            // Simulamos trabajo mínimo
+            _ = id
+        }(i)
+    }
+
+    time.Sleep(1 * time.Second)
+    runtime.ReadMemStats(&m)
+    fmt.Printf("Memoria tras 100,000 gorutinas: %d KB\n", m.HeapAlloc/1024)
+    fmt.Printf("Memoria por gorutina: ~%d bytes\n", m.HeapAlloc/100000)
+}
+```
+
+Este ejemplo demuestra la ligereza de las gorutinas. 100,000 gorutinas apenas
+consumen unos pocos cientos de KB adicionales. Unos hilos del SO consumirían
+gigas.
+
+----------------------------------------------------------------------
+  EJEMPLO 6: GOMAXPROCS Y EJECUCIÓN EN PARALELO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "sync"
+    "time"
+)
+
+func main() {
+    // Consultar número de CPUs
+    numCPU := runtime.NumCPU()
+    fmt.Printf("CPUs lógicas: %d\n", numCPU)
+    fmt.Printf("GOMAXPROCS actual: %d\n", runtime.GOMAXPROCS(0))
+
+    // Función que hace cómputo intensivo
+    trabajo := func(id int, wg *sync.WaitGroup) {
+        defer wg.Done()
+        suma := 0
+        for i := 0; i < 100000000; i++ {
+            suma += i
+        }
+        fmt.Printf("Trabajo %d completado, suma = %d\n", id, suma)
+    }
+
+    var wg sync.WaitGroup
+    inicio := time.Now()
+
+    for i := 0; i < 8; i++ {
+        wg.Add(1)
+        go trabajo(i, &wg)
+    }
+
+    wg.Wait()
+    fmt.Printf("Tiempo total: %v\n", time.Since(inicio))
+}
+```
+
+Este ejemplo muestra cómo GOMAXPROCS afecta el rendimiento de tareas
+intensivas en CPU. Con GOMAXPROCS = NumCPU, el trabajo se distribuye
+eficientemente.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: RECUPERACIÓN DE PÁNICO EN GORUTINA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                fmt.Printf("Recuperado en gorutina: %v\n", r)
+            }
+        }()
+        fmt.Println("Gorutina a punto de panicar...")
+        panic("¡algo salió mal!")
+    }()
+
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println("El programa principal sigue vivo")
+}
+```
+
+Sin recover, un panic en una gorutina derrumba todo el programa. Por eso
+es buena práctica usar recover dentro de cada gorutina que pueda fallar.
+
+----------------------------------------------------------------------
+  EJEMPLO 8: GORUTINA CON TIME.SLEEP Y SECUENCIAMIENTO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    for i := 0; i < 5; i++ {
+        go func(n int) {
+            time.Sleep(time.Duration(n) * 100 * time.Millisecond)
+            fmt.Printf("Gorutina %d durmió %dms\n", n, n*100)
+        }(i)
+    }
+
+    time.Sleep(1 * time.Second)
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: CONTEO DE GORUTINAS ACTIVAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "time"
+)
+
+func main() {
+    fmt.Printf("Gorutinas al inicio: %d\n", runtime.NumGoroutine())
+
+    for i := 0; i < 10; i++ {
+        go func(id int) {
+            time.Sleep(500 * time.Millisecond)
+            fmt.Printf("Gorutina %d terminó\n", id)
+        }(i)
+    }
+
+    fmt.Printf("Gorutinas después de lanzar: %d\n", runtime.NumGoroutine())
+    time.Sleep(200 * time.Millisecond)
+    fmt.Printf("Gorutinas a medio camino: %d\n", runtime.NumGoroutine())
+    time.Sleep(500 * time.Millisecond)
+    fmt.Printf("Gorutinas al final: %d\n", runtime.NumGoroutine())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: GORUTINAS CON RETORNO SIMULADO MEDIANTE CANAL (AVANCE)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    // Usamos un canal para recibir el resultado de la gorutina
+    ch := make(chan string)
+
+    go func() {
+        time.Sleep(200 * time.Millisecond)
+        ch <- "Resultado desde la gorutina"
+    }()
+
+    // Esperamos bloqueados hasta que la gorutina envíe
+    resultado := <-ch
+    fmt.Println(resultado)
+}
+```
+
+Este es un adelanto del siguiente capítulo. El canal nos permite recibir
+el valor de retorno de la gorutina de forma sincronizada.
+
+----------------------------------------------------------------------
+  EJEMPLO 11: GORUTINAS CON FUNCIONES NOMBRADAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+// calcularFibonacci calcula el n-ésimo número de Fibonacci
+func calcularFibonacci(n int, id string) {
+    a, b := 0, 1
+    for i := 0; i < n; i++ {
+        a, b = b, a+b
+    }
+    fmt.Printf("[%s] Fibonacci(%d) = %d\n", id, n, a)
+}
+
+func main() {
+    // Lanzamos cálculos concurrentes
+    go calcularFibonacci(10, "A")
+    go calcularFibonacci(20, "B")
+    go calcularFibonacci(30, "C")
+    go calcularFibonacci(40, "D")
+
+    // Esperamos
+    time.Sleep(500 * time.Millisecond)
+    fmt.Println("Cálculos fibanocci completados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: PRODUCTOR DE DATOS CON GORUTINAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    "time"
+)
+
+func productor(id int) {
+    for i := 0; i < 5; i++ {
+        fmt.Printf("Productor %d produce dato %d\n", id, i)
+        time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
+    }
+    fmt.Printf("Productor %d terminó\n", id)
+}
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    for i := 1; i <= 3; i++ {
+        go productor(i,)
+    }
+
+    time.Sleep(2 * time.Second)
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: ORDEN DE EJECUCIÓN NO DETERMINISTA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    for i := 0; i < 10; i++ {
+        go func(n int) {
+            fmt.Printf("%d ", n)
+        }(i)
+    }
+
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println()
+    fmt.Println("Observa cómo el orden varía en cada ejecución")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: RACE CONDITION (CONDICIÓN DE CARRERA) — SIN SINCRONIZACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+var contador int
+
+func main() {
+    for i := 0; i < 1000; i++ {
+        go func() {
+            contador++ // Race condition: múltiples gorutinas modifican sin protección
+        }()
+    }
+
+    time.Sleep(1 * time.Second)
+    fmt.Printf("Valor final del contador: %d (debería ser 1000)\n", contador)
+}
+```
+
+Casi nunca obtenemos 1000 exacto. Esto es una condición de carrera. Más
+adelante veremos cómo evitarla con Mutex o atomic.
+
+----------------------------------------------------------------------
+  EJEMPLO 15: FAN-OUT BÁSICO CON GORUTINAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func trabajador(id int, tareas []int) {
+    for _, t := range tareas {
+        fmt.Printf("Trabajador %d procesando tarea %d\n", id, t)
+        time.Sleep(100 * time.Millisecond)
+    }
+}
+
+func main() {
+    tareas := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+    // Dividimos las tareas entre 3 trabajadores
+    go trabajador(1, tareas[:3])
+    go trabajador(2, tareas[3:7])
+    go trabajador(3, tareas[7:])
+
+    time.Sleep(1 * time.Second)
+    fmt.Println("Todas las tareas distribuidas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: COMPARACIÓN GORUTINA VS HILO TRADICIONAL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "time"
+)
+
+func main() {
+    // Mostrar la diferencia fundamental
+    fmt.Println("=== Comparación: Gorutina vs Hilo del SO ===")
+    fmt.Printf("Stack inicial gorutina: ~%d KB\n", 4)
+    fmt.Printf("Stack inicial hilo SO: ~%d KB\n", 1024)
+    fmt.Printf("Costo de creación gorutina: ~%d bytes\n", 4500)
+    fmt.Printf("Número máximo típico de gorutinas: ~%d\n", 1000000)
+    fmt.Printf("Número máximo típico de hilos: ~%d\n", 10000)
+
+    var m runtime.MemStats
+    runtime.ReadMemStats(&m)
+
+    numGoroutines := 100000
+    inicio := time.Now()
+
+    for i := 0; i < numGoroutines; i++ {
+        go func(n int) {
+            _ = n
+        }(i)
+    }
+
+    runtime.ReadMemStats(&m)
+    fmt.Printf("\nTiempo crear %d gorutinas: %v\n", numGoroutines, time.Since(inicio))
+    fmt.Printf("Memoria usada: %d MB\n", m.HeapAlloc/1024/1024)
+    fmt.Printf("Gorutinas activas: %d\n", runtime.NumGoroutine())
+
+    _ = time.Sleep(100 * time.Millisecond)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: USO DE RUNTIME.GOSCHED()
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "time"
+)
+
+func main() {
+    go func() {
+        for i := 0; i < 5; i++ {
+            fmt.Println("Gorutina A:", i)
+            runtime.Gosched() // Cede el procesador a otras gorutinas
+        }
+    }()
+
+    go func() {
+        for i := 0; i < 5; i++ {
+            fmt.Println("  Gorutina B:", i)
+            runtime.Gosched()
+        }
+    }()
+
+    time.Sleep(100 * time.Millisecond)
+}
+```
+
+runtime.Gosched() cede voluntariamente la CPU para que el scheduler pueda
+ejecutar otras gorutinas. Es útil para cooperación, pero raramente necesario
+en código moderno.
+
+----------------------------------------------------------------------
+  EJEMPLO 18: GORUTINA CON DEFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    go func() {
+        defer fmt.Println("  ▶ Gorutina finalizada (defer)")
+        fmt.Println("  ▶ Gorutina trabajando...")
+        time.Sleep(200 * time.Millisecond)
+        fmt.Println("  ▶ Gorutina a punto de terminar")
+    }()
+
+    time.Sleep(300 * time.Millisecond)
+    fmt.Println("Programa principal finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: MONITOREO DE GORUTINAS CON PPROF
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    _ "net/http/pprof"
+    "time"
+)
+
+func main() {
+    // Servidor HTTP para pprof (solo para monitoreo)
+    go func() {
+        fmt.Println("Servidor pprof en :6060")
+        http.ListenAndServe("localhost:6060", nil)
+    }()
+
+    // Simulamos trabajo con varias gorutinas
+    for i := 0; i < 20; i++ {
+        go func(id int) {
+            for {
+                time.Sleep(100 * time.Millisecond)
+                fmt.Printf("Gorutina %d activa\n", id)
+            }
+        }(i)
+    }
+
+    // Dejamos correr un tiempo
+    time.Sleep(2 * time.Second)
+    fmt.Println("Programa finalizado (esto no se ejecutará por el for infinito)")
+}
+```
+
+NOTA: Este ejemplo tiene bucles infinitos. Es solo demostrativo. Para ver
+las gorutinas activas, visita http://localhost:6060/debug/pprof/goroutine
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — TODOS LOS CONCEPTOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "runtime"
+    "time"
+)
+
+const NumGorutinas = 10
+
+func trabajo(id int, resultados chan<- int) {
+    defer fmt.Printf("Gorutina %d terminó su trabajo\n", id)
+
+    // Simulamos trabajo con duración variable
+    tiempo := time.Duration(50*id) * time.Millisecond
+    time.Sleep(tiempo)
+
+    result := id * id
+    fmt.Printf("Gorutina %d: trabajo completado en %v, resultado = %d\n",
+        id, tiempo, result)
+
+    resultados <- result
+}
+
+func main() {
+    runtime.GOMAXPROCS(runtime.NumCPU())
+
+    fmt.Println("=== SÍNTESIS: GORUTINAS EN ACCIÓN ===")
+    fmt.Printf("GOMAXPROCS = %d\n", runtime.GOMAXPROCS(0))
+    fmt.Printf("Número de gorutinas inicial: %d\n", runtime.NumGoroutine())
+
+    resultados := make(chan int, NumGorutinas)
+
+    // Lanzamos múltiples gorutinas
+    for i := 0; i < NumGorutinas; i++ {
+        go trabajo(i, resultados)
+    }
+
+    fmt.Printf("Gorutinas activas tras lanzar: %d\n", runtime.NumGoroutine())
+
+    // Recolectamos resultados
+    for i := 0; i < NumGorutinas; i++ {
+        r := <-resultados
+        fmt.Printf("Resultado recibido: %d\n", r)
+    }
+
+    fmt.Printf("Gorutinas activas al final: %d\n", runtime.NumGoroutine())
+    fmt.Println("=== PROGRAMA FINALIZADO ===")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+En este capítulo hemos explorado el corazón de la concurrencia en Go: las
+gorutinas. Aprendiste que:
+
+  • Una gorutina es un hilo ligero gestionado por el runtime de Go.
+  • Su stack inicial es de ~4 KB, mucho menor que el de un hilo del SO.
+  • La palabra clave 'go' lanza una función como gorutina.
+  • El scheduler M:P:G gestiona eficientemente miles de gorutinas.
+  • GOMAXPROCS controla el número de procesadores lógicos.
+  • Las funciones anónimas y closures son una forma común de lanzar gorutinas.
+  • El problema del closure en bucles debe evitarse pasando argumentos.
+  • Sin sincronización, el programa principal puede terminar antes que las
+    gorutinas.
+  • runtime.NumGoroutine() permite monitorear gorutinas activas.
+  • Un panic no recuperado en una gorutina derrumba todo el programa.
+  • Las condiciones de carrera ocurren cuando múltiples gorutinas acceden a
+    datos compartidos sin sincronización.
+
+Las gorutinas son el primer pilar de la concurrencia en Go. En los próximos
+capítulos añadiremos los mecanismos de comunicación y sincronización que
+harán de este un modelo completo y poderoso.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Lanza 10 gorutinas que impriman su número del 1 al 10. Usa una
+   función anónima con el patrón correcto del closure.
+
+2. INTERMEDIO — Escribe un programa que lance 1000 gorutinas, cada una
+   incrementando un contador compartido. Ejecútalo varias veces. ¿Obtienes
+   siempre 1000? ¿Por qué?
+
+3. INTERMEDIO — Usando runtime.NumGoroutine(), crea un programa que
+   demuestre el ciclo de vida de una gorutina: antes, durante y después.
+
+4. AVANZADO — Crea un programa que calcule números primos concurrentemente.
+   Divide el rango de búsqueda entre N gorutinas y recoge los resultados.
+
+5. AVANZADO — Implementa un timeout para una gorutina usando time.Sleep
+   y un canal (avance del siguiente capítulo). Si la gorutina no responde
+   en 1 segundo, el programa continúa.
+
+6. BÁSICO — Modifica el Ejemplo 3 para que cada gorutina imprima su ID
+   y el tiempo total transcurrido desde el inicio del programa.
+
+7. INTERMEDIO — Crea un programa que demuestre el problema del closure
+   en un bucle for. Luego corrígelo y muestra la diferencia.
+
+8. AVANZADO — Simula un servidor web con 10 gorutinas atendiendo peticiones
+   concurrentes. Cada gorutina imprime "Atendiendo petición X" y espera
+   un tiempo aleatorio entre 100ms y 500ms.
+
+9. INTERMEDIO — Escribe un programa que ejecute una función con timeout
+   usando select (avance). Muestra "Completado" si termina antes de 2s
+   o "Timeout" si excede.
+
+10. AVANZADO — Crea un generador de IDs incremental usando una gorutina
+    y un canal. La gorutina central produce IDs secuenciales y los envía
+    a través del canal.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Cuántas gorutinas puedo crear?
+R: En la práctica, puedes crear cientos de miles o incluso millones. Cada
+gorutina consume ~4 KB de stack inicial más overhead del scheduler. En una
+máquina con 8 GB de RAM, un millón de gorutinas es factible.
+
+❓ ¿Una gorutina se ejecuta en paralelo?
+R: Depende de GOMAXPROCS. Si GOMAXPROCS > 1, múltiples gorutinas pueden
+ejecutarse en paralelo en diferentes hilos del SO. Si GOMAXPROCS = 1,
+la concurrencia es cooperativa (una gorutina se ejecuta hasta que bloquea
+o cede).
+
+❓ ¿Por qué mi gorutina no se ejecuta?
+R: El programa principal termina antes de que el scheduler asigne tiempo
+a la gorutina. Necesitas sincronización: time.Sleep, WaitGroup, channels,
+o cualquier mecanismo que mantenga vivo el programa principal.
+
+❓ ¿Qué es una gorutina huérfana?
+R: Es una gorutina que se ejecuta pero ya no tiene forma de ser notificada
+para terminar. También se llama fuga de gorutina (goroutine leak). Puede
+causar problemas de memoria a largo plazo.
+
+❓ ¿Debo usar recover en cada gorutina?
+R: Al menos en aquellas que realizan operaciones que podrían panicar (accesos
+a red, archivos, parsers, etc.). Un panic no recuperado en cualquier gorutina
+detiene todo el programa.
+
+❓ ¿Qué diferencia hay entre concurrencia y paralelismo?
+R: Concurrencia es la composición de tareas independientes (estructura).
+Paralelismo es la ejecución simultánea (ejecución). La concurrencia permite
+el paralelismo, pero no lo garantiza.
+
+❓ ¿Cómo sé cuántas gorutinas tengo activas?
+R: Usa runtime.NumGoroutine() para obtener el conteo actual.
+
+❓ ¿Las gorutinas tienen prioridad?
+R: No. El scheduler de Go es cooperativo y justo. Las gorutinas se ejecutan
+en orden FIFO dentro de cada P. No hay prioridades configurables.
+
+❓ ¿Puedo matar una gorutina desde fuera?
+R: No directamente. Debes diseñar la gorutina para que pueda ser cancelada
+mediante un channel o context. No hay runtime.GoroutineKill().
+
+❓ ¿GOMAXPROCS > NumCPU es útil?
+R: Generalmente no para tareas intensivas en CPU. Puede ser útil si las
+gorutinas hacen muchas operaciones de I/O bloqueantes, ya que permite
+aprovechar mejor el tiempo de espera.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+Como Arquitecto de Software, tu labor no es solo lanzar gorutinas, sino
+diseñar sistemas completos que aprovechen la concurrencia de forma segura
+y eficiente.
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: DISEÑAR UN SISTEMA DE PROCESAMIENTO DE PEDIDOS               │
+│                                                                          │
+│  Un restaurante de alta cocina necesita un sistema para gestionar       │
+│  pedidos concurrentes. Cada pedido pasa por 3 etapas:                   │
+│                                                                          │
+│    1. RECEPCIÓN: Se recibe el pedido (cliente, platos, cantidad)        │
+│    2. COCINA: Cada plato se prepara con un tiempo diferente             │
+│    3. ENTREGA: El pedido completo se sirve al cliente                   │
+│                                                                          │
+│  Requisitos:                                                             │
+│  • Múltiples pedidos pueden estar en proceso simultáneamente            │
+│  • Cada plato dentro de un pedido puede cocinarse concurrentemente      │
+│  • El sistema debe poder atender hasta 50 pedidos concurrentes          │
+│  • Debes monitorear el número de gorutinas activas                      │
+│  • Implementa un mecanismo de timeout: si un pedido tarda más de 5s    │
+│    en total, debe cancelarse (usa select + time.After)                  │
+│  • Usa recover para que un error en un plato no detenga todo           │
+│  • Documenta el diseño: ¿cuántas gorutinas creaste? ¿cuántas por        │
+│    pedido? ¿qué patrones usaste?                                        │
+│                                                                          │
+│  Pistas:                                                                 │
+│  • Modela un Pedido como struct con ID, Cliente, Platos, Estado        │
+│  • Modela un Plato con ID, Nombre, TiempoPreparacion                   │
+│  • Usa gorutinas anidadas: gorutina principal del pedido, y sub-       │
+│    gorutinas para cada plato                                            │
+│  • Usa un channel para recoger resultados de platos                     │
+│  • Al terminar cada plato, imprime "Plato X listo"                     │
+│  • Cuando todos los platos están listos, imprime "Pedido Y completo"   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra todos los conceptos del capítulo y te prepara para los
+mecanismos de sincronización que veremos a continuación. ¡Resuélvelo antes
+de pasar al Capítulo 42!
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dado el primer paso en el fascinante mundo de la concurrencia en Go.
+Las gorutinas son la pieza fundamental sobre la que construirás sistemas
+concurrentes robustos, eficientes y elegantes.
+
+Recuerda siempre: la concurrencia no se trata de hacer las cosas más rápido,
+sino de estructurar mejor tu programa. Las gorutinas te permiten expresar
+la concurrencia de forma natural, sin los dolores de cabeza de los hilos
+tradicionales.
+
+En el próximo capítulo aprenderás la segunda pieza clave: los channels.
+Estos conductos de comunicación te permitirán enviar datos entre gorutinas
+de forma segura y sincronizada. La combinación de gorutinas y channels es
+lo que hace de Go un lenguaje único para la concurrencia.
+
+"No comuniques mediante memoria compartida; comparte memoria mediante
+comunicación." — Go proverbio
+
+Nos vemos en el Capítulo 42: CHANNELS.
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 42: CHANNELS → La tubería que conecta gorutinas
+
+══════════════════════════════════════════════════════════════════════════════

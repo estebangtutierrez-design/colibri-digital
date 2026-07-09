@@ -1,0 +1,879 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##              CAPÍTULO 56: HASH DE CONTRASEÑAS
+##
+################################################################################
+
+"Una contraseña no se guarda, se transforma. El hash no es un
+secreto, es una promesa de que ni el dueño del sistema podrá
+revelar lo que no debe saber."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Almacenar contraseñas en texto plano es el pecado capital del
+desarrollo web. Si un atacante accede a tu base de datos, todas
+las contraseñas de tus usuarios quedan expuestas. Y como los
+usuarios reutilizan contraseñas, el daño se extiende a otros
+servicios.
+
+PHP proporciona funciones nativas para hashear contraseñas de
+forma segura: password_hash() y password_verify(). Estas funciones
+implementan los algoritmos más robustos (bcrypt, Argon2) y
+gestionan automáticamente los salts.
+
+En este capítulo aprenderás a almacenar y verificar contraseñas
+como lo hacen los sistemas profesionales: con hash adaptativos,
+costes ajustables y protección contra ataques de fuerza bruta.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"No almacenes contraseñas, almacena promesas. Un hash bien hecho
+es un juramento que ni su creador puede romper."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender por qué nunca debes almacenar contraseñas en texto plano.
+✓ Usar password_hash() con bcrypt para almacenar contraseñas.
+✓ Usar password_verify() para verificar contraseñas.
+✓ Configurar el coste de bcrypt para balance seguridad/rendimiento.
+✓ Implementar Argon2i y Argon2id como alternativas más seguras.
+✓ Verificar y actualizar hashes antiguos automáticamente.
+✓ Prevenir ataques de timing en la verificación.
+✓ Implementar políticas de contraseñas seguras.
+
+===============================================================================
+1. POR QUÉ HASHEAR CONTRASEÑAS
+===============================================================================
+
+Cuando un usuario se registra con contraseña "MiClave2024", NO debes
+guardar "MiClave2024" en la base de datos. Debes guardar un hash.
+
+Un hash es una función unidireccional: es fácil de calcular pero
+computacionalmente inviable de revertir. Dado el hash, no puedes
+obtener la contraseña original (a diferencia del cifrado, que sí
+es reversible).
+
+¿Qué pasa si guardas texto plano?
+  - Un atacante accede a la BD y obtiene TODAS las contraseñas.
+  - Los usuarios reusan contraseñas en email, banco, redes sociales.
+  - La reputación de tu empresa queda destruida.
+  - Puedes enfrentar demandas legales (GDPR, CCPA).
+
+Funciones NO seguras para contraseñas:
+
+```php
+<?php
+// MAL - Hash demasiado rápido (MD5 en 0.000001 segundos)
+$hash = md5($password);
+
+// MAL - SHA1 igual de rápido
+$hash = sha1($password);
+
+// MAL - SHA256 sigue siendo muy rápido
+$hash = hash('sha256', $password);
+
+// MAL - Agregar un salt fijo no ayuda lo suficiente
+$hash = md5('saltFijo' . $password);
+```
+
+Estos hashes son inseguros porque una GPU moderna puede calcular
+miles de millones de MD5/SHA256 por segundo. Con hardware
+especializado (ASIC), la velocidad es aún mayor.
+
+Las funciones diseñadas para contraseñas son deliberadamente LENTAS:
+  - bcrypt: ajustable, resistente a ASIC.
+  - Argon2: ganador del Password Hashing Competition, resistente a
+    GPU y ASIC.
+
+===============================================================================
+2. PASSWORD_HASH CON BCRYPT
+===============================================================================
+
+password_hash() es la función oficial de PHP para hashear contraseñas.
+
+```php
+<?php
+$password = 'MiClaveSegura2024';
+
+$hash = password_hash($password, PASSWORD_BCRYPT);
+
+echo $hash;
+// $2y$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234
+```
+
+El hash de bcrypt contiene:
+  - $2y$: identificador del algoritmo.
+  - 10: coste (número de iteraciones = 2^10 = 1024).
+  - Los siguientes 53 caracteres: salt (22) + hash (31).
+
+Almacenar en base de datos:
+
+```sql
+CREATE TABLE usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,  -- 60 caracteres para bcrypt
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+La columna password debe ser VARCHAR(255) para soportar cualquier
+algoritmo futuro. Bcrypt genera 60 caracteres, pero Argon2 puede
+generar más.
+
+===============================================================================
+3. PASSWORD_VERIFY
+===============================================================================
+
+password_verify() compara una contraseña con su hash.
+
+```php
+<?php
+$passwordIngresada = $_POST['password'];
+$hashAlmacenado  = $usuario['password']; // de la BD
+
+if (password_verify($passwordIngresada, $hashAlmacenado)) {
+    echo 'Contraseña correcta. ¡Bienvenido!';
+    // Iniciar sesión...
+} else {
+    echo 'Contraseña incorrecta.';
+}
+```
+
+Características de password_verify:
+  - Es resistente a timing attacks (siempre tarda lo mismo).
+  - Extrae automáticamente el algoritmo, coste y salt del hash.
+  - No necesitas almacenar el salt por separado.
+  - Funciona con bcrypt, Argon2i, Argon2id.
+
+Ejemplo completo de registro y login:
+
+```php
+<?php
+// REGISTRO
+$nombre   = $_POST['nombre'];
+$email    = $_POST['email'];
+$password = $_POST['password'];
+
+// Validar que la contraseña cumpla políticas
+if (strlen($password) < 8) {
+    die('La contraseña debe tener al menos 8 caracteres');
+}
+
+// Hashear la contraseña
+$hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+
+// Guardar en BD
+$stmt = $db->prepare('INSERT INTO usuarios (nombre, email, password) VALUES (:nombre, :email, :password)');
+$stmt->execute([
+    ':nombre'   => $nombre,
+    ':email'    => $email,
+    ':password' => $hash,
+]);
+
+echo 'Usuario registrado correctamente.';
+```
+
+```php
+<?php
+// LOGIN
+$email    = $_POST['email'];
+$password = $_POST['password'];
+
+$stmt = $db->prepare('SELECT * FROM usuarios WHERE email = :email');
+$stmt->execute([':email' => $email]);
+$usuario = $stmt->fetch();
+
+if (!$usuario || !password_verify($password, $usuario['password'])) {
+    // Mensaje genérico: no reveles si el email existe o no
+    die('Credenciales inválidas');
+}
+
+// Iniciar sesión
+$_SESSION['user_id'] = $usuario['id'];
+echo 'Inicio de sesión exitoso.';
+```
+
+Nunca reveles si el usuario existe o la contraseña es incorrecta.
+Siempre usa el mensaje genérico "Credenciales inválidas".
+
+===============================================================================
+4. CONFIGURANDO EL COSTE DE BCRYPT
+===============================================================================
+
+El coste de bcrypt determina cuántas iteraciones de hash se realizan.
+El coste por defecto es 10 (2^10 = 1024 iteraciones).
+
+```php
+<?php
+// Coste por defecto (10)
+$hash = password_hash($password, PASSWORD_BCRYPT);
+
+// Coste 12 (más seguro, más lento)
+$hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+
+// Coste 14 (mucho más seguro, bastante lento)
+$hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 14]);
+```
+
+¿Cómo elegir el coste?
+
+Regla: el hash debe tardar entre 0.1 y 0.5 segundos en tu servidor.
+
+```php
+<?php
+function benchmarkCost(int $cost): float
+{
+    $start = microtime(true);
+    password_hash('test', PASSWORD_BCRYPT, ['cost' => $cost]);
+    return microtime(true) - $start;
+}
+
+echo "Coste 10: " . benchmarkCost(10) . " segundos\n";
+echo "Coste 12: " . benchmarkCost(12) . " segundos\n";
+echo "Coste 14: " . benchmarkCost(14) . " segundos\n";
+```
+
+Costes recomendados:
+  - 2024: coste 12 es un buen balance.
+  - Hardware lento (compartido): coste 10-11.
+  - Hardware rápido (dedicado): coste 12-13.
+  - Máxima seguridad: coste 14 (si el hardware lo permite).
+
+El coste debe ajustarse periódicamente a medida que el hardware
+se vuelve más rápido.
+
+Configuración dinámica:
+
+```php
+<?php
+// config/password.php
+define('BCRYPT_COST', 12);
+
+function hashPassword(string $password): string
+{
+    return password_hash($password, PASSWORD_BCRYPT, [
+        'cost' => BCRYPT_COST,
+    ]);
+}
+```
+
+===============================================================================
+5. ARGON2: EL SUCESOR DE BCRYPT
+===============================================================================
+
+Argon2 es el ganador del Password Hashing Competition (2015). Es
+más resistente a ataques con GPU y ASIC que bcrypt.
+
+PHP soporta dos variantes:
+  - PASSWORD_ARGON2I: optimizado contra side-channel attacks.
+  - PASSWORD_ARGON2ID: combinación de Argon2i y Argon2d (recomendado).
+
+```php
+<?php
+// Argon2id (recomendado)
+$hash = password_hash($password, PASSWORD_ARGON2ID);
+
+// Argon2i
+$hash = password_hash($password, PASSWORD_ARGON2I);
+
+// Con parámetros personalizados
+$hash = password_hash($password, PASSWORD_ARGON2ID, [
+    'memory_cost' => 65536,   // 64 MB (por defecto: 65536)
+    'time_cost'   => 4,       // 4 iteraciones (por defecto: 4)
+    'threads'     => 3,       // 3 hilos (por defecto: 2)
+]);
+```
+
+Parámetros de Argon2:
+  - memory_cost: memoria en KB (65536 = 64 MB). Más memoria = más
+    resistencia a ataques con ASIC.
+  - time_cost: iteraciones (4 es el mínimo recomendado).
+  - threads: paralelismo (depende de los núcleos de CPU).
+
+Requisitos: PHP 7.2+ con Argon2 habilitado. En la mayoría de
+instalaciones actuales, Argon2id está disponible.
+
+Verificar si Argon2 está disponible:
+
+```php
+<?php
+if (defined('PASSWORD_ARGON2ID')) {
+    echo 'Argon2id disponible';
+} else {
+    echo 'Usando bcrypt como fallback';
+}
+```
+
+Benchmark de Argon2:
+
+```php
+<?php
+$options = [
+    'memory_cost' => 65536, // 64 MB
+    'time_cost'   => 4,
+    'threads'     => 3,
+];
+
+$start = microtime(true);
+password_hash('test', PASSWORD_ARGON2ID, $options);
+$time = microtime(true) - $start;
+
+echo "Argon2id: {$time} segundos\n";
+```
+
+===============================================================================
+6. REHASH: ACTUALIZAR HASHES AUTOMÁTICAMENTE
+===============================================================================
+
+Con el tiempo, los algoritmos se vuelven obsoletos o necesitas
+aumentar el coste. password_needs_rehash() detecta si un hash
+necesita actualizarse.
+
+```php
+<?php
+function verificarYRehash(string $password, array $usuario, PDO $db): bool
+{
+    if (!password_verify($password, $usuario['password'])) {
+        return false;
+    }
+
+    // Verificar si el hash necesita actualizarse
+    if (password_needs_rehash($usuario['password'], PASSWORD_ARGON2ID, [
+        'memory_cost' => 65536,
+        'time_cost'   => 4,
+        'threads'     => 3,
+    ])) {
+        // Crear nuevo hash y guardarlo
+        $nuevoHash = password_hash($password, PASSWORD_ARGON2ID, [
+            'memory_cost' => 65536,
+            'time_cost'   => 4,
+            'threads'     => 3,
+        ]);
+
+        $stmt = $db->prepare('UPDATE usuarios SET password = :password WHERE id = :id');
+        $stmt->execute([
+            ':password' => $nuevoHash,
+            ':id'       => $usuario['id'],
+        ]);
+    }
+
+    return true;
+}
+```
+
+Esto permite migrar gradualmente:
+  - De bcrypt coste 10 a bcrypt coste 12.
+  - De bcrypt a Argon2id.
+  - Sin afectar a los usuarios (solo se actualiza cuando se loguean).
+
+También puedes rehashear todos los usuarios inactivos con un
+script de consola:
+
+```php
+<?php
+// bin/rehash-passwords.php
+$stmt = $db->query('SELECT id, password FROM usuarios WHERE password LIKE \'$2y$%\'');
+$usuarios = $stmt->fetchAll();
+
+foreach ($usuarios as $usuario) {
+    if (password_needs_rehash($usuario['password'], PASSWORD_ARGON2ID)) {
+        // No podemos rehashear sin la contraseña original
+        // Estos usuarios se actualizarán cuando inicien sesión
+        continue;
+    }
+}
+
+echo "Migración pendiente para " . count($usuarios) . " usuarios.\n";
+```
+
+La migración solo es posible cuando el usuario proporciona su
+contraseña (en el login). Por eso es importante tener una
+estrategia gradual.
+
+===============================================================================
+7. POLÍTICAS DE CONTRASEÑAS SEGURAS
+===============================================================================
+
+No solo el hash importa. La política de contraseñas es igualmente
+importante.
+
+```php
+<?php
+class PasswordPolicy
+{
+    public static function validate(string $password): array
+    {
+        $errors = [];
+
+        if (strlen($password) < 8) {
+            $errors[] = 'Mínimo 8 caracteres';
+        }
+
+        if (strlen($password) > 128) {
+            $errors[] = 'Máximo 128 caracteres';
+        }
+
+        if (!preg_match('/[A-Z]/', $password)) {
+            $errors[] = 'Debe contener al menos una mayúscula';
+        }
+
+        if (!preg_match('/[a-z]/', $password)) {
+            $errors[] = 'Debe contener al menos una minúscula';
+        }
+
+        if (!preg_match('/[0-9]/', $password)) {
+            $errors[] = 'Debe contener al menos un número';
+        }
+
+        if (!preg_match('/[!@#$%^&*()\-_=+{};:,<.>]/', $password)) {
+            $errors[] = 'Debe contener al menos un carácter especial';
+        }
+
+        // Verificar contra contraseñas comunes
+        $comunes = file(__DIR__ . '/common-passwords.txt', FILE_IGNORE_NEW_LINES);
+        if (in_array(strtolower($password), $comunes)) {
+            $errors[] = 'Esta contraseña es demasiado común';
+        }
+
+        return $errors;
+    }
+
+    public static function generate(int $length = 16): string
+    {
+        $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $lowercase = 'abcdefghijklmnopqrstuvwxyz';
+        $numbers   = '0123456789';
+        $special   = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+
+        $all = $uppercase . $lowercase . $numbers . $special;
+        $password = '';
+
+        // Asegurar al menos uno de cada tipo
+        $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+        $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+        $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+        $password .= $special[random_int(0, strlen($special) - 1)];
+
+        // Completar el resto
+        for ($i = strlen($password); $i < $length; $i++) {
+            $password .= $all[random_int(0, strlen($all) - 1)];
+        }
+
+        // Mezclar aleatoriamente
+        $password = str_shuffle($password);
+
+        return $password;
+    }
+}
+```
+
+Uso en registro:
+
+```php
+<?php
+$errors = PasswordPolicy::validate($_POST['password']);
+
+if (!empty($errors)) {
+    $this->render('auth/register', [
+        'errors' => $errors,
+        'old'    => $_POST,
+    ]);
+    return;
+}
+
+// Generar contraseña automática
+$nuevaPassword = PasswordPolicy::generate(20);
+echo "Tu nueva contraseña: $nuevaPassword";
+```
+
+===============================================================================
+8. ATAQUES DE FUERZA BRUTA Y DICCIONARIO
+===============================================================================
+
+El hash no protege contra contraseñas débiles. "123456" se
+descifra en segundos aunque esté hasheado con Argon2.
+
+Protecciones adicionales:
+
+```php
+<?php
+// 1. Rate limiting (del capítulo anterior)
+// 2. Verificar contra contraseñas filtradas
+
+function isPasswordPwned(string $password): bool
+{
+    // Usar Have I Been Pwned API (k-anonymity)
+    $hash = strtoupper(sha1($password));
+    $prefix = substr($hash, 0, 5);
+    $suffix = substr($hash, 5);
+
+    $response = file_get_contents("https://api.pwnedpasswords.com/range/{$prefix}");
+
+    return strpos($response, $suffix) !== false;
+}
+
+// Uso
+if (isPasswordPwned($password)) {
+    die('Esta contraseña ha sido filtrada en violaciones de datos. Elige otra.');
+}
+```
+
+Forzar cambio de contraseña periódico:
+
+```php
+<?php
+// En el login
+$stmt = $db->prepare('
+    SELECT * FROM usuarios
+    WHERE email = :email
+    AND (
+        password_updated_at IS NULL
+        OR password_updated_at < DATE_SUB(NOW(), INTERVAL 90 DAY)
+    )
+');
+$stmt->execute([':email' => $email]);
+$passwordExpirada = $stmt->fetch();
+
+if ($passwordExpirada) {
+    $_SESSION['must_change_password'] = true;
+    header('Location: /cambiar-contrasena');
+    exit;
+}
+```
+
+===============================================================================
+9. MEJORES PRÁCTICAS ADICIONALES
+===============================================================================
+
+Nunca almacenar contraseñas en logs:
+
+```php
+<?php
+// MAL
+$log->info('Usuario registrado', ['email' => $email, 'password' => $password]);
+
+// BIEN
+$log->info('Usuario registrado', ['email' => $email]);
+$log->info('Hash generado', ['email' => $email, 'hash' => substr($hash, 0, 10) . '...']);
+```
+
+No limitar la longitud de contraseñas:
+
+```php
+<?php
+// MAL - corta contraseñas largas
+$password = substr($_POST['password'], 0, 20);
+
+// BIEN - acepta hasta 4096 caracteres
+$password = $_POST['password']; // El hash siempre tiene tamaño fijo
+```
+
+Solo hashear, no encriptar:
+
+```php
+<?php
+// MAL - reversible
+$encrypted = openssl_encrypt($password, 'AES-256-CBC', $key);
+
+// BIEN - unidireccional
+$hash = password_hash($password, PASSWORD_BCRYPT);
+```
+
+Usar cifrado solo cuando necesites recuperar el valor original
+(como datos de tarjetas de crédito con PCI DSS). Para contraseñas,
+siempre hash.
+
+===============================================================================
+10. VERIFICACIÓN DE INTEGRIDAD DEL HASH
+===============================================================================
+
+La función hash_equals() previene timing attacks en la comparación
+de hashes.
+
+```php
+<?php
+// MAL - vulnerable a timing attack
+if ($hashCalculado === $hashAlmacenado) {
+    // ...
+}
+
+// BIEN - tiempo constante
+if (hash_equals($hashCalculado, $hashAlmacenado)) {
+    // ...
+}
+```
+
+password_verify() ya usa hash_equals() internamente, por lo que
+no necesitas preocuparte si usas la función nativa.
+
+Sin embargo, si alguna vez necesitas comparar hashes manualmente
+(por ejemplo, para verificar tokens), usa siempre hash_equals().
+
+```php
+<?php
+// Verificar token de restablecimiento
+$token = $_GET['token'];
+$tokenHash = hash('sha256', $token);
+
+$stmt = $db->prepare('SELECT * FROM password_resets WHERE token_hash = :token_hash');
+$stmt->execute([':token_hash' => $tokenHash]);
+$reset = $stmt->fetch();
+
+// No necesitas hash_equals aquí porque comparas hashes
+// Pero si compararas tokens directamente:
+// hash_equals($tokenAlmacenado, $token) ← tiempo constante
+```
+
+===============================================================================
+11. RESTABLECIMIENTO DE CONTRASEÑA
+===============================================================================
+
+El flujo seguro de "olvidé mi contraseña":
+
+```php
+<?php
+// 1. Solicitar restablecimiento
+public function solicitarReset(): void
+{
+    $email = $_POST['email'];
+
+    // No revelar si el email existe o no
+    $stmt = $db->prepare('SELECT id FROM usuarios WHERE email = :email');
+    $stmt->execute([':email' => $email]);
+    $usuario = $stmt->fetch();
+
+    if ($usuario) {
+        $token = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $token); // almacenar hash, no token
+
+        $stmt = $db->prepare('
+            INSERT INTO password_resets (user_id, token_hash, expires_at, created_at)
+            VALUES (:user_id, :token_hash, DATE_ADD(NOW(), INTERVAL 1 HOUR), NOW())
+        ');
+        $stmt->execute([
+            ':user_id'    => $usuario['id'],
+            ':token_hash' => $tokenHash,
+        ]);
+
+        // Enviar email con el token (sin hashear)
+        $resetUrl = "https://mi-app.com/reset-password?token=$token";
+        // mail($email, "Restablece tu contraseña", "Usa: $resetUrl");
+    }
+
+    // Siempre mostrar mensaje genérico
+    echo 'Si el email existe, recibirás instrucciones para restablecer tu contraseña.';
+}
+```
+
+```php
+<?php
+// 2. Restablecer la contraseña
+public function resetPassword(): void
+{
+    $token = $_GET['token'];
+    $tokenHash = hash('sha256', $token);
+
+    $stmt = $db->prepare('
+        SELECT pr.user_id, u.email
+        FROM password_resets pr
+        JOIN usuarios u ON u.id = pr.user_id
+        WHERE pr.token_hash = :token_hash
+        AND pr.expires_at > NOW()
+        AND pr.used = 0
+    ');
+    $stmt->execute([':token_hash' => $tokenHash]);
+    $reset = $stmt->fetch();
+
+    if (!$reset) {
+        die('Token inválido o expirado');
+    }
+
+    // Generar nueva contraseña
+    $nuevaPassword = PasswordPolicy::generate(16);
+    $hash = password_hash($nuevaPassword, PASSWORD_ARGON2ID);
+
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare('UPDATE usuarios SET password = :password, password_updated_at = NOW() WHERE id = :id');
+        $stmt->execute([':password' => $hash, ':id' => $reset['user_id']]);
+
+        $stmt = $db->prepare('UPDATE password_resets SET used = 1 WHERE token_hash = :token_hash');
+        $stmt->execute([':token_hash' => $tokenHash]);
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+
+    // Enviar nueva contraseña por email
+    // mail($reset['email'], "Nueva contraseña", "Tu nueva contraseña es: $nuevaPassword");
+
+    echo 'Tu nueva contraseña ha sido enviada a tu email.';
+}
+```
+
+===============================================================================
+12. LISTA DE VERIFICACIÓN DE CONTRASEÑAS
+===============================================================================
+
+✓ ¿Usas password_hash() con PASSWORD_BCRYPT o PASSWORD_ARGON2ID?
+✓ ¿Has configurado el coste/parámetros adecuados para tu hardware?
+✓ ¿Usas password_verify() para verificar?
+✓ ¿Usas password_needs_rehash() para migrar hashes?
+✓ ¿La columna password es VARCHAR(255)?
+✓ ¿Nunca guardas contraseñas en texto plano ni en logs?
+✓ ¿Nunca limitas la longitud de la contraseña?
+✓ ¿Tienes política de contraseñas (mínimo 8 caracteres)?
+✓ ¿Usas hash_equals() para comparaciones manuales de tokens?
+✓ ¿Los tokens de restablecimiento expiran y se marcan como usados?
+✓ ¿Verificas contra el API de Have I Been Pwned?
+✓ ¿Los mensajes de error no revelan si el email existe?
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Nunca almacenes contraseñas en texto plano. Usa hash unidireccional.
+- password_hash() genera hashes seguros con bcrypt o Argon2.
+- password_verify() verifica la contraseña contra el hash.
+- El coste de bcrypt (10-14) balancea seguridad y rendimiento.
+- Argon2id es más seguro que bcrypt (resistente a GPU/ASIC).
+- password_needs_rehash() actualiza hashes automáticamente.
+- Los tokens de restablecimiento deben hashearse en la BD.
+- hash_equals() previene timing attacks en comparaciones.
+- Las contraseñas comunes se descifran aunque estén hasheadas.
+- Siempre usa mensajes de error genéricos ("Credenciales inválidas").
+- Las políticas de contraseñas (mayúsculas, números, símbolos)
+  complementan el hash.
+- La migración de hashes ocurre cuando el usuario inicia sesión.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un script que registre usuarios con
+   password_hash() usando bcrypt coste 12. Almacena el hash en
+   un archivo JSON (simulando BD). Luego verifica el login.
+
+🧩 **Ejercicio 2:** Implementa un benchmark que compare:
+   bcrypt coste 10 vs 12 vs 14, y Argon2id con diferentes
+   memory_cost. Mide el tiempo de cada uno.
+
+🧩 **Ejercicio 3:** Crea el flujo completo de "olvidé mi contraseña"
+   con token seguro, expiración de 1 hora, y marca de usado.
+   Almacena el hash del token en la BD, no el token en texto plano.
+
+🧩 **Ejercicio 4:** Implementa password_needs_rehash() en el login.
+   Migra de bcrypt coste 10 a bcrypt coste 12. Verifica que los
+   usuarios existentes siguen funcionando y se actualizan al loguearse.
+
+🧩 **Ejercicio 5:** Conecta con el API de Have I Been Pwned
+   (k-anonymity) para verificar si una contraseña ha sido filtrada.
+   Implementa la comprobación en el registro.
+
+🧩 **Ejercicio 6:** Crea una clase PasswordHasher con métodos:
+   hash(), verify(), needsRehash(), generate(). Debe ser
+   configurable para usar bcrypt o Argon2 según disponibilidad.
+
+🧩 **Ejercicio 7:** Implementa un sistema de expiración de
+   contraseñas. Los usuarios deben cambiar su contraseña cada
+   90 días. Si no lo hacen, se les redirige a la página de
+   cambio al iniciar sesión.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Qué algoritmo es mejor: bcrypt o Argon2?**
+   Argon2id es el más seguro y recomendado si tu servidor lo
+   soporta (PHP 7.2+). bcrypt sigue siendo excelente y más
+   compatible. Ambos son mejores que SHA256 o MD5.
+
+❓ **¿Debo guardar el salt por separado?**
+   No. password_hash() incluye el salt dentro del hash.
+   password_verify() lo extrae automáticamente.
+
+❓ **¿Cuánto debe medir la columna password en BD?**
+   VARCHAR(255) para soportar cualquier algoritmo futuro.
+   bcrypt genera 60 caracteres; Argon2 puede generar más.
+
+❓ **¿Puedo descifrar un hash de contraseña?**
+   No. El hash es unidireccional. No puedes obtener la contraseña
+   original a partir del hash. Si necesitas recuperar el valor
+   original, usa cifrado (openssl_encrypt), no hash.
+
+❓ **¿Es seguro almacenar el hash en una cookie?**
+   No. Las cookies pueden ser robadas (XSS). Las contraseñas
+   (y sus hashes) nunca deben estar en cookies. Usa sesiones.
+
+❓ **¿Qué hago si un usuario olvida su contraseña?**
+   Implementa el flujo de restablecimiento con token temporal
+   por email. Nunca envíes la contraseña actual (no la conoces
+   porque está hasheada). Genera una nueva.
+
+❓ **¿bcrypt trunca contraseñas largas?**
+   Sí, bcrypt trunca a 72 caracteres. Si necesitas más, hashea
+   primero con SHA256 y luego aplica bcrypt:
+   password_hash(hash('sha256', $password), PASSWORD_BCRYPT).
+   Argon2 no tiene este límite.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema Completo de Gestión de Contraseñas**
+
+   Construye un subsistema completo de autenticación con:
+
+   1. Registro con verificación de políticas de contraseña.
+   2. Login con verificación contra Have I Been Pwned.
+   3. Migración automática de hashes (bcrypt → Argon2id).
+   4. Restablecimiento de contraseña por email con token seguro.
+   5. Autenticación de dos factores (2FA) con TOTP.
+   6. Historial de contraseñas (no permitir reusar las últimas 5).
+   7. Bloqueo de cuenta después de 5 intentos fallidos.
+   8. Panel de administración de usuarios con gestión de
+      contraseñas.
+   9. Notificaciones por email de cambios de contraseña.
+   10. API REST para autenticación:
+       POST /api/auth/register
+       POST /api/auth/login
+       POST /api/auth/forgot-password
+       POST /api/auth/reset-password
+       POST /api/auth/change-password
+
+   Cada endpoint debe implementar rate limiting, validación
+   exhaustiva y logging de seguridad.
+
+   Este sistema integra los capítulos 54, 55 y 56 en un solo
+   subsistema profesional listo para producción.
+
+===============================================================================
+FIN DEL CAPÍTULO 56
+===============================================================================
+
+"Una contraseña bien hasheada es un secreto que ni el servidor
+puede revelar. Esa es la verdadera privacidad."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+57_CAPITULO_57_SUBIDA_DE_ARCHIVOS.txt
+===============================================================================

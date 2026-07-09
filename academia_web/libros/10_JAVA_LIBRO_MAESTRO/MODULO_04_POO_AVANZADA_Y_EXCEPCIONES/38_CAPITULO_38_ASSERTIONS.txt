@@ -1,0 +1,1093 @@
+================================================================================
+  MÓDULO IV: POO AVANZADA Y EXCEPCIONES
+  CAPÍTULO 38: ASSERTIONS
+================================================================================
+
+  "Confío en el código, pero verifico con aserciones."
+   — Anónimo
+
+--------------------------------------------------------------------------------
+
+  BIENVENIDO
+
+  En los capítulos anteriores aprendiste a manejar errores en tiempo de
+  ejecución con excepciones. Pero hay otro tipo de error más sutil: las
+  condiciones que, según tu lógica, deberían ser imposibles que ocurran.
+
+  Las aserciones (assert) en Java son una herramienta de debugging que
+  permite verificar supuestos sobre el estado interno del programa.
+  Escribes una condición que debe ser verdadera; si es falsa, se lanza
+  un AssertionError.
+
+  Las aserciones no son para manejar errores del usuario ni condiciones
+  externas. Son para detectar bugs en tu código durante el desarrollo y
+  las pruebas. Por eso, pueden desactivarse en producción.
+
+  Este capítulo te enseñará cuándo y cómo usar assert, cómo habilitarlas,
+  y las buenas prácticas para aprovecharlas sin abusar de ellas.
+
+--------------------------------------------------------------------------------
+
+  OBJETIVOS DEL CAPÍTULO
+
+  1. Comprender el propósito de las aserciones en Java.
+  2. Escribir aserciones con la sintaxis assert.
+  3. Habilitar y deshabilitar aserciones en la JVM.
+  4. Diferenciar entre aserciones y excepciones.
+  5. Identificar cuándo usar aserciones y cuándo no.
+  6. Aplicar aserciones para verificar invariantes, precondiciones y
+     postcondiciones.
+  7. Conocer las limitaciones de las aserciones.
+
+--------------------------------------------------------------------------------
+
+  CONTENIDO
+
+  --- 1. SINTÁXIS DE ASSERT ---
+
+  La palabra clave assert tiene dos formas:
+
+  1. assert expresionBooleana;
+  2. assert expresionBooleana : expresionMensaje;
+
+  Si la expresión booleana es false, se lanza AssertionError. La segunda
+  forma permite incluir un mensaje (o cualquier objeto) para diagnóstico.
+
+  ```java
+  public class SintaxisAssert {
+      public static void main(String[] args) {
+          int edad = 25;
+
+          // Forma simple
+          assert edad >= 0;
+
+          // Forma con mensaje
+          assert edad >= 0 : "La edad no puede ser negativa: " + edad;
+
+          // Con objeto como mensaje
+          assert edad >= 0 : new IllegalArgumentException(
+                  "Edad inválida: " + edad);
+
+          System.out.println("Edad válida: " + edad);
+      }
+  }
+  ```
+
+  Las aserciones están deshabilitadas por defecto. Para ejecutar este
+  código y que las aserciones se evalúen:
+
+  ```bash
+  java -ea SintaxisAssert
+  # o
+  java -enableassertions SintaxisAssert
+  ```
+
+  Sin -ea, las aserciones se ignoran completamente (no se evalúa la
+  expresión).
+
+  --- 2. HABILITAR Y DESHABILITAR ASERCIONES ---
+
+  Las aserciones se controlan con flags de la JVM:
+
+  ```bash
+  # Habilitar aserciones para todas las clases
+  java -ea MiPrograma
+  java -enableassertions MiPrograma
+
+  # Deshabilitar aserciones (comportamiento por defecto)
+  java -da MiPrograma
+  java -disableassertions MiPrograma
+
+  # Habilitar para clases/paquetes específicos
+  java -ea:com.miempresa.mipaquete... MiPrograma
+  java -ea:com.miempresa.MiClase MiPrograma
+
+  # Habilitar solo para clases del sistema
+  java -esa MiPrograma
+  java -enablesystemassertions MiPrograma
+
+  # Combinaciones: habilitar general, deshabilitar específico
+  java -ea -da:com.miempresa.util... MiPrograma
+  ```
+
+  ```java
+  // Demostración de activación
+
+  public class DemoActivacion {
+      public static void main(String[] args) {
+          boolean asercionesActivas = false;
+
+          // Truco para detectar si las aserciones están activas
+          assert asercionesActivas = true;
+
+          if (asercionesActivas) {
+              System.out.println("Las aserciones están ACTIVADAS");
+          } else {
+              System.out.println("Las aserciones están DESACTIVADAS");
+              System.out.println("Ejecuta con: java -ea DemoActivacion");
+          }
+
+          // Esta aserción solo se evalúa si -ea está presente
+          int valor = -5;
+          assert valor >= 0 : "valor debe ser >= 0, pero es " + valor;
+
+          System.out.println("Programa ejecutado con valor: " + valor);
+      }
+  }
+  ```
+
+  La expresión del mensaje en assert solo se evalúa si la aserción falla.
+  Esto es importante para evitar efectos secundarios.
+
+  --- 3. CUÁNDO USAR ASERCIONES ---
+
+  Las aserciones son apropiadas para:
+
+  1. Invariantes internos: condiciones que siempre deben cumplirse.
+  2. Precondiciones para métodos privados (no públicos).
+  3. Postcondiciones después de un cálculo.
+  4. Casos inalcanzables (default en switch que no debería ocurrir).
+  5. Verificación de estado interno después de operaciones complejas.
+
+  ```java
+  public class CuandoUsar {
+      // 1. Invariante interno
+      private int saldo;
+
+      public void depositar(int monto) {
+          int saldoAnterior = saldo;
+          saldo += monto;
+
+          // Invariante: el saldo debe aumentar
+          assert saldo > saldoAnterior
+                  : "El saldo no aumentó después del depósito";
+      }
+
+      // 2. Precondición para método privado
+      private void procesarPagoInterno(double monto) {
+          assert monto > 0 : "El monto debe ser positivo: " + monto;
+          assert monto < 1000000 : "Monto sospechosamente grande: " + monto;
+          // Lógica del método...
+      }
+
+      // 3. Postcondición
+      public int factorial(int n) {
+          assert n >= 0 : "n no puede ser negativo: " + n;
+          int resultado = 1;
+          for (int i = 2; i <= n; i++) {
+              resultado *= i;
+          }
+          // Postcondición: el resultado debe ser positivo
+          assert resultado > 0 : "Factorial debe ser positivo";
+          return resultado;
+      }
+
+      // 4. Caso inalcanzable
+      public String getTipoDia(DiaSemana dia) {
+          switch (dia) {
+              case LUNES:
+              case MARTES:
+              case MIERCOLES:
+              case JUEVES:
+              case VIERNES:
+                  return "Laboral";
+              case SABADO:
+              case DOMINGO:
+                  return "Festivo";
+              default:
+                  // Si llegamos aquí, hay un bug o se agregó un nuevo día
+                  assert false : "Día de semana no contemplado: " + dia;
+                  return "Desconocido";
+          }
+      }
+
+      enum DiaSemana {
+          LUNES, MARTES, MIERCOLES, JUEVES,
+          VIERNES, SABADO, DOMINGO
+      }
+  }
+  ```
+
+  --- 4. CUÁNDO NO USAR ASERCIONES ---
+
+  Las aserciones NO deben usarse para:
+
+  1. Validar argumentos de métodos públicos (usa IllegalArgumentException).
+  2. Validar datos ingresados por el usuario.
+  3. Validar datos externos (archivos, red, BD).
+  4. Realizar operaciones necesarias para el funcionamiento correcto.
+  5. Reemplazar el manejo de excepciones.
+
+  ```java
+  import java.io.*;
+
+  public class CuandoNoUsar {
+
+      // MAL: usar assert para validar argumento público
+      public void setEdad(int edad) {
+          assert edad >= 0 && edad <= 150
+                  : "Edad inválida";  // ¡Esto se desactiva en producción!
+          this.edad = edad;
+      }
+
+      // BIEN: usar excepción para validar argumento público
+      public void setEdadBien(int edad) {
+          if (edad < 0 || edad > 150) {
+              throw new IllegalArgumentException(
+                      "Edad debe estar entre 0 y 150: " + edad);
+          }
+          this.edad = edad;
+      }
+
+      // MAL: assert para validar input de usuario
+      public void procesarEntrada(String input) {
+          assert input != null && !input.isEmpty()
+                  : "Input inválido";
+      }
+
+      // BIEN: validación explícita
+      public void procesarEntradaBien(String input) {
+          if (input == null || input.trim().isEmpty()) {
+              throw new IllegalArgumentException(
+                      "La entrada no puede estar vacía");
+          }
+      }
+
+      // MAL: assert con efecto secundario
+      public int obtenerValor() {
+          int resultado = calcular();
+          assert actualizarCache(resultado);  // ¡Efecto secundario!
+          return resultado;
+      }
+
+      // BIEN: separar efecto secundario de verificación
+      public int obtenerValorBien() {
+          int resultado = calcular();
+          actualizarCache(resultado);  // Siempre se ejecuta
+          assert verificarInvariante(resultado);  // Solo debug
+          return resultado;
+      }
+
+      private int edad;
+      private boolean actualizarCache(int v) { return true; }
+      private int calcular() { return 42; }
+      private boolean verificarInvariante(int v) { return v > 0; }
+  }
+  ```
+
+  --- 5. ASERCIONES PARA INVARIANTES DE CLASE ---
+
+  Puedes verificar invariantes internos después de operaciones que
+  modifican el estado del objeto.
+
+  ```java
+  import java.util.*;
+
+  public class CuentaBancaria {
+      private String titular;
+      private double saldo;
+      private List<String> movimientos;
+      private boolean activa;
+
+      public CuentaBancaria(String titular, double saldoInicial) {
+          this.titular = titular;
+          this.saldo = saldoInicial;
+          this.movimientos = new ArrayList<>();
+          this.activa = true;
+
+          // Verificar invariante después de construcción
+          assert invariante() : "Invariante violado en constructor";
+      }
+
+      public void depositar(double monto) {
+          assert activa : "Cuenta inactiva";
+          int movsAntes = movimientos.size();
+          double saldoAntes = saldo;
+
+          saldo += monto;
+          movimientos.add("Depósito: $" + monto);
+
+          // Verificar invariante después de operación
+          assert invariante() : "Invariante violado después de depósito";
+          assert saldo == saldoAntes + monto
+                  : "Cálculo de saldo incorrecto";
+          assert movimientos.size() == movsAntes + 1
+                  : "No se registró el movimiento";
+      }
+
+      public void retirar(double monto) {
+          assert activa : "Cuenta inactiva";
+          assert monto > 0 : "Monto debe ser positivo: " + monto;
+          assert saldo >= monto
+                  : "Saldo insuficiente: $" + saldo + " < $" + monto;
+
+          double saldoAntes = saldo;
+          saldo -= monto;
+          movimientos.add("Retiro: $" + monto);
+
+          assert invariante() : "Invariante violado después de retiro";
+          assert saldo == saldoAntes - monto
+                  : "Cálculo de retiro incorrecto";
+      }
+
+      // Invariante: condiciones que siempre deben cumplirse
+      private boolean invariante() {
+          return titular != null
+                  && !titular.isEmpty()
+                  && saldo >= 0
+                  && movimientos != null
+                  && (movimientos.size() >= 0);
+      }
+
+      public void cerrarCuenta() {
+          activa = false;
+          assert !activa : "La cuenta debería estar inactiva";
+      }
+  }
+
+  public class PruebaInvariante {
+      public static void main(String[] args) {
+          CuentaBancaria c = new CuentaBancaria("Ana", 1000);
+          c.depositar(500);
+          c.retirar(200);
+          System.out.println("Operaciones exitosas (aserciones activas)");
+      }
+  }
+  ```
+
+  --- 6. ASERCIONES EN FLUJOS DE CONTROL ---
+
+  Las aserciones son excelentes para marcar caminos que no deberían
+  ejecutarse.
+
+  ```java
+  public class ControlFlowAssert {
+      public enum TipoCliente { REGULAR, PREMIUM, VIP }
+
+      public double calcularDescuento(TipoCliente tipo, double monto) {
+          double descuento;
+
+          switch (tipo) {
+              case REGULAR:
+                  descuento = monto > 100 ? 0.05 : 0;
+                  break;
+              case PREMIUM:
+                  descuento = 0.10;
+                  break;
+              case VIP:
+                  descuento = 0.20;
+                  break;
+              default:
+                  // Si llegamos aquí, alguien agregó un nuevo tipo
+                  // sin actualizar este switch
+                  assert false : "Tipo de cliente no contemplado: " + tipo;
+                  descuento = 0;
+          }
+
+          assert descuento >= 0 && descuento <= 1.0
+                  : "Descuento fuera de rango: " + descuento;
+          return descuento;
+      }
+
+      public String clasificar(int puntuacion) {
+          if (puntuacion >= 90) {
+              return "Excelente";
+          } else if (puntuacion >= 70) {
+              return "Bueno";
+          } else if (puntuacion >= 50) {
+              return "Regular";
+          } else if (puntuacion >= 0) {
+              return "Malo";
+          } else {
+              // No debería llegar aquí si la validación externa funciona
+              assert false : "Puntuación negativa: " + puntuacion;
+              return "Inválido";
+          }
+      }
+
+      public static void main(String[] args) {
+          ControlFlowAssert c = new ControlFlowAssert();
+
+          // Probar todos los casos
+          for (TipoCliente t : TipoCliente.values()) {
+              double d = c.calcularDescuento(t, 200);
+              System.out.println(t + " -> descuento: " + (d * 100) + "%");
+          }
+      }
+  }
+  ```
+
+  --- 7. ASERCIONES PARA VERIFICAR ALGORITMOS ---
+
+  Las aserciones son ideales para verificar la corrección de algoritmos
+  durante el desarrollo.
+
+  ```java
+  import java.util.*;
+
+  public class AlgoritmosConAssert {
+
+      // Búsqueda binaria con verificación de invariantes
+      public static int busquedaBinaria(int[] arr, int target) {
+          assert arr != null : "Array no puede ser nulo";
+
+          // Verificar que el array está ordenado (precondición)
+          assert estaOrdenado(arr)
+                  : "Array debe estar ordenado para búsqueda binaria";
+
+          int izquierda = 0;
+          int derecha = arr.length - 1;
+
+          while (izquierda <= derecha) {
+              // Invariante: target está entre arr[izquierda] y arr[derecha]
+              assert izquierda >= 0 && izquierda < arr.length;
+              assert derecha >= 0 && derecha < arr.length;
+              assert izquierda <= derecha;
+
+              int medio = izquierda + (derecha - izquierda) / 2;
+
+              assert medio >= izquierda && medio <= derecha
+                      : "Índice medio fuera de rango";
+
+              if (arr[medio] == target) {
+                  // Postcondición: encontrado en posición correcta
+                  assert arr[medio] == target;
+                  return medio;
+              } else if (arr[medio] < target) {
+                  izquierda = medio + 1;
+              } else {
+                  derecha = medio - 1;
+              }
+          }
+
+          // No encontrado: verificar que realmente no está
+          for (int v : arr) {
+              assert v != target
+                      : "El valor " + target + " está en el array pero no se encontró";
+          }
+
+          return -1;
+      }
+
+      // Ordenamiento con verificación
+      public static void ordenarBurbuja(int[] arr) {
+          assert arr != null;
+          int n = arr.length;
+
+          for (int i = 0; i < n - 1; i++) {
+              boolean intercambio = false;
+              for (int j = 0; j < n - i - 1; j++) {
+                  if (arr[j] > arr[j + 1]) {
+                      int temp = arr[j];
+                      arr[j] = arr[j + 1];
+                      arr[j + 1] = temp;
+                      intercambio = true;
+                  }
+              }
+              // Invariante: los últimos i+1 elementos están ordenados
+              assert ultimosOrdenados(arr, i + 1)
+                      : "Invariante violado en iteración " + i;
+              if (!intercambio) break;
+          }
+
+          // Postcondición: el array está ordenado
+          assert estaOrdenado(arr)
+                  : "El array no quedó ordenado después del burbuja";
+      }
+
+      private static boolean estaOrdenado(int[] arr) {
+          for (int i = 0; i < arr.length - 1; i++) {
+              if (arr[i] > arr[i + 1]) return false;
+          }
+          return true;
+      }
+
+      private static boolean ultimosOrdenados(int[] arr, int k) {
+          int n = arr.length;
+          for (int i = n - k; i < n - 1; i++) {
+              if (i >= 0 && arr[i] > arr[i + 1]) return false;
+          }
+          return true;
+      }
+
+      public static void main(String[] args) {
+          int[] datos = {64, 34, 25, 12, 22, 11, 90};
+          System.out.println("Original: " + Arrays.toString(datos));
+
+          ordenarBurbuja(datos);
+          System.out.println("Ordenado: " + Arrays.toString(datos));
+
+          int pos = busquedaBinaria(datos, 22);
+          System.out.println("22 encontrado en: " + pos);
+      }
+  }
+  ```
+
+  --- 8. ASERCIONES Y MÉTODOS PRIVADOS ---
+
+  Las aserciones son perfectas para verificar parámetros de métodos
+  privados, ya que estos son llamados solo desde tu propio código.
+
+  ```java
+  public class MetodosPrivados {
+
+      public double procesarPrestamo(double ingreso, int puntaje,
+              double montoSolicitado) {
+          // Validación pública con excepciones
+          if (ingreso <= 0) {
+              throw new IllegalArgumentException(
+                      "Ingreso debe ser positivo: " + ingreso);
+          }
+          if (puntaje < 0 || puntaje > 1000) {
+              throw new IllegalArgumentException(
+                      "Puntaje fuera de rango: " + puntaje);
+          }
+
+          // Delegar a método privado con aserciones internas
+          return calcularTasaInteres(ingreso, puntaje, montoSolicitado);
+      }
+
+      // Método privado: las aserciones verifican supuestos internos
+      private double calcularTasaInteres(double ingreso, int puntaje,
+              double monto) {
+          // Precondiciones (solo se verifican en desarrollo)
+          assert ingreso > 0 : "Ingreso inválido: " + ingreso;
+          assert puntaje >= 0 && puntaje <= 1000
+                  : "Puntaje inválido: " + puntaje;
+          assert monto > 0 : "Monto inválido: " + monto;
+
+          double tasaBase = 0.05;
+          double ajuste = 0;
+
+          // Lógica interna
+          if (puntaje > 700) {
+              ajuste -= 0.02;
+          } else if (puntaje < 400) {
+              ajuste += 0.05;
+          }
+
+          if (ingreso < 20000) {
+              ajuste += 0.03;
+          }
+
+          if (monto > 100000) {
+              ajuste += 0.01;
+          }
+
+          double tasaFinal = tasaBase + ajuste;
+
+          // Postcondiciones
+          assert tasaFinal >= 0.01 : "Tasa demasiado baja: " + tasaFinal;
+          assert tasaFinal <= 0.50 : "Tasa demasiado alta: " + tasaFinal;
+          assert tasaFinal >= tasaBase - 0.05
+                  : "Ajuste negativo excesivo";
+
+          return tasaFinal;
+      }
+
+      public static void main(String[] args) {
+          MetodosPrivados mp = new MetodosPrivados();
+          double tasa = mp.procesarPrestamo(50000, 750, 150000);
+          System.out.println("Tasa de interés: " + (tasa * 100) + "%");
+      }
+  }
+  ```
+
+  --- 9. ASERCIONES Y CLASES ANIDADAS ---
+
+  Las aserciones funcionan en cualquier contexto, incluyendo clases
+  anidadas y lambdas.
+
+  ```java
+  import java.util.function.*;
+
+  public class AsercionesAvanzadas {
+
+      private int contador = 0;
+
+      public void procesar() {
+          // Lambda con aserción
+          Supplier<Integer> incrementar = () -> {
+              int anterior = contador;
+              contador++;
+              assert contador == anterior + 1
+                      : "Error de incremento";
+              return contador;
+          };
+
+          System.out.println("Valor: " + incrementar.get());
+          assert contador == 1 : "Contador debería ser 1";
+      }
+
+      // Inner class con aserción
+      class Nodo {
+          int valor;
+          Nodo siguiente;
+
+          Nodo(int valor) {
+              this.valor = valor;
+              assert valor >= 0 : "Valor negativo en nodo: " + valor;
+          }
+
+          void enlazar(Nodo siguiente) {
+              assert siguiente != this
+                      : "Auto-referencia detectada";
+              this.siguiente = siguiente;
+              assert this.siguiente == siguiente
+                      : "Enlace no establecido correctamente";
+          }
+      }
+
+      // Clase local con aserción
+      public void ejecutarTarea(String nombre) {
+          class Tarea {
+              void ejecutar() {
+                  assert nombre != null && !nombre.isEmpty()
+                          : "Nombre de tarea inválido";
+                  System.out.println("Ejecutando: " + nombre);
+                  contador++;
+              }
+          }
+          new Tarea().ejecutar();
+          assert contador > 0 : "Tarea no incrementó contador";
+      }
+
+      public static void main(String[] args) {
+          AsercionesAvanzadas a = new AsercionesAvanzadas();
+          a.procesar();
+          a.ejecutarTarea("Tarea-1");
+
+          Nodo n1 = a.new Nodo(10);
+          Nodo n2 = a.new Nodo(20);
+          n1.enlazar(n2);
+
+          System.out.println("Todo ejecutado con aserciones activas");
+      }
+  }
+  ```
+
+  --- 10. COMPARATIVA: ASSERT VS EXCEPCIONES ---
+
+  +========================+====================================+========================================+
+  | Aspecto                | assert                             | Excepción (throws)                     |
+  +========================+====================================+========================================+
+  | Habilitado en          | Solo con -ea (desactivado x def.)  | Siempre activo                         |
+  | producción             |                                    |                                        |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Propósito              | Detectar bugs internos             | Manejar condiciones excepcionales      |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Tipo de error          | Error de programación              | Error de entorno, input, lógica        |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Quién lo ve            | Desarrollador                      | Usuario final / sistema                |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Mensaje                | Opcional (segundo argumento)       | Requerido para diagnóstico             |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Tipo de excepción      | AssertionError (Error)             | Exception o RuntimeException           |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Validación args        | Solo privados                      | Públicos y privados                    |
+  | públicos               |                                    |                                        |
+  +------------------------+------------------------------------+----------------------------------------+
+  | Costo en producción    | Ninguno (desactivado)              | Presente (try-catch)                   |
+  +------------------------+------------------------------------+----------------------------------------+
+
+  --- 11. EJEMPLO INTEGRADOR ---
+
+  ```java
+  import java.util.*;
+
+  public class SistemaCuentas {
+
+      private Map<String, Cuenta> cuentas = new HashMap<>();
+
+      public Cuenta crearCuenta(String titular, double saldoInicial) {
+          assert titular != null && !titular.trim().isEmpty()
+                  : "Titular inválido";
+          assert saldoInicial >= 0 : "Saldo inicial negativo: "
+                  + saldoInicial;
+
+          String id = generarIdUnico();
+          Cuenta cuenta = new Cuenta(id, titular, saldoInicial);
+
+          cuentas.put(id, cuenta);
+
+          assert cuentas.containsKey(id)
+                  : "Cuenta no registrada después de crear";
+          assert cuentas.get(id) == cuenta
+                  : "Referencia incorrecta en el mapa";
+
+          return cuenta;
+      }
+
+      public void transferir(String origenId, String destinoId,
+              double monto) {
+          assert monto > 0 : "Monto de transferencia inválido: " + monto;
+
+          Cuenta origen = cuentas.get(origenId);
+          Cuenta destino = cuentas.get(destinoId);
+
+          assert origen != null : "Cuenta origen no existe: " + origenId;
+          assert destino != null : "Cuenta destino no existe: " + destinoId;
+          assert origen != destino : "Transferencia a la misma cuenta";
+
+          double saldoOrigenAntes = origen.getSaldo();
+          double saldoDestinoAntes = destino.getSaldo();
+
+          origen.retirar(monto);
+          destino.depositar(monto);
+
+          // Verificar postcondiciones
+          assert origen.getSaldo() == saldoOrigenAntes - monto
+                  : "Saldo origen incorrecto después de transferir";
+          assert destino.getSaldo() == saldoDestinoAntes + monto
+                  : "Saldo destino incorrecto después de transferir";
+
+          // Invariante global: la suma total debe mantenerse
+          assert sumaTotal() == saldoOrigenAntes + saldoDestinoAntes
+                  : "¡El dinero se perdió o creó en la transferencia!";
+      }
+
+      private double sumaTotal() {
+          return cuentas.values().stream()
+                  .mapToDouble(Cuenta::getSaldo)
+                  .sum();
+      }
+
+      private String generarIdUnico() {
+          return "CTA-" + UUID.randomUUID().toString().substring(0, 8);
+      }
+
+      // Inner class con aserciones
+      class Cuenta {
+          private final String id;
+          private final String titular;
+          private double saldo;
+          private List<String> historial;
+          private boolean activa;
+
+          Cuenta(String id, String titular, double saldoInicial) {
+              assert id != null : "ID nulo";
+              assert titular != null && !titular.isEmpty() : "Titular vacío";
+              assert saldoInicial >= 0 : "Saldo inicial negativo";
+
+              this.id = id;
+              this.titular = titular;
+              this.saldo = saldoInicial;
+              this.historial = new ArrayList<>();
+              this.activa = true;
+
+              // Invariante de construcción
+              assert invariante() : "Invariante violado en construcción";
+          }
+
+          void depositar(double monto) {
+              assert activa : "Cuenta inactiva: " + id;
+              assert monto > 0 : "Monto de depósito inválido";
+
+              double antes = saldo;
+              saldo += monto;
+              historial.add("DEP: " + monto);
+
+              assert saldo == antes + monto
+                      : "Error en depósito: " + antes + " + " + monto
+                      + " != " + saldo;
+              assert invariante() : "Invariante violado después de depósito";
+          }
+
+          void retirar(double monto) {
+              assert activa : "Cuenta inactiva: " + id;
+              assert monto > 0 : "Monto de retiro inválido";
+              assert saldo >= monto
+                      : "Saldo insuficiente: " + saldo + " < " + monto;
+
+              double antes = saldo;
+              saldo -= monto;
+              historial.add("RET: " + monto);
+
+              assert saldo == antes - monto
+                      : "Error en retiro: " + antes + " - " + monto
+                      + " != " + saldo;
+              assert invariante() : "Invariante violado después de retiro";
+          }
+
+          String getId() { return id; }
+          double getSaldo() { return saldo; }
+
+          private boolean invariante() {
+              return id != null
+                      && titular != null
+                      && !titular.isEmpty()
+                      && saldo >= 0
+                      && historial != null
+                      && activa == true;
+          }
+
+          @Override
+          public String toString() {
+              return id + ": " + titular + " ($" + saldo + ")";
+          }
+      }
+
+      public static void main(String[] args) {
+          SistemaCuentas sistema = new SistemaCuentas();
+
+          System.out.println("=== SISTEMA DE CUENTAS ===");
+          System.out.println("(Ejecutar con -ea para aserciones activas)\n");
+
+          Cuenta c1 = sistema.crearCuenta("Ana García", 1000);
+          Cuenta c2 = sistema.crearCuenta("Carlos López", 500);
+
+          System.out.println("Antes de transferencia:");
+          System.out.println("  " + c1);
+          System.out.println("  " + c2);
+
+          sistema.transferir(c1.getId(), c2.getId(), 300);
+
+          System.out.println("\nDespués de transferencia ($300):");
+          System.out.println("  " + c1);
+          System.out.println("  " + c2);
+
+          System.out.println("\n=== SISTEMA OPERANDO CORRECTAMENTE ===");
+      }
+  }
+  ```
+
+  --- 12. LIMITACIONES Y ADVERTENCIAS ---
+
+  1. Las aserciones se desactivan por defecto en producción. No confíes
+     en ellas para la corrección del programa.
+
+  2. No uses expresiones con efectos secundarios en aserciones (se
+     perderían en producción).
+
+  3. Las aserciones no reemplazan las pruebas unitarias (JUnit).
+
+  4. El mensaje de aserción se evalúa solo si la aserción falla, lo que
+     puede ser sorprendente si tiene efectos secundarios.
+
+  5. AssertionError extiende Error, no Exception. No deberías capturarlo.
+
+  ```java
+  public class Limitaciones {
+      private int contador = 0;
+
+      public void metodoConProblema() {
+          // PELIGRO: efecto secundario en aserción
+          assert incrementarContador() : "Error";  // Solo se ejecuta con -ea
+          System.out.println("Contador: " + contador);  // Diferente con/sin -ea
+      }
+
+      private boolean incrementarContador() {
+          contador++;
+          return true;
+      }
+
+      public static void main(String[] args) {
+          Limitaciones l = new Limitaciones();
+          l.metodoConProblema();
+          // Sin -ea: contador = 0
+          // Con -ea: contador = 1
+      }
+  }
+  ```
+
+  ```java
+  // No captures AssertionError
+  public class NoCapturarAssert {
+      public static void main(String[] args) {
+          try {
+              assert false : "Error de prueba";
+          } catch (AssertionError e) {
+              // Esto no deberías hacerlo: AssertionError indica un bug
+              System.out.println("Capturado: " + e.getMessage());
+              // El bug sigue ahí, solo lo escondiste
+          }
+      }
+  }
+  ```
+
+  --- 13. BUENAS PRÁCTICAS ---
+
+  1. Usa aserciones solo para condiciones que deberían ser imposibles.
+  2. Prefiere excepciones para validación de parámetros públicos.
+  3. No uses aserciones para validar datos externos o de usuario.
+  4. Mantén las aserciones libres de efectos secundarios.
+  5. Proporciona mensajes descriptivos en las aserciones.
+  6. Usa aserciones para verificar invariantes de clase.
+  7. Documenta los invariantes que verificas con aserciones.
+  8. Combina aserciones con pruebas unitarias, no las reemplaces.
+  9. Activa aserciones (-ea) en todos tus entornos de desarrollo y CI.
+  10. No captures AssertionError.
+
+  ```java
+  // Resumen de buenas prácticas
+
+  public class BuenasPracticas {
+
+      public void metodoPublico(int valor) {
+          // Validación con excepción (siempre activa)
+          if (valor < 0) {
+              throw new IllegalArgumentException(
+                      "Valor no puede ser negativo: " + valor);
+          }
+          procesarInternamente(valor);
+      }
+
+      private void procesarInternamente(int valor) {
+          // Aserción para método privado (solo desarrollo)
+          assert valor >= 0 : "Valor negativo en método privado: " + valor;
+          // Lógica...
+          assert resultadoConsistente() : "Estado inconsistente";
+      }
+
+      private boolean resultadoConsistente() {
+          return true;
+      }
+  }
+  ```
+
+--------------------------------------------------------------------------------
+
+  PREGUNTAS FRECUENTES (FAQ)
+
+  1. ¿Las aserciones siempre se ejecutan?
+     No. Solo si se invoca la JVM con el flag -ea (enableassertions).
+
+  2. ¿Qué tipo de excepción lanza assert?
+     AssertionError, que extiende de Error (no de Exception).
+
+  3. ¿Debo capturar AssertionError?
+     No. Indicaría un bug en el código que debe corregirse, no manejarse.
+
+  4. ¿Puedo usar assert para validar argumentos públicos?
+     No. Usa IllegalArgumentException. Las aserciones se desactivan en
+     producción.
+
+  5. ¿Cuál es la diferencia entre assert y JUnit assertEquals?
+     assert es interno (verifica durante la ejecución). JUnit verifica
+     resultados de pruebas específicas.
+
+  6. ¿Puedo activar aserciones solo para ciertas clases?
+     Sí: java -ea:com.miempresa.mipaquete... MainClass
+
+  7. ¿Las aserciones tienen impacto en rendimiento?
+     Sí, si están activadas. Por eso se desactivan en producción.
+
+  8. ¿Puedo usar assert en lambdas?
+     Sí. Las aserciones funcionan en cualquier bloque de código Java.
+
+  9. ¿Puedo desactivar aserciones para clases del sistema?
+     Las aserciones del sistema se controlan con -esa (enablesystemassertions).
+
+  10. ¿Qué hago si necesito validación siempre activa?
+        Usa excepciones. Las aserciones son solo para desarrollo/pruebas.
+
+--------------------------------------------------------------------------------
+
+  EJERCICIOS PROPUESTOS
+
+  Ejercicio 1: Invariantes en una Pila
+  Implementa una clase Pila (stack) con un arreglo interno. Usa
+  aserciones para verificar: que el tamaño nunca exceda la capacidad,
+  que el tope esté en rango válido, y que después de push/pop el
+  invariante se mantenga.
+
+  Ejercicio 2: Verificación de Algoritmo de Ordenamiento
+  Implementa el algoritmo QuickSort con aserciones que verifiquen:
+  invariante de partición (elementos izquierda < pivote < derecha),
+  postcondición de ordenamiento completo, y que los índices nunca
+  excedan los límites del arreglo.
+
+  Ejercicio 3: Sistema de Reservas de Vuelos
+  Crea un sistema de reservas donde cada asiento tenga invariantes:
+  estado válido (DISPONIBLE/RESERVADO/COMPRADO), no se pueda reservar
+  un asiento ya reservado, y el total de pasajeros no exceda la
+  capacidad del vuelo.
+
+  Ejercicio 4: Calculadora Científica
+  Implementa una calculadora con métodos para operaciones matemáticas.
+  Usa aserciones para verificar: precondiciones (argumentos válidos),
+  postcondiciones (resultados en rangos esperados), e invariantes
+  (estado de la calculadora consistente).
+
+  Ejercicio 5: Juego de Tres en Raya
+  Implementa el juego Tic-Tac-Toe con aserciones que verifiquen:
+  invariantes del tablero (solo X/O/ vacío, dimensiones correctas),
+  que no se pueda jugar en una casilla ocupada, que los turnos se
+  alternen correctamente, y que al detectar ganador el juego termine.
+
+--------------------------------------------------------------------------------
+
+  RESUMEN DEL CAPÍTULO
+
+  En este capítulo has aprendido:
+
+  • Las aserciones (assert) verifican condiciones que deberían ser
+    verdad en código libre de bugs.
+
+  • Sintaxis: assert condicion : mensaje;
+
+  • Se habilitan con java -ea y se desactivan por defecto en producción.
+
+  • Son ideales para verificar invariantes, precondiciones (privadas),
+    postcondiciones y casos inalcanzables.
+
+  • No deben usarse para validar parámetros públicos ni datos externos.
+
+  • No deben tener efectos secundarios.
+
+  • AssertionError extiende Error y no debería capturarse.
+
+  • Son complementarias a las pruebas unitarias, no un reemplazo.
+
+  • El mensaje solo se evalúa si la aserción falla.
+
+  • Son una herramienta de desarrollo, no de producción.
+
+--------------------------------------------------------------------------------
+
+  DESAFÍO DEL ARQUITECTO
+
+  Diseña una implementación completa de un árbol binario de búsqueda (BST)
+  con aserciones exhaustivas.
+
+  Requisitos:
+  - Clase ArbolBinarioBusqueda<K extends Comparable<K>, V>
+  - Métodos: insertar, buscar, eliminar, recorrido inorder
+  - Aserciones de invariantes en CADA método:
+    * Invariante de BST: todos los hijos izquierdos < nodo < hijos derechos
+    * Invariante de estructura: si un nodo tiene hijo izquierdo, el
+      padre del hijo es el nodo (doble enlace)
+    * Invariante de tamaño: size == conteo recursivo de nodos
+    * Precondiciones: clave no nula, valor no nulo
+    * Postcondiciones después de insertar: el árbol sigue siendo BST,
+      tamaño incrementó en 1
+    * Postcondiciones después de eliminar: el árbol sigue siendo BST,
+      tamaño decrementó en 1 (si existía)
+  - Prueba exhaustiva con 1000 inserciones y 500 eliminaciones aleatorias
+
+  Extensión opcional: Implementa un verificador de invariante recursivo
+  que recorra todo el árbol comprobando todas las condiciones. Actívalo
+  con aserciones solo en los tests. Implementa también un visualizador
+  del árbol en consola.
+
+--------------------------------------------------------------------------------
+
+  CIERRE DEL CAPÍTULO
+
+  Las aserciones son una herramienta sutil pero poderosa en el arsenal
+  del programador Java. Te permiten detectar bugs temprano, documentar
+  supuestos internos y verificar que tu código se comporta como esperas.
+
+  Sin embargo, recuerda: las aserciones no son una barrera de seguridad.
+  Son como andamios en la construcción: ayudan mientras construyes, pero
+  no forman parte del edificio final.
+
+  En el próximo capítulo exploraremos los enums (enumeraciones), una
+  característica de Java mucho más poderosa de lo que parece a simple
+  vista.
+
+  ¡Nos vemos en el Capítulo 39!
+
+================================================================================
+  FIN DEL CAPÍTULO 38
+================================================================================

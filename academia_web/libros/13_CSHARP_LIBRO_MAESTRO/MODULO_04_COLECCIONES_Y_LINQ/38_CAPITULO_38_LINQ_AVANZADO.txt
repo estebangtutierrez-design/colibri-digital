@@ -1,0 +1,1309 @@
+================================================================================
+  MÓDULO IV: COLECCIONES Y LINQ
+  C# MASTER BOOK
+  CAPÍTULO 38: LINQ AVANZADO
+================================================================================
+
+  << BIENVENIDA >>
+
+  Bienvenido al Capítulo 38. En el capítulo anterior sentaste las bases
+  de LINQ: consultas, filtros, proyecciones, agrupaciones y joins. Ahora
+  es el momento de ir mucho más allá.
+
+  En este capítulo exploraremos los aspectos más profundos y poderosos
+  de LINQ: la ejecución diferida en detalle, la diferencia fundamental
+  entre IEnumerable e IQueryable, operadores avanzados como Zip,
+  Aggregate, Any, All, Skip, Take, y técnicas profesionales que elevan
+  tu código LINQ al nivel de un arquitecto de software.
+
+  También exploraremos MoreLINQ, la librería que extiende LINQ con
+  operadores adicionales que todo profesional debería conocer.
+
+  -----------------------------------------------------------------------
+
+  << FRASE DEL DÍA >>
+
+  "Conocer LINQ es bueno. Entender su ejecución diferida, sus
+   proveedores y sus límites es lo que separa al experto del usuario
+   ocasional." — Lucas Ega
+
+  -----------------------------------------------------------------------
+
+  << OBJETIVOS DEL CAPÍTULO >>
+
+  1. Comprender en profundidad la ejecución diferida y sus implicaciones.
+  2. Diferenciar IEnumerable<T> de IQueryable<T> y saber cuándo usar
+     cada uno.
+  3. Dominar operadores avanzados: Aggregate, Any, All, Zip, Skip,
+     Take, SkipWhile, TakeWhile.
+  4. Usar operadores de paginación y particionado.
+  5. Conocer MoreLINQ y sus operadores más útiles.
+  6. Implementar métodos de extensión LINQ personalizados.
+  7. Optimizar consultas LINQ para rendimiento.
+
+  -----------------------------------------------------------------------
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+  --- 38.1 EJECUCIÓN DIFERIDA EN PROFUNDIDAD ---
+
+  La ejecución diferida (deferred execution) es el mecanismo por el cual
+  una consulta LINQ no se ejecuta hasta que se itera sobre ella. Esto
+  tiene implicaciones profundas en rendimiento, memoria y comportamiento.
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjecucionDiferidaProfunda
+  {
+      static void Main()
+      {
+          // 1. Operadores diferidos vs no diferidos
+          int[] datos = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+          // DIFERIDOS (deferred): Where, Select, OrderBy, GroupBy, etc.
+          var diferido = datos.Where(n =>
+          {
+              Console.WriteLine($"  Evaluando Where({n})");
+              return n % 2 == 0;
+          });
+
+          // NO DIFERIDOS (inmediate): ToList, ToArray, Count, Sum, etc.
+          Console.WriteLine("Llamando a ToList (fuerza ejecución):");
+          var listaInmediata = diferido.ToList();
+
+          // 2. Streaming vs Non-Streaming
+          // Streaming: producen resultados a medida que iteran (Where, Select, Take)
+          // Non-Streaming: necesitan todos los datos antes de producir algo (OrderBy, GroupBy, Reverse)
+
+          Console.WriteLine("\n--- Streaming: Take(3) ---");
+          var streaming = datos.Select(n =>
+          {
+              Console.WriteLine($"  Select({n})");
+              return n * 2;
+          }).Take(3);
+
+          foreach (var v in streaming) // Solo procesa los primeros 3
+              Console.WriteLine($"  Resultado: {v}");
+
+          Console.WriteLine("\n--- Non-Streaming: OrderBy ---");
+          var nonStreaming = datos.Select(n =>
+          {
+              Console.WriteLine($"  Select({n})");
+              return n * 2;
+          }).OrderBy(n => n);
+
+          // OrderBy necesita TODOS los elementos antes de producir el primero
+          foreach (var v in nonStreaming.Take(3))
+              Console.WriteLine($"  Resultado: {v}");
+
+          // 3. Múltiples iteraciones ejecutan la consulta múltiples veces
+          Console.WriteLine("\n--- Múltiples iteraciones ---");
+          var consulta = datos.Where(n => n > 5);
+
+          Console.WriteLine("Primera iteración:");
+          foreach (var v in consulta) Console.Write($"{v} ");
+          Console.WriteLine();
+
+          datos.Add(11); // Modificación
+          Console.WriteLine("Segunda iteración (refleja el cambio!):");
+          foreach (var v in consulta) Console.Write($"{v} ");
+          Console.WriteLine();
+
+          // 4. Cachear resultados con ToList
+          var cache = consulta.ToList();
+          datos.Add(12);
+          Console.WriteLine($"Cache (no afectado por cambio): {string.Join(", ", cache)}");
+      }
+  }
+  ```
+
+  --- 38.2 IEnumerable<T> VS IQueryable<T> ---
+
+  Esta es una de las diferencias más importantes en LINQ profesional.
+
+  ```csharp
+  using System;
+  using System.Collections;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class IEnumerableVsIQueryable
+  {
+      static void Main()
+      {
+          // IEnumerable<T>: LINQ to Objects (en memoria)
+          //   - Las operaciones se ejecutan en el mismo proceso
+          //   - Todo el procesamiento es local
+          //   - Los datos deben estar en memoria
+
+          List<int> lista = new List<int> { 1, 2, 3, 4, 5 };
+          IEnumerable<int> enumerable = lista.Where(n => n > 2);
+          // La expresión lambda n => n > 2 se compila a IL y se ejecuta localmente
+
+          // IQueryable<T>: LINQ to SQL/Entities (o cualquier proveedor remoto)
+          //   - Las operaciones se traducen a expresiones (Expression trees)
+          //   - El proveedor (EF, NHibernate) traduce el árbol a SQL
+          //   - El filtrado ocurre en el servidor de base de datos
+
+          // IQueryable<int> queryable = dbContext.Productos
+          //     .Where(p => p.Precio > 100)
+          //     .OrderBy(p => p.Nombre);
+          //
+          // Esto se traduce a: SELECT * FROM Productos WHERE Precio > 100 ORDER BY Nombre
+          // El WHERE y ORDER BY se ejecutan EN LA BASE DE DATOS, no en memoria.
+
+          // Diferencia fundamental:
+          //   IEnumerable: delegate (Func<>) → compilado a IL, ejecución local
+          //   IQueryable: expression tree (Expression<>) → traducible a otro lenguaje
+
+          // IEnumerable ejecuta TODO en memoria:
+          IEnumerable<int> enumerableQuery = lista
+              .Where(n => n > 2)
+              .OrderBy(n => n)
+              .Take(3);
+          // 1. Filtra todo en memoria
+          // 2. Ordena todo en memoria
+          // 3. Toma 3
+
+          // IQueryable (con EF) traduce TODO a SQL:
+          // IQueryable<Producto> queryableQuery = dbCtx.Productos
+          //     .Where(p => p.Precio > 100)
+          //     .OrderBy(p => p.Nombre)
+          //     .Take(10);
+          // SQL generado: SELECT TOP 10 * FROM Productos WHERE Precio > 100 ORDER BY Nombre
+          // ¡El servidor hace el filtrado, ordenación y top!
+
+          // Peligro: mezclar IEnumerable e IQueryable
+          // IQueryable<Producto> query = dbCtx.Productos;
+          // var mal = query
+          //     .Where(p => p.Precio > 100)     // SQL
+          //     .AsEnumerable()                  // Cambia a IEnumerable
+          //     .Where(p => p.Nombre.Length > 5); // ¡EN MEMORIA!
+          //
+          // El segundo Where se ejecuta en memoria, trayendo datos innecesarios.
+
+          // Simulación de IQueryable con IEnumerable
+          Console.WriteLine("Simulación IEnumerable vs IQueryable:");
+          Console.WriteLine("  IEnumerable: todo en memoria después de traer datos");
+          Console.WriteLine("  IQueryable:  traducción a SQL, filtrado en servidor");
+
+          // Conversión explícita
+          IEnumerable<int> asEnumerable = lista.AsEnumerable();
+          IQueryable<int> asQueryable = lista.AsQueryable();
+
+          // Mostrar tipo
+          Console.WriteLine($"\nasEnumerable: {asEnumerable.GetType().Name}");
+          Console.WriteLine($"asQueryable: {asQueryable.GetType().Name}");
+      }
+  }
+  ```
+
+  --- 38.3 ANY, ALL, CONTAINS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploAnyAll
+  {
+      static void Main()
+      {
+          List<int> numeros = new List<int> { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+          List<int> vacio = new List<int>();
+
+          // Any: ¿existe al menos un elemento que cumple?
+          bool hayPares = numeros.Any(n => n % 2 == 0);
+          Console.WriteLine($"¿Hay pares? {hayPares}"); // True
+
+          bool hayNegativos = numeros.Any(n => n < 0);
+          Console.WriteLine($"¿Hay negativos? {hayNegativos}"); // False
+
+          // Any sin predicado: ¿hay elementos?
+          Console.WriteLine($"\n¿Números tiene elementos? {numeros.Any()}"); // True
+          Console.WriteLine($"¿Vacío tiene elementos? {vacio.Any()}"); // False
+
+          // All: ¿todos los elementos cumplen?
+          bool todosPositivos = numeros.All(n => n > 0);
+          Console.WriteLine($"\n¿Todos positivos? {todosPositivos}"); // True
+
+          bool todosMayoresQue5 = numeros.All(n => n > 5);
+          Console.WriteLine($"¿Todos > 5? {todosMayoresQue5}"); // False
+
+          // Contains (LINQ vs instancia)
+          bool contiene7 = numeros.Contains(7);
+          Console.WriteLine($"\n¿Contiene 7? {contiene7}"); // True
+
+          // Any vs Count > 0: Any es más eficiente (no cuenta todo)
+          // Any termina en el primer elemento; Count recorre toda la colección
+
+          // Uso con objetos
+          List<Persona> personas = new List<Persona>
+          {
+              new("Ana", 25),
+              new("Luis", 17),
+              new("Carlos", 30)
+          };
+
+          bool todosAdultos = personas.All(p => p.Edad >= 18);
+          Console.WriteLine($"\n¿Todos adultos? {todosAdultos}");
+
+          bool algunMenor = personas.Any(p => p.Edad < 18);
+          Console.WriteLine($"¿Algún menor? {algunMenor}");
+
+          // Validación compleja
+          var pedido = new
+          {
+              Items = new[] { "ProductoA", "ProductoB" },
+              Total = 250.00m,
+              Pagado = true
+          };
+
+          bool pedidoValido = pedido.Items.Any()
+              && pedido.Total > 0
+              && pedido.Pagado;
+
+          Console.WriteLine($"\nPedido válido: {pedidoValido}");
+
+          // All con colección vacía: retorna true (vacuous truth)
+          Console.WriteLine($"\nAll sobre vacío: {vacio.All(n => n > 0)}"); // True
+          Console.WriteLine($"Any sobre vacío: {vacio.Any()}"); // False
+      }
+
+      record Persona(string Nombre, int Edad);
+  }
+  ```
+
+  --- 38.4 SKIP, TAKE, SKIPWHILE, TAKEWHILE ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploSkipTake
+  {
+      static void Main()
+      {
+          int[] numeros = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+
+          // Take: toma los primeros N elementos
+          var primeros5 = numeros.Take(5);
+          Console.WriteLine("Take(5): " + string.Join(", ", primeros5));
+
+          // Skip: salta los primeros N elementos
+          var despuesDe5 = numeros.Skip(5);
+          Console.WriteLine("Skip(5): " + string.Join(", ", despuesDe5));
+
+          // Skip + Take = paginación
+          int pagina = 2;
+          int tamanoPagina = 4;
+          var pagina2 = numeros
+              .Skip((pagina - 1) * tamanoPagina)
+              .Take(tamanoPagina);
+          Console.WriteLine($"\nPágina {pagina}: " + string.Join(", ", pagina2));
+
+          // TakeWhile: toma mientras se cumpla la condición
+          var tomados = numeros.TakeWhile(n => n < 8);
+          Console.WriteLine("\nTakeWhile(n < 8): " + string.Join(", ", tomados));
+
+          // SkipWhile: salta mientras se cumpla la condición
+          var saltados = numeros.SkipWhile(n => n < 8);
+          Console.WriteLine("SkipWhile(n < 8): " + string.Join(", ", saltados));
+
+          // TakeLast / SkipLast (.NET 6+)
+          var ultimos3 = numeros.TakeLast(3);
+          Console.WriteLine("\nTakeLast(3): " + string.Join(", ", ultimos3));
+
+          var menosUltimos4 = numeros.SkipLast(4);
+          Console.WriteLine("SkipLast(4): " + string.Join(", ", menosUltimos4));
+
+          // Combinaciones útiles
+          // Obtener el segundo elemento más grande
+          var segundoMasGrande = numeros
+              .OrderByDescending(n => n)
+              .Skip(1)
+              .Take(1)
+              .FirstOrDefault();
+          Console.WriteLine($"\nSegundo más grande: {segundoMasGrande}");
+
+          // Partición por condición
+          var (menores, mayores) = Particionar(numeros, n => n <= 7);
+          Console.WriteLine($"\nMenores/iguales a 7: {string.Join(", ", menores)}");
+          Console.WriteLine($"Mayores a 7: {string.Join(", ", mayores)}");
+
+          // Chunk (.NET 6+)
+          var bloques = numeros.Chunk(4);
+          Console.WriteLine("\nChunk(4):");
+          int idx = 1;
+          foreach (var bloque in bloques)
+              Console.WriteLine($"  Bloque {idx++}: {string.Join(", ", bloque)}");
+      }
+
+      static (List<T> True, List<T> False) Particionar<T>(
+          IEnumerable<T> source, Func<T, bool> predicate)
+      {
+          var lookup = source.ToLookup(predicate);
+          return (lookup[true].ToList(), lookup[false].ToList());
+      }
+  }
+  ```
+
+  --- 38.5 ZIP: COMBINAR DOS COLECCIONES ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploZip
+  {
+      static void Main()
+      {
+          string[] nombres = { "Ana", "Luis", "Carlos", "Marta" };
+          int[] edades = { 25, 30, 17, 22 };
+          string[] ciudades = { "Madrid", "Barcelona", "Valencia", "Sevilla", "Bilbao" };
+
+          // Zip: combina dos colecciones elemento a elemento
+          var combinado = nombres.Zip(edades, (nombre, edad) =>
+              $"{nombre} tiene {edad} años");
+
+          Console.WriteLine("Zip básico:");
+          foreach (var item in combinado)
+              Console.WriteLine($"  {item}");
+
+          // Zip con tres colecciones (.NET 6+)
+          var triple = nombres.Zip(edades, ciudades);
+          Console.WriteLine("\nZip triple (.NET 6+):");
+          foreach (var (nombre, edad, ciudad) in triple)
+              Console.WriteLine($"  {nombre}, {edad} años, {ciudad}");
+
+          // Zip con índice
+          var conIndice = nombres
+              .Select((nombre, i) => (nombre, i))
+              .Zip(edades, (a, edad) => new { a.nombre, a.i, edad });
+
+          // Zip con Join (diferencia conceptual)
+          var join = nombres.Join(edades,
+              n => Array.IndexOf(nombres, n),
+              e => Array.IndexOf(edades, e),
+              (n, e) => $"{n}: {e} años");
+
+          // Zip procesa hasta la colección más corta
+          string[] corto = { "A", "B" };
+          int[] largo = { 1, 2, 3, 4, 5 };
+          var zipCorto = corto.Zip(largo, (a, b) => $"{a}{b}");
+          Console.WriteLine("\nZip hasta el más corto: " +
+              string.Join(", ", zipCorto)); // A1, B2
+
+          // Aplicación práctica: combinar encabezados con datos
+          string[] headers = { "Nombre", "Edad", "Ciudad" };
+          string[][] filas = {
+              new[] { "Ana", "25", "Madrid" },
+              new[] { "Luis", "30", "Barcelona" }
+          };
+
+          Console.WriteLine("\nTabla desde Zip:");
+          foreach (var fila in filas)
+          {
+              var filaFormateada = headers.Zip(fila, (h, v) => $"{h}={v}");
+              Console.WriteLine("  " + string.Join(", ", filaFormateada));
+          }
+
+          // Zip para calcular diferencias
+          int[] preciosAnio1 = { 100, 200, 300, 400 };
+          int[] preciosAnio2 = { 110, 190, 310, 390 };
+
+          var diferencias = preciosAnio1.Zip(preciosAnio2, (a, b) => b - a);
+          Console.WriteLine("\nDiferencias de precios: " +
+              string.Join(", ", diferencias));
+      }
+  }
+  ```
+
+  --- 38.6 AGGREGATE EN PROFUNDIDAD ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploAggregateProfundo
+  {
+      static void Main()
+      {
+          int[] numeros = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+          // Aggregate básico (sin semilla)
+          int producto = numeros.Aggregate((acum, n) => acum * n);
+          Console.WriteLine($"Producto: {producto}"); // 3628800
+
+          // Aggregate con semilla
+          int sumaCon10 = numeros.Aggregate(10, (acum, n) => acum + n);
+          Console.WriteLine($"Suma + 10: {sumaCon10}"); // 65
+
+          // Aggregate con selector de resultado
+          string resultado = numeros
+              .Aggregate(
+                  new { Suma = 0, Producto = 1 },
+                  (acum, n) => new { Suma = acum.Suma + n, Producto = acum.Producto * n },
+                  acum => $"Suma={acum.Suma}, Producto={acum.Producto}"
+              );
+          Console.WriteLine($"Resultado: {resultado}");
+
+          // Aggregate para construir un StringBuilder
+          var builder = numeros.Aggregate(
+              new System.Text.StringBuilder(),
+              (sb, n) => sb.Append(n).Append(","),
+              sb => sb.ToString().TrimEnd(',')
+          );
+          Console.WriteLine($"StringBuilder: {builder}");
+
+          // Aggregate para encontrar máximo y mínimo simultáneamente
+          var (min, max) = numeros.Aggregate(
+              (Min: int.MaxValue, Max: int.MinValue),
+              (acum, n) =>
+              (
+                  Math.Min(acum.Min, n),
+                  Math.Max(acum.Max, n)
+              )
+          );
+          Console.WriteLine($"Min: {min}, Max: {max}");
+
+          // Aggregate con objetos
+          List<Persona> personas = new List<Persona>
+          {
+              new("Ana", 25),
+              new("Luis", 30),
+              new("Carlos", 17),
+              new("Marta", 22)
+          };
+
+          var personaMayor = personas.Aggregate(
+              (mayor, actual) => actual.Edad > mayor.Edad ? actual : mayor);
+          Console.WriteLine($"\nPersona mayor: {personaMayor.Nombre} ({personaMayor.Edad})");
+
+          // Implementar Join personalizado con Aggregate
+          string joinPersonalizado = numeros.Aggregate(
+              "Elementos: ",
+              (acum, n) => acum + n.ToString() + " - ",
+              result => result.TrimEnd(' ', '-')
+          );
+          Console.WriteLine($"\nJoin personalizado: {joinPersonalizado}");
+      }
+
+      record Persona(string Nombre, int Edad);
+  }
+  ```
+
+  --- 38.7 OPERADORES DE CONJUNTOS AVANZADOS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploConjuntosAvanzados
+  {
+      static void Main()
+      {
+          int[] A = { 1, 2, 3, 4, 5, 6 };
+          int[] B = { 4, 5, 6, 7, 8, 9, 10 };
+
+          // Distinct: elimina duplicados
+          int[] conDup = { 1, 2, 2, 3, 3, 3, 4 };
+          var unicos = conDup.Distinct();
+          Console.WriteLine("Distinct: " + string.Join(", ", unicos));
+
+          // Distinct con IEqualityComparer
+          var caseInsensitive = new[] { "A", "a", "B", "b", "C" }
+              .Distinct(StringComparer.OrdinalIgnoreCase);
+          Console.WriteLine("Distinct (case-insensitive): " +
+              string.Join(", ", caseInsensitive));
+
+          // Union (A ∪ B)
+          var union = A.Union(B);
+          Console.WriteLine("\nA ∪ B: " + string.Join(", ", union));
+
+          // Intersect (A ∩ B)
+          var interseccion = A.Intersect(B);
+          Console.WriteLine("A ∩ B: " + string.Join(", ", interseccion));
+
+          // Except (A - B)
+          var exceptAB = A.Except(B);
+          Console.WriteLine("A - B: " + string.Join(", ", exceptAB));
+
+          var exceptBA = B.Except(A);
+          Console.WriteLine("B - A: " + string.Join(", ", exceptBA));
+
+          // SymmetricExcept (A △ B) = (A - B) ∪ (B - A)
+          var symmetricExcept = A.Except(B).Union(B.Except(A));
+          Console.WriteLine("A △ B: " + string.Join(", ", symmetricExcept));
+
+          // SequenceEqual
+          int[] C = { 4, 5, 6, 7, 8, 9, 10 };
+          Console.WriteLine($"\nB == C? {B.SequenceEqual(C)}");
+
+          // SequenceEqual con IEqualityComparer
+          string[] s1 = { "Hola", "Mundo" };
+          string[] s2 = { "hola", "mundo" };
+          Console.WriteLine($"Case insensitive: " +
+              $"{s1.SequenceEqual(s2, StringComparer.OrdinalIgnoreCase)}");
+
+          // ToHashSet
+          HashSet<int> hashSet = A.ToHashSet();
+          Console.WriteLine($"\nToHashSet: {string.Join(", ", hashSet)}");
+      }
+  }
+  ```
+
+  --- 38.8 MORELINQ: OPERADORES ADICIONALES ---
+
+  MoreLINQ es una librería de código abierto que extiende LINQ con
+  operadores adicionales. Aunque no forma parte de .NET, es tan útil que
+  merece ser conocida.
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  // NOTA: MoreLINQ requiere instalación NuGet: dotnet add package morelinq
+  // Estos ejemplos muestran la funcionalidad, implementada manualmente.
+
+  class EjemploMoreLINQ
+  {
+      static void Main()
+      {
+          int[] numeros = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+          // Batch (Chunk en .NET 6+): divide en grupos de tamaño N
+          var lotes = numeros.Chunk(3);
+          Console.WriteLine("Chunk(3):");
+          foreach (var lote in lotes)
+              Console.WriteLine($"  [{string.Join(",", lote)}]");
+
+          // Pad: rellena hasta un tamaño mínimo
+          int[] corto = { 1, 2, 3 };
+          var rellenado = corto.Concat(Enumerable.Repeat(0, 2)).Take(5);
+          Console.WriteLine("\nPad(5): " + string.Join(", ", rellenado));
+
+          // DistinctBy: basado en una clave
+          var personas = new[]
+          {
+              new { Nombre = "Ana", Dept = "IT" },
+              new { Nombre = "Luis", Dept = "Ventas" },
+              new { Nombre = "Carlos", Dept = "IT" }
+          };
+          var deptsUnicos = personas.DistinctBy(p => p.Dept);
+          Console.WriteLine("\nDistinctBy(Dept): " +
+              string.Join(", ", deptsUnicos.Select(p => p.Dept)));
+
+          // MaxBy / MinBy (disponible en .NET 6+)
+          var max = numeros.MaxBy(n => n);
+          Console.WriteLine($"\nMaxBy: {max}");
+
+          // TakeEvery: cada N-ésimo elemento
+          var cadaTercero = numeros.Where((n, i) => (i + 1) % 3 == 0);
+          Console.WriteLine("Cada 3er elemento: " + string.Join(", ", cadaTercero));
+
+          // Assert: verifica condición en cada elemento
+          try
+          {
+              var conAssert = numeros.Select(n =>
+              {
+                  if (n < 0) throw new InvalidOperationException();
+                  return n;
+              });
+          }
+          catch { }
+
+          // Pipe: acción por cada elemento (como ForEach pero diferido)
+          var conPipe = numeros.Select(n =>
+          {
+              Console.Write($"  Procesando {n}");
+              return n * 2;
+          }).Take(3).ToList();
+          Console.WriteLine();
+
+          // Segment: divide cuando cambia una clave
+          int[] conRachas = { 1, 1, 2, 2, 2, 3, 1, 1, 4 };
+          var segmentos = Segmentar(conRachas);
+          Console.WriteLine("\nSegmentos:");
+          foreach (var seg in segmentos)
+              Console.WriteLine($"  [{string.Join(",", seg)}]");
+
+          // Scan: como Aggregate pero produce resultados intermedios
+          var scan = Escanear(numeros, (acum, n) => acum + n);
+          Console.WriteLine("\nScan (suma acumulada): " +
+              string.Join(", ", scan));
+      }
+
+      static IEnumerable<IEnumerable<T>> Segmentar<T>(IEnumerable<T> source)
+          where T : IEquatable<T>
+      {
+          var enumerator = source.GetEnumerator();
+          if (!enumerator.MoveNext())
+              yield break;
+
+          var segmento = new List<T> { enumerator.Current };
+          T anterior = enumerator.Current;
+
+          while (enumerator.MoveNext())
+          {
+              if (!enumerator.Current.Equals(anterior))
+              {
+                  yield return segmento;
+                  segmento = new List<T>();
+              }
+              segmento.Add(enumerator.Current);
+              anterior = enumerator.Current;
+          }
+
+          if (segmento.Count > 0)
+              yield return segmento;
+      }
+
+      static IEnumerable<T> Escanear<T>(IEnumerable<T> source,
+          Func<T, T, T> func)
+      {
+          using var enumerator = source.GetEnumerator();
+          if (!enumerator.MoveNext())
+              yield break;
+
+          T acum = enumerator.Current;
+          yield return acum;
+
+          while (enumerator.MoveNext())
+          {
+              acum = func(acum, enumerator.Current);
+              yield return acum;
+          }
+      }
+  }
+  ```
+
+  --- 38.9 MÉTODOS DE EXTENSIÓN LINQ PERSONALIZADOS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  static class LinqExtensions
+  {
+      // ForEach: ejecuta acción por cada elemento
+      public static void ForEach<T>(this IEnumerable<T> source, Action<T> action)
+      {
+          foreach (var item in source)
+              action(item);
+      }
+
+      // ForEach con índice
+      public static void ForEach<T>(this IEnumerable<T> source,
+          Action<T, int> action)
+      {
+          int i = 0;
+          foreach (var item in source)
+              action(item, i++);
+      }
+
+      // Pipe: similar a Select pero con acción secundaria
+      public static IEnumerable<T> Pipe<T>(this IEnumerable<T> source,
+          Action<T> action)
+      {
+          foreach (var item in source)
+          {
+              action(item);
+              yield return item;
+          }
+      }
+
+      // DistinctBy: basado en clave
+      public static IEnumerable<T> DistinctBy<T, TKey>(
+          this IEnumerable<T> source, Func<T, TKey> keySelector,
+          IEqualityComparer<TKey>? comparer = null)
+      {
+          HashSet<TKey> seen = new HashSet<TKey>(comparer);
+          foreach (var item in source)
+          {
+              if (seen.Add(keySelector(item)))
+                  yield return item;
+          }
+      }
+
+      // WhereIf: filtra condicionalmente
+      public static IEnumerable<T> WhereIf<T>(this IEnumerable<T> source,
+          bool condition, Func<T, bool> predicate)
+      {
+          return condition ? source.Where(predicate) : source;
+      }
+
+      // OrderByIf: ordena condicionalmente
+      public static IOrderedEnumerable<T> OrderByIf<T, TKey>(
+          this IEnumerable<T> source, bool condition,
+          Func<T, TKey> keySelector)
+      {
+          return condition
+              ? source.OrderBy(keySelector)
+              : source.OrderBy(x => 0); // no-op order
+      }
+
+      // Page: paginación
+      public static IEnumerable<T> Page<T>(this IEnumerable<T> source,
+          int pageNumber, int pageSize)
+      {
+          return source
+              .Skip((pageNumber - 1) * pageSize)
+              .Take(pageSize);
+      }
+
+      // Median: mediana
+      public static double Median<T>(this IEnumerable<T> source) where T : IComparable<T>
+      {
+          var sorted = source.OrderBy(x => x).ToList();
+          int count = sorted.Count;
+          if (count == 0) throw new InvalidOperationException("Secuencia vacía");
+
+          if (count % 2 == 1)
+              return Convert.ToDouble(sorted[count / 2]);
+
+          return (Convert.ToDouble(sorted[count / 2 - 1]) +
+                  Convert.ToDouble(sorted[count / 2])) / 2.0;
+      }
+
+      // Percentile: percentil
+      public static double Percentile<T>(this IEnumerable<T> source,
+          double percentile) where T : IComparable<T>
+      {
+          var sorted = source.OrderBy(x => x).ToList();
+          int count = sorted.Count;
+          if (count == 0) throw new InvalidOperationException("Secuencia vacía");
+
+          double index = (percentile / 100.0) * (count - 1);
+          int lower = (int)Math.Floor(index);
+          int upper = (int)Math.Ceiling(index);
+
+          if (lower == upper)
+              return Convert.ToDouble(sorted[lower]);
+
+          double frac = index - lower;
+          return Convert.ToDouble(sorted[lower]) * (1 - frac) +
+                 Convert.ToDouble(sorted[upper]) * frac;
+      }
+
+      // Shuffle: barajar (Fisher-Yates)
+      public static IEnumerable<T> Shuffle<T>(this IEnumerable<T> source,
+          Random? rng = null)
+      {
+          var list = source.ToList();
+          rng ??= Random.Shared;
+
+          for (int i = list.Count - 1; i > 0; i--)
+          {
+              int j = rng.Next(i + 1);
+              (list[i], list[j]) = (list[j], list[i]);
+          }
+
+          return list;
+      }
+  }
+
+  class EjemploExtensiones
+  {
+      static void Main()
+      {
+          int[] numeros = { 5, 3, 8, 1, 9, 2, 7, 4, 6, 10 };
+
+          // ForEach
+          Console.Write("ForEach: ");
+          numeros.ForEach(n => Console.Write($"{n} "));
+          Console.WriteLine();
+
+          // DistinctBy
+          var personas = new[]
+          {
+              new { Nombre = "Ana", Depto = "IT" },
+              new { Nombre = "Luis", Depto = "Ventas" },
+              new { Nombre = "Carlos", Depto = "IT" }
+          };
+          var depts = personas.DistinctBy(p => p.Depto);
+          Console.WriteLine("DistinctBy: " +
+              string.Join(", ", depts.Select(p => p.Depto)));
+
+          // WhereIf
+          bool filtrar = true;
+          var filtrados = numeros.WhereIf(filtrar, n => n > 5);
+          Console.WriteLine("WhereIf(true): " + string.Join(", ", filtrados));
+
+          // Page
+          var pagina = numeros.Page(2, 3);
+          Console.WriteLine("Page(2,3): " + string.Join(", ", pagina));
+
+          // Median
+          Console.WriteLine($"Mediana: {numeros.Median()}");
+
+          // Percentile
+          Console.WriteLine($"Percentil 90: {numeros.Percentile(90)}");
+
+          // Shuffle
+          var barajado = numeros.Shuffle();
+          Console.WriteLine("Shuffle: " + string.Join(", ", barajado));
+
+          // Pipe
+          Console.Write("Pipe: ");
+          var pipeados = numeros.Take(5).Pipe(n => Console.Write($"[{n}]"));
+          Console.Write(" -> ");
+          Console.WriteLine(string.Join(", ", pipeados));
+      }
+  }
+  ```
+
+  --- 38.10 OPTIMIZACIÓN DE CONSULTAS LINQ ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+  using System.Linq;
+
+  class OptimizacionLINQ
+  {
+      static void Main()
+      {
+          const int n = 1000000;
+          var datos = Enumerable.Range(1, n).ToList();
+
+          // 1. Orden de operaciones: filtrar antes de ordenar
+          var sw = Stopwatch.StartNew();
+          var mal = datos
+              .OrderBy(x => x)
+              .Where(x => x % 2 == 0)
+              .Take(100)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"Ordenar antes de filtrar: {sw.ElapsedMilliseconds} ms");
+
+          sw.Restart();
+          var bien = datos
+              .Where(x => x % 2 == 0)
+              .OrderBy(x => x)
+              .Take(100)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"Filtrar antes de ordenar: {sw.ElapsedMilliseconds} ms");
+
+          // 2. Usar Any() en lugar de Count() > 0
+          bool existe = datos.Any(x => x == 999999);
+          // vs bool existe = datos.Count(x => x == 999999) > 0;
+
+          // 3. Usar ToList() solo cuando sea necesario
+          // Si solo iteras una vez, no hagas ToList()
+
+          // 4. Usar Select para reducir datos antes de operaciones costosas
+          var personas = Enumerable.Range(1, 10000)
+              .Select(i => new Persona($"Nombre {i}",
+                  i, $"Ciudad {i % 100}"))
+              .ToList();
+
+          sw.Restart();
+          var sinSelect = personas
+              .Where(p => p.Edad > 5000)
+              .Select(p => p.Nombre)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"\nSin optimizar: {sw.ElapsedMilliseconds} ms");
+
+          // 5. Usar HashSet para Contains frecuentes
+          var idsBusqueda = Enumerable.Range(5000, 100).ToList();
+          var hashSet = new HashSet<int>(idsBusqueda);
+
+          sw.Restart();
+          var encontrados = personas
+              .Where(p => hashSet.Contains(p.Edad))
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"Con HashSet: {sw.ElapsedMilliseconds} ms");
+
+          // 6. Evitar múltiples iteraciones
+          // MAL: datos.Where(...).Count() + datos.Where(...).Sum()
+          // BIEN: datos.Where(...).Aggregate(...)
+
+          // 7. Usar bucles para operaciones muy simples
+          int maximo = 0;
+          foreach (var d in datos.Take(1000))
+              if (d > maximo) maximo = d;
+          Console.WriteLine($"\nMáximo (bucle): {maximo}");
+      }
+
+      record Persona(string Nombre, int Edad, string Ciudad);
+  }
+  ```
+
+  --- 38.11 LINQ CON PARALLEL LINQ (PLINQ) ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+  using System.Linq;
+
+  class EjemploPLINQ
+  {
+      static void Main()
+      {
+          var numeros = Enumerable.Range(1, 10000000).ToList();
+
+          // LINQ secuencial
+          var sw = Stopwatch.StartNew();
+          var pares = numeros
+              .Where(n => n % 2 == 0)
+              .Select(n => n * n)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"LINQ secuencial: {sw.ElapsedMilliseconds} ms, " +
+              $"elementos: {pares.Count}");
+
+          // PLINQ (paralelo)
+          sw.Restart();
+          var paresParallel = numeros
+              .AsParallel()
+              .Where(n => n % 2 == 0)
+              .Select(n => n * n)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"PLINQ paralelo: {sw.ElapsedMilliseconds} ms, " +
+              $"elementos: {paresParallel.Count}");
+
+          // PLINQ con orden preservado
+          sw.Restart();
+          var paresOrdenado = numeros
+              .AsParallel()
+              .AsOrdered()
+              .Where(n => n % 2 == 0)
+              .Select(n => n * n)
+              .ToList();
+          sw.Stop();
+          Console.WriteLine($"PLINQ ordenado: {sw.ElapsedMilliseconds} ms");
+
+          // ForAll: acción paralela sin orden
+          Console.Write("\nForAll: ");
+          var datos = Enumerable.Range(1, 100);
+          var caja = new System.Collections.Concurrent.ConcurrentBag<int>();
+
+          datos.AsParallel().ForAll(n =>
+          {
+              if (n % 10 == 0)
+                  caja.Add(n);
+          });
+
+          Console.WriteLine(string.Join(", ", caja.OrderBy(x => x)));
+
+          // WithDegreeOfParallelism: controlar grado de paralelismo
+          var conLimite = numeros
+              .AsParallel()
+              .WithDegreeOfParallelism(4)
+              .Where(n => n % 2 == 0)
+              .ToList();
+          Console.WriteLine($"\nCon 4 hilos: {conLimite.Count} elementos");
+      }
+  }
+  ```
+
+  --- 38.12 IQUERYABLE Y EXPRESSION TREES ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+  using System.Linq.Expressions;
+
+  class EjemploExpressionTrees
+  {
+      static void Main()
+      {
+          // Expression tree: representación de código como datos
+          Expression<Func<int, bool>> expresion = n => n > 5;
+
+          Console.WriteLine("Expression tree:");
+          Console.WriteLine($"  Body: {expresion.Body}");
+          Console.WriteLine($"  Parameters: {string.Join(", ", expresion.Parameters)}");
+          Console.WriteLine($"  NodeType: {expresion.NodeType}");
+
+          if (expresion.Body is BinaryExpression binary)
+          {
+              Console.WriteLine($"  Left: {binary.Left}");
+              Console.WriteLine($"  Right: {binary.Right}");
+              Console.WriteLine($"  Operator: {binary.NodeType}");
+          }
+
+          // Compilar y ejecutar
+          Func<int, bool> func = expresion.Compile();
+          Console.WriteLine($"\nCompilado: func(7) = {func(7)}");
+          Console.WriteLine($"Compilado: func(3) = {func(3)}");
+
+          // Construir expression tree manualmente
+          // (n) => n * n + 1
+          var param = Expression.Parameter(typeof(int), "n");
+          var cuadrado = Expression.Multiply(param, param);
+          var masUno = Expression.Add(cuadrado, Expression.Constant(1));
+          var lambda = Expression.Lambda<Func<int, int>>(masUno, param);
+
+          var compilada = lambda.Compile();
+          Console.WriteLine($"\nExpression manual: n*n+1 con n=5 => {compilada(5)}");
+
+          // IQueryable usa Expression trees para traducir a SQL
+          // IEnumerable usa delegates (Func<>)
+
+          // Simular IQueryable con IEnumerable
+          var datos = new List<int> { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }.AsQueryable();
+
+          // La expresión se almacena como árbol, no se ejecuta
+          IQueryable<int> query = datos.Where(n => n > 5);
+
+          Console.WriteLine($"\nIQueryable expression: {query.Expression}");
+          Console.WriteLine($"ElementType: {query.ElementType}");
+          Console.WriteLine($"Provider: {query.Provider}");
+
+          // Solo al iterar se ejecuta
+          Console.WriteLine("Resultados: " + string.Join(", ", query));
+      }
+  }
+  ```
+
+  --- 38.13 LINQ CON FECHAS Y TIEMPOS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploLINQFechas
+  {
+      static void Main()
+      {
+          Random rnd = new Random(42);
+          List<DateTime> fechas = Enumerable.Range(0, 100)
+              .Select(_ => new DateTime(2024, 1, 1)
+                  .AddDays(rnd.Next(0, 365)))
+              .ToList();
+
+          // Filtrar por mes
+          var enero = fechas.Where(f => f.Month == 1);
+          Console.WriteLine($"Eventos en enero: {enero.Count()}");
+
+          // Agrupar por mes
+          var porMes = fechas
+              .GroupBy(f => f.Month)
+              .Select(g => new { Mes = g.Key, Count = g.Count() })
+              .OrderBy(x => x.Mes);
+
+          Console.WriteLine("\nEventos por mes:");
+          foreach (var m in porMes)
+              Console.WriteLine($"  Mes {m.Mes}: {m.Count}");
+
+          // Agrupar por trimestre
+          var porTrimestre = fechas
+              .GroupBy(f => (f.Month - 1) / 3 + 1)
+              .Select(g => new { Trimestre = g.Key, Count = g.Count() })
+              .OrderBy(x => x.Trimestre);
+
+          Console.WriteLine("\nEventos por trimestre:");
+          foreach (var t in porTrimestre)
+              Console.WriteLine($"  T{t.Trimestre}: {t.Count}");
+
+          // Agrupar por día de semana
+          var porDiaSemana = fechas
+              .GroupBy(f => f.DayOfWeek)
+              .Select(g => new { Dia = g.Key, Count = g.Count() })
+              .OrderBy(x => x.Dia);
+
+          Console.WriteLine("\nEventos por día de semana:");
+          foreach (var d in porDiaSemana)
+              Console.WriteLine($"  {d.Dia}: {d.Count}");
+
+          // Diferencia entre fechas
+          var diferencias = fechas
+              .OrderBy(f => f)
+              .Select((f, i) => new { Fecha = f, Diff = i > 0
+                  ? (f - fechas.OrderBy(x => x).ToList()[i - 1]).Days
+                  : 0 })
+              .Skip(1);
+
+          Console.WriteLine($"\nDiferencia mínima entre fechas: " +
+              $"{diferencias.Min(d => d.Diff)} días");
+          Console.WriteLine($"Diferencia máxima entre fechas: " +
+              $"{diferencias.Max(d => d.Diff)} días");
+      }
+  }
+  ```
+
+================================================================================
+  << RESUMEN DEL CAPÍTULO >>
+================================================================================
+
+  1. Ejecución diferida: las consultas se ejecutan al iterar, no al
+     definir. Operadores diferidos vs inmediatos. Streaming vs
+     non-streaming. Múltiples iteraciones = múltiples ejecuciones.
+
+  2. IEnumerable vs IQueryable:
+     - IEnumerable: delegates (Func<>), ejecución local en memoria.
+     - IQueryable: expression trees (Expression<>), traducción a SQL.
+     - AsEnumerable() cambia a IEnumerable; AsQueryable() a IQueryable.
+
+  3. Any / All / Contains: operadores booleanos. Any es más eficiente
+     que Count() > 0. All sobre colección vacía retorna true.
+
+  4. Skip / Take / SkipWhile / TakeWhile: operadores de particionado y
+     paginación. Chunk (antes Batch) para grupos de tamaño fijo.
+
+  5. Zip: combina dos colecciones elemento a elemento. Termina en la
+     más corta. .NET 6+ soporta tres colecciones.
+
+  6. Aggregate: acumulador personalizado. Soporta semilla y selector de
+     resultado final. Útil para cálculos complejos en una sola iteración.
+
+  7. MoreLINQ: librería con operadores adicionales (DistinctBy, Batch,
+     Scan, Pipe, etc.). Muchos ahora nativos en .NET 6+.
+
+  8. Extensiones LINQ personalizadas: ForEach, WhereIf, Page, Median,
+     Percentile, Shuffle, DistinctBy.
+
+  9. Optimización: filtrar antes de ordenar, usar Any vs Count, HashSet
+     para Contains frecuentes, evitar múltiples iteraciones.
+
+  10. PLINQ: paralelización automática con AsParallel().
+
+  11. Expression Trees: representación de código como datos. Base de
+      IQueryable y ORMs.
+
+================================================================================
+  << EJERCICIOS PROPUESTOS >>
+================================================================================
+
+  1. BÁSICO: Dada una lista de números, usa Any, All y Contains para
+     verificar propiedades del conjunto.
+
+  2. INTERMEDIO: Implementa un sistema de paginación genérico usando
+     Skip y Take. Crea un método que reciba página y tamaño.
+
+  3. AVANZADO: Usa Zip para combinar dos listas de igual longitud en
+     una lista de tuplas, y luego procesa las tuplas.
+
+  4. BÁSICO: Demuestra la ejecución diferida usando un ejemplo con
+     efectos secundarios (como imprimir en Select).
+
+  5. INTERMEDIO: Implementa un método de extensión Median() que
+     calcule la mediana de una secuencia numérica.
+
+  6. AVANZADO: Usa Aggregate para calcular la desviación estándar
+     de una secuencia en UNA sola iteración.
+
+  7. BÁSICO: Compara el rendimiento de Count() > 0 vs Any() en una
+     colección grande de 1 millón de elementos.
+
+  8. INTERMEDIO: Crea un método de extensión WhereIf que aplique un
+     filtro solo si una condición booleana es true.
+
+  9. AVANZADO: Implementa un evaluador de expresiones que construya un
+     Expression Tree dinámicamente y lo compile.
+
+  10. DESAFÍO: Implementa un proveedor IQueryable simple que traduzca
+      consultas LINQ a SQL (simulado). Debe manejar Where, Select,
+      OrderBy y Take.
+
+================================================================================
+  << FAQ - PREGUNTAS FRECUENTES >>
+================================================================================
+
+  P: ¿Qué significa que un operador LINQ sea "streaming"?
+  R: Un operador streaming produce resultados a medida que recibe datos
+     de entrada (Where, Select, Take). Un operador non-streaming necesita
+     todos los datos antes de producir el primer resultado (OrderBy,
+     GroupBy, Reverse).
+
+  P: ¿Cuándo debo usar IQueryable en lugar de IEnumerable?
+  R: Cuando trabajes con un origen de datos remoto (base de datos, servicio
+     web) para que el filtrado ocurra en el servidor. Usa IEnumerable para
+     colecciones en memoria.
+
+  P: ¿Por qué mi consulta LINQ se ejecuta más de una vez?
+  R: Porque defines la consulta pero no la materializas. Cada foreach o
+     ToList ejecuta la consulta de nuevo. Usa ToList() para cachear resultados.
+
+  P: ¿Qué es un Expression Tree?
+  R: Es una representación en memoria del código como datos. Permite que
+     IQueryable analice, transforme y traduzca la consulta a otro lenguaje
+     (como SQL). Es la base de Entity Framework.
+
+  P: ¿PLINQ siempre es más rápido?
+  R: No. PLINQ tiene overhead de paralelización. Solo es beneficioso para
+     operaciones CPU-bound en colecciones grandes (generalmente > 10,000
+     elementos). Para operaciones pequeñas o IO-bound, puede ser más lento.
+
+  P: ¿Cómo evito el error "collection was modified" en LINQ?
+  R: Haz una copia de la colección antes de modificarla, o usa ToList()
+     para materializar los resultados antes de modificar la fuente.
+
+================================================================================
+  << DESAFÍO DEL ARQUITECTO >>
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                       DESAFÍO DEL ARQUITECTO                        │
+  │                                                                     │
+  │  Implementa un motor de transformación de datos (ETL ligero)        │
+  │  usando LINQ avanzado como núcleo.                                  │
+  │                                                                     │
+  │  El sistema debe:                                                   │
+  │  1. Extraer datos de múltiples fuentes (archivos CSV, JSON,        │
+  │     colecciones en memoria) representados como IEnumerable.         │
+  │  2. Transformar usando LINQ:                                       │
+  │     - Limpieza (eliminar nulos, duplicados, outliers)              │
+  │     - Conversión de tipos                                           │
+  │     - Enriquecimiento (join con datos maestros)                    │
+  │     - Agregaciones (sumas, promedios, conteos por grupo)           │
+  │     - Ventanas (running total, moving average, lag/lead)           │
+  │  3. Cargar en destino (generar archivo de salida o lista)          │
+  │  4. Pipeline configurable: definir secuencia de transformaciones   │
+  │  5. Reporte de estadísticas del proceso (registros procesados,     │
+  │     errores, tiempos)                                               │
+  │                                                                     │
+  │  Implementa los siguientes operadores personalizados como           │
+  │  métodos de extensión:                                              │
+  │  - Validate(predicate, errorHandler)                                │
+  │  - Log(ILogger o Action<string>)                                    │
+  │  - Cache(duration)                                                  │
+  │  - Throttle(perSecond)                                              │
+  │  - Retry(maxAttempts)                                               │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  << CIERRE DEL CAPÍTULO >>
+================================================================================
+
+  Has completado el Capítulo 38: LINQ Avanzado. Ahora entiendes las
+  profundidades de LINQ que separan al usuario ocasional del experto.
+
+  Comprendes la ejecución diferida, la diferencia entre IEnumerable e
+  IQueryable, y dominas operadores avanzados como Zip, Aggregate,
+  Skip/Take y las extensiones personalizadas.
+
+  En el próximo capítulo exploraremos las Expresiones Lambda en
+  profundidad. Aunque las has estado usando en LINQ, las lambdas son
+  un tema mucho más amplio que merece su propio capítulo: closures,
+  captura de variables, Func vs Action vs Predicate, y su uso más
+  allá de LINQ.
+
+  ¡Nos vemos en el Capítulo 39!
+
+================================================================================
+  FIN DEL CAPÍTULO 38
+  C# MASTER BOOK — MÓDULO IV: COLECCIONES Y LINQ
+================================================================================

@@ -1,0 +1,1044 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 54: JSON (encoding/json)
+================================================================================
+
+  "JSON es el esperanto de los datos. Todo sistema moderno habla
+   JSON, y Go lo hace con fluidez nativa."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 54 de GO MASTER BOOK. JSON (JavaScript Object
+  Notation) es el formato de intercambio de datos más utilizado en la
+  actualidad. Go ofrece un soporte excelente para JSON a través del
+  paquete encoding/json. Aprenderás a convertir structs a JSON y
+  viceversa, controlar la estructura con tags, implementar marshaling
+  personalizado, y manejar streams JSON grandes de manera eficiente.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Los datos solo valen lo que se puedan comunicar. JSON es el
+   puente entre sistemas."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Serializar datos Go a JSON con json.Marshal.
+  ✓ Deserializar JSON a datos Go con json.Unmarshal.
+  ✓ Usar json.NewEncoder y json.NewDecoder para streams.
+  ✓ Controlar la estructura JSON con struct tags.
+  ✓ Personalizar la serialización con MarshalJSON/UnmarshalJSON.
+  ✓ Manejar JSON anidado y arrays complejos.
+  ✓ Trabajar con JSON dinámico usando map[string]interface{}.
+  ✓ Validar JSON y manejar errores de parsing.
+  ✓ Optimizar el rendimiento con encoders/decoders.
+  ✓ Conocer las diferencias entre marshal/unmarshal y encode/decode.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. INTRODUCCIÓN A JSON EN GO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  El paquete encoding/json proporciona funciones para convertir
+  entre Go y JSON. Los pilares son:
+
+  - json.Marshal / json.Unmarshal: convierten entre Go y JSON []byte.
+  - json.NewEncoder / json.NewDecoder: trabajan con streams (io.Writer/Reader).
+  - Struct tags: controlan los nombres de campos en JSON.
+  - MarshalJSON / UnmarshalJSON: personalizan la conversión.
+
+  2. MARSHAL — CONVERTIR GO A JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  type Usuario struct {
+      ID        int
+      Nombre    string
+      Email     string
+      Activo    bool
+      Puntaje   float64
+  }
+
+  func main() {
+      u := Usuario{
+          ID:      1,
+          Nombre:  "Ana García",
+          Email:   "ana@ejemplo.com",
+          Activo:  true,
+          Puntaje: 95.5,
+      }
+
+      jsonBytes, err := json.Marshal(u)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println(string(jsonBytes))
+  }
+  ```
+
+  Salida:
+  ```json
+  {"ID":1,"Nombre":"Ana García","Email":"ana@ejemplo.com","Activo":true,"Puntaje":95.5}
+  ```
+
+  Para JSON con formato (indentado):
+
+  ```go
+  jsonBytes, _ := json.MarshalIndent(u, "", "  ")
+  fmt.Println(string(jsonBytes))
+  ```
+
+  Salida:
+  ```json
+  {
+    "ID": 1,
+    "Nombre": "Ana García",
+    "Email": "ana@ejemplo.com",
+    "Activo": true,
+    "Puntaje": 95.5
+  }
+  ```
+
+  3. UNMARSHAL — CONVERTIR JSON A GO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  type Usuario struct {
+      ID        int
+      Nombre    string
+      Email     string
+      Activo    bool
+      Puntaje   float64
+  }
+
+  func main() {
+      jsonStr := `{"ID":1,"Nombre":"Ana García","Email":"ana@ejemplo.com","Activo":true,"Puntaje":95.5}`
+
+      var u Usuario
+      err := json.Unmarshal([]byte(jsonStr), &u)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Printf("ID: %d, Nombre: %s, Email: %s\n", u.ID, u.Nombre, u.Email)
+  }
+  ```
+
+  4. STRUCT TAGS — CONTROLA LA ESTRUCTURA JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Las struct tags permiten controlar cómo se serializa/deserializa
+  cada campo:
+
+  ```go
+  type Usuario struct {
+      ID        int     `json:"id"`
+      Nombre    string  `json:"nombre"`
+      Email     string  `json:"email,omitempty"`
+      Password  string  `json:"-"`
+      Puntaje   float64 `json:"puntaje,string"`
+      Role      string  `json:"rol,omitempty"`
+  }
+  ```
+
+  Opciones de tags:
+  - `json:"nombre"`: nombre del campo en JSON.
+  - `json:"-"`: excluir el campo completamente.
+  - `json:"nombre,omitempty`: omitir si es valor cero.
+  - `json:"nombre,string`: forzar representación como string.
+  - `json:"nombre,omitzero`: omitir si es valor cero (Go 1.24+).
+
+  Ejemplo completo:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  type Producto struct {
+      ID          int     `json:"id"`
+      Nombre      string  `json:"nombre"`
+      Descripcion string  `json:"descripcion,omitempty"`
+      Precio      float64 `json:"precio,string"`
+      Moneda      string  `json:"moneda,omitempty"`
+      interno     string  `json:"-"` // no exportado, nunca se serializa
+  }
+
+  func main() {
+      p := Producto{
+          ID:     1,
+          Nombre: "Laptop Pro",
+          Precio: 1250.99,
+          Moneda: "USD",
+      }
+
+      jsonBytes, _ := json.MarshalIndent(p, "", "  ")
+      fmt.Println(string(jsonBytes))
+      // {
+      //   "id": 1,
+      //   "nombre": "Laptop Pro",
+      //   "precio": "1250.99",
+      //   "moneda": "USD"
+      // }
+
+      // Unmarshal inverso
+      var p2 Producto
+      json.Unmarshal(jsonBytes, &p2)
+      fmt.Printf("Producto: %+v\n", p2)
+  }
+  ```
+
+  5. json.NewEncoder — STREAM DE SALIDA JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para escribir JSON directamente a un writer (archivo, HTTP response,
+  etc.):
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "os"
+  )
+
+  type Producto struct {
+      ID     int     `json:"id"`
+      Nombre string  `json:"nombre"`
+      Precio float64 `json:"precio"`
+  }
+
+  func main() {
+      productos := []Producto{
+          {1, "Laptop", 1250.99},
+          {2, "Mouse", 25.50},
+          {3, "Teclado", 89.99},
+      }
+
+      // Escribir a un archivo
+      f, _ := os.Create("productos.json")
+      defer f.Close()
+
+      encoder := json.NewEncoder(f)
+      encoder.SetIndent("", "  ") // Para formato legible
+      err := encoder.Encode(productos)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("JSON escrito en productos.json")
+  }
+  ```
+
+  6. json.NewDecoder — STREAM DE ENTRADA JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para leer JSON desde un reader (archivo, HTTP request, etc.):
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "os"
+  )
+
+  type Producto struct {
+      ID     int     `json:"id"`
+      Nombre string  `json:"nombre"`
+      Precio float64 `json:"precio"`
+  }
+
+  func main() {
+      f, _ := os.Open("productos.json")
+      defer f.Close()
+
+      var productos []Producto
+      decoder := json.NewDecoder(f)
+      err := decoder.Decode(&productos)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      for _, p := range productos {
+          fmt.Printf("%d: %s ($%.2f)\n", p.ID, p.Nombre, p.Precio)
+      }
+  }
+  ```
+
+  7. ENCODER VS MARSHAL — ¿CUÁL USAR?
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Marshal                    | Encoder                    |
+  |---------------------------|----------------------------|
+  | Devuelve []byte           | Escribe a un io.Writer     |
+  | Carga todo en memoria     | Stream (bajo consumo)      |
+  | Ideal para respuestas pequeñas | Ideal para streams grandes |
+  | MarshalIndent para formato | SetIndent para formato     |
+  | No requiere Flush         | No requiere Flush          |
+
+  Regla general:
+  - Usa Marshal para convertir a variable o buffer pequeño.
+  - Usa Encoder para enviar JSON a un archivo o red.
+
+  8. DECODER VS UNMARSHAL
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Unmarshal                  | Decoder                    |
+  |---------------------------|----------------------------|
+  | Recibe []byte             | Lee de un io.Reader        |
+  | Carga todo en memoria     | Stream (bajo consumo)      |
+  | Ideal para datos completos | Ideal para streams grandes |
+  | Decodifica exactamente    | Puede verificar UseNumber  |
+  | Más rápido para datos pequeños | Más flexible            |
+
+  9. JSON ANIDADO Y ESTRUCTURAS COMPLEJAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  type Direccion struct {
+      Calle    string `json:"calle"`
+      Ciudad   string `json:"ciudad"`
+      Pais     string `json:"pais"`
+  }
+
+  type Usuario struct {
+      ID         int         `json:"id"`
+      Nombre     string      `json:"nombre"`
+      Direccion  Direccion   `json:"direccion"`
+      Tags       []string    `json:"tags"`
+      Puntuacion map[string]int `json:"puntuacion"`
+      Metadata   interface{} `json:"metadata"`
+  }
+
+  func main() {
+      jsonStr := `{
+          "id": 1,
+          "nombre": "Ana García",
+          "direccion": {
+              "calle": "Calle Mayor 10",
+              "ciudad": "Madrid",
+              "pais": "España"
+          },
+          "tags": ["admin", "usuario"],
+          "puntuacion": {"velocidad": 90, "precision": 95},
+          "metadata": {"ultimo_acceso": "2026-07-02"}
+      }`
+
+      var u Usuario
+      json.Unmarshal([]byte(jsonStr), &u)
+      fmt.Printf("Usuario: %s, Ciudad: %s\n", u.Nombre, u.Direccion.Ciudad)
+      fmt.Printf("Tags: %v\n", u.Tags)
+      fmt.Printf("Puntuación: %v\n", u.Puntuacion)
+      fmt.Printf("Metadata: %v\n", u.Metadata)
+  }
+  ```
+
+  10. JSON DINÁMICO CON map[string]interface{}
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Cuando no conoces la estructura del JSON de antemano:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  func main() {
+      jsonStr := `{
+          "nombre": "Producto X",
+          "precio": 99.99,
+          "disponible": true,
+          "colores": ["rojo", "azul", "verde"],
+          "dimensiones": {
+              "alto": 10,
+              "ancho": 20,
+              "profundidad": 5
+          }
+      }`
+
+      var datos map[string]interface{}
+      json.Unmarshal([]byte(jsonStr), &datos)
+
+      fmt.Println("Nombre:", datos["nombre"])
+      fmt.Println("Precio:", datos["precio"])
+
+      // Acceso a valores anidados requiere type assertion
+      dims := datos["dimensiones"].(map[string]interface{})
+      fmt.Println("Alto:", dims["alto"])
+
+      // Array
+      colores := datos["colores"].([]interface{})
+      for _, c := range colores {
+          fmt.Println("Color:", c)
+      }
+  }
+  ```
+
+  11. JSON CON TIPOS PERSONALIZADOS (time.Time, etc.)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "time"
+  )
+
+  type Evento struct {
+      ID        int       `json:"id"`
+      Nombre    string    `json:"nombre"`
+      Fecha     time.Time `json:"fecha"`
+  }
+
+  func main() {
+      e := Evento{
+          ID:     1,
+          Nombre: "Conferencia Go",
+          Fecha:  time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC),
+      }
+
+      jsonBytes, _ := json.MarshalIndent(e, "", "  ")
+      fmt.Println(string(jsonBytes))
+      // "fecha" se serializa como RFC3339
+
+      // Deserializar
+      jsonStr := `{"id":1,"nombre":"Conferencia Go","fecha":"2026-07-15T09:00:00Z"}`
+      var e2 Evento
+      json.Unmarshal([]byte(jsonStr), &e2)
+      fmt.Println("Fecha:", e2.Fecha.Format(time.RFC1123))
+  }
+  ```
+
+  12. MARSHAL/UNMARSHAL PERSONALIZADO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Implementando las interfaces json.Marshaler y json.Unmarshaler:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "strings"
+  )
+
+  type Precio struct {
+      Valor    float64
+      Moneda   string
+  }
+
+  // MarshalJSON personalizado: formatea como "$99.99"
+  func (p Precio) MarshalJSON() ([]byte, error) {
+      s := fmt.Sprintf(`"%s%.2f"`, p.Moneda, p.Valor)
+      return []byte(s), nil
+  }
+
+  // UnmarshalJSON personalizado
+  func (p *Precio) UnmarshalJSON(data []byte) error {
+      s := string(data)
+      s = strings.Trim(s, "\"")
+      if len(s) < 1 {
+          return nil
+      }
+      p.Moneda = string(s[0])
+      fmt.Sscanf(s[1:], "%f", &p.Valor)
+      return nil
+  }
+
+  type Producto struct {
+      ID     int    `json:"id"`
+      Nombre string `json:"nombre"`
+      Precio Precio `json:"precio"`
+  }
+
+  func main() {
+      p := Producto{1, "Café", Precio{4.99, "$"}}
+      jsonBytes, _ := json.MarshalIndent(p, "", "  ")
+      fmt.Println("JSON:", string(jsonBytes))
+
+      jsonStr := `{"id":1,"nombre":"Café","precio":"€3.50"}`
+      var p2 Producto
+      json.Unmarshal([]byte(jsonStr), &p2)
+      fmt.Printf("Producto: %+v\n", p2)
+  }
+  ```
+
+  13. MANEJO DE CAMPOS DESCONOCIDOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "os"
+  )
+
+  type Config struct {
+      Host    string            `json:"host"`
+      Puerto  int               `json:"puerto"`
+      Extra   map[string]interface{} `json:"-"` // captura campos extra
+  }
+
+  func (c *Config) UnmarshalJSON(data []byte) error {
+      type ConfigAlias Config // evita recursión infinita
+      alias := &struct {
+          *ConfigAlias
+          Extra map[string]interface{} `json:"-"`
+      }{
+          ConfigAlias: (*ConfigAlias)(c),
+      }
+
+      // Primero, unmarshal estándar
+      if err := json.Unmarshal(data, alias); err != nil {
+          return err
+      }
+
+      // Después, capturar campos desconocidos
+      var raw map[string]interface{}
+      if err := json.Unmarshal(data, &raw); err != nil {
+          return err
+      }
+      delete(raw, "host")
+      delete(raw, "puerto")
+      c.Extra = raw
+      return nil
+  }
+
+  func main() {
+      jsonStr := `{"host":"localhost","puerto":8080,"timeout":30,"ssl":true}`
+      var cfg Config
+      json.Unmarshal([]byte(jsonStr), &cfg)
+      fmt.Printf("Host: %s, Puerto: %d\n", cfg.Host, cfg.Puerto)
+      fmt.Printf("Extra: %v\n", cfg.Extra)
+  }
+  ```
+
+  14. STREAMS DE MÚLTIPLES OBJETOS JSON (NDJSON)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Newline Delimited JSON — cada línea es un objeto JSON independiente:
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "encoding/json"
+      "fmt"
+      "os"
+  )
+
+  type Venta struct {
+      ID     int     `json:"id"`
+      Total  float64 `json:"total"`
+  }
+
+  func escribirNDJSON(ruta string, ventas []Venta) error {
+      f, err := os.Create(ruta)
+      if err != nil {
+          return err
+      }
+      defer f.Close()
+
+      for _, v := range ventas {
+          linea, _ := json.Marshal(v)
+          if _, err := fmt.Fprintln(f, string(linea)); err != nil {
+              return err
+          }
+      }
+      return nil
+  }
+
+  func leerNDJSON(ruta string) ([]Venta, error) {
+      f, err := os.Open(ruta)
+      if err != nil {
+          return nil, err
+      }
+      defer f.Close()
+
+      var ventas []Venta
+      scanner := bufio.NewScanner(f)
+      for scanner.Scan() {
+          var v Venta
+          if err := json.Unmarshal(scanner.Bytes(), &v); err != nil {
+              return nil, err
+          }
+          ventas = append(ventas, v)
+      }
+      return ventas, scanner.Err()
+  }
+
+  func main() {
+      ventas := []Venta{
+          {1, 1250.99},
+          {2, 25.50},
+          {3, 89.99},
+      }
+
+      escribirNDJSON("ventas.ndjson", ventas)
+      leidas, _ := leerNDJSON("ventas.ndjson")
+      fmt.Printf("Leídas %d ventas\n", len(leidas))
+      for _, v := range leidas {
+          fmt.Printf("Venta %d: $%.2f\n", v.ID, v.Total)
+      }
+  }
+  ```
+
+  15. JSON CON NÚMEROS GRANDES (json.Number)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Por defecto, json.Decoder convierte números a float64, lo que puede
+  perder precisión. Usa UseNumber para preservar números como string:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "strings"
+  )
+
+  func main() {
+      jsonStr := `{"valor": 12345678901234567890}`
+
+      // Sin UseNumber — pierde precisión
+      var m1 map[string]interface{}
+      json.Unmarshal([]byte(jsonStr), &m1)
+      fmt.Printf("Sin UseNumber: %v\n", m1["valor"]) // 1.2345678901234568e+19
+
+      // Con UseNumber — preserva precisión
+      var m2 map[string]interface{}
+      dec := json.NewDecoder(strings.NewReader(jsonStr))
+      dec.UseNumber()
+      dec.Decode(&m2)
+      fmt.Printf("Con UseNumber: %v\n", m2["valor"]) // 12345678901234567890
+  }
+  ```
+
+  16. VALIDACIÓN DE JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  json.Valid verifica si un []byte contiene JSON válido:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  func main() {
+      casos := []string{
+          `{"nombre": "Ana"}`,
+          `{nombre: Ana}`,
+          `{"edad": 30}`,
+          `["uno", "dos"]`,
+          `hola mundo`,
+      }
+
+      for _, c := range casos {
+          valido := json.Valid([]byte(c))
+          fmt.Printf("¿Válido? %-5v | %s\n", valido, c)
+      }
+  }
+  ```
+
+  17. RAWDELAY — PROCESAMIENTO JSON CON DIFERIMIENTO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  json.RawMessage permite posponer la decodificación de un campo:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+  )
+
+  type Mensaje struct {
+      Tipo    string          `json:"tipo"`
+      Payload json.RawMessage `json:"payload"`
+  }
+
+  type UsuarioMsg struct {
+      ID     int    `json:"id"`
+      Nombre string `json:"nombre"`
+  }
+
+  type PedidoMsg struct {
+      ID       int    `json:"id"`
+      Producto string `json:"producto"`
+  }
+
+  func main() {
+      jsonStr := `{"tipo":"usuario","payload":{"id":1,"nombre":"Ana"}}`
+
+      var msg Mensaje
+      json.Unmarshal([]byte(jsonStr), &msg)
+
+      switch msg.Tipo {
+      case "usuario":
+          var u UsuarioMsg
+          json.Unmarshal(msg.Payload, &u)
+          fmt.Printf("Usuario: %s (ID: %d)\n", u.Nombre, u.ID)
+      case "pedido":
+          var p PedidoMsg
+          json.Unmarshal(msg.Payload, &p)
+          fmt.Printf("Pedido: %s (ID: %d)\n", p.Producto, p.ID)
+      }
+  }
+  ```
+
+  18. PROGRAMA COMPLETO — API DE CONFIGURACIÓN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "os"
+      "sync"
+  )
+
+  type Config struct {
+      Host     string   `json:"host"`
+      Puerto   int      `json:"puerto"`
+      Debug    bool     `json:"debug"`
+      Limites  Limites  `json:"limites"`
+      BaseDatos BDConfig `json:"base_datos"`
+  }
+
+  type Limites struct {
+      MaxUsuarios    int `json:"max_usuarios"`
+      TimeoutSeg     int `json:"timeout_seg"`
+      IntentosLogin  int `json:"intentos_login"`
+  }
+
+  type BDConfig struct {
+      Host     string `json:"host"`
+      Puerto   int    `json:"puerto"`
+      Usuario  string `json:"usuario"`
+      Password string `json:"-"`
+      DBName   string `json:"db_name"`
+  }
+
+  type ConfigManager struct {
+      mu     sync.RWMutex
+      config Config
+      ruta   string
+  }
+
+  func NewConfigManager(ruta string) (*ConfigManager, error) {
+      cm := &ConfigManager{ruta: ruta}
+      if err := cm.Cargar(); err != nil {
+          return nil, err
+      }
+      return cm, nil
+  }
+
+  func (cm *ConfigManager) Cargar() error {
+      datos, err := os.ReadFile(cm.ruta)
+      if err != nil {
+          return err
+      }
+
+      cm.mu.Lock()
+      defer cm.mu.Unlock()
+
+      return json.Unmarshal(datos, &cm.config)
+  }
+
+  func (cm *ConfigManager) Guardar() error {
+      cm.mu.RLock()
+      defer cm.mu.RUnlock()
+
+      datos, err := json.MarshalIndent(cm.config, "", "  ")
+      if err != nil {
+          return err
+      }
+      return os.WriteFile(cm.ruta, datos, 0644)
+  }
+
+  func (cm *ConfigManager) Obtener() Config {
+      cm.mu.RLock()
+      defer cm.mu.RUnlock()
+      return cm.config
+  }
+
+  func (cm *ConfigManager) Actualizar(fn func(c *Config)) error {
+      cm.mu.Lock()
+      defer cm.mu.Unlock()
+
+      fn(&cm.config)
+      return nil
+  }
+
+  func main() {
+      // Crear configuración por defecto
+      configInicial := Config{
+          Host:   "0.0.0.0",
+          Puerto: 8080,
+          Debug:  true,
+          Limites: Limites{
+              MaxUsuarios:   1000,
+              TimeoutSeg:     30,
+              IntentosLogin:    3,
+          },
+          BaseDatos: BDConfig{
+              Host:     "localhost",
+              Puerto:   5432,
+              Usuario:  "admin",
+              Password: "secreta123",
+              DBName:   "miapp",
+          },
+      }
+
+      // Guardar configuración inicial
+      datos, _ := json.MarshalIndent(configInicial, "", "  ")
+      os.WriteFile("config.json", datos, 0644)
+      fmt.Println("Configuración inicial guardada")
+
+      // Cargar configuración
+      cm, err := NewConfigManager("config.json")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      config := cm.Obtener()
+      fmt.Printf("Servidor: %s:%d\n", config.Host, config.Puerto)
+      fmt.Printf("Debug: %v\n", config.Debug)
+      fmt.Printf("BD: %s@%s:%d/%s\n",
+          config.BaseDatos.Usuario,
+          config.BaseDatos.Host,
+          config.BaseDatos.Puerto,
+          config.BaseDatos.DBName)
+
+      // Actualizar configuración
+      cm.Actualizar(func(c *Config) {
+          c.Puerto = 9090
+          c.Debug = false
+      })
+      cm.Guardar()
+      fmt.Println("Configuración actualizada")
+
+      // Verificar que la contraseña no se filtró
+      datosActualizados, _ := os.ReadFile("config.json")
+      fmt.Println("\nArchivo config.json (sin password):")
+      fmt.Println(string(datosActualizados))
+  }
+  ```
+
+  19. RENDIMIENTO Y BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Prealoca slices con make para evitar reallocaciones.
+  2. Usa Encoder/Decoder para streams, Marshal/Unmarshal para buffers.
+  3. No uses interface{} si conoces la estructura — type-safe siempre.
+  4. Usa json:",omitempty" para campos opcionales.
+  5. Tags con "-" para campos sensibles (passwords, tokens).
+  6. json.Number para números grandes de 64 bits.
+  7. json.RawMessage para procesamiento perezoso.
+  8. En producción, limita el tamaño del JSON de entrada.
+  9. Usa json.Valid antes de Unmarshal cuando sea posible.
+  10. Prueba con campos desconocidos — pueden romper el parsing.
+
+  20. COMPARATIVA CON OTRAS BIBLIOTECAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Biblioteca        | Rendimiento | Características                |
+  |-------------------|-------------|--------------------------------|
+  | encoding/json     | Bueno       | Estándar, suficiente para 95%  |
+  | json-iterator/go  | 2-3x más    | API compatible, más rápido     |
+  | goccy/go-json     | 3-5x más    | El más rápido, reemplazo drop-in |
+  | valyala/fastjson  | Muy rápido  | Solo parsing, sin validación   |
+  | buger/jsonparser  | Extremo     | Sin asignación de memoria      |
+
+  Para la mayoría de casos, encoding/json es suficiente. Cambia solo
+  si tienes requisitos extremos de rendimiento.
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • json.Marshal / Unmarshal convierten entre Go y JSON []byte.
+  • json.NewEncoder / NewDecoder trabajan con streams.
+  • Struct tags controlan nombres, omisión y formato.
+  • MarshalJSON / UnmarshalJSON permiten personalización total.
+  • json.RawMessage difiere la decodificación de campos.
+  • json.Number preserva números grandes sin pérdida.
+  • NDJSON (JSON línea por línea) para streams de objetos.
+  • El paquete encoding/json es suficiente para el 95% de los casos.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un programa que lea un archivo JSON con información de
+    estudiantes (nombre, edad, calificaciones) y calcule el promedio
+    general.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Escribe una función que reciba un slice de structs y lo convierta
+    a JSON indentado, guardándolo en un archivo.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Implementa un serializador personalizado para un tipo Fecha
+    que formatee como "DD/MM/YYYY" en JSON.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Crea un proxy de configuración que lea un JSON, permita modificar
+    valores vía consola, y guarde los cambios atómicamente.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Escribe un comparador de JSON que tome dos archivos JSON y
+    muestre las diferencias estructurales y de valores.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Implementa un validador de JSON Schema básico que verifique
+    tipos, campos requeridos y rangos de valores.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Crea un sistema de migraciones que lea un archivo JSON con
+    versiones de esquema y transforme datos de una versión a otra.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Implementa un "jsonpath" simple que permita consultar valores
+    en un JSON usando una ruta de puntos (ej. "datos.usuarios.0.nombre").
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Por qué campos exportados no aparecen en JSON?
+  R: Solo los campos exportados (mayúscula inicial) se serializan.
+  Usa tags `json:"nombre"` para controlar el nombre JSON.
+
+  ❓ ¿Cómo omito un campo si está vacío?
+  R: Usa `json:",omitempty"`. Omitirá el campo si es valor cero
+  (0, "", false, nil).
+
+  ❓ ¿Qué diferencia hay entre Marshal y Encoder?
+  R: Marshal devuelve []byte en memoria. Encoder escribe a un
+  io.Writer (archivo, HTTP response). Para streams grandes, usa
+  Encoder.
+
+  ❓ ¿Cómo manejo JSON con arrays dinámicos?
+  R: Define el campo como []T donde T es el tipo de los elementos,
+  o usa []interface{} si los tipos son mixtos.
+
+  ❓ ¿Puedo personalizar la serialización de un tipo?
+  R: Sí, implementando MarshalJSON() y UnmarshalJSON() en tu tipo.
+
+  ❓ ¿Qué hago si el JSON tiene campos que no están en mi struct?
+  R: Por defecto se ignoran. Para capturarlos, usa map[string]interface{}
+  o implementa UnmarshalJSON personalizado.
+
+  ❓ ¿Cómo evito que un campo se serialice?
+  R: Tag `json:"-"` o no exportarlo (minúscula inicial).
+
+  ❓ ¿JSON con fechas en formato personalizado?
+  R: Implementa MarshalJSON/UnmarshalJSON en tu tipo fecha, o
+  usa un string y conviértelo manualmente.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 SISTEMA DE PROCESAMIENTO DE EVENTOS JSON
+
+  Diseña e implementa un pipeline de procesamiento de eventos
+  basado en JSON con las siguientes características:
+
+  1. Entrada: archivo NDJSON (una línea = un evento JSON).
+  2. Tipos de eventos: usuario_creado, pedido_realizado, pago_procesado.
+  3. Cada evento tiene un campo "tipo" y un "payload" con RawMessage.
+  4. El pipeline transforma, filtra y agrega datos.
+  5. Salida: múltiples archivos JSON, uno por tipo de evento agregado.
+  6. El sistema debe ser configurable mediante un archivo de reglas JSON.
+  7. Implementa manejo de errores (eventos mal formados se escriben a
+     un archivo de errores separado).
+
+  Reglas de transformación (ejemplo):
+  - Filtrar eventos de pago con monto < 0.
+  - Transformar nombres a mayúsculas en eventos de usuario.
+  - Agregar campo "procesado_en" con timestamp actual.
+
+  Requisitos técnicos:
+  - Usa json.Decoder para leer el NDJSON línea por línea.
+  - Usa json.Encoder para escribir archivos de salida.
+  - Usa RawMessage para procesamiento genérico de payloads.
+  - Implementa worker pool con goroutines para paralelismo.
+  - Usa un archivo JSON de configuración para las reglas.
+
+  Este desafío integra:
+  - JSON avanzado (RawMessage, Encoder/Decoder)
+  - Procesamiento concurrente
+  - ETL (Extract, Transform, Load)
+  - Manejo de errores y datos mal formados
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 54. Ahora dominas JSON en Go:
+  serialización, deserialización, streams, tags, personalización
+  y procesamiento de grandes volúmenes de datos JSON.
+
+  JSON es el formato de intercambio más ubicuo. Saber manejarlo
+  con fluidez en Go te permite construir APIs, procesar datos,
+  configurar aplicaciones y comunicar sistemas de forma eficiente.
+
+  En el próximo capítulo, exploraremos otro formato de datos
+  esencial: CSV, el estándar para datos tabulares.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 55: CSV (encoding/csv)
+    Aprenderás a leer y escribir archivos CSV con encoding/csv,
+    manejando opciones como delimitadores, comillas y escaping.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 54 — FIN DEL CAPÍTULO
+================================================================================

@@ -1,0 +1,1187 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                  CAPÍTULO 69
+##
+##              COMPILACIÓN SEPARADA
+##
+################################################################################
+################################################################################
+
+"La compilación separada es la base de la modularidad: divide el trabajo,
+comparte las interfaces, y ensambla el resultado." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenidos, ingenieros de construcción de software! Soy el Profesor Búho
+AI y en este capítulo exploraremos la compilación separada en C, el proceso
+que transforma archivos fuente individuales en un ejecutable unificado.
+Comprender este proceso es esencial para cualquier programador profesional.
+Veremos cómo el compilador produce archivos objeto (.o) a partir de código
+fuente (.c), cómo el enlazador (linker) combina esos objetos en un
+ejecutable, y cómo crear bibliotecas estáticas (.a) y dinámicas (.so, .dll).
+También abordaremos temas críticos como el orden de enlazado, la resolución
+de símbolos, y la visibilidad de funciones y variables.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Compilar no es traducir, es construir un puente entre el código que
+escribes y la máquina que lo ejecuta." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender las fases de compilación: preprocesador, compilación, ensamble
+✓ Producir archivos objeto (.o) con gcc -c
+✓ Vincular múltiples objetos en un ejecutable con el linker
+✓ Crear y utilizar bibliotecas estáticas (.a) con ar
+✓ Crear y utilizar bibliotecas dinámicas (.so, .dll) con gcc -shared
+✓ Gestionar el orden de enlazado y la resolución de símbolos
+✓ Aplicar visibilidad de símbolos con static y atributos de control
+
+===============================================================================
+1. LAS CUATRO FASES DE LA COMPILACIÓN
+===============================================================================
+
+La compilación de un programa C no es un solo paso, sino cuatro fases
+distintas. Entender cada una es fundamental para dominar la compilación
+separada.
+
+1.1 Visión general de las fases
+
+```c
+// Fase 1: PREPROCESAMIENTO
+// Maneja #include, #define, #ifdef, etc.
+// $ gcc -E main.c -o main.i
+// main.i es el archivo preprocesado (miles de lineas!)
+
+// Fase 2: COMPILACION (traduccion a ensamblador)
+// Convierte C a codigo ensamblador.
+// $ gcc -S main.c -o main.s
+
+// Fase 3: ENSAMBLE (assembler)
+// Convierte ensamblador a codigo maquina (.o).
+// $ gcc -c main.c -o main.o
+
+// Fase 4: ENLACE (linking)
+// Combina .o y bibliotecas en ejecutable.
+// $ gcc main.o utils.o -o programa
+```
+
+1.2 Demostración de cada fase
+
+```c
+#include <stdio.h>
+#define MENSAJE "Hola Mundo"
+
+int main() {
+    printf("%s\n", MENSAJE);
+    return 0;
+}
+```
+
+```bash
+# 1. Solo preprocesamiento
+gcc -E programa.c -o programa.i
+# El #include <stdio.h> se expande, MENSAJE se reemplaza
+
+# 2. Solo compilacion
+gcc -S programa.i -o programa.s
+# Genera codigo ensamblador
+
+# 3. Solo ensamble
+gcc -c programa.s -o programa.o
+# Genera archivo objeto (binario)
+
+# 4. Un solo paso (todo junto)
+gcc programa.c -o programa
+
+# Ver los simbolos en el objeto
+nm programa.o
+objdump -d programa.o
+```
+
+1.3 Archivos intermedios con gcc -save-temps
+
+```bash
+# gcc puede conservar todos los archivos intermedios
+gcc -save-temps programa.c -o programa
+# Genera: programa.i, programa.s, programa.o, programa
+
+# Ver el tamano de cada etapa
+ls -lh programa*
+```
+
+===============================================================================
+2. ARCHIVOS OBJETO (.O)
+===============================================================================
+
+2.1 Creación de archivos objeto
+
+```c
+// main.c
+#include <stdio.h>
+#include "funciones.h"
+
+int main() {
+    printf("Resultado: %d\n", suma(5, 3));
+    printf("Resultado: %d\n", resta(10, 4));
+    return 0;
+}
+```
+
+```c
+// funciones.h
+#ifndef FUNCIONES_H
+#define FUNCIONES_H
+int suma(int a, int b);
+int resta(int a, int b);
+#endif
+```
+
+```c
+// funciones.c
+#include "funciones.h"
+
+int suma(int a, int b) {
+    return a + b;
+}
+
+int resta(int a, int b) {
+    return a - b;
+}
+```
+
+```bash
+# Compilar a objetos separados
+gcc -c main.c -o main.o
+gcc -c funciones.c -o funciones.o
+
+# Ver los simbolos
+nm main.o
+# U _GLOBAL_OFFSET_TABLE_
+# U __stack_chk_fail
+# U printf
+# U suma
+# U resta
+# T main
+# La 'U' significa undefined (se resuelve en el enlace)
+
+nm funciones.o
+# T suma
+# T resta
+# La 'T' significa que estan definidas en la seccion de texto (codigo)
+
+# Enlazar
+gcc main.o funciones.o -o programa
+
+# Ejecutar
+./programa
+```
+
+2.2 El formato ELF (Executable and Linkable Format)
+
+```bash
+# Informacion del archivo objeto
+file main.o
+# main.o: ELF 64-bit LSB relocatable, x86-64, version 1 (SYSV)
+
+readelf -h main.o    # Informacion del header ELF
+readelf -S main.o    # Tabla de secciones
+readelf -s main.o    # Tabla de simbolos
+
+# Objdump para ver el codigo desensamblado
+objdump -d main.o
+objdump -t main.o    # Tabla de simbolos (como nm)
+objdump -r main.o    # Informacion de reubicacion
+
+# Secciones principales:
+# .text  - Codigo ejecutable
+# .data  - Variables inicializadas
+# .bss   - Variables no inicializadas
+# .rodata - Datos de solo lectura (strings, constantes)
+# .symtab - Tabla de simbolos
+# .rela.text - Informacion de reubicacion
+# .debug - Informacion de depuracion (si -g)
+```
+
+2.3 Símbolos: definidos y no definidos
+
+```c
+// simbologia.c
+#include <stdio.h>
+
+int variable_global = 42;          // Definida en .data
+static int variable_estatica = 10; // Definida, pero local
+extern int variable_externa;       // NO definida aqui (se espera en otro .o)
+
+void funcion_publica(void) {       // Definida, exportada (T)
+    printf("publica\n");
+}
+
+static void funcion_privada(void) { // Definida, pero local (t)
+    printf("privada\n");
+}
+
+void funcion_que_llama_otra(void) { // Definida, llama a funcion_externa
+    funcion_externa();              // NO definida aqui (U)
+}
+```
+
+```bash
+# Simbolos
+nm simbologia.o
+# 0000000000000000 D variable_global    - D = .data (inicializada)
+# 0000000000000000 d variable_estatica  - d = local
+# U variable_externa                    - U = undefined
+# 0000000000000000 T funcion_publica    - T = text (exportada)
+# 0000000000000000 t funcion_privada    - t = local (no exportada)
+# U funcion_externa                     - U = undefined
+```
+
+===============================================================================
+3. ENLAZADO (LINKING)
+===============================================================================
+
+3.1 El proceso de enlazado
+
+El enlazador (linker) tiene tres tareas principales:
+1. Resolver símbolos: emparejar referencias (U) con definiciones (T)
+2. Reubicar: ajustar las direcciones de memoria relativas a absolutas
+3. Combinar secciones: fusionar .text, .data, etc. de todos los .o
+
+```bash
+# Enlazado paso a paso
+gcc -c main.c -o main.o
+gcc -c funciones.c -o funciones.o
+
+# El linker (ld) se invoca automaticamente via gcc
+gcc main.o funciones.o -o programa
+
+# O invocar ld directamente (mas complejo, no recomendado):
+# ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 \
+#    /usr/lib64/crt1.o /usr/lib64/crti.o \
+#    main.o funciones.o \
+#    -lc /usr/lib64/crtn.o -o programa
+```
+
+3.2 Errores comunes de enlazado
+
+```bash
+# Error 1: Simbolo no definido
+gcc main.o -o programa
+# /usr/bin/ld: main.o: in function `main':
+# main.c:(.text+0x14): undefined reference to `suma'
+# collect2: error: ld returned 1 exit status
+
+# Error 2: Definicion multiple
+# Si funciones.c define suma() y otro.c tambien:
+gcc main.o funciones.o otro.o -o programa
+# /usr/bin/ld: otro.o: in function `suma':
+# otro.c:(.text+0x0): multiple definition of `suma'
+# collect2: error: ld returned 1 exit status
+
+# Error 3: Orden incorrecto de bibliotecas
+gcc main.o -lmylib -o programa   # OK
+gcc main.o -o programa -lmylib   # OK en GCC moderno, pero no siempre
+# Algunos linkers requieren que la biblioteca vaya DESPUES del .o que la usa
+```
+
+3.3 Enlazado con bibliotecas del sistema
+
+```bash
+# -l (ele) para bibliotecas, -L para rutas
+gcc programa.c -lm           # Enlaza libm (matematicas)
+gcc programa.c -lpthread     # Enlaza libpthread (hilos)
+gcc programa.c -ldl          # Enlaza libdl (carga dinamica)
+
+# Especificar ruta de bibliotecas
+gcc programa.c -L/usr/local/lib -lmibiblioteca
+
+# Ver que bibliotecas usa un ejecutable
+ldd programa
+# linux-vdso.so.1 (0x00007ffe)
+# libc.so.6 => /lib64/libc.so.6 (0x00007f...)
+# /lib64/ld-linux-x86-64.so.2 (0x00007f...)
+```
+
+===============================================================================
+4. BIBLIOTECAS ESTÁTICAS (.A)
+===============================================================================
+
+Una biblioteca estática es un conjunto de archivos objeto empaquetados en
+un solo archivo. Al enlazar, el código necesario se copia al ejecutable.
+
+4.1 Creación con ar
+
+```bash
+# 1. Compilar los modulos a .o
+gcc -c math_ops.c -o math_ops.o
+gcc -c string_ops.c -o string_ops.o
+gcc -c io_ops.c -o io_ops.o
+
+# 2. Empaquetar en biblioteca estatica
+ar rcs libutilidades.a math_ops.o string_ops.o io_ops.o
+
+# r = reemplazar/insertar
+# c = crear si no existe
+# s = generar indice (equivalente a ranlib)
+
+# 3. Ver el contenido de la biblioteca
+ar t libutilidades.a
+# math_ops.o
+# string_ops.o
+# io_ops.o
+
+# 4. Usar la biblioteca
+gcc main.c -L. -lutilidades -o programa
+```
+
+4.2 Comandos ar en detalle
+
+```bash
+# Crear biblioteca
+ar cr libejemplo.a obj1.o obj2.o
+
+# Anadir archivos a biblioteca existente
+ar r libejemplo.a obj3.o
+
+# Extraer archivos de la biblioteca
+ar x libejemplo.a
+
+# Listar contenidos
+ar t libejemplo.a
+
+# Eliminar archivos de la biblioteca
+ar d libejemplo.a obj2.o
+
+# Indice de simbolos (necesario para enlazar)
+ranlib libejemplo.a
+# O usar ar rs ...
+```
+
+4.3 Ejemplo completo de biblioteca estática
+
+```c
+// string_utils.h
+#ifndef STRING_UTILS_H
+#define STRING_UTILS_H
+int string_longitud(const char *s);
+void string_copiar(char *dest, const char *src, int max);
+int string_comparar(const char *a, const char *b);
+#endif
+```
+
+```c
+// string_utils.c
+#include "string_utils.h"
+
+int string_longitud(const char *s) {
+    int len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
+void string_copiar(char *dest, const char *src, int max) {
+    int i;
+    for (i = 0; i < max - 1 && src[i]; i++)
+        dest[i] = src[i];
+    dest[i] = '\0';
+}
+
+int string_comparar(const char *a, const char *b) {
+    while (*a && *b && *a == *b) { a++; b++; }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+```
+
+```bash
+# Compilar y empaquetar
+gcc -c string_utils.c -o string_utils.o
+ar rcs libstr.a string_utils.o
+
+# Programa principal
+gcc -c main.c -o main.o
+gcc main.o -L. -lstr -o programa
+
+# Verificar con ldd que NO aparece libstr.a
+ldd programa
+# libc.so.6 => ... (solo la libc, la estatica se incrusto)
+```
+
+4.4 Extracto de código de biblioteca estática con main()
+
+```c
+// calculadora.h
+#ifndef CALCULADORA_H
+#define CALCULADORA_H
+
+typedef struct {
+    double ultimo_resultado;
+    int operaciones;
+} Calculadora;
+
+Calculadora* calc_crear(void);
+void calc_destruir(Calculadora *c);
+double calc_sumar(Calculadora *c, double a, double b);
+double calc_restar(Calculadora *c, double a, double b);
+double calc_multiplicar(Calculadora *c, double a, double b);
+double calc_dividir(Calculadora *c, double a, double b);
+int calc_total_ops(const Calculadora *c);
+
+#endif
+```
+
+```c
+// calculadora.c
+#include "calculadora.h"
+#include <stdlib.h>
+
+Calculadora* calc_crear(void) {
+    Calculadora *c = malloc(sizeof(Calculadora));
+    if (c) {
+        c->ultimo_resultado = 0;
+        c->operaciones = 0;
+    }
+    return c;
+}
+
+void calc_destruir(Calculadora *c) {
+    free(c);
+}
+
+double calc_sumar(Calculadora *c, double a, double b) {
+    c->ultimo_resultado = a + b;
+    c->operaciones++;
+    return c->ultimo_resultado;
+}
+
+double calc_restar(Calculadora *c, double a, double b) {
+    c->ultimo_resultado = a - b;
+    c->operaciones++;
+    return c->ultimo_resultado;
+}
+
+double calc_multiplicar(Calculadora *c, double a, double b) {
+    c->ultimo_resultado = a * b;
+    c->operaciones++;
+    return c->ultimo_resultado;
+}
+
+double calc_dividir(Calculadora *c, double a, double b) {
+    if (b == 0) return 0;
+    c->ultimo_resultado = a / b;
+    c->operaciones++;
+    return c->ultimo_resultado;
+}
+
+int calc_total_ops(const Calculadora *c) {
+    return c->operaciones;
+}
+```
+
+```bash
+# Crear biblioteca estatica
+gcc -c calculadora.c -o calculadora.o
+ar rcs libcalc.a calculadora.o
+
+# Usar
+gcc main.c -L. -lcalc -o programa
+./programa
+```
+
+===============================================================================
+5. BIBLIOTECAS DINÁMICAS (.SO, .DLL)
+===============================================================================
+
+Las bibliotecas dinámicas se cargan en tiempo de ejecución. El ejecutable
+no contiene el código, solo referencias a la biblioteca.
+
+5.1 Creación en Linux (.so)
+
+```bash
+# Compilar como codigo independiente de posicion (-fPIC)
+gcc -c -fPIC calculadora.c -o calculadora.o
+
+# Crear biblioteca compartida
+gcc -shared calculadora.o -o libcalc.so
+
+# O en un solo paso:
+gcc -fPIC -shared calculadora.c -o libcalc.so
+
+# Ver dependencias
+ldd libcalc.so
+
+# Usar la biblioteca
+gcc main.c -L. -lcalc -o programa
+
+# Configurar ruta de busqueda
+export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH
+./programa
+```
+
+5.2 Creación en Windows (.dll)
+
+```bash
+# En Windows con MinGW:
+gcc -c -fPIC calculadora.c -o calculadora.o
+gcc -shared calculadora.o -o libcalc.dll
+
+# O:
+gcc -shared calculadora.c -o libcalc.dll
+
+# Usar
+gcc main.c -L. -lcalc -o programa.exe
+```
+
+5.3 Diferencia entre estática y dinámica
+
+```c
+// Este programa demuestra el concepto (no el tamano exacto)
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    printf("Tamano del ejecutable con biblioteca ESTATICA:\n");
+    printf("  El codigo de la biblioteca se copia al .exe\n");
+    printf("  Mayor tamano en disco\n");
+    printf("  No requiere .so/.dll separado\n");
+    printf("  Mas facil de distribuir\n");
+
+    printf("\nTamano del ejecutable con biblioteca DINAMICA:\n");
+    printf("  El .exe solo tiene referencias\n");
+    printf("  Menor tamano en disco\n");
+    printf("  Requiere .so/.dll en tiempo de ejecucion\n");
+    printf("  Actualizable sin recompilar el ejecutable\n");
+
+    printf("\nldd muestra las bibliotecas dinamicas necesarias:\n");
+    system("ldd /bin/ls | head -5");
+
+    return 0;
+}
+```
+
+5.4 Visibilidad de símbolos en bibliotecas compartidas
+
+```c
+// visibilidad.c
+#include <stdio.h>
+
+// Funcion publica (exportada)
+__attribute__((visibility("default")))
+void funcion_publica(void) {
+    printf("Publica\n");
+}
+
+// Funcion privada (oculta de la API publica)
+__attribute__((visibility("hidden")))
+void funcion_privada(void) {
+    printf("Privada\n");
+}
+
+// Funcion publica sin atributo (depende de flags del compilador)
+void otra_publica(void) {
+    funcion_privada();
+    printf("Otra publica\n");
+}
+
+// Variable exportada
+__attribute__((visibility("default")))
+int variable_exportada = 42;
+
+// Variable oculta
+__attribute__((visibility("hidden")))
+int variable_interna = 10;
+```
+
+```bash
+# Compilar con control de visibilidad
+gcc -fvisibility=hidden -c visibilidad.c -o visibilidad.o
+gcc -shared visibilidad.o -o libvisibilidad.so
+
+# Ver simbolos exportados
+nm -D libvisibilidad.so
+# Solo funcion_publica, otra_publica, variable_exportada aparecen
+# funcion_privada y variable_interna estan ocultas
+
+# Sin -fvisibility=hidden, todos los simbolos son exportados
+gcc -shared visibilidad.c -o libvisibilidad2.so
+nm -D libvisibilidad2.so  # Todos los simbolos aparecen
+```
+
+5.5 Carga dinámica con dlopen/dlsym
+
+```c
+#include <stdio.h>
+#include <dlfcn.h>
+#include <stdlib.h>
+
+typedef int (*operacion_func)(int, int);
+
+int main() {
+    // Cargar biblioteca en tiempo de ejecucion
+    void *handle = dlopen("./libops.so", RTLD_LAZY);
+    if (!handle) {
+        fprintf(stderr, "Error: %s\n", dlerror());
+        return 1;
+    }
+
+    // Obtener puntero a funcion
+    operacion_func suma = (operacion_func)dlsym(handle, "suma");
+    char *error = dlerror();
+    if (error) {
+        fprintf(stderr, "Error: %s\n", error);
+        dlclose(handle);
+        return 1;
+    }
+
+    // Usar la funcion
+    printf("3 + 4 = %d\n", suma(3, 4));
+
+    // Cerrar biblioteca
+    dlclose(handle);
+    return 0;
+}
+
+// Compilar con: gcc main.c -ldl -o programa
+// La biblioteca libops.so se carga en tiempo de ejecucion
+// -- NO se enlaza en tiempo de compilacion --
+```
+
+```c
+// libops.c (compilar: gcc -shared -fPIC libops.c -o libops.so)
+int suma(int a, int b) { return a + b; }
+int resta(int a, int b) { return a - b; }
+int mult(int a, int b) { return a * b; }
+int divis(int a, int b) { return b ? a / b : 0; }
+```
+
+===============================================================================
+6. ORDEN DE ENLAZADO Y RESOLUCIÓN DE SÍMBOLOS
+===============================================================================
+
+6.1 Cómo resuelve símbolos el linker
+
+El linker tradicional procesa los archivos en orden de izquierda a derecha.
+Mantiene listas de símbolos no resueltos. Cuando encuentra una biblioteca,
+extrae solo los .o que resuelven símbolos pendientes.
+
+```bash
+# Ilustracion del problema de orden:
+# a.o llama a funcion en b.o
+# b.o llama a funcion en a.o (dependencia circular!)
+
+# Esto funciona (orden correcto):
+gcc a.o b.o -o programa
+
+# Esto FALLA en linkers tradicionales:
+gcc b.o a.o -o programa
+# Porque cuando procesa a.o, b.o ya se proceso y sus simbolos
+# no estan disponibles para resolver las referencias de a.o
+
+# Solucion: usar grupos de bibliotecas
+gcc a.o b.o -Wl,--start-group -la -lb -Wl,--end-group -o programa
+# -Wl pasa opciones al linker
+# --start-group/--end-group permite al linker buscar en ambas
+```
+
+6.2 Enlace con bibliotecas y orden
+
+```bash
+# REGLA DE ORO: poner los .o y -l en orden de dependencia
+# Lo que depende va PRIMERO, lo que resuelve va DESPUES
+
+# MAL (no encuentra simbolos):
+gcc main.o -lutils -o programa
+
+# BIEN:
+gcc main.o -L. -lutils -o programa
+
+# Multiple bibliotecas con dependencias entre si:
+# libA depende de libB, libB depende de libC
+gcc main.o -lA -lB -lC -o programa  # CORRECTO
+
+# Si hay dependencia circular:
+gcc main.o -lA -lB -lA -o programa  # Repetir bibliotecas
+
+# O mejor:
+gcc main.o -Wl,--start-group -lA -lB -Wl,--end-group -o programa
+```
+
+6.3 Símbolos fuertes y débiles
+
+```c
+// En C, las definiciones de funciones son simbolos FUERTES.
+// Las declaraciones (extern) son referencias.
+
+// Si dos bibliotecas definen el mismo simbolo:
+// - El linker toma el primero que encuentra
+// - Para funciones: error de "multiple definition"
+// - Para variables inicializadas: error
+// - Para variables no inicializadas (tentativas): se fusionan
+
+// atributos GNU para control:
+int fuerte = 42;  // Simbolo fuerte
+
+int debil __attribute__((weak)) = 10;  // Simbolo debil
+// Otro .o puede sobreescribir debil sin causar error
+
+void __attribute__((weak)) funcion_debil(void) {
+    // Puede ser sobreescrita
+}
+
+void __attribute__((weak, alias("funcion_debil")))
+funcion_alias(void);
+```
+
+===============================================================================
+7. VISIBILIDAD Y CONTROL DE SÍMBOLOS
+===============================================================================
+
+7.1 static para encapsulación
+
+```c
+// encapsulacion.c
+#include <stdio.h>
+
+// Variable global visible en todo el programa
+int variable_global = 100;
+
+// Variable ESTATICA: solo visible en este archivo
+static int variable_privada = 0;
+
+// Funcion publica
+void incrementar(void) {
+    variable_privada++;
+    variable_global++;
+}
+
+// Funcion ESTATICA: solo llamable desde este archivo
+static void reset_interno(void) {
+    variable_privada = 0;
+    variable_global = 0;
+}
+
+int obtener_privada(void) {
+    return variable_privada;
+}
+
+// Exportar control para bibliotecas compartidas
+// GNU C:
+int exportada __attribute__((visibility("default")));
+int oculta    __attribute__((visibility("hidden")));
+```
+
+7.2 Mapa de símbolos (linker script)
+
+```bash
+# Archivo: version.script
+{
+    global:
+        calc_crear;
+        calc_destruir;
+        calc_sumar;
+        calc_restar;
+        calc_multiplicar;
+        calc_dividir;
+    local:
+        *;
+};
+```
+
+```bash
+# Usar el mapa de simbolos
+gcc -shared -fPIC -Wl,--version-script=version.script \
+    calculadora.c -o libcalc.so
+
+# Verificar que solo los simbolos listados son exportados
+nm -D libcalc.so
+```
+
+===============================================================================
+8. HERRAMIENTAS DE DIAGNÓSTICO
+===============================================================================
+
+8.1 nm - listar símbolos
+
+```bash
+# Simbolos en un .o
+nm main.o
+# T = seccion de texto (codigo)
+# D = datos inicializados
+# B = BSS (no inicializados)
+# U = indefinido (necesita resolverse)
+# t = local (static)
+# W = weak
+
+# nm -D para bibliotecas compartidas
+nm -D /lib64/libc.so.6 | grep -i "printf"
+
+# nm -u solo simbolos no definidos
+nm -u main.o
+```
+
+8.2 ldd - dependencias de bibliotecas
+
+```bash
+# Ver que bibliotecas dinamicas necesita un ejecutable
+ldd /bin/ls
+# linux-vdso.so.1
+# libcap.so.2 => /lib64/libcap.so.2
+# libc.so.6 => /lib64/libc.so.6
+# /lib64/ld-linux-x86-64.so.2
+
+# Si alguna biblioteca falta:
+ldd programa
+# libcalc.so => not found  <-- ERROR! falta la .so
+
+# Solucion: LD_LIBRARY_PATH o ldconfig
+export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH
+```
+
+8.3 objdump - información detallada
+
+```bash
+# Desensamblar
+objdump -d main.o
+
+# Headers de secciones
+objdump -h main.o
+
+# Tabla de simbolos
+objdump -t main.o
+
+# Informacion de reubicacion
+objdump -r main.o
+
+# Contenido de secciones especificas
+objdump -s -j .rodata main.o  # Strings y constantes
+```
+
+8.4 readelf - análisis ELF
+
+```bash
+# Header ELF completo
+readelf -a programa
+
+# Solo tabla de simbolos dinamicos
+readelf --dyn-syms libcalc.so
+
+# Secciones
+readelf -S main.o
+
+# Notas
+readelf -n programa
+```
+
+8.5 size - tamaños de secciones
+
+```bash
+# Tamano de las secciones de un ejecutable
+size programa
+#   text    data     bss     dec     hex filename
+#   1234     567      89    1890     762 programa
+
+# size de todos los .o del proyecto
+size *.o
+```
+
+===============================================================================
+9. CASOS PRÁCTICOS Y PROBLEMAS COMUNES
+===============================================================================
+
+9.1 Compilación separada de un proyecto modular
+
+```c
+// Proyecto: procesador de texto
+// Archivos: main.c, lectura.c, escritura.c, analisis.c, utilidades.c
+```
+
+```bash
+# 1. Compilacion individual
+gcc -Wall -c main.c -o main.o
+gcc -Wall -c lectura.c -o lectura.o
+gcc -Wall -c escritura.c -o escritura.o
+gcc -Wall -c analisis.c -o analisis.o
+gcc -Wall -c utilidades.c -o utilidades.o
+
+# 2. Enlazado
+gcc main.o lectura.o escritura.o analisis.o utilidades.o -o texto
+
+# 3. Con Makefile
+# CC = gcc
+# CFLAGS = -Wall -Wextra
+# OBJS = main.o lectura.o escritura.o analisis.o utilidades.o
+# texto: $(OBJS)
+#     $(CC) $^ -o $@
+```
+
+9.2 Problema: símbolo definido en múltiples archivos
+
+```c
+// archivo1.c
+int contador = 0;  // Definicion
+
+// archivo2.c
+int contador = 0;  // ERROR: definicion multiple!
+
+// SOLUCION: declarar en .h, definir en un solo .c
+// global.h
+extern int contador;
+
+// archivo1.c
+#include "global.h"
+int contador = 0;  // Unica definicion
+
+// archivo2.c
+#include "global.h"
+// Usa contador sin definirlo
+```
+
+9.3 Problema: biblioteca no encontrada
+
+```bash
+# Error: cannot find -lcalc
+# El linker busca libcalc.a o libcalc.so en rutas estandar y -L
+
+# Soluciones:
+# 1. Especificar ruta con -L
+gcc main.o -L/home/usuario/proyecto/lib -lcalc -o programa
+
+# 2. Compilar con ruta absoluta
+gcc main.o /home/usuario/proyecto/lib/libcalc.a -o programa
+
+# 3. Para .so, configurar LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/home/usuario/proyecto/lib:$LD_LIBRARY_PATH
+
+# 4. Instalar en ruta del sistema
+sudo cp libcalc.so /usr/local/lib/
+sudo ldconfig
+```
+
+9.4 Programa completo con biblioteca estática
+
+```c
+// ============================================================
+// ejemplo_biblioteca_estatica/
+// ├── include/
+// │   ├── operaciones.h
+// │   └── formato.h
+// ├── src/
+// │   ├── operaciones.c
+// │   └── formato.c
+// ├── main.c
+// └── Makefile
+// ============================================================
+```
+
+```bash
+# Makefile
+CC = gcc
+CFLAGS = -Wall -Iinclude
+AR = ar
+ARFLAGS = rcs
+LIB = libutil.a
+OBJS = src/operaciones.o src/formato.o
+
+all: $(LIB) main.o
+	gcc main.o -L. -lutil -o programa
+
+$(LIB): $(OBJS)
+	$(AR) $(ARFLAGS) $@ $^
+
+src/%.o: src/%.c include/%.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+main.o: main.c include/operaciones.h include/formato.h
+	$(CC) $(CFLAGS) -c main.c -o main.o
+
+clean:
+	rm -f src/*.o main.o programa $(LIB)
+```
+
+```bash
+# Construir y ejecutar
+make
+./programa
+```
+
+===============================================================================
+10. COMPILACIÓN CRUZADA Y ENTORNOS ESPECIALES
+===============================================================================
+
+10.1 Compilación cruzada
+
+```bash
+# Compilar para Raspberry Pi (ARM) desde PC (x86_64)
+# Instalar toolchain:
+# apt install gcc-arm-linux-gnueabihf
+
+# Compilar
+arm-linux-gnueabihf-gcc -c main.c -o main_arm.o
+arm-linux-gnueabihf-gcc main_arm.o -o programa_arm
+
+# Ver informacion
+file programa_arm
+# programa_arm: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV)
+
+# Compilar para Windows desde Linux
+x86_64-w64-mingw32-gcc main.c -o programa.exe
+file programa.exe
+# programa.exe: PE32+ executable (console) x86-64, for MS Windows
+```
+
+10.2 Enlazado estático completo
+
+```bash
+# Crear ejecutable completamente estatico (sin dependencias .so)
+gcc -static main.c -o programa_estatico
+
+# Verificar que no usa .so
+ldd programa_estatico
+# not a dynamic executable
+
+# Comparar tamanos
+gcc main.c -o programa
+gcc -static main.c -o programa_estatico
+ls -lh programa programa_estatico
+# programa: ~16KB
+# programa_estatico: ~800KB (incluye libc completa!)
+```
+
+10.3 Flags útiles de compilación y enlazado
+
+```bash
+# Compilacion:
+# -c           : solo compilar (producir .o)
+# -S           : solo ensamblador (.s)
+# -E           : solo preprocesar (.i)
+# -g           : informacion de depuracion
+# -O0, -O1, -O2, -O3, -Os : niveles de optimizacion
+# -Wall -Wextra -Wpedantic : warnings
+# -fPIC        : codigo independiente de posicion (para .so)
+# -fvisibility=hidden : ocultar simbolos por defecto
+# -std=c17     : version del estandar
+
+# Enlazado:
+# -o archivo   : nombre del ejecutable
+# -l nombre    : enlazar biblioteca (libnombre.a o libnombre.so)
+# -L ruta      : anadir ruta de busqueda de bibliotecas
+# -static      : enlazado completamente estatico
+# -shared      : crear biblioteca compartida
+# -Wl,opcion   : pasar opcion al linker
+# -s           : strip (eliminar simbolos)
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- La compilación tiene 4 fases: preprocesador, compilación, ensamble, enlace
+- gcc -c produce archivos objeto (.o) a partir de archivos fuente (.c)
+- El linker combina .o y bibliotecas resolviendo símbolos y reubicando
+- Las bibliotecas estáticas (.a) se crean con ar y se incrustan en el .exe
+- Las bibliotecas dinámicas (.so/.dll) se cargan en tiempo de ejecución
+- Las .so requieren -fPIC y se crean con gcc -shared
+- static oculta símbolos dentro de un archivo .c
+- ldd muestra dependencias dinámicas; nm muestra símbolos
+- El orden de enlazado importa: los que dependen van primero
+- LD_LIBRARY_PATH configura rutas de bibliotecas en tiempo de ejecución
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Compila manualmente un proyecto de 4 archivos .c:
+genera los .o por separado, enlázalos, y verifica cada paso con nm y
+objdump.
+
+🧩 **Ejercicio 2:** Crea una biblioteca estática libgeom.a con funciones
+de geometría (area_circulo, area_rectangulo, volumen_esfera). Úsala desde
+un programa principal.
+
+🧩 **Ejercicio 3:** Convierte la biblioteca anterior a dinámica (.so).
+Compila con -fPIC y -shared. Verifica las dependencias con ldd.
+
+🧩 **Ejercicio 4:** Usa dlopen/dlsym para cargar la .so dinámicamente.
+Implementa un plugin system donde las operaciones se registran en tiempo
+de ejecución.
+
+🧩 **Ejercicio 5:** Crea tres bibliotecas con dependencias circulares
+(libA llama a libB, libB llama a libA). Resuelve el enlazado con
+--start-group/--end-group.
+
+🧩 **Ejercicio 6:** Implementa un programa que use -static y compara el
+tamaño del ejecutable con uno dinámico. Analiza las diferencias con size.
+
+🧩 **Ejercicio 7:** Escribe un Makefile que automatice la creación de
+bibliotecas estática y dinámica desde los mismos fuentes, con targets
+separados: static, shared, y all.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Cuál es la diferencia entre .o y .a?** .o es un archivo objeto
+individual. .a es una colección de .o empaquetados (biblioteca estática).
+El linker extrae solo los .o necesarios de la .a.
+
+❓ **¿Por qué obtengo "undefined reference"?** Porque el linker no encuentra
+la definición de un símbolo. Puede faltar un .o, una biblioteca, o el orden
+de enlazado es incorrecto.
+
+❓ **¿Qué significa -fPIC?** "Position Independent Code". El código generado
+no depende de direcciones absolutas, permitiendo que la biblioteca se cargue
+en cualquier dirección de memoria. Obligatorio para .so.
+
+❓ **¿Puedo mezclar .a y .so?** Sí. El linker acepta ambos tipos. Si
+encuentra .a y .so con el mismo nombre, prefiere .so (a menos que use
+-static).
+
+❓ **¿Qué es RPATH?** Es una ruta incrustada en el ejecutable que el
+sistema usa para buscar bibliotecas. Se añade con `-Wl,-rpath,/ruta`.
+
+❓ **¿Cómo depuro problemas de enlazado?** Use `gcc -v` (verbose), `nm`
+para ver símbolos, `ldd` para dependencias, y `LD_DEBUG=all` para
+depuración detallada del enlazador dinámico.
+
+❓ **¿Qué hace -L y -l?** -L añade un directorio a la ruta de búsqueda de
+bibliotecas. -l nombre busca libnombre.a o libnombre.so en esas rutas.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Diseño de un sistema de plugins cargables dinámicamente** — Diseñe e
+implemente un framework de plugins en C usando bibliotecas dinámicas (.so).
+El sistema debe: definir una interfaz de plugin clara (init, process,
+cleanup) mediante un header común; cargar plugins desde un directorio en
+tiempo de ejecución con dlopen/dlsym; registrar cada plugin con nombre,
+versión y descripción; permitir que los plugins se comuniquen entre sí vía
+una API de registro de servicios; y proporcionar un programa principal que
+cargue, liste, ejecute y descargue plugins. Incluya 3 plugins de ejemplo
+(uno de cifrado, uno de compresión, uno de logging).
+
+===============================================================================
+FIN DEL CAPÍTULO 69
+===============================================================================
+
+"La compilación separada es el arte de dividir para conquistar: cada
+módulo se construye en soledad, y el linker los reúne en armonía."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+70_CAPITULO_70_PROYECTO_MODULO_VII.txt
+===============================================================================

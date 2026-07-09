@@ -1,0 +1,839 @@
+================================================================================
+  RUBY MASTER BOOK
+  MÓDULO IV: PROGRAMACIÓN ORIENTADA A OBJETOS EN RUBY
+  CAPÍTULO 39: SELF
+================================================================================
+
+  "Self es el concepto más importante y más confuso de Ruby. Cuando
+   entiendes self, entiendes Ruby."
+   — Yukihiro "Matz" Matsumoto
+
+================================================================================
+
+  BIENVENIDA
+
+  self es una palabra reservada fundamental en Ruby. Siempre referencia
+  al objeto actual, pero "el objeto actual" cambia dependiendo del
+  contexto en el que te encuentres. self puede ser una instancia, una
+  clase, un módulo, o incluso el contexto global (main).
+
+  Comprender self es esencial para:
+  - Entender cómo se definen los métodos de clase
+  - Saber por qué los setters necesitan self
+  - Entender la diferencia entre ámbito de clase y ámbito de instancia
+  - Dominar la metaprogramación
+  - Escribir código correcto y predecible
+
+  En este capítulo exploraremos self en todos los contextos posibles:
+  dentro y fuera de clases, dentro de métodos de instancia y de clase,
+  en bloques, en lambdas, y en módulos.
+
+================================================================================
+
+  FRASE DEL CAPÍTULO
+
+  "Self es el centro del universo Ruby. Todo código se ejecuta en algún
+   contexto, y self es ese contexto. Cuando entiendes qué es self en
+   cada momento, el lenguaje se vuelve transparente."
+   — Lucas Ega
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+
+  Al finalizar este capítulo serás capaz de:
+
+  • Identificar qué es self en cualquier contexto de Ruby.
+  • Diferenciar self en métodos de instancia vs métodos de clase.
+  • Usar self explícitamente cuando sea necesario (setters).
+  • Comprender self en el contexto global (main).
+  • Entender self dentro de bloques, lambdas y procs.
+  • Usar class << self para cambiar el contexto.
+  • Aplicar self en metaprogramación y DSLs.
+
+================================================================================
+
+  1. ¿QUÉ ES SELF?
+
+  self es una pseudo-variable que siempre referencia al objeto que está
+  ejecutando el código actual. No puedes asignar un valor a self; Ruby
+  lo determina automáticamente según el contexto.
+
+  ------------------------------------------------------------------
+  Ejemplo 1: self en el contexto global
+  ------------------------------------------------------------------
+
+  puts self          # => main
+  puts self.class    # => Object
+
+  # En el contexto global (fuera de cualquier clase), self es "main",
+  # una instancia especial de Object.
+
+  def metodo_global
+    puts "Dentro de método global, self = #{self}"
+  end
+
+  metodo_global  # => Dentro de método global, self = main
+
+  ------------------------------------------------------------------
+  Ejemplo 2: self dentro de una clase
+  ------------------------------------------------------------------
+
+  class Demo
+    puts "Dentro de clase (fuera de métodos), self = #{self}"
+    # => Dentro de clase (fuera de métodos), self = Demo
+
+    def metodo_instancia
+      puts "Dentro de método de instancia, self = #{self}"
+      puts "self.class = #{self.class}"
+    end
+
+    def self.metodo_clase
+      puts "Dentro de método de clase, self = #{self}"
+    end
+  end
+
+  d = Demo.new
+  d.metodo_instancia
+  # => Dentro de método de instancia, self = #<Demo:0x...>
+  # => self.class = Demo
+
+  Demo.metodo_clase
+  # => Dentro de método de clase, self = Demo
+
+================================================================================
+
+  2. SELF EN EL CUERPO DE LA CLASE
+
+  Cuando Ruby ejecuta el código dentro de class...end, self es la
+  clase misma. Esto permite definir métodos de clase, variables de
+  instancia de clase y ejecutar código en el contexto de la clase.
+
+  ------------------------------------------------------------------
+  Ejemplo 3: self en el cuerpo de la clase
+  ------------------------------------------------------------------
+
+  class Configuracion
+    puts "self = #{self}"  # => self = Configuracion
+
+    # Variable de instancia de clase
+    @valores_por_defecto = { host: "localhost", puerto: 8080 }
+
+    def self.valores_por_defecto
+      @valores_por_defecto
+    end
+
+    # Método de clase usando self
+    def self.definir(clave, valor)
+      @valores_por_defecto[clave] = valor
+    end
+
+    def initialize
+      # Aquí self es la instancia
+      @config = self.class.valores_por_defecto.dup
+    end
+
+    def obtener(clave)
+      @config[clave]
+    end
+  end
+
+  cfg = Configuracion.new
+  puts cfg.obtener(:host)  # => localhost
+
+================================================================================
+
+  3. SELF EN MÉTODOS DE INSTANCIA
+
+  En métodos de instancia, self es la instancia que recibe el mensaje.
+  Es el objeto individual con sus propias variables de instancia.
+
+  ------------------------------------------------------------------
+  Ejemplo 4: Self en métodos de instancia
+  ------------------------------------------------------------------
+
+  class Persona
+    def initialize(nombre)
+      @nombre = nombre
+    end
+
+    def nombre
+      @nombre
+    end
+
+    def nombre=(nuevo)
+      @nombre = nuevo
+    end
+
+    def presentarse
+      # Self implícito: nombre llama al getter
+      "Hola, soy #{nombre}"
+    end
+
+    def self_introduccion
+      # Self explícito: self.nombre también funciona para getter
+      "Hola, soy #{self.nombre}"
+    end
+
+    def renombrar(nuevo)
+      # Self OBLIGATORIO para setters
+      self.nombre = nuevo
+      # nombre = nuevo  # Esto crearía una variable local!
+    end
+
+    def probar_asignacion_sin_self
+      nombre = "Variable local"  # Esto es una variable local
+    end
+
+    def que_soy
+      "Soy #{self.class} con id #{self.object_id}"
+    end
+  end
+
+  p = Persona.new("Ana")
+  puts p.presentarse        # => Hola, soy Ana
+  puts p.self_introduccion  # => Hola, soy Ana
+
+  p.renombrar("María")
+  puts p.nombre             # => María
+
+  p.probar_asignacion_sin_self
+  puts p.nombre             # => María (no cambió)
+
+  puts p.que_soy  # => Soy Persona con id ...
+
+================================================================================
+
+  4. POR QUÉ SELF ES OBLIGATORIO EN SETTERS
+
+  La razón por la que self es obligatorio en setters es que Ruby
+  interpreta nombre = valor como la creación de una variable local,
+  no como una llamada a un método.
+
+  ------------------------------------------------------------------
+  Ejemplo 5: Setter sin self (error común)
+  ------------------------------------------------------------------
+
+  class Rectangulo
+    attr_reader :ancho, :alto
+
+    def initialize(ancho, alto)
+      @ancho = ancho
+      @alto = alto
+    end
+
+    def escalar(factor)
+      ancho = @ancho * factor    # Crea variable LOCAL, no llama a setter!
+      alto = @alto * factor      # Crea variable LOCAL, no llama a setter!
+    end
+
+    def escalar_correcto(factor)
+      self.ancho = @ancho * factor  # Llama al setter
+      self.alto = @alto * factor    # Llama al setter
+    end
+
+    def ancho=(valor)
+      puts "Setter ancho llamado con #{valor}"
+      @ancho = valor
+    end
+
+    def alto=(valor)
+      puts "Setter alto llamado con #{valor}"
+      @alto = valor
+    end
+  end
+
+  r = Rectangulo.new(10, 5)
+  r.escalar(2)
+  puts r.ancho  # => 10 (no cambió!)
+  puts r.alto   # => 5 (no cambió!)
+
+  r.escalar_correcto(2)
+  puts r.ancho  # => 20
+  puts r.alto   # => 10
+
+================================================================================
+
+  5. SELF EN MÉTODOS DE CLASE
+
+  En métodos de clase, self es la propia clase. Esto permite acceder
+  a variables de instancia de clase y llamar a otros métodos de clase.
+
+  ------------------------------------------------------------------
+  Ejemplo 6: Self en métodos de clase
+  ------------------------------------------------------------------
+
+  class Biblioteca
+    @contador = 0
+
+    class << self
+      attr_accessor :contador
+    end
+
+    def initialize(nombre)
+      @nombre = nombre
+      self.class.contador += 1
+    end
+
+    def self.crear(nombre)
+      puts "Creando biblioteca '#{nombre}'"
+      nueva = new(nombre)
+      nueva
+    end
+
+    def self.total
+      @contador
+    end
+
+    def self.reporte
+      # self aquí es Biblioteca
+      "Total de bibliotecas: #{total}"  # Self implícito
+    end
+
+    def nombre
+      @nombre
+    end
+  end
+
+  b1 = Biblioteca.crear("Central")
+  b2 = Biblioteca.crear("Norte")
+
+  puts Biblioteca.reporte  # => Total de bibliotecas: 2
+
+================================================================================
+
+  6. SELF EN CLASS << SELF
+
+  class << self abre la clase singleton del objeto actual. Si estamos
+  dentro de una clase, self es la clase, y class << self permite
+  definir métodos de clase en un bloque.
+
+  ------------------------------------------------------------------
+  Ejemplo 7: Self en class << self
+  ------------------------------------------------------------------
+
+  class Servicio
+    class << self
+      # Dentro de class << self, self es la clase Servicio
+      puts "Dentro de class << self, self = #{self}"
+      # => Dentro de class << self, self = Servicio
+
+      def iniciar
+        puts "Iniciando servicio desde #{self}"
+        conectar
+      end
+
+      def detener
+        desconectar
+      end
+
+      private
+
+      def conectar
+        puts "Conectando..."
+      end
+
+      def desconectar
+        puts "Desconectando..."
+      end
+    end
+  end
+
+  Servicio.iniciar
+  # => Iniciando servicio desde Servicio
+  # => Conectando...
+  # Servicio.conectar  # Error! private
+
+  ------------------------------------------------------------------
+  Ejemplo 8: class << self con un objeto cualquiera
+  ------------------------------------------------------------------
+
+  objeto = Object.new
+  puts "objeto.self (no existe, pero self en contexto global es main)"
+
+  class << objeto
+    # Ahora self es la singleton_class del objeto
+    def saludar
+      "Hola desde el singleton del objeto"
+    end
+
+    def despedir
+      "Adiós"
+    end
+  end
+
+  puts objeto.saludar  # => Hola desde el singleton del objeto
+  puts objeto.despedir # => Adiós
+
+================================================================================
+
+  7. SELF EN BLOQUES
+
+  En Ruby tradicional (proc, bloques con do/end), los bloques heredan
+  el self del contexto donde fueron creados. No tienen su propio self.
+
+  ------------------------------------------------------------------
+  Ejemplo 9: Self en bloques (hereda del contexto)
+  ------------------------------------------------------------------
+
+  class Demo
+    def initialize
+      @valor = 42
+    end
+
+    def probar_bloques
+      puts "En método, self = #{self}"
+
+      [1, 2].each do |i|
+        puts "  Dentro del bloque, self = #{self}"
+        puts "  @valor = #{@valor}"  # Accede a @valor de la instancia
+      end
+    end
+  end
+
+  d = Demo.new
+  d.probar_bloques
+  # => En método, self = #<Demo:0x...>
+  # => Dentro del bloque, self = #<Demo:0x...> (el mismo!)
+  # => @valor = 42
+
+  ------------------------------------------------------------------
+  Ejemplo 10: Self en instance_eval y instance_exec
+  ------------------------------------------------------------------
+
+  class Persona
+    def initialize(nombre)
+      @nombre = nombre
+    end
+  end
+
+  p = Persona.new("Ana")
+
+  # instance_eval cambia self al receptor
+  p.instance_eval do
+    puts "Dentro de instance_eval, self = #{self}"
+    puts "@nombre = #{@nombre}"  # Acceso directo a @nombre
+  end
+  # => Dentro de instance_eval, self = #<Persona:0x...>
+  # => @nombre = Ana
+
+  # instance_exec es similar pero pasa argumentos
+  p.instance_exec("Hola") do |saludo|
+    puts "#{saludo}, soy #{self}"
+  end
+  # => Hola, soy #<Persona:0x...>
+
+================================================================================
+
+  8. SELF EN LAMBDAS Y PROCS
+
+  Las lambdas y procs también heredan el self del contexto de creación.
+  Pero hay diferencias sutiles en cómo manejan los argumentos y el
+  return.
+
+  ------------------------------------------------------------------
+  Ejemplo 11: Self en lambdas
+  ------------------------------------------------------------------
+
+  class Contexto
+    def initialize
+      @valor = "instancia"
+    end
+
+    def crear_lambda
+      -> { puts "Lambda: self = #{self}, @valor = #{@valor}" }
+    end
+
+    def crear_proc
+      Proc.new { puts "Proc: self = #{self}, @valor = #{@valor}" }
+    end
+  end
+
+  ctx = Contexto.new
+  lam = ctx.crear_lambda
+  pro = ctx.crear_proc
+
+  lam.call  # => Lambda: self = #<Contexto:...>, @valor = instancia
+  pro.call  # => Proc: self = #<Contexto:...>, @valor = instancia
+
+  # Ambos heredan self del contexto donde fueron creados.
+
+================================================================================
+
+  9. SELF EN MÓDULOS
+
+  Cuando un módulo se incluye en una clase, los métodos del módulo
+  se ejecutan en el contexto de la instancia (self es la instancia).
+
+  ------------------------------------------------------------------
+  Ejemplo 12: Self en módulos
+  ------------------------------------------------------------------
+
+  module Saludador
+    def saludar
+      "¡Hola! Soy #{nombre_completo}"
+    end
+
+    def presentacion_completa
+      "#{self.class}: #{nombre_completo}"
+    end
+
+    def quien_soy
+      "self = #{self}"
+    end
+  end
+
+  class Persona
+    include Saludador
+
+    def initialize(nombre, apellido)
+      @nombre = nombre
+      @apellido = apellido
+    end
+
+    def nombre_completo
+      "#{@nombre} #{@apellido}"
+    end
+  end
+
+  p = Persona.new("Ana", "García")
+  puts p.saludar              # => ¡Hola! Soy Ana García
+  puts p.presentacion_completa # => Persona: Ana García
+  puts p.quien_soy            # => self = #<Persona:0x...>
+
+================================================================================
+
+  10. EJEMPLO COMPLETO: SELF EN ACCIÓN
+
+  ------------------------------------------------------------------
+  Ejemplo 13: Rastreador de self
+  ------------------------------------------------------------------
+
+  module Rastreable
+    def self.included(base)
+      puts "[Módulo] included en #{base}"
+      puts "[Módulo] self = #{self}"
+    end
+
+    def rastrear
+      puts "[Método de instancia del módulo] self = #{self}"
+    end
+  end
+
+  class Ejemplo
+    puts "[Cuerpo de clase] self = #{self}"
+
+    include Rastreable
+
+    @variable_clase = "soy de clase"
+
+    def initialize
+      @variable_instancia = "soy de instancia"
+    end
+
+    def test
+      puts "[Método de instancia] self = #{self}"
+      puts "[Método de instancia] self.class = #{self.class}"
+
+      # self.class ejecuta un método de clase en el contexto de la clase
+      self.class.test_clase
+    end
+
+    def self.test_clase
+      puts "[Método de clase] self = #{self}"
+      puts "[Método de clase] @variable_clase = #{@variable_clase}"
+    end
+
+    class << self
+      puts "[class << self] self = #{self}"
+
+      def otro_clase
+        puts "[Otro método de clase] self = #{self}"
+      end
+    end
+  end
+
+  # Probando en el contexto global
+  puts "[Global] self = #{self}"
+
+  e = Ejemplo.new
+  e.test
+  e.rastrear
+
+  Ejemplo.test_clase
+  Ejemplo.otro_clase
+
+================================================================================
+
+  11. SELF EN DSLS (DOMAIN SPECIFIC LANGUAGES)
+
+  self es fundamental para crear DSLs elegantes en Ruby.
+
+  ------------------------------------------------------------------
+  Ejemplo 14: DSL con instance_eval
+  ------------------------------------------------------------------
+
+  class Router
+    def initialize(&block)
+      @rutas = []
+      instance_eval(&block) if block
+    end
+
+    def get(ruta, destino)
+      @rutas << { metodo: "GET", ruta: ruta, destino: destino }
+    end
+
+    def post(ruta, destino)
+      @rutas << { metodo: "POST", ruta: ruta, destino: destino }
+    end
+
+    def mostrar
+      @rutas.each { |r| puts "#{r[:metodo]} #{r[:ruta]} -> #{r[:destino]}" }
+    end
+  end
+
+  app = Router.new do
+    get "/", "HomeController#index"
+    get "/usuarios", "UsuariosController#index"
+    post "/usuarios", "UsuariosController#create"
+    get "/login", "SesionesController#new"
+  end
+
+  app.mostrar
+
+  # instance_eval hace que self dentro del bloque sea la instancia
+  # de Router, por lo que get y post se llaman sobre self.
+
+  ------------------------------------------------------------------
+  Ejemplo 15: DSL con yield self
+  ------------------------------------------------------------------
+
+  class Configuracion
+    attr_accessor :host, :puerto, :debug, :timeout
+
+    def initialize
+      @host = "localhost"
+      @puerto = 8080
+      @debug = false
+      @timeout = 30
+      yield self if block_given?
+    end
+
+    def configurar(&block)
+      instance_eval(&block)
+    end
+
+    def to_s
+      "#{@host}:#{@puerto} (debug: #{@debug}, timeout: #{@timeout}s)"
+    end
+  end
+
+  # DSL con yield self
+  cfg1 = Configuracion.new do |c|
+    c.host = "example.com"
+    c.puerto = 443
+    c.debug = true
+  end
+  puts cfg1  # => example.com:443 (debug: true, timeout: 30s)
+
+  # DSL con instance_eval
+  cfg2 = Configuracion.new
+  cfg2.configurar do
+    self.host = "api.example.com"
+    self.puerto = 3000
+    self.timeout = 60
+  end
+  puts cfg2  # => api.example.com:3000 (debug: false, timeout: 60s)
+
+================================================================================
+
+  12. TIPS Y BUENAS PRÁCTICAS
+
+  1. Conoce siempre qué es self en el contexto actual.
+  2. Usa self explícito solo cuando sea necesario (setters, métodos
+     de clase).
+  3. No uses self para getters a menos que quieras enfatizar que es
+     una llamada a método.
+  4. Recuerda: sin self en setters, creas variables locales.
+  5. instance_eval cambia self al receptor, ideal para DSLs.
+  6. Los bloques heredan self del contexto de creación.
+  7. class << self es útil para agrupar métodos de clase.
+  8. self en el cuerpo de la clase es la clase misma.
+
+================================================================================
+
+  RESUMEN DEL CAPÍTULO
+
+  • self referencia al objeto actual que ejecuta el código.
+  • En el contexto global, self es main (Object).
+  • En el cuerpo de la clase, self es la clase.
+  • En métodos de instancia, self es la instancia.
+  • En métodos de clase, self es la clase.
+  • self es obligatorio en setters (self.nombre = valor).
+  • Sin self, nombre = valor crea una variable local.
+  • class << self cambia al contexto de la clase singleton.
+  • Los bloques heredan self del contexto donde se crean.
+  • instance_eval cambia self al receptor del método.
+  • self permite crear DSLs elegantes.
+
+================================================================================
+
+  EJERCICIOS DEL CAPÍTULO
+
+  Ejercicio 1: Identificar self
+  Sin ejecutar código, determina qué es self en cada línea marcada:
+  puts self            # ?
+  class A              # ?
+    puts self          # ?
+    def m              # ?
+      puts self        # ?
+    end
+    def self.n         # ?
+      puts self        # ?
+    end
+  end
+
+  Ejercicio 2: Self en setters
+  Define una clase Producto con precio. Crea un método aplicar_descuento
+  que use self.precio = y otro que intente precio = (sin self).
+  Demuestra la diferencia.
+
+  Ejercicio 3: class << self
+  Reescribe una clase Utilidades para que todos sus métodos de clase
+  estén dentro de class << self. Incluye métodos públicos y privados.
+
+  Ejercicio 4: instance_eval para DSL
+  Crea una clase TareaDSL que permita:
+  TareaDSL.new do
+    titulo "Estudiar"
+    prioridad :alta
+    etiqueta "ruby"
+  end
+
+  Ejercicio 5: Self en bloques
+  Crea una clase que demuestre que self dentro de un bloque each es
+  el mismo que fuera del bloque (hereda el contexto).
+
+  Ejercicio 6: Self en módulos
+  Define un módulo que añada un método debug que imprima self y self.class.
+  Inclúyelo en varias clases y llama al método.
+
+  Ejercicio 7: DSL con yield self
+  Crea una clase ServidorConfigurable que acepte un bloque donde se
+  configuren host, port, ssl y timeout.
+
+  Ejercicio 8: Rastreador de self
+  Implementa una clase que tenga métodos en todos los niveles (clase,
+  instancia, singleton) y cada uno imprima self. Crea una instancia
+  y llama a todos.
+
+  Ejercicio 9: self para comparaciones
+  Define una clase con un método protected donde self se use para
+   comparar dos instancias.
+
+  Ejercicio 10: Sistema de self
+  Construye una jerarquía con métodos que demuestren los 5 contextos
+  principales de self en Ruby.
+
+================================================================================
+
+  PREGUNTAS FRECUENTES (FAQ)
+
+  P: ¿Qué es main en Ruby?
+  R: main es el contexto global de ejecución. Es una instancia especial
+     de Object donde se ejecuta el código que no está dentro de ninguna
+     clase o módulo. Los métodos definidos en main se convierten en
+     métodos privados de Object (disponibles globalmente).
+
+  P: ¿Por qué self no funciona igual en bloques que en lambdas?
+  R: En realidad, self funciona igual en ambos: hereda el self del
+     contexto de creación. La diferencia entre bloques, procs y lambdas
+     está en cómo manejan return y argumentos, no en self.
+
+  P: ¿Puedo cambiar el valor de self?
+  R: No, self es una pseudo-variable y no se puede asignar. Sin embargo,
+     puedes cambiar el contexto en el que se evalúa un bloque con
+     instance_eval, instance_exec, o class_eval.
+
+  P: ¿Cuándo debo usar self explícitamente?
+  R: 1) En setters (self.nombre = valor). 2) Cuando quieras enfatizar
+     que estás llamando a un método y no a una variable. 3) En métodos
+     de clase. 4) Cuando necesites desambiguar.
+
+  P: ¿Qué es class << self exactamente?
+  R: Abre la clase singleton del objeto actual. Dentro de una clase,
+     permite definir métodos de clase. Es equivalente a definir
+     métodos con self.metodo, pero permite agruparlos y usar control
+     de acceso (private, protected).
+
+  P: ¿Por qué dentro de un bloque puedo acceder a @variables sin self?
+  R: Porque el bloque hereda el self del contexto de creación. Si el
+     bloque se creó dentro de un método de instancia, self es la
+     instancia y @var accede a las variables de esa instancia.
+
+================================================================================
+
+  DESAFÍO DEL ARQUITECTO
+
+  Construye un mini framework de inyección de dependencias que demuestre
+  el uso de self en múltiples contextos.
+
+  1. Clase Contenedor (DSL con instance_eval):
+     - Método de clase: configure(&block) que evalúa el bloque en el
+       contexto del contenedor
+     - Métodos dentro del DSL:
+       - registrar(nombre, clase, *args)
+       - singleton(nombre, clase, *args)
+       - usar(archivo) para cargar configuración externa
+     - Método de instancia: resolver(nombre) devuelve la instancia
+
+  2. Dentro de configure, self debe ser la instancia del contenedor
+     para que registrar y singleton estén disponibles directamente.
+
+  3. Clase Servicio que use el contenedor:
+     - Métodos de clase con self para definir dependencias
+     - depends_on :repositorio, :logger (usando class << self)
+
+  4. Módulo AutoInyectable:
+     - Cuando se incluye, añade métodos de instancia que automática-
+       mente resuelven dependencias del contenedor global
+     - Usa self.included para registrar la clase
+     - self dentro de los métodos del módulo es la instancia
+
+  5. Clase Logger (Singleton con self):
+     - Implementa el patrón Singleton manualmente usando métodos
+       de clase con self
+     - self.instance siempre devuelve la misma instancia
+
+  6. Demostración:
+     - Configurar el contenedor con un bloque
+     - Crear clases que usen AutoInyectable
+     - Resolver dependencias
+     - Mostrar self en cada contexto
+
+  Este desafío integra: self en todos los contextos, class << self,
+  instance_eval, DSLs, módulos con self.included, métodos de clase,
+  y el patrón Singleton.
+
+================================================================================
+
+  CIERRE DEL CAPÍTULO
+
+  Has explorado self en toda su profundidad. Ahora sabes que self
+  cambia según el contexto: puede ser main, una clase, una instancia,
+  o el contexto de una clase singleton.
+
+  Entender self es entender Ruby. Cada vez que veas código Ruby,
+  pregúntate: "¿Qué es self aquí?" Esta pregunta te llevará a
+  comprender cómo funciona el código a nivel fundamental.
+
+  self es la clave para dominar la metaprogramación, los DSLs, y la
+  POO en Ruby. Con este conocimiento, estás listo para el último
+  capítulo de este módulo: el proyecto práctico que integra todo lo
+  aprendido.
+
+  ¡Nos vemos en el Capítulo 40!
+
+================================================================================
+  FIN DEL CAPÍTULO 39 — SELF
+================================================================================

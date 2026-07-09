@@ -1,0 +1,950 @@
+================================================================================
+  MÓDULO V: ARCHIVOS Y SERIALIZACIÓN
+  CAPÍTULO 49: PATH Y DIRECTORIOS
+  "C# MASTER BOOK"
+================================================================================
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 49! La clase Path es una de esas herramientas que
+parecen simples pero que, mal usadas, pueden causar errores difíciles de
+depurar. Construir rutas correctamente, manejar separadores de directorio,
+combinar segmentos de ruta, extraer extensiones y nombres de archivo son
+operaciones fundamentales en cualquier aplicación que toque el sistema de
+archivos.
+
+En este capítulo dominaremos Path, exploraremos técnicas de enumeración de
+directorios, y aprenderemos a navegar por el árbol de directorios de forma
+eficiente y robusta.
+
+================================================================================
+  FRASE DEL DÍA
+================================================================================
+
+"Una ruta bien construida es el primer paso hacia un archivo bien gestionado.
+Path es el GPS de nuestros datos."
+
+--- Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  - Dominar Path.Combine y construcción de rutas.
+  - Utilizar Path.GetExtension, GetFileName, GetFileNameWithoutExtension.
+  - Implementar Path.ChangeExtension y transformaciones de ruta.
+  - Diferenciar rutas relativas y absolutas.
+  - Usar Directory.EnumerateFiles para traversal eficiente.
+  - Implementar búsqueda recursiva de archivos.
+  - Manejar archivos y directorios temporales.
+  - Aplicar buenas prácticas de manipulación de rutas.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+1. La clase Path: introducción
+2. Path.Combine: Construcción segura de rutas
+3. Path.GetExtension, GetFileName, GetFileNameWithoutExtension
+4. Path.ChangeExtension y GetDirectoryName
+5. Path.GetFullPath, GetRelativePath, IsPathFullyQualified
+6. Path.GetTempPath, GetTempFileName, GetRandomFileName
+7. Path.Exists y validación de rutas
+8. Directory.EnumerateFiles: enumeración eficiente
+9. Directory traversal recursivo
+10. FileSystemWatcher: monitoreo de directorios
+11. Buenas prácticas con rutas
+
+----------------------------------------------------------------------
+1. LA CLASE PATH: INTRODUCCIÓN
+----------------------------------------------------------------------
+
+Path (System.IO) es una clase estática que proporciona métodos para manipular
+strings que representan rutas de archivos y directorios. NO verifica si los
+archivos existen realmente; solo trabaja con strings.
+
+  ```csharp
+  using System.IO;
+
+  // Separador de directorio de la plataforma actual
+  char sep = Path.DirectorySeparatorChar;     // '\' en Windows, '/' en Linux
+  char altSep = Path.AltDirectorySeparatorChar; // '/' en Windows
+  char volSep = Path.VolumeSeparatorChar;     // ':' en Windows
+  string[] invalidos = Path.GetInvalidPathChars();
+  char[] invalidosArchivo = Path.GetInvalidFileNameChars();
+  ```
+
+Path es multiplataforma: en Windows usa '\' y maneja letras de unidad; en
+Linux/macOS usa '/' y no tiene letras de unidad.
+
+----------------------------------------------------------------------
+2. PATH.COMBINE: CONSTRUCCIÓN SEGURA DE RUTAS
+----------------------------------------------------------------------
+
+NUNCA concatenes rutas con strings. Siempre usa Path.Combine.
+
+  ```csharp
+  // MAL
+  string ruta = directorio + "\\" + archivo; // No multiplataforma
+  string ruta = directorio + "/" + archivo;  // Funciona, pero...
+
+  // BIEN
+  string ruta = Path.Combine(directorio, archivo);
+  string ruta = Path.Combine("carpeta", "sub", "archivo.txt");
+  ```
+
+Múltiples segmentos:
+  ```csharp
+  string ruta = Path.Combine("base", "sub1", "sub2", "archivo.txt");
+  // "base/sub1/sub2/archivo.txt" en Linux
+  // "base\sub1\sub2\archivo.txt" en Windows
+  ```
+
+Comportamiento importante:
+  ```csharp
+  // Si el último segmento empieza con separador, se trata como ruta absoluta
+  Path.Combine("carpeta", "/archivo.txt");
+  // "/archivo.txt" en Linux (ignora "carpeta")
+
+  // En Windows, si un segmento tiene letra de unidad, es absoluto
+  Path.Combine("carpeta", @"D:\archivo.txt");
+  // "D:\archivo.txt" (ignora "carpeta")
+  ```
+
+Path.Join (.NET 8+): Similar a Combine pero no ignora segmentos previos.
+  ```csharp
+  string ruta = Path.Join("carpeta", "/archivo.txt");
+  // Linux: "carpeta/archivo.txt" (no ignora)
+  ```
+
+----------------------------------------------------------------------
+3. PATH.GETEXTENSION, GETFileName, GETFileNameWithoutExtension
+----------------------------------------------------------------------
+
+Extraer partes de una ruta:
+
+  ```csharp
+  string ruta = @"/home/usuarios/documentos/reporte-final.pdf";
+
+  string ext = Path.GetExtension(ruta);
+  Console.WriteLine(ext); // ".pdf"
+
+  string nombre = Path.GetFileName(ruta);
+  Console.WriteLine(nombre); // "reporte-final.pdf"
+
+  string nombreSinExt = Path.GetFileNameWithoutExtension(ruta);
+  Console.WriteLine(nombreSinExt); // "reporte-final"
+
+  string directorio = Path.GetDirectoryName(ruta);
+  Console.WriteLine(directorio); // "/home/usuarios/documentos"
+
+  string raiz = Path.GetPathRoot(ruta);
+  Console.WriteLine(raiz); // "/" en Linux, "C:\" en Windows
+  ```
+
+Casos especiales:
+  ```csharp
+  Path.GetExtension("archivo");        // "" (sin extensión)
+  Path.GetExtension("archivo.tar.gz"); // ".gz" (solo última)
+  Path.GetExtension(".gitignore");     // ".gitignore" (archivo oculto)
+
+  Path.GetFileName("");                // ""
+  Path.GetFileName(null);              // null
+  Path.GetFileName(@"dir\..\archivo.txt"); // "archivo.txt" (no normaliza)
+  ```
+
+----------------------------------------------------------------------
+4. PATH.CHANGEEXTENSION Y GETDIRECTORYNAME
+----------------------------------------------------------------------
+
+Cambiar extensión:
+  ```csharp
+  string ruta = "imagen.jpg";
+  string nuevo = Path.ChangeExtension(ruta, ".png");
+  Console.WriteLine(nuevo); // "imagen.png"
+
+  // Quitar extensión
+  string sinExt = Path.ChangeExtension(ruta, null);
+  Console.WriteLine(sinExt); // "imagen"
+
+  // ChangeExtension solo cambia la última extensión
+  Path.ChangeExtension("backup.tar.gz", ".zip");
+  // "backup.tar.zip"
+  ```
+
+GetDirectoryName devuelve el directorio padre:
+  ```csharp
+  string ruta = "/home/user/docs/file.txt";
+  string dir = Path.GetDirectoryName(ruta);
+  Console.WriteLine(dir); // "/home/user/docs"
+
+  // Si la ruta es un directorio, GetDirectoryName devuelve el padre
+  string soloDir = "/home/user/docs";
+  string padre = Path.GetDirectoryName(soloDir);
+  Console.WriteLine(padre); // "/home/user"
+  ```
+
+HasExtension:
+  ```csharp
+  Path.HasExtension("archivo.txt"); // true
+  Path.HasExtension("archivo");     // false
+  ```
+
+----------------------------------------------------------------------
+5. PATH.GETFULLPATH, GETRELATIVEPATH, ISPATHFULLYQUALIFIED
+----------------------------------------------------------------------
+
+Convertir a ruta absoluta:
+  ```csharp
+  string relativa = @"docs\archivo.txt";
+  string absoluta = Path.GetFullPath(relativa);
+  Console.WriteLine(absoluta);
+  // "/current/directory/docs/archivo.txt" o "C:\current\docs\archivo.txt"
+  ```
+
+Normalizar ruta:
+  ```csharp
+  string ruta = @"/home/user/./docs/../docs2/archivo.txt";
+  string normalizada = Path.GetFullPath(ruta);
+  Console.WriteLine(normalizada);
+  // "/home/user/docs2/archivo.txt"
+  ```
+
+Ruta relativa entre dos rutas (.NET 5+):
+  ```csharp
+  string rutaBase = @"/home/user/docs";
+  string rutaDestino = @"/home/user/docs/sub/proyecto/archivo.txt";
+
+  string relativa = Path.GetRelativePath(rutaBase, rutaDestino);
+  Console.WriteLine(relativa); // "sub/proyecto/archivo.txt"
+
+  // También funciona con directorios hacia arriba
+  string relUp = Path.GetRelativePath(rutaDestino, rutaBase);
+  Console.WriteLine(relUp); // "../.."
+  ```
+
+IsPathFullyQualified / IsPathRooted:
+  ```csharp
+  Path.IsPathFullyQualified("/home/user/file.txt"); // true
+  Path.IsPathFullyQualified("file.txt");             // false
+  Path.IsPathRooted("/home/user/file.txt");          // true
+  Path.IsPathRooted("file.txt");                     // false
+  Path.IsPathRooted(@"C:\file.txt");                 // true
+  ```
+
+----------------------------------------------------------------------
+6. PATH.GETTEMPPATH, GETTEMPFILENAME, GETRANDOMFILENAME
+----------------------------------------------------------------------
+
+Archivos temporales:
+  ```csharp
+  // Directorio temporal del sistema
+  string tempDir = Path.GetTempPath();
+  Console.WriteLine(tempDir); // "/tmp/" o "C:\Users\...\AppData\Local\Temp\"
+
+  // Crear archivo temporal único (crea el archivo)
+  string tempFile = Path.GetTempFileName();
+  Console.WriteLine(tempFile); // "/tmp/tmpXXXX.tmp"
+  // ¡Importante! GetTempFileName CREA el archivo (0 bytes)
+  // Debes eliminarlo cuando termines
+
+  // Nombre aleatorio (solo genera nombre, no crea archivo)
+  string randomName = Path.GetRandomFileName();
+  Console.WriteLine(randomName); // "w2f3k4j5.dat"
+  ```
+
+Uso práctico:
+  ```csharp
+  public string EscribirArchivoTemporal(string contenido)
+  {
+      string tempFile = Path.GetTempFileName();
+      File.WriteAllText(tempFile, contenido);
+      return tempFile;
+  }
+
+  public void ProcesarConTemp()
+  {
+      string temp = Path.GetTempFileName();
+      try
+      {
+          File.WriteAllText(temp, "datos temporales");
+          // Procesar...
+      }
+      finally
+      {
+          if (File.Exists(temp))
+              File.Delete(temp);
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+7. PATH.EXISTS Y VALIDACIÓN DE RUTAS
+----------------------------------------------------------------------
+
+Path no verifica existencia de archivos, pero puedes validar sintaxis:
+
+  ```csharp
+  // Verificar si los caracteres son válidos para un nombre de archivo
+  public static bool EsNombreArchivoValido(string nombre)
+  {
+      return !nombre.Any(c => Path.GetInvalidFileNameChars().Contains(c))
+          && !string.IsNullOrWhiteSpace(nombre);
+  }
+
+  // Verificar ruta completa
+  public static bool EsRutaValida(string ruta)
+  {
+      try
+      {
+          Path.GetFullPath(ruta);
+          return true;
+      }
+      catch (ArgumentException) { return false; }
+      catch (PathTooLongException) { return false; }
+  }
+  ```
+
+Longitud máxima de ruta:
+  ```csharp
+  // Windows: 260 caracteres (MAX_PATH)
+  // .NET Core/5+: Soporta rutas largas (>260) con \\?\
+  // Linux/macOS: 4096 caracteres
+
+  if (ruta.Length >= 260 && OperatingSystem.IsWindows())
+  {
+      // En Windows moderno, habilitar rutas largas con app manifest
+      // o usar \\?\ prefix
+      string rutaExtendida = @"\\?\" + Path.GetFullPath(ruta);
+  }
+  ```
+
+Validación de ruta completa:
+  ```csharp
+  public static (bool esValida, string? mensaje) ValidarRuta(string ruta)
+  {
+      if (string.IsNullOrWhiteSpace(ruta))
+          return (false, "La ruta no puede estar vacía.");
+
+      try
+      {
+          string fullPath = Path.GetFullPath(ruta);
+
+          if (fullPath.Length > 260 && OperatingSystem.IsWindows())
+              return (false, "La ruta excede los 260 caracteres.");
+
+          string dirName = Path.GetDirectoryName(fullPath);
+          if (dirName != null && !Directory.Exists(dirName))
+              return (true, "El directorio no existe, pero la ruta es válida.");
+
+          return (true, null);
+      }
+      catch (ArgumentException ex)
+      {
+          return (false, $"Caracteres inválidos en la ruta: {ex.Message}");
+      }
+      catch (PathTooLongException)
+      {
+          return (false, "La ruta es demasiado larga.");
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+8. DIRECTORY.ENUMERATEFILES: ENUMERACIÓN EFICIENTE
+----------------------------------------------------------------------
+
+Directory.EnumerateFiles devuelve un IEnumerable<string> lazy, ideal para
+directorios con muchos archivos.
+
+  ```csharp
+  string directorio = "/home/user/docs";
+
+  // Enumeración simple
+  foreach (string archivo in Directory.EnumerateFiles(directorio))
+  {
+      Console.WriteLine(archivo);
+  }
+
+  // Con filtro
+  foreach (string archivo in Directory.EnumerateFiles(directorio, "*.txt"))
+  {
+      Console.WriteLine(archivo);
+  }
+
+  // Recursivo
+  foreach (string archivo in Directory.EnumerateFiles(directorio, "*.*",
+      SearchOption.AllDirectories))
+  {
+      Console.WriteLine(archivo);
+  }
+  ```
+
+Diferencia con GetFiles:
+  ```csharp
+  // GetFiles: carga TODOS los nombres en un string[]
+  string[] archivos = Directory.GetFiles(directorio, "*.*",
+      SearchOption.AllDirectories); // Puede consumir mucha memoria
+
+  // EnumerateFiles: uno a la vez
+  foreach (string archivo in Directory.EnumerateFiles(directorio, "*.*",
+      SearchOption.AllDirectories))
+  {
+      // Solo un string en memoria a la vez
+      if (new FileInfo(archivo).Length > 100_000_000)
+          Console.WriteLine($"Archivo grande: {archivo}");
+  }
+  ```
+
+Filtros con LINQ:
+  ```csharp
+  var archivosRecientes = Directory
+      .EnumerateFiles(@"/var/log", "*.log", SearchOption.AllDirectories)
+      .Select(path => new FileInfo(path))
+      .Where(fi => fi.LastWriteTime > DateTime.Now.AddDays(-1))
+      .OrderByDescending(fi => fi.Length)
+      .Take(10);
+
+  foreach (FileInfo fi in archivosRecientes)
+      Console.WriteLine($"{fi.Name} - {fi.LastWriteTime} - {fi.Length} bytes");
+  ```
+
+----------------------------------------------------------------------
+9. DIRECTORY TRAVERSAL RECURSIVO
+----------------------------------------------------------------------
+
+Recorrer directorios recursivamente:
+
+  ```csharp
+  public static void RecorrerDirectorios(string directorio, string patron = "*.*")
+  {
+      try
+      {
+          foreach (string archivo in Directory.EnumerateFiles(directorio, patron))
+          {
+              Console.WriteLine($"Archivo: {archivo}");
+          }
+
+          foreach (string subdir in Directory.EnumerateDirectories(directorio))
+          {
+              Console.WriteLine($"Directorio: {subdir}");
+              RecorrerDirectorios(subdir, patron);
+          }
+      }
+      catch (UnauthorizedAccessException ex)
+      {
+          Console.WriteLine($"Sin acceso: {ex.Message}");
+      }
+      catch (PathTooLongException)
+      {
+          Console.WriteLine($"Ruta demasiado larga en: {directorio}");
+      }
+  }
+  ```
+
+Tree traversal con SearchOption:
+  ```csharp
+  // TopDirectoryOnly: solo el directorio actual
+  // AllDirectories: todos los subdirectorios
+
+  // Pero cuidado: AllDirectories puede fallar si no tienes permisos
+  // en algún subdirectorio
+
+  // Alternativa: manejar acceso denegado manualmente
+  public static IEnumerable<string> SafeEnumerateFiles(
+      string directorio, string patron = "*.*")
+  {
+      var cola = new Queue<string>();
+      cola.Enqueue(directorio);
+
+      while (cola.Count > 0)
+      {
+          string dir = cola.Dequeue();
+          string[] archivos;
+          string[] subdirs;
+
+          try
+          {
+              archivos = Directory.GetFiles(dir, patron);
+          }
+          catch (UnauthorizedAccessException) { continue; }
+
+          foreach (string archivo in archivos)
+              yield return archivo;
+
+          try
+          {
+              subdirs = Directory.GetDirectories(dir);
+          }
+          catch (UnauthorizedAccessException) { continue; }
+
+          foreach (string subdir in subdirs)
+              cola.Enqueue(subdir);
+      }
+  }
+  ```
+
+Obtener estadísticas del árbol:
+  ```csharp
+  public static (long archivos, long bytes, long directorios) ObtenerEstadisticas(
+      string directorio)
+  {
+      long countArchivos = 0;
+      long totalBytes = 0;
+      long countDirs = 0;
+
+      var cola = new Queue<string>();
+      cola.Enqueue(directorio);
+
+      while (cola.Count > 0)
+      {
+          string dir = cola.Dequeue();
+          countDirs++;
+
+          try
+          {
+              foreach (string archivo in Directory.EnumerateFiles(dir))
+              {
+                  countArchivos++;
+                  try
+                  {
+                      totalBytes += new FileInfo(archivo).Length;
+                  }
+                  catch { /* ignorar errores de archivo individual */ }
+              }
+
+              foreach (string subdir in Directory.EnumerateDirectories(dir))
+                  cola.Enqueue(subdir);
+          }
+          catch (UnauthorizedAccessException) { continue; }
+      }
+
+      return (countArchivos, totalBytes, countDirs);
+  }
+  ```
+
+----------------------------------------------------------------------
+10. FILESYSTEMWATCHER: MONITOREO DE DIRECTORIOS
+----------------------------------------------------------------------
+
+FileSystemWatcher permite observar cambios en el sistema de archivos.
+
+  ```csharp
+  using FileSystemWatcher watcher = new FileSystemWatcher
+  {
+      Path = "/home/user/docs",
+      NotifyFilter = NotifyFilters.FileName
+                   | NotifyFilters.LastWrite
+                   | NotifyFilters.DirectoryName,
+      Filter = "*.txt",
+      EnableRaisingEvents = true,
+      IncludeSubdirectories = true,
+      InternalBufferSize = 65536 // Prevenir pérdida de eventos
+  };
+
+  watcher.Created += (s, e) =>
+      Console.WriteLine($"Creado: {e.Name} ({e.ChangeType})");
+
+  watcher.Changed += (s, e) =>
+      Console.WriteLine($"Modificado: {e.Name}");
+
+  watcher.Deleted += (s, e) =>
+      Console.WriteLine($"Eliminado: {e.Name}");
+
+  watcher.Renamed += (s, e) =>
+      Console.WriteLine($"Renombrado: {e.OldName} → {e.Name}");
+
+  watcher.Error += (s, e) =>
+      Console.WriteLine($"Error en watcher: {e.GetException()?.Message}");
+
+  Console.WriteLine("Observando cambios... (presiona Enter para salir)");
+  Console.ReadLine();
+  ```
+
+Eventos múltiples: FileSystemWatcher puede generar múltiples eventos para
+una sola operación. Usa un timer para agrupar:
+  ```csharp
+  private static readonly Dictionary<string, DateTime> _eventos = new();
+  private static readonly TimeSpan _debounceTime = TimeSpan.FromMilliseconds(500);
+
+  private static void OnChanged(object sender, FileSystemEventArgs e)
+  {
+      lock (_eventos)
+      {
+          _eventos[e.FullPath] = DateTime.Now;
+      }
+  }
+
+  // Timer que revisa eventos pendientes
+  static void RevisarEventos(object state)
+  {
+      lock (_eventos)
+      {
+          var ahora = DateTime.Now;
+          foreach (var kv in _eventos.Where(x => ahora - x.Value >= _debounceTime).ToList())
+          {
+              Console.WriteLine($"Archivo cambiado: {kv.Key}");
+              _eventos.Remove(kv.Key);
+          }
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+11. BUENAS PRÁCTICAS CON RUTAS
+----------------------------------------------------------------------
+
+a) Siempre usa Path.Combine para construir rutas. NUNCA concatenes strings.
+
+b) Usa Path.GetFullPath para normalizar rutas antes de compararlas.
+
+c) No asumas que Directory.GetCurrentDirectory() es el directorio del
+   ejecutable. Usa AppContext.BaseDirectory en su lugar.
+
+d) Para rutas relativas a la aplicación, usa:
+  ```csharp
+  string dataDir = Path.Combine(AppContext.BaseDirectory, "data");
+  string configFile = Path.Combine(AppContext.BaseDirectory, "config.json");
+  ```
+
+e) Prefiere EnumerateFiles sobre GetFiles para grandes volúmenes.
+
+f) Siempre maneja UnauthorizedAccessException en traversal recursivo.
+
+g) No hardcodees separadores de directorio. Usa Path.DirectorySeparatorChar
+   o mejor, Path.Combine.
+
+h) Para archivos de recursos de la aplicación, considera usar
+   Assembly.GetExecutingAssembly().Location.
+
+i) Limpia siempre los archivos temporales en bloques finally.
+
+j) Valida las rutas de entrada del usuario para evitar path traversal
+   (../../etc/passwd).
+
+  ```csharp
+  public static string SanitizarRuta(string rutaUsuario, string directorioBase)
+  {
+      string rutaCompleta = Path.GetFullPath(
+          Path.Combine(directorioBase, rutaUsuario));
+
+      // Asegurar que está dentro del directorio base
+      if (!rutaCompleta.StartsWith(Path.GetFullPath(directorioBase),
+          StringComparison.OrdinalIgnoreCase))
+      {
+          throw new UnauthorizedAccessException("Acceso a ruta no permitido.");
+      }
+
+      return rutaCompleta;
+  }
+  ```
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using System.Linq;
+
+  namespace Capitulo49.PathDirectorios
+  {
+      class Program
+      {
+          static void Main(string[] args)
+          {
+              string dir = "ejemplos_path";
+              Directory.CreateDirectory(dir);
+
+              Console.WriteLine("=== DEMO 1: PATH.COMBINE ===");
+              string ruta1 = Path.Combine(dir, "sub", "archivo.txt");
+              Console.WriteLine($"  Combine: {ruta1}\n");
+
+              Console.WriteLine("=== DEMO 2: GETEXTENSION, GETFILENAME ===");
+              string ruta2 = Path.Combine(dir, "documento-final-v2.pdf");
+              Console.WriteLine($"  Extension: {Path.GetExtension(ruta2)}");
+              Console.WriteLine($"  FileName: {Path.GetFileName(ruta2)}");
+              Console.WriteLine($"  FileNameWithoutExt: {Path.GetFileNameWithoutExtension(ruta2)}");
+              Console.WriteLine($"  DirectoryName: {Path.GetDirectoryName(ruta2)}\n");
+
+              Console.WriteLine("=== DEMO 3: CHANGEEXTENSION ===");
+              string ruta3 = Path.Combine(dir, "imagen.jpg");
+              Console.WriteLine($"  Original: {Path.GetFileName(ruta3)}");
+              Console.WriteLine($"  .png: {Path.ChangeExtension(ruta3, ".png")}");
+              Console.WriteLine($"  sin ext: {Path.ChangeExtension(ruta3, null)}\n");
+
+              Console.WriteLine("=== DEMO 4: GETFULLPATH ===");
+              string ruta4 = "archivo_relativo.txt";
+              Console.WriteLine($"  Relativa: {ruta4}");
+              Console.WriteLine($"  Absoluta: {Path.GetFullPath(ruta4)}\n");
+
+              Console.WriteLine("=== DEMO 5: GETRELATIVEPATH ===");
+              string baseDir = "/home/user/docs";
+              string target = "/home/user/docs/sub/project/file.txt";
+              Console.WriteLine($"  Base: {baseDir}");
+              Console.WriteLine($"  Target: {target}");
+              Console.WriteLine($"  Relative: {Path.GetRelativePath(baseDir, target)}\n");
+
+              Console.WriteLine("=== DEMO 6: TEMP FILES ===");
+              string tempDir = Path.GetTempPath();
+              string tempFile = Path.GetTempFileName();
+              Console.WriteLine($"  Temp dir: {tempDir}");
+              Console.WriteLine($"  Temp file: {tempFile}");
+              File.Delete(tempFile);
+              string randomName = Path.GetRandomFileName();
+              Console.WriteLine($"  Random name: {randomName}\n");
+
+              Console.WriteLine("=== DEMO 7: ENUMERATEFILES ===");
+              Directory.CreateDirectory(Path.Combine(dir, "logs"));
+              File.WriteAllText(Path.Combine(dir, "logs", "app.log"), "INFO: inicio");
+              File.WriteAllText(Path.Combine(dir, "logs", "error.log"), "ERROR: fallo");
+              File.WriteAllText(Path.Combine(dir, "logs", "debug.log"), "DEBUG: variable");
+
+              Console.WriteLine("  Archivos .log:");
+              foreach (string f in Directory.EnumerateFiles(
+                  Path.Combine(dir, "logs"), "*.log"))
+                  Console.WriteLine($"    {Path.GetFileName(f)}");
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 8: TRAVERSAL RECURSIVO ===");
+              Directory.CreateDirectory(Path.Combine(dir, "src", "Controllers"));
+              Directory.CreateDirectory(Path.Combine(dir, "src", "Models"));
+              Directory.CreateDirectory(Path.Combine(dir, "src", "Views"));
+              File.WriteAllText(Path.Combine(dir, "src", "Program.cs"), "// main");
+              File.WriteAllText(Path.Combine(dir, "src", "Controllers", "HomeController.cs"), "// controller");
+              File.WriteAllText(Path.Combine(dir, "src", "Models", "User.cs"), "// model");
+
+              Console.WriteLine("  Árbol de directorios:");
+              MostrarArbol(dir, "");
+
+              Console.WriteLine("=== DEMO 9: ESTADÍSTICAS ===");
+              var stats = ObtenerEstadisticas(dir);
+              Console.WriteLine($"  Archivos: {stats.archivos}, Directorios: {stats.directorios}, Bytes: {stats.bytes}\n");
+
+              Console.WriteLine("=== DEMO 10: FILTRADO CON LINQ ===");
+              var archivosGrandes = Directory
+                  .EnumerateFiles(dir, "*.*", SearchOption.AllDirectories)
+                  .Select(p => new FileInfo(p))
+                  .Where(fi => fi.Length > 10)
+                  .OrderByDescending(fi => fi.Length);
+              Console.WriteLine("  Archivos mayores a 10 bytes:");
+              foreach (var fi in archivosGrandes)
+                  Console.WriteLine($"    {fi.Name} ({fi.Length} bytes)");
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 11: VALIDACIÓN DE RUTAS ===");
+              Console.WriteLine($"  EsNombreValido(\"archivo.txt\"): {EsNombreArchivoValido("archivo.txt")}");
+              Console.WriteLine($"  EsNombreValido(\"archivo<>.txt\"): {EsNombreArchivoValido("archivo<>.txt")}");
+              Console.WriteLine($"  EsRutaValida(\"{dir}\"): {EsRutaValida(dir)}");
+              Console.WriteLine($"  EsRutaValida(\"\"): {EsRutaValida("")}");
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 12: HASEXTENSION Y OTROS ===");
+              Console.WriteLine($"  HasExtension(\"foto.jpg\"): {Path.HasExtension("foto.jpg")}");
+              Console.WriteLine($"  HasExtension(\"foto\"): {Path.HasExtension("foto")}");
+              Console.WriteLine($"  Separador: '{Path.DirectorySeparatorChar}'");
+              Console.WriteLine($"  Separador alt: '{Path.AltDirectorySeparatorChar}'");
+              Console.WriteLine($"  Carácteres inválidos: {new string(Path.GetInvalidFileNameChars())}");
+              Console.WriteLine();
+
+              // Limpieza
+              Directory.Delete(dir, true);
+              Console.WriteLine("¡Todas las demostraciones completadas!");
+          }
+
+          static void MostrarArbol(string directorio, string prefix)
+          {
+              try
+              {
+                  foreach (string dir in Directory.EnumerateDirectories(directorio))
+                  {
+                      Console.WriteLine($"  {prefix}[{Path.GetFileName(dir)}]");
+                      MostrarArbol(dir, prefix + "  ");
+                  }
+                  foreach (string archivo in Directory.EnumerateFiles(directorio))
+                  {
+                      Console.WriteLine($"  {prefix}{Path.GetFileName(archivo)}");
+                  }
+              }
+              catch (UnauthorizedAccessException) { }
+          }
+
+          static (long archivos, long bytes, long directorios) ObtenerEstadisticas(
+              string directorio)
+          {
+              long archivos = 0, bytes = 0, dirs = 0;
+              var cola = new Queue<string>();
+              cola.Enqueue(directorio);
+
+              while (cola.Count > 0)
+              {
+                  string dir = cola.Dequeue();
+                  dirs++;
+                  try
+                  {
+                      foreach (string f in Directory.EnumerateFiles(dir))
+                      {
+                          archivos++;
+                          try { bytes += new FileInfo(f).Length; }
+                          catch { }
+                      }
+                      foreach (string s in Directory.EnumerateDirectories(dir))
+                          cola.Enqueue(s);
+                  }
+                  catch (UnauthorizedAccessException) { }
+              }
+              return (archivos, bytes, dirs);
+          }
+
+          static bool EsNombreArchivoValido(string nombre)
+          {
+              return !string.IsNullOrWhiteSpace(nombre)
+                  && !nombre.Any(c => Path.GetInvalidFileNameChars().Contains(c));
+          }
+
+          static bool EsRutaValida(string ruta)
+          {
+              try
+              {
+                  Path.GetFullPath(ruta);
+                  return !string.IsNullOrWhiteSpace(ruta);
+              }
+              catch { return false; }
+          }
+      }
+  }
+  ```
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Crea una herramienta que busque archivos duplicados por nombre en un
+   árbol de directorios, usando Path.GetFileName y agrupación con LINQ.
+
+2. Implementa un "limpiador de rutas" que normalice todas las rutas de un
+   archivo de configuración usando Path.GetFullPath.
+
+3. Escribe un programa que renombre archivos en lote cambiando su extensión
+   (.jpg → .png, .txt → .md) usando Path.ChangeExtension.
+
+4. Crea un explorador de directorios que muestre el tamaño total de cada
+   subdirectorio (suma de tamaños de archivos) usando EnumerateFiles.
+
+5. Implementa un sistema de archivos temporales con limpieza automática
+   que cree archivos en Path.GetTempPath() y los elimine al cerrar la
+   aplicación.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Path.Combine es multiplataforma?
+R: Sí. Usa el separador del sistema operativo actual.
+
+P: ¿Cómo obtengo el directorio del ejecutable?
+R: AppContext.BaseDirectory o Assembly.GetExecutingAssembly().Location.
+
+P: ¿Puedo usar Path con rutas UNC (\\server\share)?
+R: Sí. Path.GetFullPath, Combine, etc. funcionan con rutas UNC.
+
+P: ¿Por qué GetTempFileName crea el archivo?
+R: Por motivos de seguridad: al crear el archivo, garantiza que el nombre
+   sea único y nadie más lo usará. Debes eliminarlo después.
+
+P: ¿Qué hago si un directorio tiene 100000 archivos?
+R: Usa Directory.EnumerateFiles (lazy) en lugar de GetFiles. Nunca
+   cargues todos los nombres en memoria a la vez.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Implementa un "Motor de Búsqueda de Archivos con Expresiones" que:
+
+  - Busque archivos en un árbol de directorios usando una sintaxis de
+    consulta similar a SQL o find:
+      Ejemplo: `find type=file size>1MB name=*.log modified>2024-01-01`
+  - Use Directory.EnumerateFiles para traversal eficiente.
+  - Soporte filtros combinados:
+    - name: patrón glob (*.txt, reporte-*.csv)
+    - size: >10MB, <1KB, =500B
+    - modified: >2024-01-01, <2023-12-31
+    - type: file, directory
+    - content: texto dentro del archivo (StreamReader)
+  - Proyecte resultados con formato personalizable:
+    - {path}, {name}, {size}, {modified}, {extension}
+    - Ej: `format "{name} ({size})"` → "reporte.pdf (1.2 MB)"
+  - Use Expression<Func<FileInfo, bool>> para los filtros.
+
+  ```csharp
+  var engine = new SearchEngine();
+  var results = engine.Query("/home/user",
+      "type=file size>1MB name=*.log modified>2024-01-01",
+      format: "{path} - {size:F2} MB");
+  foreach (string result in results)
+      Console.WriteLine(result);
+  ```
+
+Pistas:
+  - Construye un árbol de expresiones (Expression Tree).
+  - Combina filtros con Expression.AndAlso.
+  - Parallel.ForEach para búsqueda en múltiples directorios.
+  - FileStream + StreamReader para búsqueda de contenido.
+  - Cachea Directory.EnumerateFiles por directorio.
+
+Criterios de éxito:
+  - Sintaxis de consulta intuitiva y extensible.
+  - Resultados en streaming (no cargar todo en memoria).
+  - Búsqueda de contenido en archivos de texto.
+  - Formato de salida personalizable.
+  - Buen rendimiento con Parallel.ForEach.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+Hemos aprendido:
+
+  - Path.Combine: construcción segura de rutas.
+  - Path.GetExtension, GetFileName, GetFileNameWithoutExtension.
+  - Path.ChangeExtension, GetDirectoryName.
+  - Path.GetFullPath, GetRelativePath, validación de rutas.
+  - Path.GetTempPath, GetTempFileName, GetRandomFileName.
+  - Directory.EnumerateFiles: enumeración lazy y eficiente.
+  - Directory traversal recursivo con manejo de permisos.
+  - FileSystemWatcher: monitoreo de cambios en tiempo real.
+  - Buenas prácticas: sanitización de rutas, multiplataforma, limpieza.
+
+================================================================================
+  CIERRE
+================================================================================
+
+¡Excelente! Has dominado la clase Path y las técnicas de enumeración de
+directorios. Ahora puedes construir rutas de forma segura y multiplataforma,
+navegar por árboles de directorios eficientemente, y monitorear cambios en
+el sistema de archivos.
+
+En el Capítulo 50: Proyecto del Módulo V, integraremos todos los
+conocimientos adquiridos en un proyecto completo: un gestor de archivos
+con serialización JSON y XML, búsqueda, manipulación y persistencia.
+
+================================================================================
+  PREPARACIÓN PARA EL PRÓXIMO CAPÍTULO
+================================================================================
+
+En el Capítulo 50 exploraremos:
+  - Proyecto integrador: Gestor de Archivos y Configuración
+  - FileStream, StreamReader/Writer, BinaryReader/Writer
+  - Serialización JSON y XML
+  - File, FileInfo, Directory, DirectoryInfo
+  - Path y directorios
+  - Aplicación completa con interfaz de consola
+
+================================================================================
+  FIN DEL CAPÍTULO 49
+================================================================================

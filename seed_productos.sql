@@ -1,0 +1,17 @@
+INSERT OR IGNORE INTO productos (id, sku, titulo, descripcion, division_id, categoria, precio_fisico, precio_pdf, precio_audio, precio_video, precio_premium, autor, activo) VALUES
+(1,'LGA-HTML5','HTML5: El Lenguaje de la Web','Libro completo de HTML5 desde cero hasta avanzado.','academia','programacion',399,199,299,499,799,'Esteban Gutiérrez',1),
+(2,'LGA-CSS3','CSS3: Diseño y Estilo Web','Dominia CSS3: Flexbox, Grid, Animaciones y más.','academia','programacion',399,199,299,499,799,'Esteban Gutiérrez',1),
+(3,'LGA-JS','JavaScript: De Cero a Experto','El manual definitivo de JavaScript.','academia','programacion',499,249,349,599,899,'Esteban Gutiérrez',1),
+(4,'LGA-REACT','React: Aplicaciones Modernas','Construye aplicaciones web con React 18.','academia','programacion',499,249,349,599,899,'Esteban Gutiérrez',1),
+(5,'LGA-PYTHON','Python: Automatización y Más','Python aplicado a tareas del mundo real.','academia','programacion',449,219,329,549,849,'Esteban Gutiérrez',1),
+(6,'LGA-IA','Introducción a la Inteligencia Artificial','Fundamentos de IA, Machine Learning y LLMs.','academia','ia',599,299,399,699,999,'Esteban Gutiérrez',1),
+(7,'LGA-DJANGO','Django: Web sin Complicaciones','Desarrollo web rápido con Python.','academia','programacion',449,219,329,549,849,'Esteban Gutiérrez',1),
+(8,'LGA-DOCKER','Docker: Contenedores','Despliega aplicaciones con Docker.','academia','devops',449,219,329,549,849,'Esteban Gutiérrez',1),
+(9,'LGA-GIT','Git y GitHub','Control de versiones y trabajo colaborativo.','academia','devops',349,179,249,449,699,'Esteban Gutiérrez',1),
+(10,'LGA-SQL','SQL: Bases de Datos','Domina SQL y bases de datos relacionales.','academia','programacion',399,199,299,499,799,'Esteban Gutiérrez',1),
+(11,'LGA-NODE','Node.js: Backend Moderno','JavaScript en el servidor con Node.js.','academia','programacion',449,219,329,549,849,'Esteban Gutiérrez',1),
+(12,'LGA-API','APIs RESTful','Diseño y construcción de APIs profesionales.','academia','programacion',399,199,299,499,799,'Esteban Gutiérrez',1),
+(13,'LGA-SEGURIDAD','Seguridad Web','Protege tus aplicaciones web.','academia','seguridad',449,219,329,549,849,'Esteban Gutiérrez',1),
+(14,'LGA-LINUX','Linux para Desarrolladores','La terminal y el ecosistema Linux.','academia','devops',399,199,299,499,799,'Esteban Gutiérrez',1),
+(15,'LGA-ARQUITECTURA','Arquitectura de Software','Patrones de diseño y buenas prácticas.','academia','programacion',549,269,379,649,949,'Esteban Gutiérrez',1),
+(16,'LGA-LIDERAZGO','Liderazgo Tecnológico','De desarrollador a líder de equipo.','academia','carrera',349,179,249,449,699,'Esteban Gutiérrez',1);

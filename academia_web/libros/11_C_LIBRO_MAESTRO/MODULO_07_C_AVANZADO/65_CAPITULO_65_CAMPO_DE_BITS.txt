@@ -1,0 +1,1658 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                      CAPÍTULO 65
+##
+##                  CAMPOS DE BITS
+##
+################################################################################
+################################################################################
+
+"Los campos de bits son el puente entre la comodidad de las estructuras y
+la eficiencia de los bits sueltos." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenidos, arquitectos del byte! Soy el Profesor Búho AI y en este
+capítulo exploraremos una de las características más peculiares y útiles de
+C: los campos de bits (bit fields). Esta característica permite definir
+miembros de una estructura que ocupan un número específico de bits, en lugar
+de bytes completos. Es la herramienta ideal para modelar registros de
+hardware, empaquetar datos en protocolos de red, ahorrar memoria en
+estructuras masivas, y trabajar con formatos binarios. Sin embargo, como
+todo poder conlleva responsabilidad, los campos de bits tienen limitaciones
+importantes: no se pueden tomar direcciones, el orden de bits depende del
+endianness, y la portabilidad es un desafío. Dominaremos tanto sus ventajas
+como sus trampas.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La eficiencia no es solo cuestión de velocidad, sino también de usar
+exactamente los bits que necesitas." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender qué son los campos de bits y su sintaxis en C
+✓ Aprender a definir campos de bits con ancho arbitrario
+✓ Modelar registros de hardware y formatos de protocolo con campos de bits
+✓ Analizar el layout de memoria y el padding en estructuras con campos
+✓ Identificar las limitaciones: sin punteros, sin arrays, sin sizeof
+✓ Evaluar la portabilidad entre arquitecturas big/little endian
+✓ Comparar campos de bits vs. manipulación manual con operadores bitwise
+
+===============================================================================
+1. INTRODUCCIÓN A LOS CAMPOS DE BITS
+===============================================================================
+
+Un campo de bit (bit field) es un miembro de una estructura cuyo ancho en
+bits se especifica explícitamente mediante dos puntos seguidos de un entero.
+Solo se permiten en tipos enteros: _Bool, int, signed int, unsigned int, y
+(en C99+) cualquier tipo entero incluyendo char, short, long.
+
+La sintaxis básica es:
+
+```c
+struct nombre {
+    tipo nombre_campo : anchura;
+};
+```
+
+Donde anchura es una constante entera positiva que indica cuántos bits ocupa
+el campo. Por ejemplo:
+
+```c
+struct {
+    unsigned int activo : 1;     // 1 bit: 0 o 1
+    unsigned int modo : 2;       // 2 bits: valores 0-3
+    unsigned int prioridad : 3;  // 3 bits: valores 0-7
+    unsigned int canal : 4;      // 4 bits: valores 0-15
+} config;
+```
+
+Esta estructura ocupa 10 bits, pero en la práctica el compilador la alinea
+al tamaño de su unidad de almacenamiento (típicamente 4 bytes para
+unsigned int).
+
+Los campos de bits son parte integral del lenguaje C desde su creación.
+Aparecieron en la versión original de Kernighan & Ritchie y se mantienen
+en C99, C11 y C17 sin cambios significativos. Su implementación, sin
+embargo, es dependiente de la implementación en varios aspectos: el orden
+de asignación de bits (de izquierda a derecha o viceversa), si un campo
+puede solaparse con el límite de un byte, y la alineación de la unidad de
+almacenamiento.
+
+===============================================================================
+2. SINTAXIS Y DECLARACIONES
+===============================================================================
+
+2.1 Declaración básica
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct DatosEmpaquetados {
+    unsigned int tipo      : 3;  // 3 bits: 8 tipos posibles
+    unsigned int subtipo   : 2;  // 2 bits: 4 subtipos
+    unsigned int longitud  : 4;  // 4 bits: 0-15
+    unsigned int flags     : 3;  // 3 bits: varias banderas
+    unsigned int checksum  : 4;  // 4 bits: checksum parcial
+};
+
+int main()
+{
+    struct DatosEmpaquetados d = {0};
+
+    d.tipo = 5;
+    d.subtipo = 2;
+    d.longitud = 12;
+    d.flags = 3;
+    d.checksum = 9;
+
+    printf("tipo = %u\n", d.tipo);
+    printf("subtipo = %u\n", d.subtipo);
+    printf("longitud = %u\n", d.longitud);
+    printf("flags = %u\n", d.flags);
+    printf("checksum = %u\n", d.checksum);
+
+    printf("Tamaño de la estructura: %zu bytes\n", sizeof(d));
+
+    return 0;
+}
+```
+
+2.2 Tipos permitidos
+
+C permite varios tipos base para campos de bits:
+
+```c
+struct EjemploTipos {
+    unsigned int a : 4;      // Sin signo: 0-15
+    int b : 4;               // Con signo: -8 a 7 (en complemento a dos)
+    _Bool c : 1;             // Booleano: 0 o 1
+    signed int d : 5;        // Explicitamente con signo
+    unsigned long long e : 8; // 8 bits en un entero de 64 bits
+};
+
+int main()
+{
+    struct EjemploTipos et = {0};
+
+    et.a = 15;    // OK
+    et.b = -8;    // OK para signed de 4 bits
+    et.c = 1;     // OK
+    et.d = -16;   // OK para signed de 5 bits
+
+    printf("a=%u, b=%d, c=%u, d=%d\n", et.a, et.b, et.c, et.d);
+
+    // Comportamiento de overflow
+    et.a = 20;    // Truncado a 4 bits -> 20 % 16 = 4
+    printf("a (20 truncado) = %u\n", et.a);
+
+    et.b = 10;    // Solo 4 bits con signo: max 7 -> comportamiento
+    printf("b (10 truncado) = %d\n", et.b);
+
+    return 0;
+}
+```
+
+2.3 Campos sin nombre y de relleno
+
+Se pueden declarar campos de bits sin nombre para relleno (padding):
+
+```c
+struct RegistroControl {
+    unsigned int habilitado  : 1;
+    unsigned int             : 2;  // 2 bits de relleno (sin nombre)
+    unsigned int modo        : 2;
+    unsigned int             : 0;  // Fuerza alineación a siguiente unidad
+    unsigned int interrupcion : 1;
+};
+
+int main()
+{
+    printf("sizeof(RegistroControl) = %zu bytes\n",
+           sizeof(struct RegistroControl));
+
+    return 0;
+}
+```
+
+Un campo de ancho 0 tiene un propósito especial: fuerza alineación al
+siguiente límite de la unidad de almacenamiento (generalmente el tamaño
+del tipo base).
+
+===============================================================================
+3. LAYOUT DE MEMORIA Y ALMACENAMIENTO
+===============================================================================
+
+Entender cómo se disponen los campos de bits en memoria es crucial para
+usarlos correctamente. La norma C deja varios aspectos como dependientes de
+la implementación.
+
+3.1 Unidad de almacenamiento
+
+Los campos de bits se empaquetan dentro de una "unidad de almacenamiento"
+cuyo tamaño es el del tipo base (típicamente sizeof(unsigned int) = 4 bytes
+en muchas plataformas). Si un campo no cabe en la unidad actual, el
+compilador puede:
+- Colocarlo en la siguiente unidad
+- Partirlo a través del límite (menos común)
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct ConPadding {
+    uint32_t a : 12;
+    uint32_t b : 12;
+    uint32_t c : 12;  // ¿Cabe en 32 bits? 12+12+12=36 > 32
+    // c se coloca en una nueva unidad de 32 bits
+};
+
+struct SinPadding {
+    uint32_t x : 12;
+    uint32_t y : 12;
+    uint32_t z : 8;   // 12+12+8 = 32 -> justo en una unidad
+};
+
+int main()
+{
+    printf("ConPadding: %zu bytes (esperado 8)\n", sizeof(struct ConPadding));
+    printf("SinPadding: %zu bytes (esperado 4)\n", sizeof(struct SinPadding));
+
+    struct ConPadding cp = {0};
+    cp.a = 0xFFF;
+    cp.b = 0xAAA;
+    cp.c = 0x555;
+
+    // Ver en memoria
+    unsigned char *bytes = (unsigned char *)&cp;
+    printf("Bytes (little-endian): ");
+    for (size_t i = 0; i < sizeof(cp); i++)
+        printf("%02X ", bytes[i]);
+    printf("\n");
+
+    return 0;
+}
+```
+
+3.2 Orden de bits
+
+El orden en que se asignan los bits dentro de la unidad de almacenamiento
+depende del endianness:
+- Little-endian: el primer campo declarado ocupa los bits menos
+  significativos (LSB)
+- Big-endian: el primer campo declarado ocupa los bits más significativos
+  (MSB)
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct MapeoBits {
+    uint16_t bajo  : 8;  // Primer campo
+    uint16_t alto  : 8;  // Segundo campo
+};
+
+void mostrar_mapeo()
+{
+    struct MapeoBits m = {0};
+    m.bajo = 0x12;
+    m.alto = 0x34;
+
+    uint16_t *p = (uint16_t *)&m;
+    printf("Valor como uint16_t: 0x%04X\n", *p);
+
+    unsigned char *b = (unsigned char *)&m;
+    printf("Bytes: [0x%02X, 0x%02X]\n", b[0], b[1]);
+
+    printf("Interpretación:\n");
+    printf("  En little-endian: bajo=0x%02X, alto=0x%02X\n", m.bajo, m.alto);
+}
+
+int main()
+{
+    mostrar_mapeo();
+    return 0;
+}
+```
+
+3.3 Demostración de empaquetado vs. no empaquetado
+
+```c
+#include <stdio.h>
+#include <stddef.h>
+
+// Versión con enteros completos (desperdicio)
+struct RGBInt {
+    uint32_t rojo;
+    uint32_t verde;
+    uint32_t azul;
+};
+
+// Versión con campos de bits (eficiente)
+struct RGBBits {
+    uint32_t rojo : 8;
+    uint32_t verde : 8;
+    uint32_t azul : 8;
+    // 8 bits libres (relleno implícito)
+};
+
+// Versión con 10 bits por componente (alto rango dinámico)
+struct RGBAltoRango {
+    uint32_t rojo : 10;
+    uint32_t verde : 10;
+    uint32_t azul : 10;
+    // 2 bits libres
+};
+
+int main()
+{
+    printf("sizeof(RGBInt) = %zu bytes\n", sizeof(struct RGBInt));
+    printf("sizeof(RGBBits) = %zu bytes\n", sizeof(struct RGBBits));
+    printf("sizeof(RGBAltoRango) = %zu bytes\n", sizeof(struct RGBAltoRango));
+
+    struct RGBBits pixel;
+    pixel.rojo = 200;
+    pixel.verde = 150;
+    pixel.azul = 100;
+
+    printf("Pixel: R=%u, G=%u, B=%u\n", pixel.rojo, pixel.verde, pixel.azul);
+
+    // El ahorro es significativo con arrays
+    printf("\nArray de 1000 pixeles:\n");
+    printf("  RGBInt:  %zu bytes\n", 1000 * sizeof(struct RGBInt));
+    printf("  RGBBits: %zu bytes\n", 1000 * sizeof(struct RGBBits));
+    printf("  RGBAltoRango: %zu bytes\n", 1000 * sizeof(struct RGBAltoRango));
+
+    return 0;
+}
+```
+
+===============================================================================
+4. MODELADO DE REGISTROS DE HARDWARE
+===============================================================================
+
+Una de las aplicaciones más importantes de los campos de bits es modelar
+registros de hardware. Los microcontroladores y periféricos tienen
+registros de control y estado donde cada bit o grupo de bits tiene un
+significado específico.
+
+4.1 Registro de control UART (simplificado)
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+// Registro de Control de una UART
+struct UARTControlReg {
+    // Byte 0
+    uint32_t habilitar    : 1;   // Bit 0: Enable UART
+    uint32_t modo_tx      : 1;   // Bit 1: Transmit mode
+    uint32_t modo_rx      : 1;   // Bit 2: Receive mode
+    uint32_t paridad      : 2;   // Bits 3-4: Parity (0=none,1=odd,2=even)
+    uint32_t bits_datos   : 2;   // Bits 5-6: Data bits (0=5,1=6,2=7,3=8)
+    uint32_t bits_stop    : 1;   // Bit 7: Stop bits (0=1, 1=2)
+    // Byte 1
+    uint32_t velocidad    : 3;   // Bits 0-2: Baud rate selector
+    uint32_t flujo_ctrl   : 1;   // Bit 3: Flow control
+    uint32_t modo_eco     : 1;   // Bit 4: Echo mode
+    uint32_t modo_loopback : 1;  // Bit 5: Loopback
+    uint32_t dma_habilitado : 1; // Bit 6: DMA mode
+    uint32_t             : 1;    // Bit 7: Reserved
+};
+
+void configurar_uart(struct UARTControlReg *reg, int baudios, int bits,
+                     int paridad, int stop)
+{
+    reg->habilitar = 1;
+    reg->modo_tx = 1;
+    reg->modo_rx = 1;
+
+    // Configurar bits de datos
+    if (bits == 5) reg->bits_datos = 0;
+    else if (bits == 6) reg->bits_datos = 1;
+    else if (bits == 7) reg->bits_datos = 2;
+    else reg->bits_datos = 3;  // 8 bits
+
+    // Configurar paridad
+    if (paridad == 0) reg->paridad = 0;
+    else if (paridad == 1) reg->paridad = 1;  // Odd
+    else reg->paridad = 2;  // Even
+
+    // Configurar stop bits
+    reg->bits_stop = (stop == 2) ? 1 : 0;
+
+    printf("UART configurada: %d bits, paridad=%d, stop=%d\n",
+           bits, paridad, stop);
+}
+
+void mostrar_uart(const struct UARTControlReg *reg)
+{
+    printf("=== UART Register ===\n");
+    printf("Habilitado: %s\n", reg->habilitar ? "Si" : "No");
+    printf("TX: %s, RX: %s\n", reg->modo_tx ? "On" : "Off",
+           reg->modo_rx ? "On" : "Off");
+    printf("Paridad: ");
+    if (reg->paridad == 0) printf("None\n");
+    else if (reg->paridad == 1) printf("Odd\n");
+    else printf("Even\n");
+    printf("Data bits: ");
+    int datos[] = {5, 6, 7, 8};
+    printf("%d\n", datos[reg->bits_datos]);
+    printf("Stop bits: %d\n", reg->bits_stop ? 2 : 1);
+    printf("Velocidad: %d\n", reg->velocidad);
+    printf("Flow Ctrl: %s\n", reg->flujo_ctrl ? "On" : "Off");
+    printf("Echo: %s\n", reg->modo_eco ? "On" : "Off");
+    printf("Loopback: %s\n", reg->modo_loopback ? "On" : "Off");
+    printf("DMA: %s\n", reg->dma_habilitado ? "On" : "Off");
+}
+
+int main()
+{
+    struct UARTControlReg uart = {0};
+    configurar_uart(&uart, 115200, 8, 0, 1);
+    uart.velocidad = 4;
+    uart.flujo_ctrl = 1;
+    mostrar_uart(&uart);
+
+    printf("\nTamaño del registro: %zu bytes\n", sizeof(uart));
+    printf("Valor crudo: 0x%08X\n", *(uint32_t*)&uart);
+
+    return 0;
+}
+```
+
+4.2 Registro de estado y control GPIO
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct GPIOReg {
+    // Modo de cada pin (00=input, 01=output, 10=alternate, 11=analog)
+    uint32_t modo_pin0  : 2;
+    uint32_t modo_pin1  : 2;
+    uint32_t modo_pin2  : 2;
+    uint32_t modo_pin3  : 2;
+    uint32_t modo_pin4  : 2;
+    uint32_t modo_pin5  : 2;
+    uint32_t modo_pin6  : 2;
+    uint32_t modo_pin7  : 2;
+    uint32_t modo_pin8  : 2;
+    uint32_t modo_pin9  : 2;
+    uint32_t modo_pin10 : 2;
+    uint32_t modo_pin11 : 2;
+    uint32_t modo_pin12 : 2;
+    uint32_t modo_pin13 : 2;
+    uint32_t modo_pin14 : 2;
+    uint32_t modo_pin15 : 2;
+};
+
+// Output Data Register
+struct GPIOOutputReg {
+    uint32_t pin0  : 1;
+    uint32_t pin1  : 1;
+    uint32_t pin2  : 1;
+    uint32_t pin3  : 1;
+    uint32_t pin4  : 1;
+    uint32_t pin5  : 1;
+    uint32_t pin6  : 1;
+    uint32_t pin7  : 1;
+    uint32_t pin8  : 1;
+    uint32_t pin9  : 1;
+    uint32_t pin10 : 1;
+    uint32_t pin11 : 1;
+    uint32_t pin12 : 1;
+    uint32_t pin13 : 1;
+    uint32_t pin14 : 1;
+    uint32_t pin15 : 1;
+    uint32_t       : 16;  // Relleno para completar 32 bits
+};
+
+void configurar_pin_modo(struct GPIOReg *reg, int pin, int modo)
+{
+    if (pin < 0 || pin > 15) return;
+    uint32_t *base = (uint32_t *)reg;
+    int offset = pin * 2;  // Cada pin usa 2 bits
+    *base &= ~(3 << offset);
+    *base |= (modo & 3) << offset;
+}
+
+void escribir_pin(struct GPIOOutputReg *reg, int pin, int valor)
+{
+    if (pin < 0 || pin > 15) return;
+    uint32_t *base = (uint32_t *)reg;
+    if (valor)
+        *base |= (1 << pin);
+    else
+        *base &= ~(1 << pin);
+}
+
+int main()
+{
+    struct GPIOReg modo = {0};
+    configurar_pin_modo(&modo, 0, 1);  // Pin 0 como output
+    configurar_pin_modo(&modo, 1, 0);  // Pin 1 como input
+    configurar_pin_modo(&modo, 5, 2);  // Pin 5 como alternate
+
+    printf("Modo pin 0: %u\n", modo.modo_pin0);
+    printf("Modo pin 1: %u\n", modo.modo_pin1);
+    printf("Modo pin 5: %u\n", modo.modo_pin5);
+
+    struct GPIOOutputReg out = {0};
+    escribir_pin(&out, 0, 1);
+    escribir_pin(&out, 7, 1);
+    escribir_pin(&out, 15, 1);
+
+    printf("Pin 0: %u\n", out.pin0);
+    printf("Pin 7: %u\n", out.pin7);
+    printf("Pin 15: %u\n", out.pin15);
+
+    return 0;
+}
+```
+
+4.3 Registro de flags de interrupción
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct InterruptReg {
+    uint32_t timer0     : 1;
+    uint32_t timer1     : 1;
+    uint32_t uart_rx    : 1;
+    uint32_t uart_tx    : 1;
+    uint32_t spi        : 1;
+    uint32_t i2c        : 1;
+    uint32_t dma        : 1;
+    uint32_t gpio       : 1;
+    uint32_t adc        : 1;
+    uint32_t dac        : 1;
+    uint32_t usb        : 1;
+    uint32_t ethernet   : 1;
+    uint32_t wifi       : 1;
+    uint32_t bluetooth  : 1;
+    uint32_t sdio       : 1;
+    uint32_t            : 1;  // Reserved
+    uint32_t error      : 1;
+    uint32_t watchdog   : 1;
+    uint32_t            : 14; // Más reservados
+};
+
+void limpiar_interrupcion(struct InterruptReg *reg, int fuente)
+{
+    uint32_t *p = (uint32_t *)reg;
+    *p &= ~(1U << fuente);
+}
+
+int main()
+{
+    struct InterruptReg irq = {0};
+    irq.timer0 = 1;
+    irq.uart_rx = 1;
+    irq.gpio = 1;
+    irq.error = 1;
+
+    printf("Interrupciones activas:\n");
+    if (irq.timer0) printf("  - Timer0\n");
+    if (irq.uart_rx) printf("  - UART RX\n");
+    if (irq.gpio) printf("  - GPIO\n");
+    if (irq.error) printf("  - ERROR!\n");
+
+    limpiar_interrupcion(&irq, 0);  // Limpiar timer0
+    printf("Despues de limpiar timer0: timer0=%u\n", irq.timer0);
+
+    return 0;
+}
+```
+
+===============================================================================
+5. PROTOCOLOS DE RED CON CAMPOS DE BITS
+===============================================================================
+
+Los encabezados de protocolos de red son un caso de uso clásico para campos
+de bits, aunque muchos programadores prefieren la manipulación manual por
+portabilidad.
+
+5.1 Encabezado TCP (simplificado)
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct TCPHeader {
+    uint16_t puerto_origen;
+    uint16_t puerto_destino;
+    uint32_t num_secuencia;
+    uint32_t num_ack;
+    uint16_t data_offset_reservado : 4;  // Offset en palabras de 32 bits
+    uint16_t reservado             : 3;
+    uint16_t flags                 : 9;  // NS, CWR, ECE, URG, ACK, PSH, RST, SYN, FIN
+    uint16_t ventana;
+    uint16_t checksum;
+    uint16_t puntero_urgente;
+};
+
+// Acceso a flags individuales via macros
+#define FLAG_FIN  (1 << 0)
+#define FLAG_SYN  (1 << 1)
+#define FLAG_RST  (1 << 2)
+#define FLAG_PSH  (1 << 3)
+#define FLAG_ACK  (1 << 4)
+#define FLAG_URG  (1 << 5)
+#define FLAG_ECE  (1 << 6)
+#define FLAG_CWR  (1 << 7)
+#define FLAG_NS   (1 << 8)
+
+void imprimir_tcp(const struct TCPHeader *tcp)
+{
+    printf("=== TCP Header ===\n");
+    printf("Puerto origen: %u\n", __builtin_bswap16(tcp->puerto_origen));
+    printf("Puerto destino: %u\n", __builtin_bswap16(tcp->puerto_destino));
+    printf("Secuencia: %u\n", __builtin_bswap32(tcp->num_secuencia));
+    printf("ACK: %u\n", __builtin_bswap32(tcp->num_ack));
+    printf("Data offset: %u palabras (%u bytes)\n",
+           tcp->data_offset_reservado,
+           tcp->data_offset_reservado * 4);
+    printf("Flags: ");
+    if (tcp->flags & FLAG_FIN) printf("FIN ");
+    if (tcp->flags & FLAG_SYN) printf("SYN ");
+    if (tcp->flags & FLAG_RST) printf("RST ");
+    if (tcp->flags & FLAG_PSH) printf("PSH ");
+    if (tcp->flags & FLAG_ACK) printf("ACK ");
+    if (tcp->flags & FLAG_URG) printf("URG ");
+    printf("\n");
+}
+
+int main()
+{
+    struct TCPHeader tcp = {0};
+    tcp.puerto_origen = __builtin_bswap16(80);
+    tcp.puerto_destino = __builtin_bswap16(54321);
+    tcp.num_secuencia = __builtin_bswap32(1000);
+    tcp.num_ack = __builtin_bswap32(500);
+    tcp.data_offset_reservado = 5;  // 20 bytes
+    tcp.flags = FLAG_SYN | FLAG_ACK;
+    tcp.ventana = __builtin_bswap16(65535);
+
+    imprimir_tcp(&tcp);
+    printf("Tamaño struct TCPHeader: %zu bytes\n", sizeof(tcp));
+
+    return 0;
+}
+```
+
+5.2 Encabezado DNS header
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+struct DNSHeader {
+    uint16_t id;
+    // Campos de 1 bit cada uno
+    uint16_t qr     : 1;  // 0=query, 1=response
+    uint16_t opcode : 4;  // Tipo de consulta
+    uint16_t aa     : 1;  // Authoritative Answer
+    uint16_t tc     : 1;  // Truncation
+    uint16_t rd     : 1;  // Recursion Desired
+    uint16_t ra     : 1;  // Recursion Available
+    uint16_t z      : 3;  // Reserved
+    uint16_t rcode  : 4;  // Response code
+    uint16_t qdcount;     // Question count
+    uint16_t ancount;     // Answer count
+    uint16_t nscount;     // Authority count
+    uint16_t arcount;     // Additional count
+};
+
+void imprimir_dns(const struct DNSHeader *dns)
+{
+    printf("=== DNS Header ===\n");
+    printf("ID: 0x%04X\n", dns->id);
+    printf("QR: %s\n", dns->qr ? "Response" : "Query");
+    printf("Opcode: %u\n", dns->opcode);
+    printf("AA: %u, TC: %u, RD: %u, RA: %u\n",
+           dns->aa, dns->tc, dns->rd, dns->ra);
+    printf("Rcode: %u\n", dns->rcode);
+    printf("Questions: %u, Answers: %u\n",
+           dns->qdcount, dns->ancount);
+}
+
+int main()
+{
+    struct DNSHeader dns = {0};
+    dns.id = 0x1234;
+    dns.qr = 0;      // Query
+    dns.opcode = 0;  // Standard query
+    dns.rd = 1;      // Recursion desired
+    dns.qdcount = 1; // 1 question
+
+    imprimir_dns(&dns);
+    printf("Tamaño: %zu bytes\n", sizeof(dns));
+
+    return 0;
+}
+```
+
+===============================================================================
+6. LIMITACIONES DE LOS CAMPOS DE BITS
+===============================================================================
+
+Los campos de bits tienen varias restricciones importantes que todo
+programador debe conocer:
+
+6.1 No se puede tomar la dirección de un campo de bits
+
+```c
+struct Punto {
+    unsigned int x : 10;
+    unsigned int y : 10;
+};
+
+void ejemplo_restriccion()
+{
+    struct Punto p = {0};
+
+    // Esto NO compila:
+    // unsigned int *ptr = &p.x;
+
+    // Tampoco se puede hacer:
+    // scanf("%u", &p.x);
+
+    // Tampoco se pueden usar en offsetof:
+    // size_t off = offsetof(struct Punto, x);
+
+    // Solucion: usar variable temporal
+    unsigned int temp = p.x;
+    // ... trabajar con temp
+    p.x = temp;
+}
+```
+
+6.2 No se pueden declarar arrays de campos de bits
+
+```c
+struct Intentando {
+    // unsigned int datos[4] : 8;  // ERROR: no se permiten arrays
+    unsigned int dato0 : 8;
+    unsigned int dato1 : 8;
+    unsigned int dato2 : 8;
+    unsigned int dato3 : 8;
+};
+```
+
+6.3 sizeof no aplica a campos de bits
+
+```c
+void ejemplo_sizeof()
+{
+    struct Flags {
+        unsigned int a : 1;
+        unsigned int b : 1;
+    } f;
+
+    // printf("%zu\n", sizeof(f.a)); // ERROR: no se puede
+    printf("sizeof estructura: %zu\n", sizeof(f)); // OK, pero es el contenedor
+
+    // Solucion: usar una union
+    union {
+        struct Flags campos;
+        uint32_t raw;
+    } u;
+    printf("size de un campo via union: todos tienen %zu bits\n",
+           sizeof(u.raw) * 8);
+}
+```
+
+6.4 Problemas de portabilidad
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+// Este struct puede tener distinto layout en big vs little endian
+struct NoPortable {
+    unsigned int alto  : 8;  // Primer campo
+    unsigned int medio : 8;
+    unsigned int bajo  : 8;
+};
+
+// Version portable usando macros
+#define EXTRAER_ALTO(x)  (((x) >> 16) & 0xFF)
+#define EXTRAER_MEDIO(x) (((x) >> 8) & 0xFF)
+#define EXTRAER_BAJO(x)  ((x) & 0xFF)
+#define EMPAQUETAR(r, g, b) (((r) << 16) | ((g) << 8) | (b))
+
+int main()
+{
+    // Demostrar diferencia potencial
+    struct NoPortable np = {0xAA, 0xBB, 0xCC};
+    uint32_t *p = (uint32_t *)&np;
+    printf("Valor crudo: 0x%08X\n", *p);
+    printf("  En little-endian, esperariamos 0xCCBBAA??\n");
+    printf("  Esto varia segun el compilador y arquitectura\n");
+
+    // Version portable
+    uint32_t color = EMPAQUETAR(0xAA, 0xBB, 0xCC);
+    printf("Version portable: 0x%08X\n", color);
+    printf("  R=0x%02X, G=0x%02X, B=0x%02X\n",
+           EXTRAER_ALTO(color), EXTRAER_MEDIO(color), EXTRAER_BAJO(color));
+
+    return 0;
+}
+```
+
+6.5 Asignación de valores fuera de rango
+
+```c
+#include <stdio.h>
+
+struct CampoPequeno {
+    unsigned int valor : 3;  // Solo 3 bits: 0-7
+};
+
+int main()
+{
+    struct CampoPequeno cp = {0};
+
+    cp.valor = 10;  // 10 en binario es 1010, truncado a 3 bits = 010 = 2
+    printf("cp.valor = 10 -> %u (truncado)\n", cp.valor);
+
+    cp.valor = 7;
+    printf("cp.valor = 7 -> %u (correcto)\n", cp.valor);
+
+    cp.valor = 8;
+    printf("cp.valor = 8 -> %u (truncado a 0)\n", cp.valor);
+
+    // Con signo
+    struct Firmado {
+        signed int valor : 3;  // -4 a 3
+    } sf;
+    sf.valor = 3;
+    printf("sf.valor = 3 -> %d (maximo positivo)\n", sf.valor);
+    sf.valor = -4;
+    printf("sf.valor = -4 -> %d (minimo negativo)\n", sf.valor);
+    sf.valor = 4;  // Overflow: 100 en binario -> interpretado como -4
+    printf("sf.valor = 4 -> %d (overflow!)\n", sf.valor);
+
+    return 0;
+}
+```
+
+6.6 Problemas con memset y asignación directa
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+struct BufferControl {
+    unsigned int len  : 5;
+    unsigned int flags : 3;
+    unsigned int crc  : 8;
+};
+
+int main()
+{
+    struct BufferControl bc;
+
+    // memset inicializa a 0, funciona bien
+    memset(&bc, 0, sizeof(bc));
+    printf("Despues de memset: len=%u, flags=%u, crc=%u\n",
+           bc.len, bc.flags, bc.crc);
+
+    // Asignacion directa de estructura también funciona
+    struct BufferControl bc2 = {.len = 10, .flags = 3, .crc = 0xFF};
+    bc = bc2;
+    printf("Despues de asignacion: len=%u, flags=%u, crc=%u\n",
+           bc.len, bc.flags, bc.crc);
+
+    // Pero memcpy byte a byte puede no funcionar correctamente
+    // por el layout dependiente de implementacion
+
+    return 0;
+}
+```
+
+===============================================================================
+7. CAMPOS DE BITS vs. MANIPULACIÓN MANUAL
+===============================================================================
+
+Es importante saber cuándo usar campos de bits y cuándo es mejor la
+manipulación manual con operadores bitwise.
+
+7.1 Comparación de legibilidad
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+// Enfoque 1: Campos de bits (legible, menos portable)
+struct StatusBits {
+    uint32_t conectado : 1;
+    uint32_t autenticado : 1;
+    uint32_t cifrado : 1;
+    uint32_t modo_solo_lectura : 1;
+    uint32_t nivel_acceso : 4;
+};
+
+// Enfoque 2: Operaciones manuales (portable, más código)
+#define STATUS_CONECTADO      (1 << 0)
+#define STATUS_AUTENTICADO    (1 << 1)
+#define STATUS_CIFRADO        (1 << 2)
+#define STATUS_SOLO_LECTURA   (1 << 3)
+#define STATUS_NIVEL_ACCESO_SHIFT 4
+#define STATUS_NIVEL_ACCESO_MASK  0xF0
+
+void proceso_con_bits()
+{
+    struct StatusBits st = {0};
+    st.conectado = 1;
+    st.autenticado = 1;
+    st.nivel_acceso = 5;
+
+    if (st.conectado && st.autenticado && st.nivel_acceso >= 3)
+        printf("Acceso permitido (via campos de bits)\n");
+}
+
+void proceso_manual()
+{
+    uint32_t st = 0;
+    st |= STATUS_CONECTADO | STATUS_AUTENTICADO;
+    st |= (5 << STATUS_NIVEL_ACCESO_SHIFT);
+
+    int conectado = st & STATUS_CONECTADO;
+    int autenticado = st & STATUS_AUTENTICADO;
+    int nivel = (st & STATUS_NIVEL_ACCESO_MASK) >> STATUS_NIVEL_ACCESO_SHIFT;
+
+    if (conectado && autenticado && nivel >= 3)
+        printf("Acceso permitido (via operaciones manuales)\n");
+}
+
+int main()
+{
+    proceso_con_bits();
+    proceso_manual();
+    return 0;
+}
+```
+
+7.2 Tabla comparativa
+
+```c
+#include <stdio.h>
+
+void comparativa()
+{
+    printf("=== Campos de Bits vs. Manipulacion Manual ===\n\n");
+
+    printf("Legibilidad:\n");
+    printf("  Campos:  Alta (nombres semanticos)\n");
+    printf("  Manual:  Baja (macros y desplazamientos)\n\n");
+
+    printf("Portabilidad:\n");
+    printf("  Campos:  Baja (endianness, orden de bits)\n");
+    printf("  Manual:  Alta (independiente de arquitectura)\n\n");
+
+    printf("Rendimiento:\n");
+    printf("  Campos:  Comparable (el compilador optimiza)\n");
+    printf("  Manual:  Comparable (puede ser mas predecible)\n\n");
+
+    printf("Flexibilidad:\n");
+    printf("  Campos:  Baja (no punteros, no arrays)\n");
+    printf("  Manual:  Alta (toda operacion es posible)\n\n");
+
+    printf("Depuracion:\n");
+    printf("  Campos:  Dificil (no se puede inspeccionar facilmente)\n");
+    printf("  Manual:  Facil (el valor completo es visible)\n\n");
+
+    printf("Serializacion:\n");
+    printf("  Campos:  Dificil (layout variable)\n");
+    printf("  Manual:  Trivial (control total sobre bytes)\n");
+}
+
+int main()
+{
+    comparativa();
+    return 0;
+}
+```
+
+7.3 Serialización segura
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+struct VersionCampos {
+    uint32_t dia  : 5;  // 0-31
+    uint32_t mes  : 4;  // 0-15
+    uint32_t anio : 11; // 0-2047
+};
+
+// Serializacion portable de la fecha
+uint32_t serializar_fecha(int dia, int mes, int anio)
+{
+    return (anio << 9) | (mes << 5) | dia;
+}
+
+void deserializar_fecha(uint32_t empaquetado, int *dia, int *mes, int *anio)
+{
+    *dia = empaquetado & 0x1F;
+    *mes = (empaquetado >> 5) & 0x0F;
+    *anio = (empaquetado >> 9) & 0x7FF;
+}
+
+int main()
+{
+    // Con campos de bits
+    struct VersionCampos vc = {15, 6, 2024};
+    printf("Campo bits: dia=%u, mes=%u, anio=%u\n", vc.dia, vc.mes, vc.anio);
+
+    // Serializar a uint32_t (problemas de portabilidad)
+    uint32_t raw;
+    memcpy(&raw, &vc, sizeof(raw));
+    printf("Raw (puede variar): 0x%08X\n", raw);
+
+    // Version portable
+    uint32_t portable = serializar_fecha(15, 6, 2024);
+    printf("Portable raw: 0x%08X\n", portable);
+
+    int d, m, a;
+    deserializar_fecha(portable, &d, &m, &a);
+    printf("Deserializado: dia=%d, mes=%d, anio=%d\n", d, m, a);
+
+    return 0;
+}
+```
+
+===============================================================================
+8. CASOS PRÁCTICOS AVANZADOS
+===============================================================================
+
+8.1 Formato de archivo BMP (bitmap header)
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+#pragma pack(push, 1)
+struct BMPFileHeader {
+    uint16_t type;             // 'BM'
+    uint32_t size;
+    uint16_t reserved1;
+    uint16_t reserved2;
+    uint32_t offset;
+};
+
+struct BMPInfoHeader {
+    uint32_t size;
+    int32_t  width;
+    int32_t  height;
+    uint16_t planes;
+    uint16_t bit_count;
+    uint32_t compression;
+    uint32_t image_size;
+    int32_t  x_pixels_per_meter;
+    int32_t  y_pixels_per_meter;
+    uint32_t colors_used;
+    uint32_t colors_important;
+};
+#pragma pack(pop)
+
+int main()
+{
+    printf("sizeof(BMPFileHeader): %zu bytes\n", sizeof(struct BMPFileHeader));
+    printf("sizeof(BMPInfoHeader): %zu bytes\n", sizeof(struct BMPInfoHeader));
+
+    struct BMPFileHeader fh = {
+        .type = 0x4D42,  // 'BM' en little-endian
+        .size = 54 + 256 * 3,  // header + 256 pixeles RGB
+        .offset = 54
+    };
+
+    printf("Tipo BMP: 0x%04X ('%c%c')\n",
+           fh.type, fh.type & 0xFF, (fh.type >> 8) & 0xFF);
+
+    return 0;
+}
+```
+
+8.2 Simulación de un formato de paquete binario
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+// Formato de paquete de red personalizado
+// Total: 64 bits (8 bytes)
+struct PaqueteRed {
+    uint64_t version      : 4;   // Version del protocolo
+    uint64_t tipo         : 4;   // Tipo de mensaje
+    uint64_t longitud     : 16;  // Longitud del payload
+    uint64_t secuencia    : 8;   // Numero de secuencia
+    uint64_t flags        : 4;   // Banderas de control
+    uint64_t checksum     : 12;  // Checksum del header
+    uint64_t prioridad    : 4;   // Prioridad
+    uint64_t reservado    : 12;  // Para uso futuro
+};
+
+void llenar_paquete(struct PaqueteRed *pkt,
+                    uint8_t ver, uint8_t tipo, uint16_t len,
+                    uint8_t seq, uint8_t flags, uint16_t csum,
+                    uint8_t prio)
+{
+    pkt->version = ver;
+    pkt->tipo = tipo;
+    pkt->longitud = len;
+    pkt->secuencia = seq;
+    pkt->flags = flags;
+    pkt->checksum = csum;
+    pkt->prioridad = prio;
+    pkt->reservado = 0;
+}
+
+void mostrar_paquete(const struct PaqueteRed *pkt)
+{
+    printf("=== Paquete de Red ===\n");
+    printf("Version:    %lu\n", (unsigned long)pkt->version);
+    printf("Tipo:       %lu\n", (unsigned long)pkt->tipo);
+    printf("Longitud:   %lu\n", (unsigned long)pkt->longitud);
+    printf("Secuencia:  %lu\n", (unsigned long)pkt->secuencia);
+    printf("Flags:      0x%lX\n", (unsigned long)pkt->flags);
+    printf("Checksum:   0x%03lX\n", (unsigned long)pkt->checksum);
+    printf("Prioridad:  %lu\n", (unsigned long)pkt->prioridad);
+
+    uint64_t raw;
+    memcpy(&raw, pkt, sizeof(raw));
+    printf("Raw:        0x%016lX\n", (unsigned long)raw);
+}
+
+int main()
+{
+    struct PaqueteRed pkt = {0};
+    llenar_paquete(&pkt, 1, 5, 256, 42, 0x7, 0xABC, 2);
+    mostrar_paquete(&pkt);
+    printf("Tamanio del paquete: %zu bytes\n", sizeof(pkt));
+
+    return 0;
+}
+```
+
+8.3 Codificación de caracteres en 5 bits (base32)
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+struct Char5Bits {
+    unsigned int c0 : 5;
+    unsigned int c1 : 5;
+    unsigned int c2 : 5;
+    unsigned int c3 : 5;
+    unsigned int c4 : 5;
+    unsigned int c5 : 5;
+    unsigned int c6 : 5;
+    unsigned int c7 : 5;  // 40 bits totales
+};
+
+const char *alfabeto_base32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const char *alfabeto_base32_inv = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+void codificar_5bits(const char *texto, struct Char5Bits *salida)
+{
+    unsigned int *bits = (unsigned int *)salida;
+    for (int i = 0; i < 8 && texto[i]; i++)
+    {
+        int idx = texto[i] - 'A';
+        if (idx >= 0 && idx < 26)
+            ;
+        else if (texto[i] >= '2' && texto[i] <= '7')
+            idx = texto[i] - '2' + 26;
+        else
+            idx = 0;
+
+        // Asignar al campo correspondiente
+        switch(i) {
+            case 0: salida->c0 = idx; break;
+            case 1: salida->c1 = idx; break;
+            case 2: salida->c2 = idx; break;
+            case 3: salida->c3 = idx; break;
+            case 4: salida->c4 = idx; break;
+            case 5: salida->c5 = idx; break;
+            case 6: salida->c6 = idx; break;
+            case 7: salida->c7 = idx; break;
+        }
+    }
+}
+
+int main()
+{
+    struct Char5Bits empaquetado = {0};
+    codificar_5bits("HELLO", &empaquetado);
+
+    printf("Caracteres empaquetados (5 bits c/u):\n");
+    printf("c0=%u ('%c')\n", empaquetado.c0, alfabeto_base32[empaquetado.c0]);
+    printf("c1=%u ('%c')\n", empaquetado.c1, alfabeto_base32[empaquetado.c1]);
+    printf("c2=%u ('%c')\n", empaquetado.c2, alfabeto_base32[empaquetado.c2]);
+    printf("c3=%u ('%c')\n", empaquetado.c3, alfabeto_base32[empaquetado.c3]);
+    printf("c4=%u ('%c')\n", empaquetado.c4, alfabeto_base32[empaquetado.c4]);
+
+    return 0;
+}
+```
+
+===============================================================================
+9. TRUCOS Y BUENAS PRÁCTICAS
+===============================================================================
+
+9.1 Forzar empaquetado sin padding
+
+Algunos compiladores soportan pragmas para controlar el empaquetado:
+
+```c
+// GCC/Clang: __attribute__((packed))
+struct __attribute__((packed)) RegistroEmpaquetado {
+    uint8_t  a : 4;
+    uint8_t  b : 4;
+    uint16_t c : 10;
+    uint8_t  d : 2;
+};
+
+// MSVC: #pragma pack(push, 1) ... #pragma pack(pop)
+
+int main()
+{
+    printf("Empaquetado: %zu bytes\n",
+           sizeof(struct RegistroEmpaquetado));
+    return 0;
+}
+```
+
+9.2 Usar unions para acceso dual
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+union Registro {
+    struct {
+        uint32_t habilitado : 1;
+        uint32_t modo : 2;
+        uint32_t velocidad : 3;
+        uint32_t            : 26;  // Relleno
+    } campos;
+    uint32_t raw;
+};
+
+int main()
+{
+    union Registro reg;
+    reg.raw = 0;
+
+    reg.campos.habilitado = 1;
+    reg.campos.modo = 2;
+    reg.campos.velocidad = 5;
+
+    printf("Por campos: habilitado=%u, modo=%u, velocidad=%u\n",
+           reg.campos.habilitado, reg.campos.modo, reg.campos.velocidad);
+    printf("Valor crudo: 0x%08X\n", reg.raw);
+
+    // Acceso directo para E/S con hardware
+    // *(volatile uint32_t *)DIRECCION_REGISTRO = reg.raw;
+    // reg.raw = *(volatile uint32_t *)DIRECCION_REGISTRO;
+
+    return 0;
+}
+```
+
+9.3 Iterar sobre campos de bits
+
+```c
+#include <stdio.h>
+
+struct MuchosBits {
+    unsigned int b0  : 1;
+    unsigned int b1  : 1;
+    unsigned int b2  : 1;
+    unsigned int b3  : 1;
+    unsigned int b4  : 1;
+    unsigned int b5  : 1;
+    unsigned int b6  : 1;
+    unsigned int b7  : 1;
+    unsigned int b8  : 1;
+    unsigned int b9  : 1;
+    unsigned int b10 : 1;
+    unsigned int b11 : 1;
+    unsigned int b12 : 1;
+    unsigned int b13 : 1;
+    unsigned int b14 : 1;
+    unsigned int b15 : 1;
+};
+
+int main()
+{
+    struct MuchosBits bits = {0};
+    // No podemos iterar directamente sobre campos
+    // Solucion: union con uint16_t
+
+    union {
+        struct MuchosBits campos;
+        uint16_t valor;
+    } u = {0};
+
+    u.campos.b0 = 1;
+    u.campos.b2 = 1;
+    u.campos.b7 = 1;
+    u.campos.b15 = 1;
+
+    printf("Valor: 0x%04X\n", u.valor);
+    for (int i = 0; i < 16; i++)
+    {
+        if (u.valor & (1 << i))
+            printf("Bit %d activado\n", i);
+    }
+
+    return 0;
+}
+```
+
+9.4 Múltiples estructuras de bits superpuestas
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+
+union DiversasInterpretaciones {
+    struct {
+        uint32_t a : 8;
+        uint32_t b : 8;
+        uint32_t c : 8;
+        uint32_t d : 8;
+    } como_4_bytes;
+
+    struct {
+        uint32_t xy : 16;
+        uint32_t zw : 16;
+    } como_2_shorts;
+
+    struct {
+        uint32_t valor : 32;
+    } como_entero;
+
+    uint32_t raw;
+};
+
+int main()
+{
+    union DiversasInterpretaciones di;
+
+    // Ver como 4 bytes
+    di.como_4_bytes.a = 0x12;
+    di.como_4_bytes.b = 0x34;
+    di.como_4_bytes.c = 0x56;
+    di.como_4_bytes.d = 0x78;
+
+    printf("Como 4 bytes: 0x%02X 0x%02X 0x%02X 0x%02X\n",
+           di.como_4_bytes.a, di.como_4_bytes.b,
+           di.como_4_bytes.c, di.como_4_bytes.d);
+    printf("Raw: 0x%08X\n", di.raw);
+
+    // Reinterpretar como 2 shorts
+    printf("Como 2 shorts: 0x%04X 0x%04X\n",
+           di.como_2_shorts.xy, di.como_2_shorts.zw);
+
+    return 0;
+}
+```
+
+9.5 Detección de fin de campo (wide field)
+
+```c
+#include <stdio.h>
+
+struct CamposVariables {
+    unsigned int a : 8;
+    unsigned int b : 12;
+    unsigned int c : 12;
+};
+
+int main()
+{
+    struct CamposVariables cv = {0xFF, 0xFFF, 0xFFF};
+
+    unsigned int *ptr = (unsigned int *)&cv;
+    printf("Valor crudo: 0x%08X\n", *ptr);
+
+    // Si sabemos que en little-endian los campos se almacenan
+    // de LSB a MSB:
+    printf("Esperado: a=0xFF, b=0xFFF, c=0xFFF\n");
+    printf("Real:    a=0x%X, b=0x%X, c=0x%X\n", cv.a, cv.b, cv.c);
+
+    // Demostrar que la suma de bits cabe en 32 bits
+    printf("Total bits: %d (caben en %zu bytes)\n",
+           8 + 12 + 12, sizeof(cv));
+
+    return 0;
+}
+```
+
+===============================================================================
+10. PROYECTO PRÁCTICO: DECODIFICADOR DE PROTOCOLO BINARIO
+===============================================================================
+
+Implementemos un decodificador para un protocolo binario simple que usa
+campos de bits extensivamente:
+
+```c
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+// Protocolo "SimplePacket V1"
+// Header de 64 bits (8 bytes):
+// - version: 4 bits
+// - msg_type: 6 bits
+// - priority: 2 bits
+// - source: 8 bits
+// - dest: 8 bits
+// - length: 12 bits
+// - sequence: 8 bits
+// - flags: 8 bits
+// - checksum: 8 bits
+
+struct SimplePacketHeader {
+    uint64_t version  : 4;
+    uint64_t msg_type : 6;
+    uint64_t priority : 2;
+    uint64_t source   : 8;
+    uint64_t dest     : 8;
+    uint64_t length   : 12;
+    uint64_t sequence : 8;
+    uint64_t flags    : 8;
+    uint64_t checksum : 8;  // Total = 64
+};
+
+struct SimplePacket {
+    struct SimplePacketHeader header;
+    uint8_t payload[256];
+};
+
+void inicializar_paquete(struct SimplePacket *pkt,
+                          uint8_t type, uint8_t src, uint8_t dst,
+                          uint16_t len, uint8_t seq)
+{
+    memset(pkt, 0, sizeof(*pkt));
+    pkt->header.version = 1;
+    pkt->header.msg_type = type;
+    pkt->header.priority = 1;
+    pkt->header.source = src;
+    pkt->header.dest = dst;
+    pkt->header.length = len;
+    pkt->header.sequence = seq;
+    pkt->header.flags = 0;
+    pkt->header.checksum = 0;
+}
+
+uint8_t calcular_checksum(const struct SimplePacket *pkt)
+{
+    uint8_t sum = 0;
+    const uint8_t *bytes = (const uint8_t *)pkt;
+    for (size_t i = 0; i < sizeof(pkt->header) + pkt->header.length; i++)
+        sum ^= bytes[i];
+    return sum;
+}
+
+bool verificar_paquete(const struct SimplePacket *pkt)
+{
+    uint8_t checksum_original = pkt->header.checksum;
+    struct SimplePacket copia = *pkt;
+    copia.header.checksum = 0;
+    uint8_t checksum_calc = 0;
+    const uint8_t *bytes = (const uint8_t *)&copia;
+    for (size_t i = 0; i < sizeof(copia.header) + copia.header.length; i++)
+        checksum_calc ^= bytes[i];
+    return checksum_original == checksum_calc;
+}
+
+void imprimir_paquete(const struct SimplePacket *pkt)
+{
+    printf("=== SimplePacket ===\n");
+    printf("Version:   %lu\n", (unsigned long)pkt->header.version);
+    printf("Tipo msg:  %lu\n", (unsigned long)pkt->header.msg_type);
+    printf("Prioridad: %lu\n", (unsigned long)pkt->header.priority);
+    printf("Origen:    %lu\n", (unsigned long)pkt->header.source);
+    printf("Destino:   %lu\n", (unsigned long)pkt->header.dest);
+    printf("Longitud:  %lu\n", (unsigned long)pkt->header.length);
+    printf("Secuencia: %lu\n", (unsigned long)pkt->header.sequence);
+    printf("Flags:     0x%02lX\n", (unsigned long)pkt->header.flags);
+    printf("Checksum:  0x%02lX\n", (unsigned long)pkt->header.checksum);
+    printf("Payload: ");
+    for (uint16_t i = 0; i < pkt->header.length && i < 16; i++)
+        printf("%02X ", pkt->payload[i]);
+    printf("%s\n", pkt->header.length > 16 ? "..." : "");
+}
+
+int main()
+{
+    struct SimplePacket pkt;
+    inicializar_paquete(&pkt, 3, 0x10, 0x20, 8, 42);
+
+    // Llenar payload
+    for (uint16_t i = 0; i < 8; i++)
+        pkt.payload[i] = i * 0x11;
+
+    // Calcular checksum
+    pkt.header.checksum = calcular_checksum(&pkt);
+
+    imprimir_paquete(&pkt);
+
+    printf("\nVerificacion: %s\n",
+           verificar_paquete(&pkt) ? "OK" : "FALLO");
+
+    // Corromper un byte
+    pkt.payload[3] ^= 0xFF;
+    printf("Verificacion tras corrupcion: %s\n",
+           verificar_paquete(&pkt) ? "OK" : "FALLO");
+
+    printf("\nTamaño del header: %zu bytes\n", sizeof(pkt.header));
+    printf("Tamaño del paquete completo: %zu bytes\n", sizeof(pkt));
+
+    return 0;
+}
+```
+
+```c
+#include <stdbool.h>
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Los campos de bits permiten declarar miembros de struct con ancho en bits
+  específico usando la sintaxis tipo : anchura
+- Se usan para ahorrar memoria, modelar registros de hardware, y empaquetar
+  protocolos binarios
+- El layout en memoria depende de la implementación: orden de bits,
+  alineación, y unidad de almacenamiento varían entre compiladores
+- No se pueden tomar direcciones (&) de campos de bits, ni usar sizeof,
+  ni declarar arrays de ellos
+- Los campos de ancho 0 fuerzan alineación al siguiente límite de unidad
+- El endianness de la plataforma afecta el orden de los campos dentro de la
+  unidad de almacenamiento
+- Para código portable, la manipulación manual con operadores bitwise y
+  macros es preferible a los campos de bits
+- La unión con un entero permite acceso raw a los bits subyacentes
+- El empaquetado forzado con __attribute__((packed)) puede ayudar pero
+  afecta rendimiento y portabilidad
+- Los campos de bits son ideales para prototipos rápidos y código específico
+  de plataforma
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Define una estructura con campos de bits que represente
+un color RGB565 (5 bits rojo, 6 bits verde, 5 bits azul), usada en pantallas
+TFT. Escribe funciones para convertir desde RGB888.
+
+🧩 **Ejercicio 2:** Implementa una estructura para un encabezado RTP (Real-
+time Transport Protocol) usando campos de bits: version(2), padding(1),
+extension(1), CSRC count(4), marker(1), payload type(7), sequence(16),
+timestamp(32), SSRC(32).
+
+🧩 **Ejercicio 3:** Crea un programa que lea un archivo BMP y extraiga los
+campos del header usando una estructura con campos de bits. Compare el
+resultado con extracción manual byte a byte.
+
+🧩 **Ejercicio 4:** Escribe una función que determine el endianness de la
+plataforma usando una unión entre un entero de 16 bits y una estructura con
+dos campos de bits de 8 bits.
+
+🧩 **Ejercicio 5:** Diseña un sistema de 8 LEDs controlados por 8 bits de
+un registro. Cada LED tiene: estado(1), brillo(3), efecto(2). Implementa
+el registro completo y funciones para controlar cada LED.
+
+🧩 **Ejercicio 6:** Implementa un serializador/deserializador portable que
+convierta entre una estructura con campos de bits y un buffer de bytes,
+manejando explícitamente el endianness.
+
+🧩 **Ejercicio 7:** Crea un benchmark que compare la velocidad de acceso a
+campos de bits vs. operaciones manuales con mascaras, midiendo tiempo de
+lectura/escritura de 1 millón de operaciones.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué sizeof(mi_struct) es 4 aunque solo use 10 bits?** Porque el
+compilador alinea la estructura al tamaño de la unidad de almacenamiento
+(típicamente sizeof(unsigned int) = 4 bytes). Use __attribute__((packed))
+si necesita ahorrar espacio, pero con cuidado.
+
+❓ **¿Puedo usar uint8_t como tipo base para campos de bits?** Sí, desde
+C99/C11 puedes usar cualquier tipo entero: uint8_t, uint16_t, etc. Sin
+embargo, algunos compiladores antiguos pueden limitarse a int/unsigned int.
+
+❓ **¿Cómo accedo al valor crudo de los campos de bits?** Use una unión con
+un entero del tamaño de la estructura. O memcpy a un buffer. No asuma el
+layout.
+
+❓ **¿Los campos de bits son útiles en sistemas modernos con mucha RAM?**
+Sí, especialmente para modelar hardware, protocolos de red, y formatos de
+archivo. El ahorro de memoria sigue siendo valioso en cachés y sistemas
+embebidos.
+
+❓ **¿Qué compiladores soportan campos de bits?** Todos los compiladores C
+estándar (GCC, Clang, MSVC, ICC, etc.) los soportan, pero el layout exacto
+puede diferir.
+
+❓ **¿Puedo usar volatile con campos de bits?** Sí, es común en registros
+de hardware: volatile struct Registro *reg = (volatile void *)0x4000;
+
+❓ **¿Cómo hago para que mis campos de bits tengan un orden predecible?**
+No puede garantizarse en C estándar. Use operaciones bitwise manuales si
+necesita portabilidad absoluta, o use atributos específicos del compilador
+(#pragma pack, __attribute__((packed))) entendiendo que no son portables.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Implementación de un códec RTP completo** — Diseñe e implemente un
+módulo en C que maneje paquetes RTP (Real-time Transport Protocol) usando
+campos de bits para el encabezado. El módulo debe soportar: creación de
+paquetes con todos los campos (version, padding, extension, CC, marker,
+payload type, sequence number, timestamp, SSRC, CSRC list), extracción de
+campos individuales, verificación de checksum, y reordenamiento de paquetes
+por número de secuencia. Incluya un programa de prueba que genere y procese
+miles de paquetes, midiendo throughput y uso de memoria.
+
+===============================================================================
+FIN DEL CAPÍTULO 65
+===============================================================================
+
+"Un campo de bits correctamente usado es poesía binaria. Mal usado, es una
+pesadilla de depuración portátil." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+66_CAPITULO_66_ARGUMENTOS_LINEA_DE_COMANDOS.txt
+===============================================================================

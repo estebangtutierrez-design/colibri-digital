@@ -1,0 +1,1279 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 43: CHANNELS BUFFERIZADOS
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A LOS CHANNELS CON BUFFER
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de sistemas concurrentes. En el capítulo anterior
+dominaste los channels sin buffer, esos tubos sincronizados donde emisor y
+receptor se encuentran cara a cara. Ahora es momento de añadir una sala de
+espera a ese tubo: el buffer.
+
+Los channels bufferizados son como tuberías con capacidad de almacenamiento
+intermedio. Permiten que el emisor siga enviando aunque el receptor no esté
+listo, hasta que el buffer se llena. Y permiten que el receptor siga recibiendo
+aunque el emisor no esté enviando, hasta que el buffer se vacía.
+
+Este desacoplamiento temporal es increíblemente útil para:
+  • Suavizar picos de carga entre productores y consumidores.
+  • Implementar sistemas de tipo productor-consumidor con ratios desiguales.
+  • Crear semáforos y límites de concurrencia.
+  • Mejorar el rendimiento reduciendo bloqueos.
+
+Pero atención: los channels bufferizados no son siempre la respuesta. Un buffer
+mal dimensionado puede ocultar problemas de diseño, crear backpressure
+inadecuada o incluso empeorar el rendimiento. Como arquitecto, debes entender
+cuándo y cómo usarlos.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"Un channel bufferizado es como una línea de producción: el trabajador de
+arriba puede seguir produciendo aunque el de abajo esté atascado, hasta
+que la cinta transportadora se llena." — Anónimo
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender la diferencia entre channels bufferizados y no bufferizados.
+  • Crear channels con buffer usando make(chan T, n).
+  • Entender cuándo un envío bloquea (buffer lleno).
+  • Entender cuándo una recepción bloquea (buffer vacío).
+  • Dimensionar correctamente el tamaño del buffer.
+  • Usar len(ch) y cap(ch) para inspeccionar el buffer.
+  • Implementar el patrón de semáforo con buffer.
+  • Conocer las ventajas y desventajas del bufferizado.
+  • Identificar cuándo NO usar buffer.
+  • Practicar con ejercicios progresivos.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — CHANNELS BUFFERIZADOS
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ¿QUÉ ES UN CHANNEL BUFFERIZADO?
+----------------------------------------------------------------------
+
+Un channel bufferizado tiene una capacidad interna (buffer) donde los valores
+enviados se almacenan temporalmente hasta que un receptor los lea.
+
+    ch := make(chan int, 3)  // Buffer de 3 elementos
+
+  • Envío: No bloquea mientras haya espacio en el buffer.
+  • Recepción: No bloquea mientras haya datos en el buffer.
+  • Bloqueo en envío: Solo cuando el buffer está lleno.
+  • Bloqueo en recepción: Solo cuando el buffer está vacío.
+
+----------------------------------------------------------------------
+  2. COMPORTAMIENTO PASO A PASO
+----------------------------------------------------------------------
+
+Imagina un canal con buffer de 3:
+
+    ch := make(chan int, 3)
+
+    ch <- 1  // OK, buffer: [1]
+    ch <- 2  // OK, buffer: [1, 2]
+    ch <- 3  // OK, buffer: [1, 2, 3]
+    ch <- 4  // BLOQUEA, buffer lleno
+
+    <-ch     // OK, recibe 1, buffer: [2, 3]
+    <-ch     // OK, recibe 2, buffer: [3]
+    <-ch     // OK, recibe 3, buffer: []
+    <-ch     // BLOQUEA, buffer vacío
+
+----------------------------------------------------------------------
+  3. TAMAÑO DEL BUFFER
+----------------------------------------------------------------------
+
+La elección del tamaño del buffer es una decisión de diseño importante:
+
+  • Buffer = 0: Channel no bufferizado (síncrono). Bloqueo en cada envío.
+  • Buffer = 1: Permite un elemento de "adelanto". Útil para handshake.
+  • Buffer = N: Desacopla productor y consumidor por N elementos.
+
+Regla general: usa buffer cuando sepas que los productores y consumidores
+tienen ritmos diferentes, pero dimensiónalo con cuidado.
+
+----------------------------------------------------------------------
+  4. LEN Y CAP EN CHANNELS BUFFERIZADOS
+----------------------------------------------------------------------
+
+  • cap(ch): Capacidad total del buffer (constante tras creación).
+  • len(ch): Número de elementos actualmente en el buffer.
+
+    ch := make(chan int, 5)
+    fmt.Println(cap(ch)) // 5
+    fmt.Println(len(ch)) // 0
+
+    ch <- 10
+    ch <- 20
+    fmt.Println(len(ch)) // 2
+
+Útil para monitoreo, pero no uses len(ch) para tomar decisiones de
+sincronización (el valor puede cambiar inmediatamente después de leerlo).
+
+----------------------------------------------------------------------
+  5. CHANNEL BUFFERIZADO COMO SEMÁFORO
+----------------------------------------------------------------------
+
+Un channel bufferizado con tamaño N puede actuar como semáforo, limitando
+la concurrencia a N gorutinas simultáneas:
+
+    sem := make(chan struct{}, 3)
+
+    for _, t := range tareas {
+        sem <- struct{}{}  // Adquiere el semáforo (bloquea si ya hay 3)
+        go func(t Tarea) {
+            defer func() { <-sem }()  // Libera el semáforo
+            procesar(t)
+        }(t)
+    }
+
+----------------------------------------------------------------------
+  6. CUÁNDO USAR vs NO USAR BUFFER
+----------------------------------------------------------------------
+
+USAR buffer cuando:
+  • Productor y consumidor tienen ritmos diferentes.
+  • Quieres reducir la latencia de envío.
+  • Implementas un semáforo o limitador.
+  • Necesitas un pequeño colchón para picos de carga.
+  • Patrón fan-out (un productor, múltiples consumidores).
+
+NO USAR buffer cuando:
+  • Necesitas sincronización estricta (handshake).
+  • Quieres garantizar que el receptor procesa cada elemento antes del
+    siguiente envío.
+  • El buffer oculta un desequilibrio que debe ser corregido.
+  • No tienes claro el tamaño adecuado (empieza sin buffer).
+
+----------------------------------------------------------------------
+  7. ERRORES COMUNES
+----------------------------------------------------------------------
+
+  • Buffer sobredimensionado: Oculta problemas, consume memoria.
+  • Buffer subdimensionado: Causa bloqueos inesperados, estrangula el sistema.
+  • Cerrar el channel mientras aún hay datos en el buffer: Los datos se
+    pueden leer después de cerrar, pero no se pueden añadir más.
+  • Asumir que un envío a bufferizado siempre es no bloqueante: Falso,
+    bloquea cuando está lleno.
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: CHANNEL BUFFERIZADO BÁSICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    // Canal con buffer de 2
+    ch := make(chan string, 2)
+
+    // Enviamos 2 mensajes sin bloqueo
+    ch <- "Hola"
+    ch <- "Mundo"
+
+    // Recibimos los 2 mensajes
+    fmt.Println(<-ch)
+    fmt.Println(<-ch)
+}
+```
+
+Sin buffer, este código causaría deadlock (envío sin receptor concurrente).
+Con buffer de 2, funciona perfectamente porque los mensajes se almacenan.
+
+----------------------------------------------------------------------
+  EJEMPLO 2: BLOQUEO POR BUFFER LLENO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int, 3)
+
+    // Llenamos el buffer
+    ch <- 1
+    ch <- 2
+    ch <- 3
+
+    // Ahora el buffer está lleno. Esto inicia una gorutina que eventualmente
+    // recibirá, pero si enviamos aquí en main, bloqueará.
+    go func() {
+        time.Sleep(100 * time.Millisecond)
+        fmt.Println("Recibido:", <-ch)
+    }()
+
+    // Este envío bloquea hasta que la gorutina reciba uno
+    fmt.Println("Enviando 4...")
+    ch <- 4
+    fmt.Println("4 enviado exitosamente")
+
+    fmt.Println("Recibido:", <-ch)
+    fmt.Println("Recibido:", <-ch)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 3: PRODUCTOR RÁPIDO, CONSUMIDOR LENTO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func productor(ch chan<- int) {
+    for i := 1; i <= 10; i++ {
+        fmt.Printf("Productor envía %d (buffer: %d/%d)\n",
+            i, len(ch), cap(ch))
+        ch <- i
+        time.Sleep(20 * time.Millisecond)
+    }
+    close(ch)
+}
+
+func consumidor(ch <-chan int) {
+    for valor := range ch {
+        fmt.Printf("Consumidor recibe %d (buffer: %d/%d)\n",
+            valor, len(ch), cap(ch))
+        time.Sleep(100 * time.Millisecond) // Consumidor más lento
+    }
+}
+
+func main() {
+    ch := make(chan int, 5)
+
+    go productor(ch)
+    consumidor(ch)
+}
+```
+
+Observa cómo el buffer de 5 permite al productor adelantarse antes de que
+el consumidor procese, pero eventualmente el buffer se llena y el productor
+se bloquea hasta que el consumidor se desocupe.
+
+----------------------------------------------------------------------
+  EJEMPLO 4: INSPECCIÓN DEL BUFFER CON LEN Y CAP
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int, 5)
+
+    fmt.Printf("Capacidad: %d\n", cap(ch))
+    fmt.Printf("Longitud inicial: %d\n", len(ch))
+
+    // Enviamos 3 elementos
+    for i := 0; i < 3; i++ {
+        ch <- i
+        fmt.Printf("Enviado %d, buffer: %d/%d\n", i, len(ch), cap(ch))
+    }
+
+    // Recibimos 1 elemento
+    fmt.Println("Recibido:", <-ch)
+    fmt.Printf("Buffer después de recibir: %d/%d\n", len(ch), cap(ch))
+
+    // Llenamos el buffer
+    for i := 3; i < 5; i++ {
+        ch <- i
+        fmt.Printf("Enviado %d, buffer: %d/%d\n", i, len(ch), cap(ch))
+    }
+
+    // Esto llenaría el buffer, pero iniciamos una gorutina para recibir
+    go func() {
+        time.Sleep(50 * time.Millisecond)
+        fmt.Println("Gorutina recibe:", <-ch)
+    }()
+
+    ch <- 5
+    fmt.Printf("Enviado 5, buffer: %d/%d\n", len(ch), cap(ch))
+
+    time.Sleep(100 * time.Millisecond)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: SEMÁFORO CON CHANNEL BUFFERIZADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    const maxConcurrentes = 3
+    sem := make(chan struct{}, maxConcurrentes)
+
+    var wg sync.WaitGroup
+    tareas := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
+
+    for _, t := range tareas {
+        wg.Add(1)
+        tarea := t
+
+        // Adquirir semáforo (bloquea si ya hay 3 activas)
+        sem <- struct{}{}
+
+        go func() {
+            defer wg.Done()
+            defer func() { <-sem }() // Liberar semáforo
+
+            fmt.Printf("Iniciando tarea %s (%d concurrentes)\n",
+                tarea, len(sem))
+            time.Sleep(500 * time.Millisecond)
+            fmt.Printf("Finalizando tarea %s\n", tarea)
+        }()
+    }
+
+    wg.Wait()
+    fmt.Println("Todas las tareas completadas")
+}
+```
+
+Este patrón limita a 3 gorutinas simultáneas. El semáforo (channel de
+struct{} con buffer 3) controla el acceso al recurso.
+
+----------------------------------------------------------------------
+  EJEMPLO 6: CHANNEL BUFFERIZADO CON MÚLTIPLES CONSUMIDORES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(ch chan<- int) {
+    for i := 0; i < 20; i++ {
+        ch <- i
+        fmt.Printf("Producido: %d\n", i)
+        time.Sleep(50 * time.Millisecond)
+    }
+    close(ch)
+}
+
+func consumidor(id int, ch <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for v := range ch {
+        fmt.Printf("Consumidor %d procesa: %d\n", id, v)
+        time.Sleep(100 * time.Millisecond)
+    }
+}
+
+func main() {
+    ch := make(chan int, 10)
+
+    var wg sync.WaitGroup
+
+    for c := 1; c <= 3; c++ {
+        wg.Add(1)
+        go consumidor(c, ch, &wg)
+    }
+
+    go productor(ch)
+    wg.Wait()
+    fmt.Println("Sistema completo")
+}
+```
+
+El buffer de 10 permite al productor adelantarse significativamente cuando
+los 3 consumidores están ocupados.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: COMPARACIÓN SIN BUFFER vs CON BUFFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    fmt.Println("=== SIN BUFFER ===")
+    inicio := time.Now()
+    ch1 := make(chan int)
+
+    go func() {
+        for i := 0; i < 5; i++ {
+            ch1 <- i
+        }
+        close(ch1)
+    }()
+
+    for v := range ch1 {
+        fmt.Printf("Recibido %d en %v\n", v, time.Since(inicio))
+        time.Sleep(50 * time.Millisecond) // Simular procesamiento lento
+    }
+
+    fmt.Println("\n=== CON BUFFER (tamaño 5) ===")
+    inicio = time.Now()
+    ch2 := make(chan int, 5)
+
+    go func() {
+        for i := 0; i < 5; i++ {
+            ch2 <- i
+            fmt.Printf("  Enviado %d en %v\n", i, time.Since(inicio))
+        }
+        close(ch2)
+    }()
+
+    // Damos tiempo para que el productor envíe todo
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println("  Productor terminó de enviar (gracias al buffer)")
+
+    for v := range ch2 {
+        fmt.Printf("Recibido %d en %v\n", v, time.Since(inicio))
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+```
+
+Con buffer, el productor puede enviar los 5 elementos casi instantáneamente
+y terminar. Sin buffer, cada envío espera a que el receptor procese.
+
+----------------------------------------------------------------------
+  EJEMPLO 8: BUFFER COMO COLA DE TRABAJO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Trabajo struct {
+    ID       int
+    Duracion time.Duration
+}
+
+func productor(trabajos chan<- Trabajo, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 1; i <= 15; i++ {
+        trabajo := Trabajo{
+            ID:       i,
+            Duracion: time.Duration(50+i*10) * time.Millisecond,
+        }
+        fmt.Printf("Productor encola trabajo %d (buffer %d/%d)\n",
+            i, len(trabajos), cap(trabajos))
+        trabajos <- trabajo
+    }
+    close(trabajos)
+}
+
+func trabajador(id int, trabajos <-chan Trabajo, resultados chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for t := range trabajos {
+        fmt.Printf("Trabajador %d procesando trabajo %d (%v)\n",
+            id, t.ID, t.Duracion)
+        time.Sleep(t.Duracion)
+        resultados <- t.ID * 10
+    }
+}
+
+func main() {
+    const colaTrabajos = 5
+    const numTrabajadores = 3
+    const numTrabajos = 15
+
+    trabajos := make(chan Trabajo, colaTrabajos)
+    resultados := make(chan int, colaTrabajos)
+
+    var wgProductores sync.WaitGroup
+    var wgTrabajadores sync.WaitGroup
+
+    wgProductores.Add(1)
+    go productor(trabajos, &wgProductores)
+
+    for i := 1; i <= numTrabajadores; i++ {
+        wgTrabajadores.Add(1)
+        go trabajador(i, trabajos, resultados, &wgTrabajadores)
+    }
+
+    // Esperamos a que terminen de producir y procesar
+    wgProductores.Wait()
+    wgTrabajadores.Wait()
+    close(resultados)
+
+    // Recolectamos resultados
+    total := 0
+    for r := range resultados {
+        total += r
+        fmt.Printf("Resultado parcial: %d, acumulado: %d\n", r, total)
+    }
+
+    fmt.Printf("Resultado final: %d\n", total)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: BACKPRESSURE CON BUFFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 100; i++ {
+        select {
+        case ch <- i:
+            // Enviado exitosamente
+        default:
+            // Buffer lleno: backpressure
+            fmt.Printf("Backpressure: buffer lleno, saltando %d\n", i)
+        }
+        time.Sleep(10 * time.Millisecond)
+    }
+}
+
+func consumidor(ch <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for v := range ch {
+        fmt.Printf("Procesando: %d\n", v)
+        time.Sleep(50 * time.Millisecond) // Consumidor lento
+    }
+}
+
+func main() {
+    ch := make(chan int, 5)
+    var wg sync.WaitGroup
+
+    wg.Add(1)
+    go consumidor(ch, &wg)
+
+    wg.Add(1)
+    go productor(ch, &wg)
+
+    time.Sleep(3 * time.Second)
+    close(ch)
+
+    wg.Wait()
+    fmt.Println("Finalizado")
+}
+```
+
+Aquí el productor usa select con default para detectar cuándo el buffer
+está lleno y aplicar backpressure (en lugar de bloquear).
+
+----------------------------------------------------------------------
+  EJEMPLO 10: CHANNEL BUFFERIZADO CON ESTRUCTURA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Evento struct {
+    Tipo      string
+    Mensaje   string
+    Prioridad int
+}
+
+func main() {
+    eventos := make(chan Evento, 10)
+
+    // Productor de eventos
+    go func() {
+        tipos := []string{"INFO", "WARN", "ERROR"}
+        for i := 0; i < 20; i++ {
+            evento := Evento{
+                Tipo:      tipos[i%3],
+                Mensaje:   fmt.Sprintf("Evento número %d", i),
+                Prioridad: i % 5,
+            }
+            eventos <- evento
+            fmt.Printf("Evento generado: [%s] %s\n", evento.Tipo, evento.Mensaje)
+            time.Sleep(30 * time.Millisecond)
+        }
+        close(eventos)
+    }()
+
+    // Consumidor de eventos
+    for e := range eventos {
+        fmt.Printf("Procesando [%s] (prio:%d): %s\n",
+            e.Tipo, e.Prioridad, e.Mensaje)
+        time.Sleep(80 * time.Millisecond)
+    }
+
+    fmt.Println("Todos los eventos procesados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: BUFFER 1 — SEÑALIZACIÓN NO BLOQUEANTE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    // Un buffer de 1 permite señalización no bloqueante
+    ch := make(chan struct{}, 1)
+
+    // Enviamos una señal (no bloquea gracias al buffer)
+    ch <- struct{}{}
+
+    go func() {
+        time.Sleep(100 * time.Millisecond)
+        // La gorutina recibe la señal
+        <-ch
+        fmt.Println("Gorutina recibió la señal")
+    }()
+
+    time.Sleep(200 * time.Millisecond)
+    fmt.Println("Main terminó")
+}
+```
+
+Un buffer de 1 permite que el emisor no se bloquee si ya hay un mensaje
+esperando. Es útil para señalización donde perder una señal no es crítico.
+
+----------------------------------------------------------------------
+  EJEMPLO 12: OVERHEAD DEL BUFFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    fmt.Println("Midiendo overhead de channels...")
+
+    // Sin buffer
+    inicio := time.Now()
+    ch1 := make(chan int)
+    go func() {
+        for i := 0; i < 10000; i++ {
+            ch1 <- i
+        }
+        close(ch1)
+    }()
+    for range ch1 {
+    }
+    fmt.Printf("Sin buffer: %v\n", time.Since(inicio))
+
+    // Con buffer de 1000
+    inicio = time.Now()
+    ch2 := make(chan int, 1000)
+    go func() {
+        for i := 0; i < 10000; i++ {
+            ch2 <- i
+        }
+        close(ch2)
+    }()
+    for range ch2 {
+    }
+    fmt.Printf("Con buffer 1000: %v\n", time.Since(inicio))
+
+    // Con buffer de 10000 (cubre todos los elementos)
+    inicio = time.Now()
+    ch3 := make(chan int, 10000)
+    go func() {
+        for i := 0; i < 10000; i++ {
+            ch3 <- i
+        }
+        close(ch3)
+    }()
+    for range ch3 {
+    }
+    fmt.Printf("Con buffer 10000: %v\n", time.Since(inicio))
+}
+```
+
+El buffer reduce el número de bloqueos y cambios de contexto, lo que mejora
+el rendimiento. Pero un buffer demasiado grande consume memoria innecesaria.
+
+----------------------------------------------------------------------
+  EJEMPLO 13: LATENCIA DE ENVÍO CON Y SIN BUFFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    const iteraciones = 1000
+
+    fmt.Println("Midiendo latencia de envío...")
+
+    // Sin buffer
+    ch1 := make(chan int)
+    inicio := time.Now()
+    go func() {
+        for i := 0; i < iteraciones; i++ {
+            <-ch1
+        }
+    }()
+    for i := 0; i < iteraciones; i++ {
+        ch1 <- i
+    }
+    fmt.Printf("Sin buffer: %v por operación\n", time.Since(inicio)/iteraciones)
+
+    // Con buffer 100
+    ch2 := make(chan int, 100)
+    inicio = time.Now()
+    go func() {
+        for i := 0; i < iteraciones; i++ {
+            <-ch2
+        }
+    }()
+    for i := 0; i < iteraciones; i++ {
+        ch2 <- i
+    }
+    fmt.Printf("Con buffer 100: %v por operación\n", time.Since(inicio)/iteraciones)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: VACIADO COMPLETO DEL BUFFER DESPUÉS DE CERRAR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan int, 5)
+
+    // Enviamos 3 elementos (sin llenar el buffer)
+    ch <- 1
+    ch <- 2
+    ch <- 3
+
+    // Cerramos el channel (aún hay datos)
+    close(ch)
+
+    // Podemos seguir leyendo los datos del buffer
+    fmt.Println(<-ch) // 1
+    fmt.Println(<-ch) // 2
+    fmt.Println(<-ch) // 3
+
+    // Ahora el buffer está vacío y cerrado
+    v, ok := <-ch
+    fmt.Printf("Valor: %d, ok: %t\n", v, ok) // Valor: 0, ok: false
+}
+```
+
+Después de cerrar un channel bufferizado, podemos seguir leyendo los datos
+almacenados. Una vez vacío, las lecturas devuelven el valor cero con ok=false.
+
+----------------------------------------------------------------------
+  EJEMPLO 15: USO DE RANGE CON CHANNEL BUFFERIZADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan string, 4)
+
+    ch <- "manzana"
+    ch <- "pera"
+    ch <- "uva"
+    ch <- "naranja"
+    close(ch)
+
+    // range itera sobre los elementos del buffer
+    for fruta := range ch {
+        fmt.Println("Fruta:", fruta)
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: MULTIPRODUCTORES, UN CONSUMIDOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(id int, ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 5; i++ {
+        valor := id*100 + i
+        fmt.Printf("Productor %d envía %d\n", id, valor)
+        ch <- valor
+        time.Sleep(time.Duration(50+id*10) * time.Millisecond)
+    }
+}
+
+func main() {
+    ch := make(chan int, 10)
+    var wg sync.WaitGroup
+
+    // 3 productores
+    for p := 1; p <= 3; p++ {
+        wg.Add(1)
+        go productor(p, ch, &wg)
+    }
+
+    // Consumidor en gorutina separada
+    go func() {
+        wg.Wait()
+        close(ch)
+    }()
+
+    // Consumidor (main)
+    total := 0
+    for v := range ch {
+        fmt.Printf("Consumidor recibe %d\n", v)
+        total += v
+        time.Sleep(30 * time.Millisecond)
+    }
+
+    fmt.Printf("Suma total: %d\n", total)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: BACKPRESSURE CON DOS BUFFERS ENCADEADOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func etapa1(salida chan<- int) {
+    for i := 0; i < 20; i++ {
+        select {
+        case salida <- i:
+            fmt.Printf("Etapa1 produce %d\n", i)
+        default:
+            fmt.Printf("Etapa1: buffer lleno, esperando...\n")
+            salida <- i // Bloquea hasta que haya espacio
+        }
+        time.Sleep(20 * time.Millisecond)
+    }
+    close(salida)
+}
+
+func etapa2(entrada <-chan int, salida chan<- string) {
+    for v := range entrada {
+        result := fmt.Sprintf("Procesado: %d -> %d", v, v*v)
+        select {
+        case salida <- result:
+        default:
+            fmt.Println("Etapa2: buffer lleno, esperando...")
+            salida <- result
+        }
+        time.Sleep(50 * time.Millisecond)
+    }
+    close(salida)
+}
+
+func main() {
+    ch1 := make(chan int, 5)
+    ch2 := make(chan string, 5)
+
+    go etapa1(ch1)
+    go etapa2(ch1, ch2)
+
+    for res := range ch2 {
+        fmt.Println(" Final:", res)
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: CANAL BUFFERIZADO Y TIMEOUT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int, 3)
+
+    // Intento de enviar con timeout
+    select {
+    case ch <- 42:
+        fmt.Println("Enviado exitosamente")
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: no se pudo enviar en 1s")
+    }
+
+    // Intento de recibir con timeout
+    select {
+    case v := <-ch:
+        fmt.Printf("Recibido: %d\n", v)
+    case <-time.After(100 * time.Millisecond):
+        fmt.Println("Timeout: no hay datos disponibles")
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: DIMENSIONAMIENTO DE BUFFER CON CARGA VARIABLE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    "time"
+)
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    const bufferSize = 10
+    ch := make(chan int, bufferSize)
+
+    go func() {
+        for i := 0; i < 50; i++ {
+            ch <- i
+            fmt.Printf("Enviado %d, buffer %d/%d\n", i, len(ch), cap(ch))
+            // Simular ráfagas: a veces rápido, a veces lento
+            if rand.Intn(3) == 0 {
+                time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+            }
+        }
+        close(ch)
+    }()
+
+    for v := range ch {
+        fmt.Printf("  Recibido %d, buffer %d/%d\n", v, len(ch), cap(ch))
+        // Consumidor siempre lento
+        time.Sleep(60 * time.Millisecond)
+    }
+}
+```
+
+Observa cómo el buffer absorbe las ráfagas del productor. Sin buffer, el
+productor se bloquearía en cada elemento.
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SISTEMA DE PROCESAMIENTO DE LOTES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Lote struct {
+    ID       int
+    Items    []int
+}
+
+func generadorLotes(salida chan<- Lote, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for loteID := 1; loteID <= 10; loteID++ {
+        items := make([]int, 5)
+        for i := range items {
+            items[i] = loteID*10 + i
+        }
+        lote := Lote{ID: loteID, Items: items}
+        fmt.Printf("Generado lote %d con %d items\n", loteID, len(items))
+        salida <- lote
+        time.Sleep(50 * time.Millisecond)
+    }
+    close(salida)
+}
+
+func procesadorLotes(entrada <-chan Lote, salida chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for lote := range entrada {
+        fmt.Printf("Procesando lote %d...\n", lote.ID)
+        suma := 0
+        for _, item := range lote.Items {
+            suma += item
+            time.Sleep(10 * time.Millisecond) // Simular procesamiento
+        }
+        fmt.Printf("Lote %d procesado, suma=%d\n", lote.ID, suma)
+        salida <- suma
+    }
+}
+
+func recolector(entrada <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    total := 0
+    count := 0
+    for suma := range entrada {
+        total += suma
+        count++
+        fmt.Printf("Recolector: lote %d suma=%d, acumulado=%d\n", count, suma, total)
+    }
+    fmt.Printf("=== RESUMEN FINAL: %d lotes, suma total=%d ===\n", count, total)
+}
+
+func main() {
+    bufferLotes := make(chan Lote, 3)
+    bufferSumas := make(chan int, 3)
+
+    var wg sync.WaitGroup
+
+    wg.Add(1)
+    go generadorLotes(bufferLotes, &wg)
+
+    wg.Add(1)
+    go procesadorLotes(bufferLotes, bufferSumas, &wg)
+
+    wg.Add(1)
+    go recolector(bufferSumas, &wg)
+
+    wg.Wait()
+    fmt.Println("Sistema de lotes completado")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Un channel bufferizado se crea con make(chan T, n) donde n es la capacidad.
+  • El envío bloquea solo cuando el buffer está lleno.
+  • La recepción bloquea solo cuando el buffer está vacío.
+  • cap(ch) devuelve la capacidad del buffer.
+  • len(ch) devuelve el número de elementos actuales en el buffer.
+  • Los buffers desacoplan temporalmente a productores y consumidores.
+  • Un channel bufferizado puede actuar como semáforo.
+  • El buffer absorbe picos de carga pero no soluciona desequilibrios
+    estructurales.
+  • Después de cerrar un channel bufferizado, se pueden leer los datos
+    pendientes.
+  • El tamaño del buffer debe elegirse basándose en el análisis del sistema.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Crea un channel con buffer de 3. Envía 3 enteros sin gorutina
+   y luego recíbelos. Demuestra que no hay bloqueo.
+
+2. INTERMEDIO — Escribe un programa que muestre en tiempo real cómo cambia
+   len(ch) a medida que productores y consumidores trabajan.
+
+3. AVANZADO — Implementa un pool de workers donde el número de workers se
+   controla mediante un semáforo con channel bufferizado.
+
+4. BÁSICO — ¿Qué ocurre si intentas enviar a un channel bufferizado lleno
+   desde la gorutina principal sin receptor? Demuéstralo.
+
+5. INTERMEDIO — Crea un pipeline de 4 etapas donde cada etapa tiene un buffer
+   de diferente tamaño. Mide el rendimiento.
+
+6. AVANZADO — Implementa un sistema de backpressure donde un productor
+   descarta elementos cuando el buffer supera cierto umbral.
+
+7. INTERMEDIO — Compara el rendimiento de un channel sin buffer, con buffer
+   pequeño (5) y con buffer grande (1000) para 100,000 operaciones.
+
+8. AVANZADO — Diseña un sistema de log asíncrono donde las gorutinas envían
+   mensajes a un channel bufferizado y una gorutina central los escribe.
+
+9. BÁSICO — Cierra un channel bufferizado con 3 elementos y demuestra que
+   aún puedes leerlos. Luego demuestra que no puedes añadir más.
+
+10. INTERMEDIO — Usa select con default para implementar un envío no
+    bloqueante a un channel bufferizado lleno.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Cuándo debo usar un channel bufferizado?
+R: Cuando productor y consumidor tienen ritmos diferentes y quieres
+desacoplarlos. También para semáforos, colas de trabajo, y cuando necesitas
+reducir latencia de envío.
+
+❓ ¿Cuál es el tamaño de buffer recomendado?
+R: Depende del caso. No hay una respuesta universal. Un buen punto de
+partida es analizar el ratio de producción/consumo y dimensionar para
+absorber picos de carga. Monitorea y ajusta.
+
+❓ ¿Usar buffer siempre es mejor para el rendimiento?
+R: Generalmente sí, porque reduce cambios de contexto y bloqueos. Pero un
+buffer excesivo consume memoria y puede ocultar problemas de diseño.
+
+❓ ¿Puedo tener un channel bufferizado con capacidad 0?
+R: Sí, pero es equivalente a un channel no bufferizado. make(chan int, 0)
+es lo mismo que make(chan int).
+
+❓ ¿Qué pasa si el buffer se llena?
+R: El envío se bloquea hasta que un receptor retire un elemento, igual que
+en un channel sin buffer.
+
+❓ ¿El buffer se redimensiona automáticamente?
+R: No. La capacidad se fija en la creación. No puedes redimensionar un
+channel después de creado.
+
+❓ ¿Puedo cambiar el tamaño del buffer dinámicamente?
+R: No. Necesitas crear un nuevo channel y migrar los datos.
+
+❓ ¿Qué tan grande puede ser el buffer?
+R: Teóricamente hasta el límite de memoria disponible. Prácticamente,
+buffers de miles o millones son factibles, pero evalúa si es necesario.
+
+❓ ¿Por qué mi programa con buffer 1 se bloquea?
+R: Porque el buffer de 1 solo almacena 1 elemento. Si intentas enviar 2
+sin que nadie reciba, el segundo envío bloquea.
+
+❓ ¿len(ch) es seguro en concurrencia?
+R: Sí, es seguro llamar a len/ch en cualquier momento, pero el valor puede
+cambiar inmediatamente después de la llamada. No lo uses para sincronización.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: DISEÑAR UN SISTEMA DE NOTIFICACIONES EN TIEMPO REAL          │
+│                                                                          │
+│  Un sistema de notificaciones debe manejar picos de hasta 10,000        │
+│  notificaciones por segundo. Diseña una arquitectura con:               │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│  • Generadores de notificaciones (5 gorutinas), cada una produce        │
+│    2000 notificaciones por segundo.                                     │
+│  • Un channel bufferizado central que recibe todas las notificaciones.  │
+│  • Procesadores de notificaciones (3 gorutinas) que las consumen.       │
+│  • Un sistema de backpressure que registre notificaciones descartadas.  │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Decide el tamaño del buffer central justificándolo.                  │
+│  • Si el buffer está lleno, las notificaciones se descartan (no         │
+│    bloquear). Cuenta las descartadas.                                   │
+│  • Los procesadores deben procesar a ritmos diferentes (unos más        │
+│    lentos que otros).                                                   │
+│  • Implementa un monitor que cada 500ms imprima:                        │
+│    - Notificaciones producidas, procesadas, descartadas                │
+│    - Ocupación actual del buffer                                       │
+│    - Throughput (notificaciones/segundo)                                │
+│  • Después de 5 segundos, detén el sistema y muestra estadísticas       │
+│    finales.                                                             │
+│  • Cada notificación es un struct con: ID, Tipo, Mensaje, Timestamp.   │
+│                                                                          │
+│  PISTAS:                                                                 │
+│  • Usa make(chan Notificacion, N) con N calculado para 500ms de buffer │
+│  • select con default para envíos no bloqueantes                       │
+│  • sync/atomic para contadores compartidos                              │
+│  • time.Ticker para el monitor periódico                                │
+│  • Context con cancelación para detener el sistema                      │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra gorutinas, channels bufferizados, backpressure,
+monitoreo y diseño de sistemas de altas prestaciones. Complejidad: Alta.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Los channels bufferizados son una herramienta versátil que añade flexibilidad
+a tus diseños concurrentes. Con ellos puedes desacoplar temporalmente
+productores y consumidores, suavizar picos de carga, implementar semáforos
+y mejorar el rendimiento general del sistema.
+
+Sin embargo, el buffer no es una solución mágica. Un buffer mal dimensionado
+puede empeorar las cosas. Como arquitecto, debes entender el flujo de datos
+de tu sistema, medir, ajustar y elegir conscientemente.
+
+En el próximo capítulo aprenderás dos patrones esenciales para trabajar con
+channels: range y close. Dominarás la iteración segura sobre channels y
+cómo señalizar correctamente el final de la transmisión.
+
+"El buffer es el amigo que suaviza las aristas, pero no el que resuelve los
+problemas de fondo." — Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 44: RANGE Y CLOSE → Iteración y cierre de channels
+
+══════════════════════════════════════════════════════════════════════════════

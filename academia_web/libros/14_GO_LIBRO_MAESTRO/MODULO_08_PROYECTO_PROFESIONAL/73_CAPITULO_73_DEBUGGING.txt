@@ -1,0 +1,970 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 73: DEBUGGING CON DELVE                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, detective de software. En la vida profesional, el código
+siempre tendrá errores. La diferencia entre un desarrollador novato y
+un maestro está en cómo los encuentra y los soluciona. Este capítulo
+te enseñará a usar Delve, el depurador de Go, como un cirujano usa
+el bisturí: con precisión y confianza.
+
+FRASE MOTIVACIONAL
+──────────────────
+"Debuggear es el arte de entender por qué el código no hace lo que
+tú crees que debería hacer. Delve es tu lupa, tu paciencia es tu
+superpoder." — Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Instalar y configurar Delve (dlv) en diferentes entornos.
+2. Dominar breakpoints, watchpoints, y conditional breakpoints.
+3. Inspeccionar goroutines en ejecución.
+4. Debuggear problemas de concurrencia.
+5. Depurar programas remotos y en producción.
+6. Integrar Delve con VS Code y otras herramientas.
+7. Técnicas de debugging sin depurador (print, trace, pprof).
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. INSTALACIÓN DE DELVE
+───────────────────────
+
+Delve se instala como cualquier herramienta Go:
+
+```bash
+# Instalación estándar
+go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Verificar instalación
+dlv version
+
+# Ayuda general
+dlv help
+```
+
+Delve tiene varios modos de operación:
+
+```bash
+# Depurar un programa directamente
+dlv debug ./cmd/server/ -- -port=9090
+
+# Ejecutar y adjuntar a proceso existente
+dlv exec ./mybinary -- --config=prod.yaml
+
+# Adjuntarse a un proceso en ejecución
+dlv attach <PID>
+
+# Modo headless para integración con IDEs
+dlv debug --headless --listen=:2345 --api-version=2 ./cmd/server/
+```
+
+2. COMANDOS ESENCIALES DE DELVE
+─────────────────────────────────
+
+Dentro de la sesión interactiva de Delve:
+
+```
+(dlv) help                    # Lista completa de comandos
+(dlv) break main.main         # Breakpoint en función
+(dlv) break main.go:25        # Breakpoint en archivo:línea
+(dlv) cond 1 i == 5           # Breakpoint condicional en #1
+(dlv) continue                # Continuar ejecución
+(dlv) next                    # Siguiente línea (sin entrar)
+(dlv) step                    # Entrar a la función
+(dlv) stepout                 # Salir de la función actual
+(dlv) print variable          # Ver valor de variable
+(dlv) locals                  # Ver variables locales
+(dlv) args                    # Ver argumentos
+(dlv) goroutines              # Listar goroutines
+(dlv) goroutine 5             # Cambiar a goroutine 5
+(dlv) stack                   # Ver stack trace
+(dlv) list                    # Ver código fuente
+(dlv) clear 1                 # Eliminar breakpoint #1
+(dlv) clearall                # Eliminar todos los breakpoints
+(dlv) restart                 # Reiniciar programa
+(dlv) exit                    # Salir
+```
+
+3. PROGRAMA DE EJEMPLO PARA DEBUG
+──────────────────────────────────
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    "sync"
+    "time"
+)
+
+type Account struct {
+    ID      int
+    Balance float64
+    mu      sync.Mutex
+}
+
+func (a *Account) Deposit(amount float64) {
+    a.mu.Lock()
+    defer a.mu.Unlock()
+    a.Balance += amount
+}
+
+func (a *Account) Withdraw(amount float64) error {
+    a.mu.Lock()
+    defer a.mu.Unlock()
+    if a.Balance < amount {
+        return fmt.Errorf("saldo insuficiente: %.2f < %.2f", a.Balance, amount)
+    }
+    a.Balance -= amount
+    return nil
+}
+
+type TransferService struct {
+    accounts map[int]*Account
+}
+
+func NewTransferService() *TransferService {
+    return &TransferService{
+        accounts: map[int]*Account{
+            1: {ID: 1, Balance: 1000.0},
+            2: {ID: 2, Balance: 500.0},
+            3: {ID: 3, Balance: 250.0},
+        },
+    }
+}
+
+func (ts *TransferService) Transfer(from, to int, amount float64) error {
+    if from == to {
+        return fmt.Errorf("no puedes transferirte a ti mismo")
+    }
+    sender, ok := ts.accounts[from]
+    if !ok {
+        return fmt.Errorf("cuenta origen %d no encontrada", from)
+    }
+    receiver, ok := ts.accounts[to]
+    if !ok {
+        return fmt.Errorf("cuenta destino %d no encontrada", to)
+    }
+    // Deadlock potencial: orden de locks inconsistente
+    if from < to {
+        sender.mu.Lock()
+        receiver.mu.Lock()
+    } else {
+        receiver.mu.Lock()
+        sender.mu.Lock()
+    }
+    defer sender.mu.Unlock()
+    defer receiver.mu.Unlock()
+    if sender.Balance < amount {
+        return fmt.Errorf("saldo insuficiente en cuenta %d", from)
+    }
+    sender.Balance -= amount
+    receiver.Balance += amount
+    return nil
+}
+
+func (ts *TransferService) GetBalance(id int) float64 {
+    if acc, ok := ts.accounts[id]; ok {
+        acc.mu.Lock()
+        defer acc.mu.Unlock()
+        return acc.Balance
+    }
+    return 0
+}
+
+func main() {
+    svc := NewTransferService()
+    var wg sync.WaitGroup
+
+    // Simular transferencias concurrentes
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            from := rand.Intn(3) + 1
+            to := rand.Intn(3) + 1
+            amount := float64(rand.Intn(200) + 10)
+            err := svc.Transfer(from, to, amount)
+            if err != nil {
+                fmt.Printf("[%d] Error: %v\n", id, err)
+            } else {
+                fmt.Printf("[%d] Transferencia %.2f de %d a %d OK\n",
+                    id, amount, from, to)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Saldos finales:")
+    for id := 1; id <= 3; id++ {
+        fmt.Printf("  Cuenta %d: %.2f\n", id, svc.GetBalance(id))
+    }
+}
+```
+
+4. SESIÓN DE DEBUG PASO A PASO
+───────────────────────────────
+
+Iniciamos Delve:
+
+```bash
+dlv debug ./cmd/server/
+```
+
+Poner breakpoint en la función Transfer:
+
+```
+(dlv) break main.(*TransferService).Transfer
+Breakpoint 1 set at 0x4a2b10 for main.(*TransferService).Transfer() ./main.go:48
+```
+
+Ejecutar hasta el breakpoint:
+
+```
+(dlv) continue
+> main.(*TransferService).Transfer() ./main.go:48 (hits goroutine(6):1 total:1) (PC: 0x4a2b10)
+    43: }
+    44:
+    45: func (ts *TransferService) Transfer(from, to int, amount float64) error {
+    46:     if from == to {
+    47:         return fmt.Errorf("no puedes transferirte a ti mismo")
+=>  48:     }
+    49:     sender, ok := ts.accounts[from]
+    50:     if !ok {
+    51:         return fmt.Errorf("cuenta origen %d no encontrada", from)
+    52:     }
+    53:     receiver, ok := ts.accounts[to]
+```
+
+Inspeccionar argumentos:
+
+```
+(dlv) args
+from = 2
+to = 3
+amount = 150
+```
+
+Ver todas las goroutines:
+
+```
+(dlv) goroutines
+[6 goroutines]
+  Goroutine 1 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+  Goroutine 2 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+  Goroutine 3 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+  Goroutine 4 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+* Goroutine 5 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+  Goroutine 6 - User: ./main.go:83 main.main.func1 (0x4a2d50)
+```
+
+Cambiar a goroutine específica:
+
+```
+(dlv) goroutine 3
+Switched from 5 to 3
+(dlv) stack
+0  0x00000000004a2b10 in main.(*TransferService).Transfer
+    at ./main.go:48
+1  0x00000000004a2d50 in main.main.func1
+    at ./main.go:83
+2  0x0000000000456c01 in runtime.goexit
+    at /usr/local/go/src/runtime/asm_amd64.s:1698
+```
+
+Breakpoint condicional (solo cuando from == 1):
+
+```
+(dlv) cond 1 from == 1
+(dlv) continue
+```
+
+5. DEBUGGING DE CONCURRENCIA — DEADLOCKS
+─────────────────────────────────────────
+
+El programa de ejemplo tiene un potencial deadlock. Veamos cómo
+detectarlo con Delve.
+
+Si el programa se queda colgado, podemos:
+
+1. Pausar con Ctrl+C.
+2. Inspeccionar goroutines.
+
+```
+(dlv) goroutines -t
+* Goroutine 1 - runtime.gopark (sync.Mutex.Lock)
+  Goroutine 5 - runtime.gopark (sync.Mutex.Lock)
+  Goroutine 6 - runtime.gopark (sync.Mutex.Lock)
+```
+
+Ver dónde está bloqueada cada goroutine:
+
+```
+(dlv) goroutine 5
+(dlv) stack
+0  0x0000000000457a1c in runtime.gopark
+    at /usr/local/go/src/runtime/proc.go:382
+1  0x0000000000457b9e in runtime.goparkunlock
+    at /usr/local/go/src/runtime/proc.go:387
+2  0x0000000000458a45 in runtime.semacquire1
+    at /usr/local/go/src/runtime/sema.go:147
+3  0x0000000000469b32 in sync.runtime_SemacquireMutex
+    at /usr/local/go/src/runtime/sema.go:71
+4  0x000000000046a2b0 in sync.(*Mutex).lockSlow
+    at /usr/local/go/src/sync/mutex.go:138
+5  0x000000000046a150 in sync.(*Mutex).Lock
+    at /usr/local/go/src/sync/mutex.go:81
+6  0x00000000004a2c15 in main.(*TransferService).Transfer
+    at ./main.go:57
+```
+
+¡La línea 57 es sender.mu.Lock()! Esto indica que las goroutines
+están esperando locks en orden inverso.
+
+Solución: siempre adquirir locks en el mismo orden global.
+
+6. WATCHPOINTS (DATA BREAKPOINTS)
+──────────────────────────────────
+
+Delve permite observar cambios en variables específicas:
+
+```
+(dlv) watch -w main.Account.Balance
+(dlv) continue
+```
+
+Cada vez que Balance cambie, Delve pausará la ejecución y mostrará
+el punto donde ocurrió el cambio.
+
+```
+(dlv) watch main.accountBalance
+(dlv) continue
+> main.(*TransferService).Transfer() ./main.go:65 (hits goroutine(8):1 total:1)
+    cambiando balance de cuenta 2: 500.0 -> 350.0
+```
+
+7. DEBUGGING REMOTO
+────────────────────
+
+Delve puede operar en modo headless para depurar contenedores o
+servidores remotos.
+
+En el servidor (o contenedor):
+
+```bash
+# Compilar sin optimizaciones para mejor debugging
+go build -gcflags='all=-N -l' -o /app/server ./cmd/server/
+
+# Iniciar Delve en modo headless
+dlv exec --headless --listen=:2345 --api-version=2 --accept-multiclient ./app/server
+```
+
+En la máquina local:
+
+```bash
+# Conectar al servidor remoto
+dlv connect remote-host:2345
+```
+
+O desde VS Code, configurar launch.json:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Remote Debug",
+            "type": "go",
+            "request": "attach",
+            "mode": "remote",
+            "remotePath": "/app",
+            "port": 2345,
+            "host": "192.168.1.100"
+        }
+    ]
+}
+```
+
+8. DEBUGGING EN DOCKER
+──────────────────────
+
+Dockerfile con Delve:
+
+```dockerfile
+FROM golang:1.22 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -gcflags='all=-N -l' -o /app/server ./cmd/server/
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/server /server
+COPY --from=builder /go/bin/dlv /dlv
+EXPOSE 2345
+CMD ["/dlv", "exec", "--headless", "--listen=:2345", "--api-version=2", "--accept-multiclient", "/server"]
+```
+
+docker-compose.yml:
+
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "2345:2345"
+      - "8080:8080"
+    environment:
+      - DEBUG=1
+    security_opt:
+      - "seccomp:unconfined"
+    cap_add:
+      - SYS_PTRACE
+```
+
+9. TRACE — DEBUGGING SIN DEPURADOR
+───────────────────────────────────
+
+A veces no puedes usar Delve (producción). Usa la función
+runtime/trace y el paquete trace:
+
+```go
+package main
+
+import (
+    "log"
+    "os"
+    "runtime/trace"
+    "sync"
+)
+
+func main() {
+    f, err := os.Create("trace.out")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer f.Close()
+
+    if err := trace.Start(f); err != nil {
+        log.Fatal(err)
+    }
+    defer trace.Stop()
+
+    var wg sync.WaitGroup
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            // Simular trabajo
+            sum := 0
+            for j := 0; j < 1000000; j++ {
+                sum += j
+            }
+            _ = sum
+        }(i)
+    }
+    wg.Wait()
+}
+```
+
+Ejecutar:
+
+```bash
+go run main.go
+go tool trace trace.out
+```
+
+Esto abre un navegador con análisis visual de goroutines, eventos,
+y tiempo de ejecución.
+
+10. GODEBUG — VARIABLES DE ENTORNO DE DEBUG
+────────────────────────────────────────────
+
+```bash
+# Ver detalles del scheduler
+GODEBUG=schedtrace=1000 ./myapp
+
+# Ver detalles del garbage collector
+GODEBUG=gctrace=1 ./myapp
+
+# Ver detalles de la pila
+GODEBUG=stacktrace=all ./myapp
+
+# Deshabilitar inlining
+GODEBUG=inlinescore=0 ./myapp
+```
+
+Ejemplo de salida de gctrace:
+
+```
+gc 1 @0.002s 2%: 0.004+1.2+0.003 ms clock, 0.016+2.3/1.2/0.004+0.012 ms cpu, 4->4->0 MB, 5 MB goal, 4 P
+gc 2 @0.008s 3%: 0.002+2.5+0.002 ms clock, 0.010+5.0/2.5/0+0.010 ms cpu, 4->4->0 MB, 8 MB goal, 4 P
+```
+
+11. DEBUGGING DE PÁNICOS
+────────────────────────
+
+Cuando un programa entra en pánico, podemos capturar el stack trace:
+
+```go
+func safeCall(fn func()) {
+    defer func() {
+        if r := recover(); r != nil {
+            debug.PrintStack()
+            log.Printf("pánico recuperado: %v", r)
+        }
+    }()
+    fn()
+}
+```
+
+Con Delve, podemos interrumpir antes del pánico:
+
+```
+(dlv) break runtime.gopanic
+(dlv) continue
+```
+
+12. DEBUGGING DE FUGA DE MEMORIA
+─────────────────────────────────
+
+Programa con fuga de memoria (goroutines que nunca terminan):
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    _ "net/http/pprof"
+    "time"
+)
+
+func leakyFunction() {
+    ch := make(chan int)
+    go func() {
+        // Esta goroutine nunca termina porque nadie escribe en ch
+        val := <-ch
+        fmt.Println(val)
+    }()
+}
+
+func main() {
+    go func() {
+        http.ListenAndServe(":6060", nil)
+    }()
+
+    for i := 0; i < 100; i++ {
+        leakyFunction()
+    }
+
+    time.Sleep(5 * time.Second)
+    fmt.Println("Revisa http://localhost:6060/debug/pprof/goroutine")
+    select {}
+}
+```
+
+Con Delve:
+
+```
+(dlv) break leakyFunction
+(dlv) continue
+(dlv) goroutines
+(dlv) goroutine 5
+(dlv) stack
+```
+
+13. INTEGRACIÓN CON VS CODE
+───────────────────────────
+
+launch.json avanzado:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/server",
+            "args": ["--port=9090"],
+            "env": {
+                "DEBUG": "true",
+                "DB_DSN": "postgres://localhost:5432/test"
+            },
+            "showLog": true,
+            "trace": "verbose",
+            "buildFlags": "-gcflags='all=-N -l'"
+        },
+        {
+            "name": "Test Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}/internal/service",
+            "args": ["-test.run", "TestCreateUser"]
+        },
+        {
+            "name": "Attach to Process",
+            "type": "go",
+            "request": "attach",
+            "mode": "local",
+            "processId": 0
+        }
+    ]
+}
+```
+
+14. DEBUGGING DE TESTS
+──────────────────────
+
+```bash
+# Debuggear un test específico
+dlv test ./internal/service -- -test.run TestCreateUser
+
+# Debuggear todos los tests
+dlv test ./internal/service/
+
+# Dentro de Delve
+(dlv) break service.TestCreateUser
+(dlv) continue
+(dlv) list
+```
+
+15. TÉCNICAS AVANZADAS
+──────────────────────
+
+15.1. Evaluación de expresiones:
+
+```
+(dlv) print len(ts.accounts)
+(dlv) print ts.accounts[1].Balance
+(dlv) print fmt.Sprintf("from=%d to=%d", from, to)
+(dlv) call time.Now()
+```
+
+15.2. Reversing (si está disponible):
+
+```
+(dlv) rev
+(dlv) rev-step
+(dlv) rev-next
+```
+
+15.3. Scripting con Delve:
+
+```go
+// debug_script.go
+package main
+
+import (
+    "fmt"
+    "os"
+    "os/exec"
+)
+
+func runDelveScript() {
+    commands := []string{
+        "break main.main",
+        "break main.(*TransferService).Transfer",
+        "cond 2 amount > 100",
+        "continue",
+        "print from",
+        "print to",
+        "print amount",
+        "continue",
+        "exit",
+    }
+
+    cmd := exec.Command("dlv", "debug", "./cmd/server/")
+    stdin, _ := cmd.StdinPipe()
+    stdout, _ := cmd.StdoutPipe()
+    cmd.Start()
+
+    for _, c := range commands {
+        fmt.Fprintln(stdin, c)
+    }
+
+    output := make([]byte, 1024)
+    stdout.Read(output)
+    fmt.Println(string(output))
+    cmd.Wait()
+}
+```
+
+16. DEBUGGING DE APLICACIONES WEB
+──────────────────────────────────
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+)
+
+func main() {
+    http.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
+        // Punto de interrupción aquí
+        log.Printf("method=%s path=%s", r.Method, r.URL.Path)
+
+        switch r.Method {
+        case http.MethodGet:
+            fmt.Fprintf(w, `[{"id":1,"name":"Alice"}]`)
+        case http.MethodPost:
+            fmt.Fprintf(w, `{"id":2,"name":"Bob"}`)
+        default:
+            http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+        }
+    })
+
+    log.Println("servidor en :8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Debuggear con curl:
+
+```bash
+# En terminal 1
+dlv debug ./cmd/server/
+
+# En terminal 2
+curl -v http://localhost:8080/api/users
+```
+
+17. DEBUGGING DE BASES DE DATOS
+────────────────────────────────
+
+```go
+package repository
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "log"
+    "time"
+)
+
+type QueryLogger struct {
+    db *sql.DB
+}
+
+func NewQueryLogger(db *sql.DB) *QueryLogger {
+    return &QueryLogger{db: db}
+}
+
+func (ql *QueryLogger) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+    start := time.Now()
+    rows, err := ql.db.QueryContext(ctx, query, args...)
+    duration := time.Since(start)
+    log.Printf("[DB] %s | args=%v | duration=%s | err=%v",
+        query, args, duration, err)
+    return rows, err
+}
+
+func (ql *QueryLogger) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+    start := time.Now()
+    result, err := ql.db.ExecContext(ctx, query, args...)
+    duration := time.Since(start)
+    log.Printf("[DB] %s | args=%v | duration=%s | err=%v",
+        query, args, duration, err)
+    return result, err
+}
+```
+
+18. RECETAS COMUNES DE DEBUGGING
+─────────────────────────────────
+
+Receta 1: "El programa se cuelga"
+
+```bash
+dlv exec ./myapp
+# Esperar a que se cuelgue, luego Ctrl+C
+(dlv) goroutines -t
+(dlv) goroutine 1
+(dlv) stack
+```
+
+Receta 2: "Valor inesperado"
+
+```
+(dlv) break myfile.go:42
+(dlv) continue
+(dlv) locals
+(dlv) print variable
+```
+
+Receta 3: "Condición rara"
+
+```
+(dlv) break myfile.go:100
+(dlv) cond 1 user.Role == "admin" && user.Attempts > 3
+(dlv) continue
+```
+
+Receta 4: "Race condition"
+
+```bash
+go run -race ./cmd/server/
+```
+
+Si hay data race, Go reporta automáticamente.
+
+19. LOGGING ESTRATÉGICO PARA DEBUG
+──────────────────────────────────
+
+```go
+package debug
+
+import (
+    "fmt"
+    "log"
+    "runtime"
+    "strings"
+)
+
+func Trace() {
+    pc, file, line, ok := runtime.Caller(1)
+    if !ok {
+        return
+    }
+    fn := runtime.FuncForPC(pc)
+    funcName := fn.Name()
+    parts := strings.Split(funcName, ".")
+    shortName := parts[len(parts)-1]
+    log.Printf("[TRACE] %s:%d %s", file, line, shortName)
+}
+
+func Tracef(format string, args ...interface{}) {
+    pc, file, line, ok := runtime.Caller(1)
+    if !ok {
+        return
+    }
+    fn := runtime.FuncForPC(pc)
+    funcName := fn.Name()
+    parts := strings.Split(funcName, ".")
+    shortName := parts[len(parts)-1]
+    msg := fmt.Sprintf(format, args...)
+    log.Printf("[TRACE] %s:%d %s: %s", file, line, shortName, msg)
+}
+```
+
+20. DEBUG PROFESIONAL — CHECKLIST
+──────────────────────────────────
+
+Cuando debuggees un problema en producción:
+
+[ ] 1. Reproducir el problema en entorno controlado.
+[ ] 2. Revisar logs en busca de patrones.
+[ ] 3. Usar pprof para identificar cuellos de botella.
+[ ] 4. Verificar goroutines colgadas con Delve.
+[ ] 5. Revisar data races con -race.
+[ ] 6. Aislar el componente sospechoso.
+[ ] 7. Escribir un test que reproduzca el bug.
+[ ] 8. Aplicar fix y verificar que el test pasa.
+[ ] 9. Monitorear en producción después del deploy.
+[ ] 10. Documentar la causa raíz y la solución.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• dlv debug/exec para iniciar depuración interactiva.
+• break, continue, next, step, stepout para navegar.
+• goroutines, goroutine N, stack para concurrencia.
+• cond para breakpoints condicionales.
+• watch para data breakpoints.
+• dlv --headless para depuración remota.
+• GODEBUG para debugging sin Delve.
+• runtime/trace para análisis visual.
+• go tool trace para visualizar trazas.
+• go run -race para detectar data races.
+
+EJERCICIOS
+──────────
+
+1. Instala Delve y debuggea el programa de transferencias bancarias
+   del capítulo. Identifica el deadlock potencial.
+
+2. Crea un programa con una goroutine que tenga un leak (nunca
+   termina). Usa Delve para encontrar la goroutine colgada.
+
+3. Configura Delve en modo headless y conéctate desde VS Code para
+   depurar remotamente.
+
+4. Escribe un programa con un pánico intermitente. Usa Delve con
+   breakpoint en runtime.gopanic para capturarlo.
+
+5. Usa GODEBUG=gctrace=1 para analizar el GC de un programa.
+
+6. Usa runtime/trace para generar una traza y visualízala con
+   go tool trace.
+
+7. Debuggea un test table-driven que falla intermitentemente usando
+   dlv test.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Delve funciona con Go 1.22+?
+R: Sí, Delve se actualiza constantemente. Usa la última versión.
+
+P: ¿Puedo debuggear un binario compilado sin -gcflags?
+R: Sí, pero algunas optimizaciones pueden dificultar el debugging.
+   Las variables pueden estar optimizadas y no ser visibles.
+
+P: ¿Cómo debuggeo un programa que solo falla en producción?
+R: Usa dlv exec en el binario de producción o configura Delve
+   headless en el contenedor. Alternativamente, usa logs
+   estratégicos y pprof.
+
+P: ¿Delve funciona con Go modules?
+R: Sí, Delve soporta Go modules nativamente.
+
+P: ¿Cómo debuggeo un programa que usa cgo?
+R: Delve tiene soporte limitado para cgo. Puedes depurar la parte
+   Go, pero el código C debes depurarlo con GDB.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Construye un pequeño servidor web concurrente que sirva endpoints
+con las siguientes características:
+
+1. Endpoint /api/process que recibe un JSON y lanza N goroutines
+   para procesarlo en paralelo.
+
+2. Endpoint /api/status que muestra el estado de las goroutines.
+
+3. Endpoint /api/cancel que cancela el procesamiento.
+
+Debe tener un bug intencional de concurrencia (deadlock o race
+condition). Tu desafío es:
+
+a) Usar Delve para identificar el bug.
+b) Explicar la causa raíz con el stack trace.
+c) Proponer la solución con código.
+d) Verificar que la solución funciona ejecutando con -race.
+
+CIERRE
+──────
+Debuggear es el momento en que realmente entiendes cómo funciona tu
+código. Delve te da el poder de ver cada engranaje del sistema. En
+el próximo capítulo aprenderás a registrar lo que ocurre con logging
+profesional usando log, zap y slog.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 74: Logging — Log, Zap y Slog

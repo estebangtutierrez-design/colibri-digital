@@ -1,0 +1,1243 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 44: RANGE Y CLOSE
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A RANGE Y CLOSE
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la comunicación concurrente. Has aprendido a crear
+channels, enviar y recibir datos, y usar buffers para desacoplar productores
+y consumidores. Ahora es momento de dominar dos herramientas fundamentales
+para el ciclo de vida de los channels: la iteración con range y el cierre
+con close().
+
+El range sobre channels te permite consumir todos los valores enviados hasta
+que el emisor indique que no hay más datos. Es una forma elegante y segura
+de procesar flujos de datos sin preocuparte por el número exacto de elementos.
+
+El close() te permite señalizar que no se enviarán más datos. Es la forma
+educada de decir "esto es todo". Combinado con el patrón de ok en recepción,
+tienes control total sobre el ciclo de vida de la comunicación.
+
+Pero atención: cerrar un channel incorrectamente puede causar panics en
+producción. Cerrar dos veces, enviar a un channel cerrado, o delegar el
+cierre al receptor son errores clásicos. Este capítulo te enseñará a
+evitarlos.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"El cierre de un canal es como echar el cierre a una tubería: deja pasar lo
+que ya está dentro, pero anuncia que no vendrá más." — Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Dominar la iteración con for range sobre channels.
+  • Comprender cuándo y cómo cerrar un channel con close().
+  • Conocer el patrón de ok (v, ok := <-ch).
+  • Entender que solo el emisor debe cerrar el channel.
+  • Identificar y evitar panics por cerrar dos veces.
+  • Identificar y evitar panics por enviar a channel cerrado.
+  • Usar close() como señal de finalización.
+  • Distinguir entre channel cerrado y channel nil.
+  • Implementar el patrón de terminación con close.
+  • Conocer las buenas prácticas de cierre de channels.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — RANGE Y CLOSE
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ITERACIÓN CON FOR RANGE
+----------------------------------------------------------------------
+
+La sentencia for range sobre un channel recibe valores hasta que el channel
+se cierra:
+
+    for valor := range ch {
+        fmt.Println(valor)
+    }
+
+Equivale a:
+    for {
+        valor, ok := <-ch
+        if !ok {
+            break
+        }
+        fmt.Println(valor)
+    }
+
+El range maneja automáticamente la detección del cierre. Es la forma más
+limpia de consumir un flujo de datos.
+
+----------------------------------------------------------------------
+  2. CERRAR UN CHANNEL: close()
+----------------------------------------------------------------------
+
+close(ch) marca el channel como cerrado. Después de cerrar:
+
+  • No se pueden enviar más datos (panic si se intenta).
+  • Los datos en el buffer aún pueden leerse.
+  • Una vez vacío, las lecturas devuelven el valor cero.
+  • Iterar con range termina automáticamente.
+
+Solo el emisor debe cerrar el channel. Cerrarlo desde el receptor es un
+antipatrón que puede causar panics.
+
+----------------------------------------------------------------------
+  3. EL PATRÓN DE OK
+----------------------------------------------------------------------
+
+La recepción de dos valores permite saber si el channel está abierto:
+
+    valor, ok := <-ch
+
+  • ok == true: Se recibió un valor válido.
+  • ok == false: El channel está cerrado y vacío.
+
+Este patrón es útil cuando no puedes usar range (por ejemplo, en un select).
+
+----------------------------------------------------------------------
+  4. ERRORES COMUNES CON CLOSE
+----------------------------------------------------------------------
+
+  • Cerrar dos veces: panic: close of closed channel.
+  • Enviar a canal cerrado: panic: send on closed channel.
+  • Cerrar un canal nil: panic: close of nil channel.
+  • Cerrar desde el receptor: El emisor podría seguir enviando y causar panic.
+
+Para evitarlos:
+  1. Designa claramente qué gorutina es la responsable de cerrar.
+  2. Usa sync.Once si múltiples gorutinas podrían intentar cerrar.
+  3. No cierres channels que recibes como parámetro (a menos que el
+     contrato lo especifique).
+
+----------------------------------------------------------------------
+  5. CLOSE COMO SEÑAL DE TERMINACIÓN
+----------------------------------------------------------------------
+
+Además de su función con datos, close() se usa para señalizar la terminación
+a múltiples gorutinas. Cuando cierras un channel, todas las gorutinas que
+estén esperando recibir de él se desbloquean:
+
+    done := make(chan struct{})
+    close(done)  // Todas las gorutinas esperando <-done se desbloquean
+
+Esto es la base del patrón "or-channel" y otras técnicas avanzadas.
+
+----------------------------------------------------------------------
+  6. CHANNEL CERRADO vs CHANNEL NIL
+----------------------------------------------------------------------
+
+  • Channel abierto y activo: Funciona normalmente.
+  • Channel cerrado: No se puede enviar, se puede leer hasta vaciarlo.
+  • Channel nil: Bloquea para siempre en envío y recepción. Causa panic
+    en close.
+
+Para reiniciar un channel, debes crear uno nuevo. No se puede reabrir.
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: RANGE BÁSICO SOBRE CHANNEL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan int)
+
+    go func() {
+        for i := 1; i <= 5; i++ {
+            ch <- i
+        }
+        close(ch)
+    }()
+
+    // range itera hasta que el channel se cierra
+    for valor := range ch {
+        fmt.Println("Recibido:", valor)
+    }
+
+    fmt.Println("Channel cerrado, iteración terminada")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 2: EQUIVALENCIA RANGE vs OK PATTERN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan string)
+
+    go func() {
+        ch <- "Hola"
+        ch <- "Mundo"
+        close(ch)
+    }()
+
+    fmt.Println("=== Usando range ===")
+    for msg := range ch {
+        fmt.Println(msg)
+    }
+
+    // Equivalente con ok pattern:
+    // ch2 := make(chan string)
+    // go func() {
+    //     ch2 <- "Hola"
+    //     ch2 <- "Mundo"
+    //     close(ch2)
+    // }()
+    // fmt.Println("=== Usando ok pattern ===")
+    // for {
+    //     msg, ok := <-ch2
+    //     if !ok {
+    //         break
+    //     }
+    //     fmt.Println(msg)
+    // }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 3: CERRAR DOS VECES — PANIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan int)
+    close(ch)
+
+    fmt.Println("Cerrando por segunda vez...")
+    // Esto causa panic
+    close(ch)
+
+    fmt.Println("Esto nunca se imprime")
+}
+```
+
+Ejecuta este código para ver el error. Siempre debes asegurarte de cerrar
+una sola vez.
+
+VERSIÓN SEGURA (con sync.Once):
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    ch := make(chan int)
+    var once sync.Once
+
+    cerrar := func() {
+        once.Do(func() {
+            close(ch)
+            fmt.Println("Channel cerrado")
+        })
+    }
+
+    cerrar()
+    cerrar() // No causa panic, la segunda llamada es no-op
+    cerrar() // No causa panic
+
+    fmt.Println("Programa finalizado sin panic")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: ENVIAR A CHANNEL CERRADO — PANIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan string)
+    close(ch)
+
+    // Esto causa panic
+    ch <- "mensaje"
+
+    fmt.Println("Esto nunca se imprime")
+}
+```
+
+Para evitar este panic, el emisor debe verificar o diseñar el flujo para
+que no ocurra.
+
+----------------------------------------------------------------------
+  EJEMPLO 5: OK PATTERN PARA VERIFICAR CIERRE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan int, 3)
+
+    ch <- 10
+    ch <- 20
+    ch <- 30
+    close(ch)
+
+    // Leemos con ok pattern
+    for {
+        valor, ok := <-ch
+        if !ok {
+            fmt.Println("Channel cerrado y vacío")
+            break
+        }
+        fmt.Printf("Valor recibido: %d (ok=%t)\n", valor, ok)
+    }
+
+    // Después de cerrado y vacío, sigue devolviendo valor cero
+    valor, ok := <-ch
+    fmt.Printf("Intento posterior: valor=%d, ok=%t\n", valor, ok)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 6: CLOSE COMO SEÑAL DE TERMINACIÓN (BROADCAST)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func trabajador(id int, done <-chan struct{}) {
+    for {
+        select {
+        case <-done:
+            fmt.Printf("Trabajador %d: señal de terminación recibida\n", id)
+            return
+        default:
+            fmt.Printf("Trabajador %d: trabajando...\n", id)
+            time.Sleep(100 * time.Millisecond)
+        }
+    }
+}
+
+func main() {
+    done := make(chan struct{})
+
+    // Lanzamos 3 trabajadores
+    for i := 1; i <= 3; i++ {
+        go trabajador(i, done)
+    }
+
+    time.Sleep(300 * time.Millisecond)
+    fmt.Println("Main: enviando señal de terminación a TODOS...")
+
+    // Cerrar el canal desbloquea TODAS las gorutinas esperando
+    close(done)
+
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println("Main: programa finalizado")
+}
+```
+
+Este es el patrón de broadcast con close. Al cerrar el canal, todas las
+gorutinas que hacen <-done se desbloquean simultáneamente.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: PIPELINE CON RANGE EN CADA ETAPA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func generar(numeros ...int) <-chan int {
+    out := make(chan int)
+    go func() {
+        for _, n := range numeros {
+            out <- n
+        }
+        close(out)
+    }()
+    return out
+}
+
+func cuadrado(in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        for n := range in {
+            out <- n * n
+        }
+        close(out)
+    }()
+    return out
+}
+
+func imprimir(in <-chan int) {
+    for n := range in {
+        fmt.Println("Resultado:", n)
+    }
+}
+
+func main() {
+    // Pipeline: generar -> cuadrado -> imprimir
+    numeros := generar(1, 2, 3, 4, 5)
+    cuadrados := cuadrado(numeros)
+    imprimir(cuadrados)
+
+    fmt.Println("Pipeline completado")
+}
+```
+
+Cada etapa usa range para consumir y cierra su channel de salida cuando
+termina. El cierre propaga la señal de finalización.
+
+----------------------------------------------------------------------
+  EJEMPLO 8: MÚLTIPLES PRODUCTORES, CIERRE COORDINADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(id int, ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 3; i++ {
+        valor := id*10 + i
+        fmt.Printf("Productor %d envía %d\n", id, valor)
+        ch <- valor
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+
+func main() {
+    ch := make(chan int)
+    var wg sync.WaitGroup
+
+    // 3 productores
+    for p := 1; p <= 3; p++ {
+        wg.Add(1)
+        go productor(p, ch, &wg)
+    }
+
+    // Gorutina que cierra el canal cuando todos los productores terminan
+    go func() {
+        wg.Wait()
+        close(ch)
+        fmt.Println("Todos los productores terminaron, canal cerrado")
+    }()
+
+    // Consumidor con range
+    count := 0
+    for valor := range ch {
+        fmt.Printf("Consumidor recibe %d\n", valor)
+        count++
+    }
+
+    fmt.Printf("Total consumido: %d elementos\n", count)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: CLOSE CON DEFER EN PRODUCTOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func productor(ch chan<- int) {
+    defer close(ch)
+    defer fmt.Println("Productor: canal cerrado con defer")
+
+    for i := 0; i < 5; i++ {
+        ch <- i * i
+    }
+    fmt.Println("Productor: todos los datos enviados")
+}
+
+func main() {
+    ch := make(chan int)
+
+    go productor(ch)
+
+    for v := range ch {
+        fmt.Println("Recibido:", v)
+    }
+
+    fmt.Println("Consumidor: canal cerrado, terminando")
+}
+```
+
+Usar defer close(ch) asegura que el canal siempre se cierre, incluso si
+el productor panic. Es una buena práctica.
+
+----------------------------------------------------------------------
+  EJEMPLO 10: CHANNEL NIL VS CHANNEL CERRADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    var nilCh chan int       // nil
+    cerrCh := make(chan int) // abierto
+    close(cerrCh)            // ahora cerrado
+    abiertCh := make(chan int, 1) // abierto con buffer
+    abiertCh <- 42
+
+    fmt.Println("=== Comportamiento de canales ===")
+
+    // 1. Canal nil: bloquea (no podemos probar select fácilmente aquí)
+    fmt.Println("Canal nil: enviar/recibir bloquea para siempre")
+
+    // 2. Canal cerrado
+    v, ok := <-cerrCh
+    fmt.Printf("Canal cerrado: recibir -> valor=%d, ok=%t\n", v, ok)
+
+    // Enviar a canal cerrado causa panic (comentado para evitar crash)
+    // cerrCh <- 99 // panic
+
+    // 3. Canal abierto
+    v, ok = <-abiertCh
+    fmt.Printf("Canal abierto con datos: recibir -> valor=%d, ok=%t\n", v, ok)
+
+    v, ok = <-abiertCh
+    fmt.Printf("Canal abierto vacío (bloquearía): no ejecutado\n", v, ok)
+    // Nota: la última línea no se ejecuta porque el canal abierto vacío bloquea
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: FAN-OUT CON RANGE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(ch chan<- int) {
+    for i := 0; i < 10; i++ {
+        ch <- i
+        time.Sleep(20 * time.Millisecond)
+    }
+    close(ch)
+}
+
+func consumidor(id int, ch <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for v := range ch {
+        fmt.Printf("Consumidor %d procesa %d\n", id, v)
+        time.Sleep(50 * time.Millisecond)
+    }
+    fmt.Printf("Consumidor %d terminó\n", id)
+}
+
+func main() {
+    ch := make(chan int, 5)
+    var wg sync.WaitGroup
+
+    // 3 consumidores
+    for i := 1; i <= 3; i++ {
+        wg.Add(1)
+        go consumidor(i, ch, &wg)
+    }
+
+    go productor(ch)
+    wg.Wait()
+    fmt.Println("Todos los consumidores terminaron")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: GORUTINA QUE CIERRA VARIOS CHANNELS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch1 := make(chan int)
+    ch2 := make(chan int)
+
+    go func() {
+        for i := 0; i < 3; i++ {
+            ch1 <- i
+        }
+        close(ch1)
+    }()
+
+    go func() {
+        for i := 10; i < 13; i++ {
+            ch2 <- i
+        }
+        close(ch2)
+    }()
+
+    // Consumir de ambos canales
+    done1, done2 := false, false
+    for !done1 || !done2 {
+        select {
+        case v, ok := <-ch1:
+            if !ok {
+                done1 = true
+                fmt.Println("ch1 cerrado")
+            } else {
+                fmt.Println("ch1:", v)
+            }
+        case v, ok := <-ch2:
+            if !ok {
+                done2 = true
+                fmt.Println("ch2 cerrado")
+            } else {
+                fmt.Println("ch2:", v)
+            }
+        }
+    }
+
+    fmt.Println("Ambos canales cerrados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: CLOSE CON CANAL DE SEÑALIZACIÓN PARA TERMINACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    trabajos := make(chan int)
+    fin := make(chan struct{})
+
+    // Productor
+    go func() {
+        for i := 0; i < 10; i++ {
+            trabajos <- i
+        }
+        close(trabajos)
+    }()
+
+    // Consumidor
+    go func() {
+        for v := range trabajos {
+            fmt.Println("Procesando:", v)
+            time.Sleep(50 * time.Millisecond)
+        }
+        close(fin) // Señaliza que terminó
+    }()
+
+    <-fin // Espera a que el consumidor termine
+    fmt.Println("Todo completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: RECUPERACIÓN DE PANIC POR CLOSE DUPLICADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func cerrarSeguro(ch chan int) (err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = fmt.Errorf("panic al cerrar canal: %v", r)
+        }
+    }()
+    close(ch)
+    return nil
+}
+
+func main() {
+    ch := make(chan int)
+
+    fmt.Println("Primer cierre:", cerrarSeguro(ch))
+    fmt.Println("Segundo cierre:", cerrarSeguro(ch))
+    fmt.Println("Tercer cierre:", cerrarSeguro(ch))
+
+    fmt.Println("Programa continúa sin panic")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: CANAL CON LÓGICA DE CIERRE CONDICIONAL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Evento int
+
+func main() {
+    eventos := make(chan Evento, 100)
+
+    go func() {
+        for i := 0; i < 10; i++ {
+            if i == 5 {
+                // Decidimos cerrar antes de tiempo por alguna condición
+                fmt.Println("Condición de cierre alcanzada en i=5")
+                close(eventos)
+                return
+            }
+            eventos <- Evento(i)
+            time.Sleep(30 * time.Millisecond)
+        }
+        close(eventos)
+    }()
+
+    for e := range eventos {
+        fmt.Printf("Evento procesado: %d\n", e)
+    }
+
+    fmt.Println("Procesamiento de eventos finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: RANGE SOBRE CANAL DE CANALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    canales := make(chan chan int, 3)
+
+    // Creamos canales hijos
+    ch1 := make(chan int)
+    ch2 := make(chan int)
+    ch3 := make(chan int)
+
+    // Enviamos los canales
+    canales <- ch1
+    canales <- ch2
+    canales <- ch3
+    close(canales)
+
+    // Enviamos datos a los canales hijos
+    go func() { ch1 <- 10; close(ch1) }()
+    go func() { ch2 <- 20; close(ch2) }()
+    go func() { ch3 <- 30; close(ch3) }()
+
+    // Iteramos sobre los canales usando range
+    for ch := range canales {
+        for v := range ch {
+            fmt.Println("Valor del canal:", v)
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: TIMEOUT EN EL CIERRE DEL PRODUCTOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    go func() {
+        defer close(ch)
+        for i := 0; i < 5; i++ {
+            select {
+            case ch <- i:
+                fmt.Println("Enviado:", i)
+            case <-time.After(200 * time.Millisecond):
+                fmt.Println("Timeout en envío, cerrando")
+                return
+            }
+            time.Sleep(100 * time.Millisecond)
+        }
+    }()
+
+    // Consumidor lento
+    for v := range ch {
+        fmt.Println("Recibido:", v)
+        time.Sleep(300 * time.Millisecond)
+    }
+
+    fmt.Println("Programa terminado")
+}
+```
+
+El productor deja de enviar si detecta que el consumidor es demasiado lento,
+cerrando el canal para que el consumidor termine también.
+
+----------------------------------------------------------------------
+  EJEMPLO 18: CIERRE DE CANAL EN ESTRUCTURA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+type Pool struct {
+    trabajos chan int
+    wg       sync.WaitGroup
+}
+
+func NewPool(tamanoBuffer int) *Pool {
+    return &Pool{
+        trabajos: make(chan int, tamanoBuffer),
+    }
+}
+
+func (p *Pool) AddTrabajo(trabajo int) {
+    p.trabajos <- trabajo
+}
+
+func (p *Pool) Start(numWorkers int) {
+    for i := 0; i < numWorkers; i++ {
+        p.wg.Add(1)
+        go p.worker(i)
+    }
+}
+
+func (p *Pool) worker(id int) {
+    defer p.wg.Done()
+    for t := range p.trabajos {
+        fmt.Printf("Worker %d procesa trabajo %d\n", id, t)
+    }
+    fmt.Printf("Worker %d finaliza (canal cerrado)\n", id)
+}
+
+func (p *Pool) Shutdown() {
+    close(p.trabajos)
+    p.wg.Wait()
+    fmt.Println("Pool cerrado correctamente")
+}
+
+func main() {
+    pool := NewPool(10)
+    pool.Start(3)
+
+    for i := 0; i < 10; i++ {
+        pool.AddTrabajo(i)
+    }
+
+    pool.Shutdown()
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: RECOLECTOR CON CIERRE AUTOMÁTICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(id int, ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 4; i++ {
+        ch <- id*10 + i
+        time.Sleep(30 * time.Millisecond)
+    }
+}
+
+func main() {
+    ch := make(chan int, 10)
+    var prodWg sync.WaitGroup
+
+    // Lanzamos productores
+    for p := 1; p <= 3; p++ {
+        prodWg.Add(1)
+        go productor(p, ch, &prodWg)
+    }
+
+    // Gorutina que cierra cuando todos los productores terminan
+    go func() {
+        prodWg.Wait()
+        close(ch)
+        fmt.Println("Todos los productores terminaron, canal cerrado")
+    }()
+
+    // Consumidor con timeout por si el canal nunca se cierra
+    for {
+        select {
+        case v, ok := <-ch:
+            if !ok {
+                fmt.Println("Canal cerrado, terminando consumo")
+                return
+            }
+            fmt.Println("Consumido:", v)
+        case <-time.After(2 * time.Second):
+            fmt.Println("Timeout: el canal no se cerró")
+            return
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SISTEMA DE ARCHIVOS CON PIPELINE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Archivo struct {
+    Nombre string
+    Tamanio int
+}
+
+type ArchivoProcesado struct {
+    Archivo
+    Lineas int
+}
+
+// Etapa 1: Generar archivos
+func generador(nombres ...string) <-chan Archivo {
+    out := make(chan Archivo)
+    go func() {
+        defer close(out)
+        for _, nombre := range nombres {
+            archivo := Archivo{
+                Nombre: nombre,
+                Tamanio: len(nombre) * 100,
+            }
+            fmt.Printf("[GENERADOR] Creado: %s (%d bytes)\n",
+                archivo.Nombre, archivo.Tamanio)
+            out <- archivo
+            time.Sleep(30 * time.Millisecond)
+        }
+    }()
+    return out
+}
+
+// Etapa 2: Procesar archivos (workers)
+func procesador(entrada <-chan Archivo, numWorkers int) <-chan ArchivoProcesado {
+    out := make(chan ArchivoProcesado)
+    var wg sync.WaitGroup
+
+    for i := 0; i < numWorkers; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for archivo := range entrada {
+                fmt.Printf("[PROCESADOR %d] Procesando: %s\n", id, archivo.Nombre)
+                time.Sleep(50 * time.Millisecond)
+                procesado := ArchivoProcesado{
+                    Archivo: archivo,
+                    Lineas:  archivo.Tamanio / 10,
+                }
+                out <- procesado
+            }
+            fmt.Printf("[PROCESADOR %d] Finalizado\n", id)
+        }(i)
+    }
+
+    // Gorutina que cierra el canal de salida cuando todos procesan
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+
+    return out
+}
+
+// Etapa 3: Recolector final
+func recolector(entrada <-chan ArchivoProcesado) {
+    totalBytes := 0
+    totalLineas := 0
+    count := 0
+
+    for p := range entrada {
+        totalBytes += p.Tamanio
+        totalLineas += p.Lineas
+        count++
+        fmt.Printf("[RECOLECTOR] %s: %d bytes, %d líneas\n",
+            p.Nombre, p.Tamanio, p.Lineas)
+    }
+
+    fmt.Printf("\n=== RESUMEN FINAL ===\n")
+    fmt.Printf("Archivos procesados: %d\n", count)
+    fmt.Printf("Total bytes: %d\n", totalBytes)
+    fmt.Printf("Total líneas: %d\n", totalLineas)
+}
+
+func main() {
+    archivos := []string{
+        "main.go", "utils.go", "handlers.go",
+        "models.go", "routes.go", "config.go",
+    }
+
+    // Pipeline completo
+    etapa1 := generador(archivos...)
+    etapa2 := procesador(etapa1, 3)
+    recolector(etapa2)
+
+    fmt.Println("Pipeline completado exitosamente")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • for v := range ch itera hasta que el channel se cierra.
+  • close(ch) marca que no se enviarán más datos.
+  • Solo el emisor debe cerrar el channel.
+  • Cerrar dos veces causa panic.
+  • Enviar a un canal cerrado causa panic.
+  • v, ok := <-ch permite detectar el cierre.
+  • Después de cerrar, los datos del buffer aún pueden leerse.
+  • Un canal cerrado devuelve el valor cero una vez vacío.
+  • close() puede usarse como broadcast de terminación.
+  • sync.Once previene cierres duplicados.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Escribe un programa que envíe 10 números a un channel y use
+   range para imprimirlos. El productor debe cerrar el channel.
+
+2. INTERMEDIO — Crea un pipeline de 3 etapas usando range en cada una.
+   Etapa1 genera números, Etapa2 filtra pares, Etapa3 los imprime.
+
+3. AVANZADO — Implementa un sistema donde N gorutinas productoras envían
+   datos a un channel. Una gorutina separada cierra el channel cuando
+   todas han terminado (usa WaitGroup).
+
+4. BÁSICO — Demuestra el panic que ocurre al cerrar un channel dos veces.
+   Luego implementa una versión segura con sync.Once.
+
+5. INTERMEDIO — Escribe un programa que use close() para señalizar la
+   terminación a múltiples gorutinas consumidoras (broadcast).
+
+6. AVANZADO — Implementa el patrón "generador" que devuelve un <-chan int.
+   El generador produce números primos y cierra el canal al encontrar
+   un límite.
+
+7. INTERMEDIO — Crea un recolector que use el patrón ok para leer de un
+   channel, con un timeout de 1 segundo por si el channel nunca se cierra.
+
+8. AVANZADO — Diseña un sistema de workers donde cada worker procesa tareas
+   de un channel usando range. El sistema debe soportar un shutdown graceful.
+
+9. BÁSICO — ¿Cuál es la diferencia entre un channel nil y un channel cerrado?
+   Escríbelo como comentario en un programa de prueba.
+
+10. INTERMEDIO — Crea un programa que demuestre que close() en un channel
+    vacío (sin buffer) desbloquea a todas las gorutinas esperando.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Puedo usar range en un channel que nunca se cierra?
+R: Sí, pero el bucle nunca terminará (bloqueo infinito). Asegúrate de que
+el channel se cierre en algún momento.
+
+❓ ¿Quién debe cerrar el channel?
+R: El emisor. Siempre el emisor. Es un principio fundamental de Go. El
+receptor no debe cerrar porque no sabe si habrá más envíos.
+
+❓ ¿Qué pasa si nunca cierro un channel?
+R: Si el recolector de basura detecta que no hay referencias al channel, lo
+libera. Pero si una gorutina está esperando <-ch, nunca se desbloqueará
+(fuga de gorutina).
+
+❓ ¿Puedo reabrir un channel cerrado?
+R: No. Una vez cerrado, está cerrado para siempre. Debes crear uno nuevo.
+
+❓ ¿Puedo cerrar un channel de solo recepción?
+R: No. La operación close no está permitida en un channel <-chan T. Solo
+el emisor (chan<- T o chan T) puede cerrar.
+
+❓ ¿close() en un channel nil causa panic?
+R: Sí. Siempre verifica que el channel no sea nil antes de cerrar, o
+usa defer/recover si existe la posibilidad.
+
+❓ ¿range sobre un channel nil?
+R: Bloquea para siempre. Similar a recibir de un channel nil.
+
+❓ ¿Cómo cierro un channel de forma segura desde múltiples gorutinas?
+R: Usa sync.Once para asegurar que solo una gorutina ejecute close().
+
+❓ ¿Puedo leer de un channel después de cerrarlo?
+R: Sí, puedes leer todos los datos que quedaban en el buffer. Después
+devuelve el valor cero.
+
+❓ ¿close() es una operación rápida?
+R: Sí. close() es una operación O(1) que marca el channel como cerrado y
+despierta a todas las gorutinas esperando en operaciones de recepción.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: SISTEMA DE PROCESAMIENTO DE TRANSACCIONES BANCARIAS          │
+│                                                                          │
+│  Diseña un sistema de procesamiento de transacciones bancarias que      │
+│  procese miles de operaciones por segundo usando un pipeline con        │
+│  range y close.                                                         │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│  1. GENERADOR DE TRANSACCIONES: Produce 100 transacciones simuladas     │
+│     (ID, Monto, Tipo: "depósito"/"retiro", CuentaOrigen, CuentaDestino) │
+│     Cada 10ms genera una, pero en ráfagas puede generar 10 en 1ms.      │
+│                                                                          │
+│  2. VALIDADOR: Verifica que:                                             │
+│     - El monto sea positivo                                             │
+│     - Para retiros, la cuenta tenga saldo suficiente (simulado)         │
+│     - Las cuentas existan (simulado)                                    │
+│     Las transacciones inválidas se descartan pero se cuentan.           │
+│                                                                          │
+│  3. PROCESADOR: Aplica la transacción (simulado con sleep).             │
+│     Cada tipo tiene un tiempo de procesamiento diferente.               │
+│                                                                          │
+│  4. CONTADOR: Lleva estadísticas:                                       │
+│     - Total transacciones procesadas                                    │
+│     - Total montos depositados y retirados                              │
+│     - Transacciones inválidas                                           │
+│     - Tiempo total de procesamiento                                     │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Cada etapa es una gorutina conectada por channels                    │
+│  • Cada etapa cierra su channel de salida al terminar                   │
+│  • La etapa de validación tiene 3 workers concurrentes                  │
+│  • La etapa de procesamiento tiene 2 workers                            │
+│  • El contador es el recolector final                                   │
+│  • Implementa un shutdown graceful: cuando todas las transacciones      │
+│    se han generado, el pipeline debe drenarse y cerrarse ordenadamente  │
+│  • Usa range en todas las etapas para consumir los canales              │
+│  • Usa el patrón ok si es necesario en algún punto                      │
+│  • Al final, imprime un resumen completo                                │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra range, close, pipelines, workers y shutdown graceful.
+Complejidad: Muy alta. Te prepara para sistemas del mundo real.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dominado el ciclo de vida completo de los channels: desde su creación
+con make, pasando por la comunicación con envío y recepción, hasta la
+iteración elegante con range y el cierre ordenado con close.
+
+Estos patrones son la base de todos los sistemas concurrentes en Go. Saber
+cuándo y cómo cerrar un channel, cómo iterar sobre él, y cómo propagar la
+señal de finalización es esencial para construir sistemas robustos.
+
+En el próximo capítulo explorarás el select, una de las herramientas más
+poderosas de Go para la multiplexación de canales. Con select podrás esperar
+múltiples canales simultáneamente, implementar timeouts, y tomar decisiones
+dinámicas sobre la comunicación.
+
+"El cierre no es el final, sino una transición ordenada hacia el siguiente
+estado." — Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 45: SELECT → Multiplexación de canales
+
+══════════════════════════════════════════════════════════════════════════════

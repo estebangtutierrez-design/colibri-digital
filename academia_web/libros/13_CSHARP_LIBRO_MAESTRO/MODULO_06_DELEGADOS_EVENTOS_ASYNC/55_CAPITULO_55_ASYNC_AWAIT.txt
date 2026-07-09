@@ -1,0 +1,682 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 55: ASYNC / AWAIT
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 55 de C# MASTER BOOK. Si has llegado hasta aquí,
+dominas los fundamentos de C#: tipos, objetos, colecciones, LINQ,
+delegados y eventos. Ahora es el momento de subir al siguiente nivel:
+la PROGRAMACIÓN ASÍNCRONA.
+
+Async/await es probablemente la característica más transformadora de C#
+desde LINQ. Introducido en C# 5.0 (2012), cambió para siempre la forma
+en que escribimos código que interactúa con operaciones lentas: acceso
+a base de datos, llamadas HTTP, lectura de archivos, etc.
+
+En lugar de bloquear hilos mientras esperamos, async/await permite que el
+hilo se libere para hacer otro trabajo mientras la operación se completa.
+El resultado: aplicaciones más rápidas, más escalables, con mejor
+experiencia de usuario.
+
+En este capítulo:
+  • async Task y async Task<T>
+  • La palabra clave await
+  • Task.Run para operaciones CPU-bound
+  • ConfigureAwait(false)
+  • Flujo de control asíncrono
+  • Manejo de excepciones
+  • Async void (solo para eventos)
+  • Patrones async avanzados
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"Async/await no se trata de paralelismo, se trata de no bloquear
+el hilo principal mientras esperas algo que no depende de la CPU."
+— Stephen Cleary
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Comprender la diferencia entre síncrono, asíncrono y paralelo.
+  • Declarar métodos asíncronos con async Task y async Task<T>.
+  • Usar await para esperar operaciones sin bloquear.
+  • Usar Task.Run para descargar trabajo CPU-bound.
+  • Configurar el contexto de sincronización con ConfigureAwait.
+  • Manejar excepciones en métodos async.
+  • Entender los peligros de async void.
+  • Implementar patrones async: progreso, cancelación, timeouts.
+  • Componer operaciones asíncronas (WhenAll, WhenAny).
+  • Escribir código async idiomático y eficiente.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. ¿Qué es async/await?
+
+Async/await es un par de palabras clave que permiten escribir código
+asíncrono que se lee como código síncrono.
+
+  // Síncrono (bloqueante)
+  string resultado = DescargarUrl("https://ejemplo.com");
+
+  // Asíncrono (no bloqueante)
+  string resultado = await DescargarUrlAsync("https://ejemplo.com");
+
+La diferencia: en el primer caso, el hilo se bloquea hasta que la
+descarga termina. En el segundo, el hilo se libera para hacer otro
+trabajo mientras la descarga ocurre.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. async Task y async Task<T>
+
+Regla de oro:
+  • async Task → método async que no devuelve valor (void async).
+  • async Task<T> → método async que devuelve un valor de tipo T.
+  • async void → SOLO para event handlers.
+
+  public async Task ProcesarAsync()
+  {
+      await Task.Delay(1000);
+      Console.WriteLine("Listo");
+  }
+
+  public async Task<int> ObtenerDatoAsync()
+  {
+      await Task.Delay(500);
+      return 42;
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. La palabra clave await
+
+await suspende la ejecución del método hasta que la operación awaitada
+se complete. MIENTRAS TANTO, el control retorna al llamante.
+
+  public async Task HacerCosasAsync()
+  {
+      Console.WriteLine("Antes del await (hilo: " +
+          Thread.CurrentThread.ManagedThreadId + ")");
+
+      await Task.Delay(2000);  // Suspende aquí
+
+      Console.WriteLine("Después del await (hilo: " +
+          Thread.CurrentThread.ManagedThreadId + ")");
+  }
+
+El hilo después del await PUEDE ser diferente (depende del contexto).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. Task.Run para CPU-bound
+
+Para operaciones intensivas de CPU que NO deben bloquear la UI:
+
+  public async Task<int> CalcularPrimosAsync(int n)
+  {
+      return await Task.Run(() =>
+      {
+          // Esto se ejecuta en un hilo de ThreadPool
+          return ContarPrimosHasta(n);
+      });
+  }
+
+Task.Run ejecuta el delegado en un hilo del ThreadPool y devuelve Task.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. ConfigureAwait(false)
+
+ConfigureAwait(false) le dice al runtime que NO intente volver al contexto
+de sincronización original (por ejemplo, el hilo de UI).
+
+  await SomeOperationAsync().ConfigureAwait(false);
+
+Úsalo en:
+  • Bibliotecas/librerías ( código de infraestructura)
+  • Aplicaciones de consola
+  • ASP.NET Core (no tiene SynchronizationContext)
+
+NO lo uses (o úsalo con cuidado) en:
+  • Aplicaciones UI (WPF, WinForms, MAUI) si necesitas acceder a la UI
+    después del await.
+
+Razón: Evita deadlocks y mejora rendimiento al no tener que hacer
+el marshalling al hilo original.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Flujo de control asíncrono
+
+Puedes usar await en bucles, condicionales, try/catch, etc.
+
+  public async Task ProcesarItemsAsync(IEnumerable<string> items)
+  {
+      foreach (var item in items)
+      {
+          await ProcesarItemAsync(item);  // Secuencial
+      }
+  }
+
+  public async Task ProcesarItemsParaleloAsync(IEnumerable<string> items)
+  {
+      var tareas = items.Select(ProcesarItemAsync);
+      await Task.WhenAll(tareas);  // Paralelo
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. Manejo de excepciones
+
+Las excepciones en métodos async se capturan con try/catch normal:
+
+  public async Task EjecutarSeguroAsync()
+  {
+      try
+      {
+          await OperacionPeligrosaAsync();
+      }
+      catch (HttpRequestException ex)
+      {
+          Console.WriteLine($"Error HTTP: {ex.Message}");
+      }
+      catch (TaskCanceledException)
+      {
+          Console.WriteLine("Operación cancelada");
+      }
+      catch (Exception ex)
+      {
+          Console.WriteLine($"Error inesperado: {ex.Message}");
+      }
+  }
+
+Si un método async lanza una excepción, esta se almacena en la Task.
+Al hacer await, la excepción se relanza en el contexto del llamante.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. async void (SOLO para event handlers)
+
+Regla estricta: NO uses async void excepto para event handlers.
+
+  // ✅ Correcto (event handler)
+  boton.Click += async (s, e) =>
+  {
+      await ProcesarDatosAsync();
+  };
+
+  // ❌ Peligroso (no se puede esperar, excepciones no capturables)
+  public async void HacerAlgoAsync()  // ⚠ MAL
+  {
+      await Task.Delay(1000);
+  }
+
+Las excepciones en async void terminan el proceso (crash) o se pierden.
+Siempre usa async Task cuando puedas.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. Composición asíncrona: WhenAll, WhenAny
+
+  Task<string> t1 = DescargarAsync("url1");
+  Task<int> t2 = CalcularAsync(100);
+  Task t3 = ProcesarAsync();
+
+  // Esperar todas
+  await Task.WhenAll(t1, t2, t3);
+  Console.WriteLine(t1.Result);  // Ya completada
+
+  // Esperar la primera en completar
+  Task primera = await Task.WhenAny(t1, t2, t3);
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+10. Async streams (IAsyncEnumerable, C# 8+)
+
+Para secuencias asíncronas (datos que llegan con el tiempo):
+
+  public async IAsyncEnumerable<int> GenerarNumerosAsync()
+  {
+      for (int i = 0; i < 10; i++)
+      {
+          await Task.Delay(500);
+          yield return i;
+      }
+  }
+
+  await foreach (var num in GenerarNumerosAsync())
+  {
+      Console.WriteLine(num);
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Capitulo55_AsyncAwait
+{
+    public class Program
+    {
+        static async Task Main(string[] args)
+        {
+            Console.WriteLine("═══════ CAPÍTULO 55: ASYNC / AWAIT ═══════\n");
+
+            Console.WriteLine($"Hilo principal: {Thread.CurrentThread.ManagedThreadId}");
+
+            // ─── 1. Task.Run ───
+            Console.WriteLine("\n─── 1. Task.Run (CPU-bound) ───");
+
+            int resultadoCPU = await Task.Run(() =>
+            {
+                Console.WriteLine($"  Hilo Task.Run: {Thread.CurrentThread.ManagedThreadId}");
+                int suma = 0;
+                for (int i = 1; i <= 1000000; i++) suma += i;
+                return suma;
+            });
+            Console.WriteLine($"  Suma 1-1000000: {resultadoCPU:N0}");
+
+            // ─── 2. Operación I/O simulada ───
+            Console.WriteLine("\n─── 2. Operación I/O Simulada ───");
+
+            string datos = await SimularDescargaAsync("https://ejemplo.com/datos");
+            Console.WriteLine($"  Datos descargados: {datos}");
+
+            // ─── 3. await secuencial ───
+            Console.WriteLine("\n─── 3. Await Secuencial ───");
+
+            await ProcesoSecuencialAsync();
+
+            // ─── 4. await paralelo con WhenAll ───
+            Console.WriteLine("\n─── 4. WhenAll (Paralelo) ───");
+
+            await ProcesoParaleloAsync();
+
+            // ─── 5. WhenAny ───
+            Console.WriteLine("\n─── 5. WhenAny (Primera en completar) ───");
+
+            Task tarea1 = Task.Delay(3000);
+            Task tarea2 = Task.Delay(1000);
+            Task tarea3 = Task.Delay(2000);
+
+            Task primera = await Task.WhenAny(tarea1, tarea2, tarea3);
+            Console.WriteLine($"  Primera tarea en completar: {primera.Id}");
+
+            // Esperar las restantes
+            await Task.WhenAll(tarea1, tarea2, tarea3);
+
+            // ─── 6. Manejo de excepciones ───
+            Console.WriteLine("\n─── 6. Manejo de Excepciones ───");
+
+            await ManejarExcepcionesAsync();
+
+            // ─── 7. ConfigureAwait(false) ───
+            Console.WriteLine("\n─── 7. ConfigureAwait(false) ───");
+
+            await DemostrarConfigureAwaitAsync();
+
+            // ─── 8. Progreso con IProgress<T> ───
+            Console.WriteLine("\n─── 8. Reporte de Progreso ───");
+
+            var progreso = new Progress<int>(p =>
+                Console.WriteLine($"  Progreso: {p}%"));
+
+            await TareaConProgresoAsync(progreso);
+
+            // ─── 9. Timeout con CancellationToken ───
+            Console.WriteLine("\n─── 9. Timeout con CancellationToken ───");
+
+            await DemostrarTimeoutAsync();
+
+            // ─── 10. Async Streams ───
+            Console.WriteLine("\n─── 10. Async Streams (IAsyncEnumerable) ───");
+
+            await foreach (var num in GenerarSecuenciaAsync(5))
+            {
+                Console.WriteLine($"  Recibido: {num}");
+            }
+
+            // ─── 11. Composición compleja ───
+            Console.WriteLine("\n─── 11. Composición Compleja ───");
+
+            var tareasMultiples = new List<Func<Task<string>>>
+            {
+                () => SimularDescargaAsync("url1"),
+                () => SimularDescargaAsync("url2"),
+                () => SimularDescargaAsync("url3"),
+            };
+
+            var resultados = await Task.WhenAll(
+                tareasMultiples.Select(f => f()));
+
+            foreach (var r in resultados)
+                Console.WriteLine($"  Resultado: {r}");
+
+            // ─── 12. Async en lambda ───
+            Console.WriteLine("\n─── 12. Lambda Asíncrona ───");
+
+            Func<string, Task<string>> procesarAsync = async (input) =>
+            {
+                await Task.Delay(300);
+                return input.ToUpper();
+            };
+
+            string procesado = await procesarAsync("hola mundo");
+            Console.WriteLine($"  Procesado: {procesado}");
+
+            // ─── 13. Evitar async void ───
+            Console.WriteLine("\n─── 13. Async Task (correcto) vs async void (mal) ───");
+
+            // ✅ Correcto
+            await MetodoAsyncCorrecto();
+
+            // async void no se puede await, solo eventos
+
+            // ─── 14. ValueTask ───
+            Console.WriteLine("\n─── 14. ValueTask (optimización) ───");
+
+            int valorSincrono = await MetodoValueTaskAsync(true);
+            int valorAsync = await MetodoValueTaskAsync(false);
+            Console.WriteLine($"  Sincrónico: {valorSincrono}, Asincrónico: {valorAsync}");
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 55 ═══════");
+        }
+
+        // ─── Métodos de soporte ───
+
+        static async Task<string> SimularDescargaAsync(string url)
+        {
+            Console.WriteLine($"  [SIM] Descargando {url}...");
+            await Task.Delay(1000);
+            return $"Contenido de {url}";
+        }
+
+        static async Task ProcesoSecuencialAsync()
+        {
+            Console.WriteLine("  Iniciando proceso secuencial...");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            string r1 = await SimularDescargaAsync("url-alpha");
+            string r2 = await SimularDescargaAsync("url-beta");
+            string r3 = await SimularDescargaAsync("url-gamma");
+
+            sw.Stop();
+            Console.WriteLine($"  Tiempo secuencial: {sw.ElapsedMilliseconds}ms");
+        }
+
+        static async Task ProcesoParaleloAsync()
+        {
+            Console.WriteLine("  Iniciando proceso paralelo...");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            Task<string> t1 = SimularDescargaAsync("url-par-1");
+            Task<string> t2 = SimularDescargaAsync("url-par-2");
+            Task<string> t3 = SimularDescargaAsync("url-par-3");
+
+            string[] resultados = await Task.WhenAll(t1, t2, t3);
+
+            sw.Stop();
+            Console.WriteLine($"  Tiempo paralelo: {sw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"  Resultados: {string.Join(", ", resultados)}");
+        }
+
+        static async Task ManejarExcepcionesAsync()
+        {
+            try
+            {
+                await OperacionQueFallaAsync();
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.WriteLine($"  ✅ Excepción capturada: {ex.Message}");
+            }
+
+            // Múltiples excepciones en WhenAll
+            try
+            {
+                Task t1 = OperacionQueFallaAsync();
+                Task t2 = OperacionQueFallaAsync();
+                await Task.WhenAll(t1, t2);
+            }
+            catch (AggregateException ae)  // Solo si usamos .Wait() o .Result
+            {
+                Console.WriteLine($"  AggregateException: {ae.InnerExceptions.Count}");
+            }
+            catch (Exception ex)  // Con await, la primera excepción
+            {
+                Console.WriteLine($"  ✅ Primera excepción capturada: {ex.Message}");
+            }
+        }
+
+        static async Task OperacionQueFallaAsync()
+        {
+            await Task.Delay(200);
+            throw new InvalidOperationException("Error simulado en operación async");
+        }
+
+        static async Task DemostrarConfigureAwaitAsync()
+        {
+            Console.WriteLine($"  Antes de await (hilo: {Thread.CurrentThread.ManagedThreadId})");
+
+            await Task.Delay(500).ConfigureAwait(false);
+
+            // Puede que estemos en otro hilo
+            Console.WriteLine($"  Después de await (hilo: {Thread.CurrentThread.ManagedThreadId})");
+            Console.WriteLine("  (puede diferir del hilo original)");
+        }
+
+        static async Task TareaConProgresoAsync(IProgress<int> progreso)
+        {
+            for (int i = 0; i <= 100; i += 20)
+            {
+                await Task.Delay(300);
+                progreso.Report(i);
+            }
+        }
+
+        static async Task DemostrarTimeoutAsync()
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                // Simular operación larga (3s)
+                await Task.Delay(3000, cts.Token);
+                Console.WriteLine("  Completado (no debería llegar aquí)");
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Operación cancelada por timeout (2s)");
+            }
+        }
+
+        static async IAsyncEnumerable<int> GenerarSecuenciaAsync(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                await Task.Delay(300);
+                yield return i;
+            }
+        }
+
+        static async Task MetodoAsyncCorrecto()
+        {
+            await Task.Delay(100);
+            Console.WriteLine("  ✅ async Task: método correcto");
+        }
+
+        // async void solo para eventos (demostración)
+        static async void AsyncVoidSoloEventos()
+        {
+            await Task.Delay(100);
+            Console.WriteLine("  async void - solo para eventos");
+        }
+
+        static async ValueTask<int> MetodoValueTaskAsync(bool sincrono)
+        {
+            if (sincrono)
+            {
+                return 42;  // Sin async allocation
+            }
+            await Task.Delay(100);
+            return 100;
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • async Task → método async sin retorno; async Task<T> → con retorno.
+  • await suspende el método sin bloquear el hilo.
+  • Task.Run descarga trabajo CPU-bound al ThreadPool.
+  • ConfigureAwait(false) evita volver al contexto original (bibliotecas).
+  • async void SOLO para event handlers.
+  • try/catch funciona normalmente con async.
+  • WhenAll espera todas las tareas; WhenAny espera la primera.
+  • IAsyncEnumerable<T> para secuencias asíncronas (C# 8+).
+  • ValueTask<T> optimiza casos donde el resultado puede ser síncrono.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Escribe un método async que descargue 3 páginas web
+    de forma secuencial y luego en paralelo. Mide los tiempos.
+
+  ✦ Ejercicio 2: Implementa un contador de líneas async: lee un archivo
+    grande de forma asíncrona y cuenta las líneas.
+
+  ✦ Ejercicio 3: Crea un método con timeout: si una operación tarda más
+    de 2 segundos, cancélala.
+
+  ✦ Ejercicio 4: Escribe un ejemplo que demuestre la diferencia entre
+    await secuencial y Task.WhenAll.
+
+  ✦ Ejercicio 5: Implementa un productor/consumidor con IAsyncEnumerable.
+    El productor genera números cada 500ms; el consumidor los procesa.
+
+  ✦ Ejercicio 6: Crea un método async que maneje progreso con IProgress<T>.
+
+  ✦ Ejercicio 7: Demuestra cómo async void puede causar crashes
+    (excepción no capturada). Compara con async Task.
+
+  ✦ Ejercicio 8: Escribe una función con ConfigureAwait(false) en una
+    librería y demuestra que funciona desde consola y desde UI.
+
+  ✦ Ejercicio 9: Implementa un retry pattern async: reintenta una
+    operación hasta 3 veces con espera exponencial.
+
+  ✦ Ejercicio 10: Crea un pipeline de procesamiento asíncrono con 3
+    etapas (descargar → procesar → guardar).
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿async hace que el método sea más rápido?
+  → No. async libera el hilo mientras espera, pero la operación total
+    toma el mismo tiempo. Mejora la escalabilidad, no la velocidad.
+
+  ❓ ¿await crea un nuevo hilo?
+  → No. await no crea hilos. Task.Run sí (usa ThreadPool).
+    await solo suspende el método.
+
+  ❓ ¿Puedo usar await en Main()?
+  → Sí, desde C# 7.1 puedes usar static async Task Main().
+
+  ❓ ¿Qué pasa si no hago await de una Task?
+  → La Task se ejecuta pero no esperas su resultado. Las excepciones
+    se perderán (🔥).
+
+  ❓ ¿async void es malo?
+  → Sí, excepto para event handlers. Las excepciones en async void
+    no se pueden capturar y pueden crashear el proceso.
+
+  ❓ ¿Debo usar ConfigureAwait(false) siempre?
+  → En bibliotecas, sí. En aplicaciones UI, solo si no necesitas la UI
+    después del await.
+
+  ❓ ¿Cuál es la diferencia entre Task y ValueTask?
+  → ValueTask evita allocation cuando el resultado es síncrono.
+    Úsalo en APIs de alto rendimiento.
+
+  ❓ ¿Puedo cancelar un método async?
+  → Sí, pasando un CancellationToken y llamando ThrowIfCancellationRequested.
+
+  ❓ ¿Cómo mido el tiempo de un método async?
+  → Con Stopwatch antes y después del await.
+
+  ❓ ¿async/await es lo mismo que paralelismo?
+  → No. Async es sobre no bloquear el hilo. Paralelismo es sobre usar
+    múltiples hilos para cómputo.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Construye un gestor de descargas asíncrono con las siguientes     │
+  │  características:                                                  │
+  │                                                                     │
+  │  AsyncDownloadManager                                              │
+  │    • Descarga múltiples archivos en paralelo (máximo N concurrentes│
+  │      usando SemaphoreSlim).                                        │
+  │    • Reporta progreso individual y global (IProgress<T>).          │
+  │    • Soporta cancelación (CancellationToken).                      │
+  │    • Soporta timeouts por descarga.                                │
+  │    • Reintentos automáticos (hasta 3 con backoff exponencial).     │
+  │    • Retorna un reporte: éxito/fallo/tiempo/tamaño por archivo.   │
+  │    • Guarda logs de cada descarga (archivo de texto).              │
+  │                                                                     │
+  │  Interfaces de ejemplo:                                            │
+  │    Task<DownloadResult> DownloadAsync(                              │
+  │        string url,                                                 │
+  │        string destino,                                             │
+  │        IProgress<DownloadProgress> progreso = null,                │
+  │        CancellationToken ct = default);                            │
+  │                                                                     │
+  │  Entrega: AsyncDownloadManager.cs con la implementación completa,  │
+  │  clases DownloadResult, DownloadProgress, y un ejemplo de uso      │
+  │  descargando 5 archivos simulados.                                 │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+Async/await es una de las características que diferencian a C# de muchos
+otros lenguajes. Escribe código que parece síncrono pero se comporta de
+forma asíncrona. Es elegante, potente, y esencial para construir
+aplicaciones modernas y responsivas.
+
+Practica hasta que async/await se convierta en algo natural. Cuando
+eso ocurra, escribirás código más limpio, más seguro y más escalable.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 56: TASK
+    Profundizaremos en la clase Task: Task<T>, Wait(), Result,
+    ContinueWith, TaskStatus, TaskCreationOptions, y más.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 55 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

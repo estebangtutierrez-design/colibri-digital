@@ -1,0 +1,666 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 57: CANCELACIÓN (CANCELLATIONTOKEN)
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 57 de C# MASTER BOOK. Una operación asíncrona
+puede tardar segundos, minutos o incluso horas. El usuario puede querer
+cancelarla: cerrar la aplicación, hacer clic en "cancelar", o establecer
+un timeout.
+
+.NET proporciona un mecanismo de cancelación cooperativa llamado
+CancellationToken. Es "cooperativa" porque la operación debe verificar
+periódicamente si se solicitó la cancelación y detenerse voluntariamente.
+
+Esto es diferente a la cancelación forzada (como Thread.Abort, obsoleto).
+La cancelación cooperativa es segura, predecible y no deja recursos
+en estado inconsistente.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"La cancelación en .NET no es forzada: es cooperativa.
+Le pides amablemente a la operación que se detenga,
+y la operación decide cómo y cuándo hacerlo."
+— Stephen Cleary
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Comprender el patrón de cancelación cooperativa.
+  • Usar CancellationTokenSource para emitir cancelación.
+  • Usar CancellationToken para verificar cancelación.
+  • Llamar ThrowIfCancellationRequested() en puntos seguros.
+  • Combinar cancelación con async/await.
+  • Usar CancelAfter para timeouts.
+  • Crear CancellationTokenSource encadenados (linked tokens).
+  • Registrar callbacks de cancelación.
+  • Propagar CancellationToken a través de la pila de llamadas.
+  • Implementar operaciones cancelables correctamente.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. CancellationTokenSource y CancellationToken
+
+El patrón usa dos tipos:
+
+  • CancellationTokenSource → "el que cancela" (crea el token, puede cancelar)
+  • CancellationToken → "el que verifica" (estructura ligera)
+
+  CancellationTokenSource cts = new CancellationTokenSource();
+  CancellationToken token = cts.Token;
+
+  // En otro hilo/proceso:
+  cts.Cancel();  // Solicita cancelación
+
+  // En la operación:
+  token.ThrowIfCancellationRequested();  // Lanza OperationCanceledException
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. ThrowIfCancellationRequested()
+
+Es el método más común para verificar cancelación:
+
+  public void ProcesarLote(CancellationToken token)
+  {
+      for (int i = 0; i < 1000; i++)
+      {
+          token.ThrowIfCancellationRequested();  // Punto seguro
+          ProcesarItem(i);
+      }
+  }
+
+Si se canceló, lanza OperationCanceledException (que debe capturarse
+en el llamante para distinguir cancelación de error real).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. CancelAfter (Timeouts)
+
+Puedes configurar un timeout automático:
+
+  CancellationTokenSource cts = new CancellationTokenSource();
+  cts.CancelAfter(TimeSpan.FromSeconds(5));  // Se cancela en 5s
+
+  // Equivalente:
+  var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+  try
+  {
+      await OperacionLargaAsync(cts.Token);
+  }
+  catch (OperationCanceledException)
+  {
+      Console.WriteLine("Timeout: operación cancelada");
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. Linked Cancellation Tokens
+
+Puedes combinar múltiples fuentes de cancelación:
+
+  CancellationTokenSource cts1 = new CancellationTokenSource();
+  CancellationTokenSource cts2 = new CancellationTokenSource();
+
+  // Token que se cancela si cualquiera de los padres se cancela
+  CancellationTokenSource ctsCombinado = CancellationTokenSource.CreateLinkedTokenSource(
+      cts1.Token, cts2.Token);
+
+  // Si cancelas cts1 o cts2, ctsCombinado también se cancela
+
+Útil cuando tienes múltiples razones para cancelar:
+  • El usuario hace clic en cancelar.
+  • Timeout expira.
+  • Otra operación relacionada falla.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. Register (Callbacks de cancelación)
+
+Puedes registrar callbacks que se ejecuten cuando se cancele:
+
+  CancellationTokenSource cts = new CancellationTokenSource();
+  cts.Token.Register(() => Console.WriteLine("🔔 Cancelación solicitada!"));
+
+  cts.Cancel();  // Dispara el callback
+
+Útil para:
+  • Liberar recursos.
+  • Cerrar archivos/streams.
+  • Hacer logging.
+  • Notificar a otros componentes.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Cancelación en métodos async
+
+Los métodos async aceptan CancellationToken como parámetro:
+
+  public async Task<string> DescargarAsync(string url, CancellationToken ct)
+  {
+      using var http = new HttpClient();
+      // HttpClient.GetStringAsync acepta CancellationToken
+      return await http.GetStringAsync(url, ct);
+  }
+
+  // Las operaciones I/O aceptan token nativamente
+  await File.ReadAllTextAsync(path, ct);
+  await Stream.ReadAsync(buffer, 0, buffer.Length, ct);
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. IsCancellationRequested (Verificación sin excepción)
+
+ThrowIfCancellationRequested es una forma. Otra es verificar la propiedad:
+
+  while (i < 1000)
+  {
+      if (token.IsCancellationRequested)
+      {
+          // Limpiar y salir gracefulmente
+          Console.WriteLine("Cancelación detectada, limpiando...");
+          break;  // No lanza excepción
+      }
+      ProcesarItem(i++);
+  }
+
+Usa este patrón cuando necesites hacer cleanup antes de salir.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. Buenas prácticas con CancellationToken
+
+  • Siempre pasa CancellationToken como último parámetro (convención).
+  • Usa default(CancellationToken) como valor por defecto.
+  • Documenta si el método es cancelable.
+  • No crees un CTS por cada llamada; reutiliza.
+  • Siempre Dispose el CTS cuando ya no lo necesites.
+  • No uses CancellationToken.None si no soportas cancelación.
+  • Haz throw de OperationCanceledException (no otra excepción).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. Cancelación en Parallel y PLINQ
+
+Parallel.ForEach y PLINQ soportan cancelación:
+
+  CancellationTokenSource cts = new CancellationTokenSource();
+  ParallelOptions options = new ParallelOptions { CancellationToken = cts.Token };
+
+  Parallel.For(0, 100, options, i =>
+  {
+      // ... trabajo
+      options.CancellationToken.ThrowIfCancellationRequested();
+  });
+
+  // PLINQ:
+  var result = data.AsParallel()
+      .WithCancellation(cts.Token)
+      .Where(x => ExpensivePredicate(x))
+      .ToList();
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Capitulo57_Cancelacion
+{
+    public class Program
+    {
+        static async Task Main(string[] args)
+        {
+            Console.WriteLine("═══════ CAPÍTULO 57: CANCELACIÓN ═══════\n");
+
+            // ─── 1. Cancelación básica ───
+            Console.WriteLine("─── 1. Cancelación Básica ───");
+
+            using var cts1 = new CancellationTokenSource();
+
+            Task tarea1 = Task.Run(() =>
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    cts1.Token.ThrowIfCancellationRequested();
+                    Thread.Sleep(100);
+                }
+            }, cts1.Token);
+
+            Thread.Sleep(300);
+            cts1.Cancel();
+
+            try
+            {
+                await tarea1;
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Tarea cancelada correctamente");
+            }
+
+            // ─── 2. Timeout con CancelAfter ───
+            Console.WriteLine("\n─── 2. Timeout con CancelAfter ───");
+
+            using var cts2 = new CancellationTokenSource();
+            cts2.CancelAfter(TimeSpan.FromSeconds(1));
+
+            try
+            {
+                await Task.Delay(3000, cts2.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Timeout: operación cancelada a los 1s");
+            }
+
+            // ─── 3. Constructor con TimeSpan ───
+            Console.WriteLine("\n─── 3. CTS con Timeout directo ───");
+
+            using var cts3 = new CancellationTokenSource(TimeSpan.FromSeconds(1.5));
+
+            try
+            {
+                await SimularOperacionLargaAsync(3, cts3.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Cancelada por timeout de 1.5s");
+            }
+
+            // ─── 4. IsCancellationRequested (sin excepción) ───
+            Console.WriteLine("\n─── 4. IsCancellationRequested (graceful) ───");
+
+            using var cts4 = new CancellationTokenSource();
+
+            var tareaGraceful = Task.Run(() =>
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    if (cts4.Token.IsCancellationRequested)
+                    {
+                        Console.WriteLine("  Cancelación graceful: limpiando...");
+                        return "cancelada";
+                    }
+                    Thread.Sleep(200);
+                }
+                return "completada";
+            });
+
+            Thread.Sleep(500);
+            cts4.Cancel();
+            string res = await tareaGraceful;
+            Console.WriteLine($"  Resultado: {res}");
+
+            // ─── 5. Callback Register ───
+            Console.WriteLine("\n─── 5. Register (Callback) ───");
+
+            using var cts5 = new CancellationTokenSource();
+
+            cts5.Token.Register(() =>
+                Console.WriteLine("  🔔 Callback: cancelación detectada!"));
+
+            cts5.Token.Register(() =>
+                Console.WriteLine("  🔔 Callback 2: liberando recursos..."));
+
+            cts5.CancelAfter(500);
+            await Task.Delay(1000);
+
+            // ─── 6. Linked CTS ───
+            Console.WriteLine("\n─── 6. Linked CancellationTokenSource ───");
+
+            using var ctsA = new CancellationTokenSource();
+            using var ctsB = new CancellationTokenSource();
+
+            using var ctsLinked = CancellationTokenSource.CreateLinkedTokenSource(
+                ctsA.Token, ctsB.Token);
+
+            _ = Task.Run(() =>
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    ctsLinked.Token.ThrowIfCancellationRequested();
+                    Thread.Sleep(200);
+                    Console.WriteLine($"  Trabajando... {i}");
+                }
+            }, ctsLinked.Token);
+
+            Thread.Sleep(500);
+            Console.WriteLine("  Cancelando ctsA (linked tb se cancela)...");
+            ctsA.Cancel();  // También cancela linked
+
+            await Task.Delay(500);
+
+            // ─── 7. Cancelación en async/await ───
+            Console.WriteLine("\n─── 7. Cancelación en async/await ───");
+
+            using var cts7 = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                await OperacionConTimeoutAsync(cts7.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Operación cancelada via token en async");
+            }
+
+            // ─── 8. Múltiples tokens linked ───
+            Console.WriteLine("\n─── 8. Múltiples Tokens ───");
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var userCts = new CancellationTokenSource();
+
+            using var multiCts = CancellationTokenSource.CreateLinkedTokenSource(
+                timeoutCts.Token, userCts.Token);
+
+            _ = SimularOperacionLargaAsync(5, multiCts.Token);
+
+            Thread.Sleep(1500);
+            // El usuario decide cancelar
+            userCts.Cancel();
+
+            await Task.Delay(2000);
+            Console.WriteLine("  Múltiples fuentes de cancelación manejadas");
+
+            // ─── 9. Cancelación en Parallel ───
+            Console.WriteLine("\n─── 9. Cancelación en Parallel ───");
+
+            using var cts9 = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+            var parallelOptions = new ParallelOptions { CancellationToken = cts9.Token };
+
+            try
+            {
+                Parallel.For(0, 1000, parallelOptions, i =>
+                {
+                    parallelOptions.CancellationToken
+                        .ThrowIfCancellationRequested();
+                    Thread.Sleep(10);
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Parallel.For cancelado");
+            }
+
+            // ─── 10. HttpClient con cancelación ───
+            Console.WriteLine("\n─── 10. HttpClient con Cancelación ───");
+
+            using var cts10 = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+            try
+            {
+                using var http = new HttpClient();
+                string content = await http.GetStringAsync(
+                    "https://httpbin.org/delay/5", cts10.Token);
+                Console.WriteLine($"  Descargado: {content.Length} chars");
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ HTTP request cancelada por timeout");
+            }
+            catch (HttpRequestException ex)
+            {
+                Console.WriteLine($"  Error HTTP (esperado sin internet): {ex.Message}");
+            }
+            catch (TaskCanceledException)
+            {
+                Console.WriteLine("  ✅ TaskCanceledException (otra forma de detectar)");
+            }
+
+            // ─── 11. Propagación de token ───
+            Console.WriteLine("\n─── 11. Propagación de Token ───");
+
+            using var cts11 = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+
+            try
+            {
+                await CapaSuperiorAsync(cts11.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Cancelación propagada desde capa superior");
+            }
+
+            // ─── 12. Cancelación en Stream ───
+            Console.WriteLine("\n─── 12. Cancelación en Stream ───");
+
+            using var cts12 = new CancellationTokenSource(TimeSpan.FromSeconds(0.5));
+
+            try
+            {
+                await LeerStreamAsync(cts12.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Lectura de stream cancelada");
+            }
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 57 ═══════");
+        }
+
+        static async Task SimularOperacionLargaAsync(int segundos,
+            CancellationToken ct)
+        {
+            Console.WriteLine($"  Simulando operación de {segundos}s...");
+            for (int i = 0; i < segundos; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                await Task.Delay(1000, ct);
+            }
+            Console.WriteLine("  Operación completada sin cancelación");
+        }
+
+        static async Task OperacionConTimeoutAsync(CancellationToken ct)
+        {
+            Console.WriteLine("  Operación con timeout configurado...");
+
+            // Simula múltiples pasos
+            for (int paso = 1; paso <= 5; paso++)
+            {
+                ct.ThrowIfCancellationRequested();
+                Console.WriteLine($"    Paso {paso}...");
+                await Task.Delay(800, ct);
+            }
+
+            Console.WriteLine("  Todos los pasos completados");
+        }
+
+        static async Task CapaSuperiorAsync(CancellationToken ct)
+        {
+            Console.WriteLine("  Capa superior: iniciando...");
+            await CapaMediaAsync(ct);
+            Console.WriteLine("  Capa superior: completado");
+        }
+
+        static async Task CapaMediaAsync(CancellationToken ct)
+        {
+            Console.WriteLine("  Capa media: iniciando...");
+            await CapaInferiorAsync(ct);
+            Console.WriteLine("  Capa media: completado");
+        }
+
+        static async Task CapaInferiorAsync(CancellationToken ct)
+        {
+            Console.WriteLine("  Capa inferior: trabajando...");
+            await Task.Delay(5000, ct);
+            Console.WriteLine("  Capa inferior: completado");
+        }
+
+        static async Task LeerStreamAsync(CancellationToken ct)
+        {
+            byte[] buffer = new byte[1024];
+            using var stream = new System.IO.MemoryStream(
+                new byte[1024 * 100]);
+
+            Console.WriteLine("  Leyendo stream con cancelación...");
+            int totalLeido = 0;
+
+            while (totalLeido < stream.Length)
+            {
+                ct.ThrowIfCancellationRequested();
+                int leido = await stream.ReadAsync(buffer, 0,
+                    buffer.Length, ct);
+                totalLeido += leido;
+                Console.WriteLine($"    Leídos {totalLeido} bytes");
+                await Task.Delay(200, ct);
+            }
+
+            Console.WriteLine($"  Stream leído completamente: {totalLeido} bytes");
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • CancellationTokenSource emite cancelación; CancellationToken verifica.
+  • ThrowIfCancellationRequested() lanza OperationCanceledException.
+  • IsCancellationRequested para verificación sin excepción.
+  • CancelAfter para timeouts automáticos.
+  • CreateLinkedTokenSource combina múltiples fuentes de cancelación.
+  • Register agrega callbacks que se ejecutan al cancelar.
+  • El token se propaga por la pila de llamadas como último parámetro.
+  • Siempre usar using con CTS (implementa IDisposable).
+  • Parallel y PLINQ soportan cancelación nativa.
+  • async/await integra CancellationToken de manera natural.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Crea un bucle infinito que se cancele después de 3s
+    usando CancelAfter.
+
+  ✦ Ejercicio 2: Implementa una descarga simulada que verifique
+    cancelación cada 100ms y que pueda cancelarse gracefulmente.
+
+  ✦ Ejercicio 3: Crea dos fuentes de cancelación (usuario + timeout)
+    y combínalas con CreateLinkedTokenSource.
+
+  ✦ Ejercicio 4: Usa Register para loguear cuándo y dónde se solicitó
+    cancelación.
+
+  ✦ Ejercicio 5: Escribe un método async que procese una lista de items
+    y sea cancelable. Si cancelan, reporta cuántos se procesaron.
+
+  ✦ Ejercicio 6: Implementa un servidor TCP simple que acepte una
+    conexión y permita cancelar la escucha con CancellationToken.
+
+  ✦ Ejercicio 7: Demuestra la diferencia entre
+    ThrowIfCancellationRequested() y verificar IsCancellationRequested.
+
+  ✦ Ejercicio 8: Crea un pipeline paralelo (Parallel.ForEach) que pueda
+    cancelarse con un CancellationToken.
+
+  ✦ Ejercicio 9: Implementa un circuito breaker simple que cancele
+    operaciones después de N fallos consecutivos.
+
+  ✦ Ejercicio 10: Escribe un método que ejecute una tarea con timeout.
+    Si la tarea no se completa en N segundos, la cancela.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿La cancelación puede detener una tarea inmediatamente?
+  → No. La tarea debe cooperar verificando el token. Es segura.
+
+  ❓ ¿Qué excepción lanza ThrowIfCancellationRequested?
+  → OperationCanceledException.
+
+  ❓ ¿TaskCanceledException vs OperationCanceledException?
+  → TaskCanceledException hereda de OperationCanceledException.
+    TaskCanceledException se lanza al cancelar una tarea con token.
+
+  ❓ ¿Debo Dispose el CancellationTokenSource?
+  → Sí. Implementa IDisposable. Libera los recursos del callback.
+
+  ❓ ¿Puedo reutilizar un CancellationToken después de Cancel?
+  → No. Una vez cancelado, está permanentemente cancelado.
+    Crea un nuevo CTS.
+
+  ❓ ¿Qué pasa si nunca llamo a Cancel?
+  → El token nunca se cancela. Las operaciones continúan normalmente.
+
+  ❓ ¿CancellationToken es thread-safe?
+  → Sí. Puede verificarse desde múltiples hilos simultáneamente.
+
+  ❓ ¿Cómo cancelo una operación que no acepta CancellationToken?
+  → Envuélvela en un Task.Run que verifique el token, o usa
+    WithCancellation extension method.
+
+  ❓ ¿Puedo saber por qué se canceló?
+  → No directamente. Puedes usar diferentes tokens para distinguir.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Implementa un gestor de operaciones cancelables con timeouts y   │
+  │  políticas de reintento.                                           │
+  │                                                                     │
+  │  CancelableOperationManager                                        │
+  │    • Ejecuta una operación (Func<CancellationToken, Task<T>>)       │
+  │      con timeout configurable.                                     │
+  │    • Soporta reintentos (retryCount, retryDelay).                  │
+  │    • Política de backoff: constante, exponencial, linear.         │
+  │    • Si la operación se cancela, no reintenta.                    │
+  │    • Retorna un Result<T> con Estado: Exitoso, Timeout,           │
+  │      Cancelado, Fallo.                                             │
+  │    • Eventos: OnRetry, OnTimeout, OnCancel, OnCompleted.          │
+  │    • Log de todos los intentos con timestamps.                    │
+  │    • Debe ser thread-safe para múltiples operaciones concurrentes.│
+  │                                                                     │
+  │  Ejemplo de uso:                                                   │
+  │    var manager = new CancelableOperationManager();                 │
+  │    var result = await manager.ExecuteAsync(                        │
+  │        async (ct) => {                                             │
+  │            await Task.Delay(2000, ct);                             │
+  │            return "OK";                                            │
+  │        },                                                          │
+  │        new OperationOptions {                                     │
+  │            Timeout = TimeSpan.FromSeconds(5),                     │
+  │            RetryCount = 3,                                         │
+  │            RetryDelay = TimeSpan.FromSeconds(1),                  │
+  │            BackoffPolicy = BackoffPolicy.Exponential              │
+  │        });                                                         │
+  │                                                                     │
+  │  Entrega: CancelableOperationManager.cs completo con demo.         │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+La cancelación cooperativa es esencial para construir aplicaciones
+robustas y responsivas. Permite que el usuario mantenga el control,
+que las operaciones no bloqueen indefinidamente, y que los recursos
+se liberen correctamente.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 58: PARALLEL (PLINQ)
+    Aprenderás a ejecutar código en paralelo de forma sencilla
+    con Parallel.For, Parallel.ForEach y PLINQ.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 57 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

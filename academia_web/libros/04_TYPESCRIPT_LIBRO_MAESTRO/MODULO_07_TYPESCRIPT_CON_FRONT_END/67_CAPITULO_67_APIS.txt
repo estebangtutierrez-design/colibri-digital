@@ -1,0 +1,767 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                       CAPÍTULO 67
+##
+##                      CONSUMO DE APIS
+##
+################################################################################
+################################################################################
+
+"Consumir APIs sin tipos es como leer un mapa sin leyenda: puedes llegar,
+pero no sabes qué encontraste."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante,
+
+Has llegado al capítulo donde todo cobra sentido. Has aprendido DOM,
+eventos, fetch, JSON, promesas y async/await. Ahora es momento de unir
+todas esas piezas en una sinfonía: el consumo completo de APIs REST con
+TypeScript.
+
+En este capítulo construirás desde cero clientes HTTP completos, con
+tipos para cada petición, cada respuesta y cada error. Aprenderás a
+estructurar tu código front-end para que la comunicación con el servidor
+sea predecible, mantenible y robusta.
+
+Porque una API bien tipada es como un contrato legal: ambas partes saben
+exactamente qué esperar.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Una API sin tipos es una conversación a gritos. Una API con tipos es un
+diálogo de caballeros."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Diseñar interfaces completas para APIs REST
+✓ Implementar un cliente HTTP tipado y reutilizable
+✓ Manejar autenticación con tokens y tipos
+✓ Trabajar con paginación tipada
+✓ Implementar caché de respuestas con tipos
+✓ Crear hooks o funciones de alto nivel para consumo de APIs
+✓ Manejar estados de carga, éxito y error con tipos
+✓ Integrar el consumo de APIs con el DOM de forma tipada
+
+===============================================================================
+1. DISEÑO DE INTERFACES PARA LA API
+===============================================================================
+
+El primer paso es modelar la API con interfaces. Esto define el contrato.
+
+```typescript
+// --- Recursos ---
+interface Usuario {
+  id: number;
+  name: string;
+  username: string;
+  email: string;
+  address: Direccion;
+  phone: string;
+  website: string;
+  company: Compania;
+}
+
+interface Direccion {
+  street: string;
+  suite: string;
+  city: string;
+  zipcode: string;
+  geo: { lat: string; lng: string };
+}
+
+interface Compania {
+  name: string;
+  catchPhrase: string;
+  bs: string;
+}
+
+// --- Peticiones ---
+interface CrearUsuarioDTO {
+  name: string;
+  email: string;
+  phone?: string; // opcional
+}
+
+interface ActualizarUsuarioDTO extends Partial<CrearUsuarioDTO> {
+  // Partial hace que todos los campos sean opcionales
+}
+
+// --- Respuestas ---
+interface RespuestaPaginada<T> {
+  data: T[];
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+}
+```
+
+===============================================================================
+2. CLIENTE HTTP COMPLETO Y TIPADO
+===============================================================================
+
+Construyamos un cliente HTTP que maneje todos los aspectos:
+
+```typescript
+type MetodoHTTP = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+interface OpcionesPeticion<T = unknown> {
+  method?: MetodoHTTP;
+  headers?: Record<string, string>;
+  body?: T;
+  params?: Record<string, string | number | boolean>;
+  signal?: AbortSignal;
+}
+
+class ApiCliente {
+  private baseUrl: string;
+  private headersBase: Record<string, string>;
+
+  constructor(baseUrl: string, token?: string) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.headersBase = {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    };
+
+    if (token) {
+      this.headersBase["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
+  private construirUrl(endpoint: string, params?: Record<string, string | number | boolean>): string {
+    const url = new URL(`${this.baseUrl}${endpoint}`);
+
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        url.searchParams.append(key, String(value));
+      });
+    }
+
+    return url.toString();
+  }
+
+  private async peticion<TRespuesta, TCuerpo = unknown>(
+    endpoint: string,
+    opciones: OpcionesPeticion<TCuerpo> = {}
+  ): Promise<TRespuesta> {
+    const {
+      method = "GET",
+      headers = {},
+      body,
+      params,
+      signal
+    } = opciones;
+
+    const url = this.construirUrl(endpoint, params);
+
+    const respuesta = await fetch(url, {
+      method,
+      headers: { ...this.headersBase, ...headers },
+      body: body ? JSON.stringify(body) : undefined,
+      signal
+    });
+
+    if (!respuesta.ok) {
+      const errorBody = await respuesta.json().catch(() => null);
+      throw new ApiError(
+        respuesta.status,
+        respuesta.statusText,
+        errorBody
+      );
+    }
+
+    // Para 204 No Content
+    if (respuesta.status === 204) {
+      return undefined as TRespuesta;
+    }
+
+    return respuesta.json() as Promise<TRespuesta>;
+  }
+
+  async get<T>(endpoint: string, params?: Record<string, string | number | boolean>): Promise<T> {
+    return this.peticion<T>(endpoint, { method: "GET", params });
+  }
+
+  async post<T, U = unknown>(endpoint: string, body: U): Promise<T> {
+    return this.peticion<T, U>(endpoint, { method: "POST", body });
+  }
+
+  async put<T, U = unknown>(endpoint: string, body: U): Promise<T> {
+    return this.peticion<T, U>(endpoint, { method: "PUT", body });
+  }
+
+  async patch<T, U = unknown>(endpoint: string, body: U): Promise<T> {
+    return this.peticion<T, U>(endpoint, { method: "PATCH", body });
+  }
+
+  async delete<T = void>(endpoint: string): Promise<T> {
+    return this.peticion<T>(endpoint, { method: "DELETE" });
+  }
+}
+```
+
+===============================================================================
+3. AUTENTICACIÓN TIPADA
+===============================================================================
+
+```typescript
+interface Credenciales {
+  email: string;
+  password: string;
+}
+
+interface TokenRespuesta {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  tokenType: string;
+}
+
+interface UsuarioAutenticado {
+  id: number;
+  name: string;
+  email: string;
+  role: "admin" | "usuario" | "invitado";
+}
+
+class AuthCliente {
+  private api: ApiCliente;
+  private token: string | null = null;
+  private refreshToken: string | null = null;
+
+  constructor(baseUrl: string) {
+    this.api = new ApiCliente(baseUrl);
+    this.cargarSesion();
+  }
+
+  private cargarSesion(): void {
+    this.token = localStorage.getItem("access_token");
+    this.refreshToken = localStorage.getItem("refresh_token");
+  }
+
+  private guardarSesion(tokens: TokenRespuesta): void {
+    this.token = tokens.accessToken;
+    this.refreshToken = tokens.refreshToken;
+    localStorage.setItem("access_token", tokens.accessToken);
+    localStorage.setItem("refresh_token", tokens.refreshToken);
+  }
+
+  async login(creds: Credenciales): Promise<UsuarioAutenticado> {
+    const tokens = await this.api.post<TokenRespuesta, Credenciales>(
+      "/auth/login",
+      creds
+    );
+    this.guardarSesion(tokens);
+    return this.obtenerPerfil();
+  }
+
+  async obtenerPerfil(): Promise<UsuarioAutenticado> {
+    return this.api.get<UsuarioAutenticado>("/auth/me");
+  }
+
+  async refrescarToken(): Promise<void> {
+    if (!this.refreshToken) throw new Error("No hay refresh token");
+
+    const nuevosTokens = await this.api.post<TokenRespuesta, { refreshToken: string }>(
+      "/auth/refresh",
+      { refreshToken: this.refreshToken }
+    );
+    this.guardarSesion(nuevosTokens);
+  }
+
+  logout(): void {
+    this.token = null;
+    this.refreshToken = null;
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+  }
+
+  estaAutenticado(): boolean {
+    return this.token !== null;
+  }
+}
+```
+
+===============================================================================
+4. PAGINACIÓN TIPADA
+===============================================================================
+
+```typescript
+interface PaginacionParams {
+  page?: number;
+  perPage?: number;
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
+interface PaginacionRespuesta<T> {
+  data: T[];
+  meta: {
+    currentPage: number;
+    perPage: number;
+    total: number;
+    lastPage: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
+}
+
+async function obtenerTodosLosElementos<T>(
+  api: ApiCliente,
+  endpoint: string,
+  maxPaginas: number = 10
+): Promise<T[]> {
+  const todos: T[] = [];
+  let paginaActual = 1;
+  let hayMas = true;
+
+  while (hayMas && paginaActual <= maxPaginas) {
+    const respuesta = await api.get<PaginacionRespuesta<T>>(endpoint, {
+      page: paginaActual,
+      perPage: 100
+    });
+
+    todos.push(...respuesta.data);
+    hayMas = respuesta.meta.hasNextPage;
+    paginaActual++;
+  }
+
+  return todos;
+}
+
+// Uso
+const api = new ApiCliente("https://api.example.com");
+const usuarios = await obtenerTodosLosElementos<Usuario>(api, "/users");
+console.log(`Total usuarios: ${usuarios.length}`);
+```
+
+===============================================================================
+5. CACHÉ DE RESPUESTAS TIPADO
+===============================================================================
+
+```typescript
+interface CacheEntry<T> {
+  datos: T;
+  timestamp: number;
+  ttl: number; // milisegundos
+}
+
+class ApiCache {
+  private cache = new Map<string, CacheEntry<unknown>>();
+
+  obtener<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+
+    const expirado = Date.now() - entry.timestamp > entry.ttl;
+    if (expirado) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return entry.datos as T;
+  }
+
+  guardar<T>(key: string, datos: T, ttl: number = 60000): void {
+    this.cache.set(key, {
+      datos,
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+
+  limpiar(): void {
+    this.cache.clear();
+  }
+}
+
+// Cliente con caché
+class ApiClienteConCache extends ApiCliente {
+  private cache = new ApiCache();
+
+  async getConCache<T>(
+    endpoint: string,
+    ttl: number = 60000
+  ): Promise<T> {
+    const cacheKey = endpoint;
+
+    const desdeCache = this.cache.obtener<T>(cacheKey);
+    if (desdeCache) {
+      console.log(`Cache hit: ${endpoint}`);
+      return desdeCache;
+    }
+
+    console.log(`Cache miss: ${endpoint}, fetching...`);
+    const datos = await this.get<T>(endpoint);
+    this.cache.guardar(cacheKey, datos, ttl);
+    return datos;
+  }
+}
+```
+
+===============================================================================
+6. MANEJO DE ESTADOS (LOADING, SUCCESS, ERROR)
+===============================================================================
+
+```typescript
+type EstadoPeticion<T> =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "success"; data: T }
+  | { status: "error"; error: ApiError };
+
+// Función que maneja el ciclo de vida completo
+async function ejecutarPeticion<T>(
+  url: string,
+  callbacks: {
+    onLoading?: () => void;
+    onSuccess?: (data: T) => void;
+    onError?: (error: ApiError) => void;
+  }
+): Promise<EstadoPeticion<T>> {
+  callbacks.onLoading?.();
+
+  try {
+    const datos = await fetchJSON<T>(url);
+    callbacks.onSuccess?.(datos);
+    return { status: "success", data: datos };
+  } catch (error) {
+    const apiError = error instanceof ApiError
+      ? error
+      : new ApiError(0, (error as Error).message, null);
+
+    callbacks.onError?.(apiError);
+    return { status: "error", error: apiError };
+  }
+}
+
+// Uso con actualización del DOM
+async function cargarUsuariosEnDOM(): Promise<void> {
+  const contenedor = document.getElementById("usuarios") as HTMLDivElement;
+  contenedor.innerHTML = "<p>Cargando usuarios...</p>";
+
+  const estado = await ejecutarPeticion<Usuario[]>(
+    "https://jsonplaceholder.typicode.com/users",
+    {
+      onLoading: () => console.log("Cargando..."),
+      onSuccess: (usuarios) => {
+        contenedor.innerHTML = usuarios.map(u => `
+          <div class="usuario">
+            <h3>${u.name}</h3>
+            <p>${u.email}</p>
+          </div>
+        `).join("");
+      },
+      onError: (error) => {
+        contenedor.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+      }
+    }
+  );
+
+  console.log("Estado final:", estado.status);
+}
+```
+
+===============================================================================
+7. INTERCEPTORES (PATRÓN MIDDLEWARE)
+===============================================================================
+
+```typescript
+type Interceptor = (config: {
+  endpoint: string;
+  options: RequestInit;
+}) => { endpoint: string; options: RequestInit } | Promise<{ endpoint: string; options: RequestInit }>;
+
+class ApiClienteConInterceptor extends ApiCliente {
+  private interceptores: Interceptor[] = [];
+
+  constructor(baseUrl: string, token?: string) {
+    super(baseUrl, token);
+  }
+
+  usarInterceptor(interceptor: Interceptor): void {
+    this.interceptores.push(interceptor);
+  }
+
+  protected async ejecutarInterceptores(
+    endpoint: string,
+    options: RequestInit
+  ): Promise<{ endpoint: string; options: RequestInit }> {
+    let config = { endpoint, options };
+
+    for (const interceptor of this.interceptores) {
+      config = await interceptor(config);
+    }
+
+    return config;
+  }
+
+  async getConInterceptores<T>(endpoint: string): Promise<T> {
+    const { endpoint: url, options } = await this.ejecutarInterceptores(
+      endpoint,
+      { method: "GET" }
+    );
+    return this.get<T>(url);
+  }
+}
+
+// Uso del interceptor
+const apiInterceptores = new ApiClienteConInterceptor("https://api.example.com");
+
+// Logging interceptor
+apiInterceptores.usarInterceptor(async (config) => {
+  console.log(`[${config.options.method}] ${config.endpoint}`);
+  return config;
+});
+
+// Auth interceptor
+apiInterceptores.usarInterceptor(async (config) => {
+  const token = localStorage.getItem("access_token");
+  if (token) {
+    config.options.headers = {
+      ...config.options.headers,
+      "Authorization": `Bearer ${token}`
+    };
+  }
+  return config;
+});
+```
+
+===============================================================================
+8. INTEGRACIÓN COMPLETA CON EL DOM
+===============================================================================
+
+```typescript
+interface Tarea {
+  userId: number;
+  id: number;
+  title: string;
+  completed: boolean;
+}
+
+class TareasApp {
+  private api: ApiCliente;
+  private listaElement: HTMLUListElement;
+
+  constructor() {
+    this.api = new ApiCliente("https://jsonplaceholder.typicode.com");
+    this.listaElement = document.querySelector("#lista-tareas") as HTMLUListElement;
+  }
+
+  async inicializar(): Promise<void> {
+    this.mostrarCargando();
+
+    try {
+      const tareas = await this.api.get<Tarea[]>("/todos?_limit=10");
+      this.renderizarTareas(tareas);
+    } catch (error) {
+      this.mostrarError(error);
+    }
+  }
+
+  private mostrarCargando(): void {
+    this.listaElement.innerHTML = `
+      <li class="cargando">
+        <span>Cargando tareas...</span>
+      </li>
+    `;
+  }
+
+  private renderizarTareas(tareas: Tarea[]): void {
+    this.listaElement.innerHTML = tareas.map(tarea => `
+      <li class="tarea ${tarea.completed ? "completada" : ""}" data-id="${tarea.id}">
+        <input type="checkbox" ${tarea.completed ? "checked" : ""} />
+        <span>${tarea.title}</span>
+        <button class="btn-eliminar" data-id="${tarea.id}">✕</button>
+      </li>
+    `).join("");
+
+    this.inicializarEventos();
+  }
+
+  private inicializarEventos(): void {
+    this.listaElement.addEventListener("change", async (event: Event) => {
+      const checkbox = event.target as HTMLInputElement;
+      const li = checkbox.closest("li") as HTMLLIElement;
+      const tareaId = Number(li.dataset.id);
+
+      await this.api.patch<Tarea, { completed: boolean }>(
+        `/todos/${tareaId}`,
+        { completed: checkbox.checked }
+      );
+
+      li.classList.toggle("completada", checkbox.checked);
+    });
+
+    this.listaElement.addEventListener("click", async (event: MouseEvent) => {
+      const boton = (event.target as HTMLElement).closest(".btn-eliminar") as HTMLButtonElement;
+      if (!boton) return;
+
+      const tareaId = Number(boton.dataset.id);
+      await this.api.delete(`/todos/${tareaId}`);
+      boton.closest("li")?.remove();
+    });
+  }
+
+  private mostrarError(error: unknown): void {
+    this.listaElement.innerHTML = `
+      <li class="error">
+        Error al cargar tareas: ${(error as Error).message}
+      </li>
+    `;
+  }
+}
+
+// Iniciar la aplicación
+const app = new TareasApp();
+app.inicializar();
+```
+
+===============================================================================
+9. HOOKS DE ALTO NIVEL
+===============================================================================
+
+```typescript
+type ApiHookResult<T> = {
+  data: T | null;
+  loading: boolean;
+  error: ApiError | null;
+  refetch: () => Promise<void>;
+};
+
+function useApi<T>(
+  fetcher: () => Promise<T>
+): ApiHookResult<T> {
+  let data: T | null = null;
+  let loading = true;
+  let error: ApiError | null = null;
+
+  async function ejecutar(): Promise<void> {
+    loading = true;
+    error = null;
+
+    try {
+      data = await fetcher();
+    } catch (e) {
+      error = e instanceof ApiError ? e : new ApiError(0, (e as Error).message, null);
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Iniciar inmediatamente
+  const promesa = ejecutar();
+  // En un entorno real, esto sería un efecto
+
+  return {
+    get data() { return data; },
+    get loading() { return loading; },
+    get error() { return error; },
+    refetch: ejecutar
+  };
+}
+
+// Uso
+const usuariosApi = useApi(() =>
+  new ApiCliente("https://jsonplaceholder.typicode.com").get<Usuario[]>("/users")
+);
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Modela las APIs con interfaces que reflejen los recursos reales.
+- Un `ApiCliente` encapsula toda la lógica HTTP con métodos tipados.
+- La autenticación con tokens se integra limpiamente en el cliente.
+- La paginación se modela con genéricos: `PaginacionRespuesta<T>`.
+- La caché tipada evita peticiones repetitivas.
+- Los estados `idle | loading | success | error` modelan el ciclo de vida.
+- Los interceptores permiten logging, auth y transformaciones.
+- La integración DOM + API actualiza la UI con datos tipados.
+- Los hooks abstraen el patrón de consumo de APIs.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1: Cliente de tareas**
+
+Crea una clase `TareasCliente` que extienda `ApiCliente` y tenga métodos
+`obtenerTodas()`, `obtenerPorId(id)`, `crear(dto)`, `completar(id)`. Define
+todas las interfaces necesarias.
+
+🧩 **Ejercicio 2: Paginación con UI**
+
+Construye una función que renderice una lista paginada de usuarios con
+botones "Anterior" y "Siguiente". Cada página debe cargarse desde la API
+y actualizar el DOM.
+
+🧩 **Ejercicio 3: Interceptor de logging**
+
+Añade un interceptor a tu `ApiCliente` que registre en consola la duración
+de cada petición: `[GET] /users — 230ms`.
+
+🧩 **Ejercicio 4: Aplicación completa**
+
+Construye una mini aplicación que muestre usuarios, sus posts y sus
+comentarios. Usa el cliente tipado, maneja estados de carga/error y
+actualiza el DOM dinámicamente.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo tipar también los errores de la API?**
+
+Sí. Define una interfaz `ErrorAPI` con `code`, `message`, `details` y
+úsa la en el catch. Así sabrás exactamente qué información tienes.
+
+❓ **¿Cómo manejo tokens expirados?**
+
+En el catch del cliente, si el error es 401, intenta refrescar el token
+automáticamente y reintenta la petición original.
+
+❓ **¿Vale la pena un cliente genérico o mejor específico por recurso?**
+
+Un cliente genérico + clases específicas por recurso es lo mejor.
+`ApiCliente` da los métodos base, y `UsuarioCliente`, `ProductoCliente`
+dan los métodos de negocio con tipos específicos.
+
+❓ **¿Cómo pruebo el consumo de APIs sin un servidor real?**
+
+Usa herramientas como json-server, MSW (Mock Service Worker) o las APIs
+públicas como JSONPlaceholder para desarrollo y pruebas.
+
+===============================================================================
+FIN DEL CAPÍTULO 67
+===============================================================================
+
+"Consumir APIs con tipos no es un lujo, es la línea que separa un
+prototipo de un producto profesional."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+
+68_CAPITULO_68_INTEGRACION_CON_JAVASCRIPT.txt
+===============================================================================

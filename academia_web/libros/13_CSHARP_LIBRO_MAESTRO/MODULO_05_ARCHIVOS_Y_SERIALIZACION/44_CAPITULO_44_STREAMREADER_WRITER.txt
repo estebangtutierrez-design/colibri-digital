@@ -1,0 +1,866 @@
+================================================================================
+  MÓDULO V: ARCHIVOS Y SERIALIZACIÓN
+  CAPÍTULO 44: STREAMREADER / STREAMWRITER
+  "C# MASTER BOOK"
+================================================================================
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 44! Si los capítulos anteriores fueron la teoría y
+la práctica básica, aquí llegamos a la maestría en el manejo de texto.
+StreamReader y StreamWriter son las herramientas más utilizadas en el mundo
+real para procesar archivos de texto en C#.
+
+Estas clases envuelven un FileStream y añaden la capa de codificación de
+caracteres, permitiéndote trabajar con texto de forma natural sin preocuparte
+de los bytes subyacentes. Hoy aprenderemos cada detalle de su funcionamiento.
+
+================================================================================
+  FRASE DEL DÍA
+================================================================================
+
+"El texto es la interfaz más universal. StreamReader y StreamWriter son los
+puentes entre nuestros datos y el mundo."
+
+--- Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  - Dominar StreamReader: ReadLine, ReadToEnd, Read, Peek.
+  - Dominar StreamWriter: Write, WriteLine, Flush, AutoFlush.
+  - Comprender la gestión de codificaciones de texto.
+  - Implementar el bloque using para garantizar la liberación.
+  - Diferenciar entre StreamReader/Writer y File estáticos.
+  - Manejar archivos grandes con streaming de texto.
+  - Aplicar patrones comunes de procesamiento de texto.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+1. StreamReader: Fundamentos
+2. StreamReader: Métodos de lectura
+3. StreamReader: Peek y lectura parcial
+4. StreamReader: Encoding y detección de BOM
+5. StreamReader: Constructores avanzados
+6. StreamWriter: Fundamentos
+7. StreamWriter: Métodos de escritura
+8. StreamWriter: AutoFlush y buffer
+9. StreamWriter: Encoding y constructores
+10. Patrones comunes con StreamReader/Writer
+11. Comparativa: métodos estáticos vs StreamReader
+12. Buenas prácticas
+
+----------------------------------------------------------------------
+1. STREAMREADER: FUNDAMENTOS
+----------------------------------------------------------------------
+
+StreamReader es una clase que lee caracteres de un stream de bytes usando
+una codificación específica. Es la herramienta principal para lectura de
+archivos de texto en .NET.
+
+Jerarquía: TextReader → StreamReader
+
+  ```csharp
+  // Forma más común
+  using StreamReader sr = new StreamReader("archivo.txt");
+
+  // Especificando encoding
+  using StreamReader sr = new StreamReader("archivo.txt", Encoding.UTF8);
+
+  // Desde un FileStream existente
+  using FileStream fs = new FileStream("archivo.txt", FileMode.Open,
+      FileAccess.Read, FileShare.Read);
+  using StreamReader sr = new StreamReader(fs);
+  ```
+
+El constructor detecta automáticamente la codificación por BOM si no se
+especifica. Si no hay BOM, asume UTF-8.
+
+----------------------------------------------------------------------
+2. STREAMREADER: MÉTODOS DE LECTURA
+----------------------------------------------------------------------
+
+a) ReadToEnd(): Lee todo el texto desde la posición actual hasta el final.
+  ```csharp
+  using StreamReader sr = new StreamReader("novela.txt");
+  string contenidoCompleto = sr.ReadToEnd();
+  Console.WriteLine($"Novela completa: {contenidoCompleto.Length} caracteres");
+  ```
+  Advertencia: Igual que File.ReadAllText, carga todo en memoria.
+
+b) ReadLine(): Lee una línea de texto (hasta \r\n, \n, o \r).
+  ```csharp
+  using StreamReader sr = new StreamReader("log.txt");
+  string linea;
+  int numLinea = 0;
+  while ((linea = sr.ReadLine()) != null)
+  {
+      numLinea++;
+      if (linea.Contains("ERROR"))
+          Console.WriteLine($"[{numLinea}] {linea}");
+  }
+  ```
+  Recomendado para archivos grandes: solo una línea en memoria.
+
+c) Read(): Lee un carácter, devuelve -1 si no hay más.
+  ```csharp
+  using StreamReader sr = new StreamReader("texto.txt");
+  int caracter;
+  int contador = 0;
+  while ((caracter = sr.Read()) != -1)
+  {
+      if (char.IsLetter((char)caracter))
+          contador++;
+  }
+  Console.WriteLine($"Letras encontradas: {contador}");
+  ```
+
+d) Read(Span<char> buffer): Lee un bloque de caracteres.
+  ```csharp
+  using StreamReader sr = new StreamReader("archivo.txt");
+  Span<char> buffer = stackalloc char[1024];
+  int charsRead;
+  while ((charsRead = sr.Read(buffer)) > 0)
+  {
+      // Procesar bloque de caracteres
+      Console.Write(buffer[..charsRead].ToString());
+  }
+  ```
+
+e) ReadBlock(Span<char> buffer): Garantiza la lectura del bloque completo.
+  ```csharp
+  using StreamReader sr = new StreamReader("texto.txt");
+  char[] buffer = new char[100];
+  sr.ReadBlock(buffer, 0, buffer.Length);
+  Console.WriteLine($"Primeros 100 caracteres: {new string(buffer)}");
+  ```
+
+----------------------------------------------------------------------
+3. STREAMREADER: PEEK Y LECTURA PARCIAL
+----------------------------------------------------------------------
+
+Peek() devuelve el siguiente carácter sin consumirlo. Devuelve -1 si al final.
+
+  ```csharp
+  using StreamReader sr = new StreamReader("datos.txt");
+
+  while (sr.Peek() != -1)
+  {
+      if (sr.Peek() == '#')
+      {
+          // Línea comentario: saltar
+          sr.ReadLine();
+          continue;
+      }
+      if (char.IsDigit((char)sr.Peek()))
+      {
+          // Empieza con número: leer como dato
+          string linea = sr.ReadLine();
+          ProcesarNumero(linea);
+      }
+      else
+      {
+          sr.ReadLine();
+      }
+  }
+  ```
+
+Uso típico: detectar el tipo de línea antes de procesarla.
+
+Peek con StreamReader anidado:
+  ```csharp
+  // Detectar si el archivo está vacío sin consumir datos
+  using StreamReader sr = new StreamReader("archivo.txt");
+  if (sr.Peek() == -1)
+      Console.WriteLine("El archivo está vacío.");
+  else
+      Console.WriteLine("El archivo tiene contenido.");
+  ```
+
+----------------------------------------------------------------------
+4. STREAMREADER: ENCODING Y DETECCIÓN DE BOM
+----------------------------------------------------------------------
+
+El encoding es crucial para leer texto correctamente. StreamReader puede
+detectar automáticamente la codificación mediante BOM.
+
+  ```csharp
+  // Detección automática
+  using StreamReader sr = new StreamReader("archivo.txt");
+  Console.WriteLine($"Encoding detectado: {sr.CurrentEncoding.EncodingName}");
+  // Si tiene BOM, detecta UTF-8, UTF-16, UTF-32.
+  // Sin BOM, asume UTF-8.
+  ```
+
+Forzar encoding específico:
+  ```csharp
+  var latin1 = Encoding.GetEncoding("ISO-8859-1");
+  using StreamReader sr = new StreamReader("archivo_latin1.txt", latin1);
+
+  // Con detección de BOM pero con fallback a Latin1
+  using StreamReader sr2 = new StreamReader("archivo.txt",
+      detectEncodingFromByteOrderMarks: true);
+  // Si detecta BOM, usa ese encoding; si no, usa UTF-8 (por defecto)
+  ```
+
+Constructor con encoding y detección:
+  ```csharp
+  public StreamReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks,
+      int bufferSize);
+  ```
+
+  ```csharp
+  // Detectar BOM, buffer de 64KB
+  using StreamReader sr = new StreamReader("archivo_grande.txt",
+      Encoding.UTF8, true, 65536);
+  ```
+
+Propiedades de encoding:
+  ```csharp
+  using StreamReader sr = new StreamReader("archivo.txt");
+  Console.WriteLine($"Encoding: {sr.CurrentEncoding.EncodingName}");
+  Console.WriteLine($"BOM detectado: {
+      sr.CurrentEncoding.GetPreamble().Length > 0}");
+  ```
+
+----------------------------------------------------------------------
+5. STREAMREADER: CONSTRUCTORES AVANZADOS
+----------------------------------------------------------------------
+
+Constructores disponibles:
+  1. StreamReader(Stream stream)
+  2. StreamReader(Stream stream, Encoding encoding)
+  3. StreamReader(Stream stream, Encoding encoding, bool detectEncodingFromByteOrderMarks)
+  4. StreamReader(Stream stream, Encoding encoding, bool detectEncodingFromByteOrderMarks, int bufferSize)
+  5. StreamReader(Stream stream, Encoding encoding, bool detectEncodingFromByteOrderMarks, int bufferSize, bool leaveOpen)
+  6. StreamReader(string path)
+  7. StreamReader(string path, Encoding encoding)
+  8. StreamReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks)
+  9. StreamReader(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks, int bufferSize)
+
+leaveOpen: útil cuando envuelves un FileStream y no quieres cerrarlo al
+disponer el StreamReader.
+
+  ```csharp
+  using FileStream fs = new FileStream("archivo.txt", FileMode.Open,
+      FileAccess.Read, FileShare.Read);
+  using StreamReader sr = new StreamReader(fs, Encoding.UTF8, true, 4096, leaveOpen: true);
+  string contenido = sr.ReadToEnd();
+  // fs sigue abierto aquí
+  // sr se cierra aquí (pero no cierra fs gracias a leaveOpen)
+  // fs se cierra aquí
+  ```
+
+Detectar encoding post-lectura:
+  ```csharp
+  using StreamReader sr = new StreamReader("archivo.txt", Encoding.ASCII, true);
+  string texto = sr.ReadToEnd();
+  Console.WriteLine($"El encoding real era: {sr.CurrentEncoding.EncodingName}");
+  ```
+
+----------------------------------------------------------------------
+6. STREAMWRITER: FUNDAMENTOS
+----------------------------------------------------------------------
+
+StreamWriter es la contrapartida de escritura. Escribe caracteres a un stream
+aplicando una codificación.
+
+Jerarquía: TextWriter → StreamWriter
+
+  ```csharp
+  // Crear nuevo archivo
+  using StreamWriter sw = new StreamWriter("salida.txt");
+
+  // Añadir a archivo existente
+  using StreamWriter sw = new StreamWriter("log.txt", append: true);
+
+  // Con encoding específico
+  using StreamWriter sw = new StreamWriter("salida.txt", false, Encoding.UTF8);
+  ```
+
+Propiedades básicas:
+  - Encoding: codificación usada (lectura).
+  - AutoFlush: si es true, vacía buffer tras cada escritura.
+  - BaseStream: el stream subyacente (si existe).
+  - NewLine: string usado para saltos de línea.
+
+  ```csharp
+  using StreamWriter sw = new StreamWriter("unix.txt");
+  sw.NewLine = "\n"; // Usar LF en lugar de CRLF
+  sw.WriteLine("Línea 1");
+  sw.WriteLine("Línea 2");
+  ```
+
+----------------------------------------------------------------------
+7. STREAMWRITER: MÉTODOS DE ESCRITURA
+----------------------------------------------------------------------
+
+a) Write(string): Escribe sin salto de línea.
+  ```csharp
+  using StreamWriter sw = new StreamWriter("reporte.html");
+  sw.Write("<html><body>");
+  sw.Write("<h1>Reporte</h1>");
+  sw.Write("</body></html>");
+  ```
+
+b) WriteLine(string): Escribe con salto de línea.
+  ```csharp
+  using StreamWriter sw = new StreamWriter("datos.csv");
+  sw.WriteLine("Nombre,Edad,Ciudad");
+  sw.WriteLine("Ana,25,Madrid");
+  sw.WriteLine("Luis,30,Barcelona");
+  ```
+
+c) WriteLine() sin argumentos: Escribe línea en blanco.
+  ```csharp
+  sw.WriteLine("Texto");
+  sw.WriteLine(); // línea en blanco
+  sw.WriteLine("Otro texto");
+  ```
+
+d) WriteLineAsync / WriteAsync: Versiones asincrónicas.
+  ```csharp
+  await using StreamWriter sw = new StreamWriter("grande.txt");
+  for (int i = 0; i < 1_000_000; i++)
+  {
+      await sw.WriteLineAsync($"Línea {i}");
+  }
+  ```
+
+e) Write(format, args): Formato al estilo Console.Write.
+  ```csharp
+  using StreamWriter sw = new StreamWriter("formato.txt");
+  string nombre = "Carlos";
+  int edad = 28;
+  sw.Write("Nombre: {0}, Edad: {1}", nombre, edad);
+  sw.WriteLine(" (formato con Write)");
+  ```
+
+f) WriteLine(string format, params object[] args): WriteLine con formato.
+  ```csharp
+  sw.WriteLine("Usuario: {0,-10} Edad: {1,3}", "María", 32);
+  ```
+
+g) Flush(): Fuerza escritura del buffer al stream.
+  ```csharp
+  using StreamWriter sw = new StreamWriter("log.txt");
+  sw.WriteLine("Evento importante...");
+  sw.Flush(); // Asegura que se escriba inmediatamente
+  // ... más operaciones
+  sw.WriteLine("Otro evento...");
+  ```
+
+----------------------------------------------------------------------
+8. STREAMWRITER: AUTOFLUSH Y BUFFER
+----------------------------------------------------------------------
+
+AutoFlush controla si el buffer se vacía automáticamente tras cada Write.
+
+  ```csharp
+  // AutoFlush = true: cada Write va al archivo inmediatamente
+  // Útil para logs en tiempo real
+  using StreamWriter sw = new StreamWriter("tiempo_real.log")
+  {
+      AutoFlush = true
+  };
+  sw.WriteLine("Evento 1"); // Escritura inmediata a disco
+
+  // AutoFlush = false (default): buffer de 4096 bytes
+  // Más eficiente pero los datos no son visibles hasta que se llene el buffer
+  using StreamWriter sw2 = new StreamWriter("eficiente.log");
+  sw2.WriteLine("Evento 1"); // En buffer, no en disco
+  sw2.WriteLine("Evento 2"); // En buffer, no en disco
+  // Al hacer Dispose, se vacía el buffer
+  ```
+
+Cuándo usar AutoFlush:
+  - true: Logs en tiempo real, aplicaciones que pueden crashear.
+  - false: Archivos grandes, rendimiento, datos no críticos.
+
+Tamaño de buffer (constructor):
+  ```csharp
+  // Buffer de 64 KB para archivos grandes
+  using StreamWriter sw = new StreamWriter("grande.txt", false,
+      Encoding.UTF8, 65536);
+  ```
+
+----------------------------------------------------------------------
+9. STREAMWRITER: ENCODING Y CONSTRUCTORES
+----------------------------------------------------------------------
+
+Constructores de StreamWriter:
+  1. StreamWriter(Stream stream)
+  2. StreamWriter(Stream stream, Encoding encoding)
+  3. StreamWriter(Stream stream, Encoding encoding, int bufferSize)
+  4. StreamWriter(Stream stream, Encoding encoding, int bufferSize, bool leaveOpen)
+  5. StreamWriter(string path)
+  6. StreamWriter(string path, bool append)
+  7. StreamWriter(string path, bool append, Encoding encoding)
+  8. StreamWriter(string path, bool append, Encoding encoding, int bufferSize)
+
+  ```csharp
+  // Constructores con string path
+  using StreamWriter sw1 = new StreamWriter("nuevo.txt");
+  using StreamWriter sw2 = new StreamWriter("existente.txt", append: true);
+  using StreamWriter sw3 = new StreamWriter("salida.txt", false, Encoding.UTF8);
+  using StreamWriter sw4 = new StreamWriter("salida.txt", false, Encoding.UTF8, 65536);
+
+  // Constructores con Stream
+  using FileStream fs = new FileStream("datos.txt", FileMode.Create);
+  using StreamWriter sw5 = new StreamWriter(fs);
+  using StreamWriter sw6 = new StreamWriter(fs, Encoding.ASCII);
+  using StreamWriter sw7 = new StreamWriter(fs, Encoding.UTF8, 4096, leaveOpen: false);
+  ```
+
+----------------------------------------------------------------------
+10. PATRONES COMUNES CON STREAMREADER/WRITER
+----------------------------------------------------------------------
+
+a) Copiar un archivo de texto línea por línea:
+  ```csharp
+  using StreamReader sr = new StreamReader("origen.txt");
+  using StreamWriter sw = new StreamWriter("destino.txt");
+  string linea;
+  while ((linea = sr.ReadLine()) != null)
+      sw.WriteLine(linea);
+  ```
+
+b) Filtrar líneas:
+  ```csharp
+  using StreamReader sr = new StreamReader("datos.txt");
+  using StreamWriter sw = new StreamWriter("filtrado.txt");
+  string linea;
+  while ((linea = sr.ReadLine()) != null)
+  {
+      if (!linea.StartsWith("//") && !string.IsNullOrWhiteSpace(linea))
+          sw.WriteLine(linea.ToUpper());
+  }
+  ```
+
+c) Procesar CSV línea por línea:
+  ```csharp
+  using StreamReader sr = new StreamReader("personas.csv");
+  using StreamWriter sw = new StreamWriter("reporte.csv");
+  string encabezado = sr.ReadLine(); // Leer header
+  sw.WriteLine(encabezado + ",PROCESADO");
+
+  string linea;
+  while ((linea = sr.ReadLine()) != null)
+  {
+      string[] campos = linea.Split(',');
+      if (campos.Length >= 3 && int.TryParse(campos[1], out int edad))
+      {
+          sw.WriteLine($"{linea},OK");
+      }
+  }
+  ```
+
+d) Leer y modificar un archivo XML pequeño:
+  ```csharp
+  using StreamReader sr = new StreamReader("config.xml");
+  string contenido = sr.ReadToEnd();
+  contenido = contenido.Replace("version=\"1.0\"", "version=\"2.0\"");
+  using StreamWriter sw = new StreamWriter("config.xml");
+  sw.Write(contenido);
+  ```
+
+e) Leer archivo de ancho fijo:
+  ```csharp
+  using StreamReader sr = new StreamReader("datos_fijos.txt");
+  string linea;
+  while ((linea = sr.ReadLine()) != null)
+  {
+      if (linea.Length >= 30)
+      {
+          string codigo = linea[..5].Trim();
+          string nombre = linea[5..25].Trim();
+          string valor = linea[25..30].Trim();
+          Console.WriteLine($"Código: {codigo}, Nombre: {nombre}, Valor: {valor}");
+      }
+  }
+  ```
+
+f) Escribir HTML desde datos:
+  ```csharp
+  using StreamWriter sw = new StreamWriter("reporte.html");
+  sw.WriteLine("<html><head><title>Reporte</title></head><body>");
+  sw.WriteLine("<table border='1'>");
+  sw.WriteLine("<tr><th>Nombre</th><th>Edad</th></tr>");
+
+  foreach (var p in personas)
+  {
+      sw.WriteLine($"<tr><td>{p.Nombre}</td><td>{p.Edad}</td></tr>");
+  }
+
+  sw.WriteLine("</table></body></html>");
+  ```
+
+----------------------------------------------------------------------
+11. COMPARATIVA: MÉTODOS ESTÁTICOS VS STREAMREADER
+----------------------------------------------------------------------
+
+  Escenario                     | Método estático      | StreamReader/Writer
+  ------------------------------|----------------------|---------------------
+  Archivo < 10 MB, texto        | File.ReadAllText     | Adecuado pero verboso
+  Archivo > 100 MB, texto       | NO (OutOfMemory)     | StreamReader línea a línea
+  Archivo CSV, procesamiento    | File.ReadAllLines    | StreamReader (memoria)
+  Log en tiempo real            | NO                   | StreamWriter + AutoFlush
+  Modificar líneas específicas  | ReadAllLines+WriteAll| NO recomendado
+  Archivos binarios             | File.ReadAllBytes    | Usar FileStream
+  Codificación específica       | Overload con Encoding| Constructor con Encoding
+  Detección automática encoding | BOM detectado        | detectEncodingFromBOM
+
+Regla práctica:
+  - Usa métodos estáticos para scripts, herramientas pequeñas, archivos
+    de configuración.
+  - Usa StreamReader/Writer para aplicaciones profesionales, archivos grandes,
+    logs, procesamiento en tiempo real.
+  - Usa FileStream para datos binarios.
+
+----------------------------------------------------------------------
+12. BUENAS PRÁCTICAS
+----------------------------------------------------------------------
+
+a) Siempre usa using. No confíes en que el GC libere los recursos a tiempo.
+
+b) Usa StreamReader.ReadLine() en lugar de ReadToEnd() para archivos grandes.
+
+c) Configura AutoFlush apropiadamente: true para logs, false para rendimiento.
+
+d) Especifica el encoding. No confíes en la detección automática para
+   formatos de intercambio.
+
+e) Si envuelves un FileStream con leaveOpen, recuerda disponer ambos.
+
+f) Para modificar un archivo, lee línea por línea y escribe a un archivo
+   temporal, luego renombra.
+
+g) StreamReader y StreamWriter tienen Dispose() que llama a Close() y Flush().
+
+h) En archivos de texto grandes, prefiere ReadLineAsync/WriteLineAsync en
+   aplicaciones asincrónicas.
+
+i) NewLine propiedad: configúrala si trabajas con archivos Unix (\n) vs
+   Windows (\r\n).
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using System.Text;
+  using System.Threading.Tasks;
+
+  namespace Capitulo44.StreamReaderWriter
+  {
+      class Program
+      {
+          static async Task Main(string[] args)
+          {
+              string dir = "ejemplos_sr_sw";
+              Directory.CreateDirectory(dir);
+
+              // Preparar archivo de ejemplo
+              File.WriteAllLines(Path.Combine(dir, "ejemplo.txt"),
+                  Enumerable.Range(1, 50).Select(i => $"Línea de ejemplo número {i}"));
+
+              Console.WriteLine("=== DEMO 1: STREAMREADER READLINE ===");
+              string ruta1 = Path.Combine(dir, "ejemplo.txt");
+              using (StreamReader sr = new StreamReader(ruta1))
+              {
+                  string linea;
+                  int cont = 0;
+                  while ((linea = sr.ReadLine()) != null && cont < 5)
+                      Console.WriteLine($"  [{++cont}] {linea}");
+              }
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 2: STREAMREADER READTOEND ===");
+              using (StreamReader sr = new StreamReader(ruta1))
+              {
+                  string completo = sr.ReadToEnd();
+                  Console.WriteLine($"  Total caracteres: {completo.Length}");
+              }
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 3: STREAMREADER PEEK ===");
+              string ruta3 = Path.Combine(dir, "comentarios.txt");
+              File.WriteAllLines(ruta3, new[] { "# Comentario", "dato1", "dato2", "# otro", "dato3" });
+              using (StreamReader sr = new StreamReader(ruta3))
+              {
+                  while (sr.Peek() != -1)
+                  {
+                      if (sr.Peek() == '#')
+                      {
+                          Console.WriteLine($"  Saltando: {sr.ReadLine()}");
+                          continue;
+                      }
+                      Console.WriteLine($"  Dato: {sr.ReadLine()}");
+                  }
+              }
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 4: STREAMWRITER WRITELINE ===");
+              string ruta4 = Path.Combine(dir, "salida.txt");
+              using (StreamWriter sw = new StreamWriter(ruta4))
+              {
+                  sw.WriteLine("Encabezado");
+                  sw.WriteLine("=== === ===");
+                  for (int i = 1; i <= 10; i++)
+                      sw.WriteLine($"Elemento {i:D2}");
+              }
+              Console.WriteLine($"  Escrito: {Path.GetFileName(ruta4)}\n");
+
+              Console.WriteLine("=== DEMO 5: STREAMWRITER APPEND ===");
+              using (StreamWriter sw = new StreamWriter(ruta4, append: true))
+              {
+                  sw.WriteLine("--- Añadido después ---");
+                  sw.WriteLine($"  Fecha: {DateTime.Now}");
+              }
+              Console.WriteLine("  Append completado.\n");
+
+              Console.WriteLine("=== DEMO 6: ENCODING DETECT ===");
+              string ruta6 = Path.Combine(dir, "encoding_test.txt");
+              File.WriteAllText(ruta6, "Hola ñandú español", Encoding.UTF32);
+              using (StreamReader sr = new StreamReader(ruta6, Encoding.UTF8, true))
+              {
+                  string text = sr.ReadToEnd();
+                  Console.WriteLine($"  Encoding detectado: {sr.CurrentEncoding.EncodingName}");
+                  Console.WriteLine($"  Texto leído: {text}");
+              }
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 7: AUTOFLUSH ===");
+              string ruta7 = Path.Combine(dir, "autoflush.txt");
+              using (StreamWriter sw = new StreamWriter(ruta7) { AutoFlush = true })
+              {
+                  sw.WriteLine("Escritura inmediata 1");
+                  System.Threading.Thread.Sleep(100);
+                  sw.WriteLine("Escritura inmediata 2");
+              }
+              Console.WriteLine("  AutoFlush completado.\n");
+
+              Console.WriteLine("=== DEMO 8: NEWLINE PERSONALIZADO ===");
+              string ruta8 = Path.Combine(dir, "unix.txt");
+              using (StreamWriter sw = new StreamWriter(ruta8))
+              {
+                  sw.NewLine = "\n";
+                  sw.WriteLine("Línea con LF");
+                  sw.WriteLine("Otra línea con LF");
+              }
+              byte[] raw = File.ReadAllBytes(ruta8);
+              Console.WriteLine($"  Bytes: {BitConverter.ToString(raw)}\n");
+
+              Console.WriteLine("=== DEMO 9: LEAVEOPEN ===");
+              string ruta9 = Path.Combine(dir, "leaveopen.txt");
+              using (FileStream fs = new FileStream(ruta9, FileMode.Create))
+              {
+                  using (StreamWriter sw = new StreamWriter(fs, Encoding.UTF8, 4096, leaveOpen: true))
+                  {
+                      sw.WriteLine("Texto dentro del StreamWriter");
+                  }
+                  fs.WriteByte(0xAA); // fs sigue abierto
+              }
+              Console.WriteLine("  leaveOpen funcionó.\n");
+
+              Console.WriteLine("=== DEMO 10: PROCESAMIENTO LÍNEA A LÍNEA ===");
+              string ruta10 = Path.Combine(dir, "datos.csv");
+              File.WriteAllLines(ruta10, new[]
+              {
+                  "Nombre,Edad,Ciudad",
+                  "Ana,25,Madrid",
+                  "Luis,30,Barcelona",
+                  "Carla,22,Valencia",
+                  "Pedro,35,Sevilla"
+              });
+              using (StreamReader sr = new StreamReader(ruta10))
+              using (StreamWriter sw = new StreamWriter(
+                  Path.Combine(dir, "reporte.csv")))
+              {
+                  string header = sr.ReadLine();
+                  sw.WriteLine(header + ",MAYOR_EDAD");
+                  while ((linea = sr.ReadLine()) != null)
+                  {
+                      string[] campos = linea.Split(',');
+                      if (campos.Length >= 2 && int.TryParse(campos[1], out int edad))
+                      {
+                          sw.WriteLine($"{linea},{(edad >= 18 ? "Sí" : "No")}");
+                      }
+                  }
+              }
+              Console.WriteLine("  CSV procesado línea a línea.\n");
+
+              Console.WriteLine("=== DEMO 11: LECTURA ASINCRÓNICA ===");
+              string ruta11 = Path.Combine(dir, "async.txt");
+              await using (StreamWriter sw = new StreamWriter(ruta11))
+              {
+                  for (int i = 1; i <= 100; i++)
+                      await sw.WriteLineAsync($"Async línea {i}");
+              }
+              await using (StreamReader sr = new StreamReader(ruta11))
+              {
+                  int count = 0;
+                  string linea;
+                  while ((linea = await sr.ReadLineAsync()) != null)
+                      count++;
+                  Console.WriteLine($"  Leídas {count} líneas asincrónicamente.\n");
+              }
+
+              // Limpieza
+              Directory.Delete(dir, true);
+              Console.WriteLine("¡Todas las demostraciones completadas!");
+          }
+      }
+  }
+  ```
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Implementa un "buscador de texto" que recorra recursivamente todos los
+   archivos .txt de un directorio y busque una palabra clave usando
+   StreamReader.ReadLine(). Muestra archivo, línea y número de línea.
+
+2. Crea un programa que lea un archivo CSV grande, filtre las filas que
+   cumplan una condición, y escriba el resultado en un nuevo CSV, todo
+   usando StreamReader y StreamWriter sin cargar todo en memoria.
+
+3. Escribe un "formateador de código" simple que lea un archivo .cs y
+   normalice la indentación (reemplace tabs por 4 espacios, ajuste
+   llaves, etc.) usando StreamReader/Writer.
+
+4. Implementa un sistema de logs rotativos:
+   - StreamWriter con AutoFlush = true.
+   - Cuando el archivo supere 10 MB, cré uno nuevo (log.1.txt, log.2.txt...).
+   - Mantenga solo los últimos 5 archivos de log.
+
+5. Crea un conversor de codificaciones que lea un archivo en una codificación
+   (ej. ISO-8859-1) y lo escriba en otra (ej. UTF-8), procesando línea por
+   línea.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Cuándo se vacía el buffer de StreamWriter?
+R: Cuando el buffer está lleno (4096 bytes por defecto), cuando llamas a
+   Flush(), o cuando se cierra el StreamWriter (Dispose).
+
+P: ¿StreamReader es seguro para usar con múltiples hilos?
+R: No. Para acceso multihilo, usa bloqueos o procesa cada archivo en un hilo
+   separado sin compartir el StreamReader.
+
+P: ¿Qué diferencia hay entre ReadLine y Read?
+R: ReadLine lee hasta el próximo salto de línea y devuelve string.
+   Read lee un solo carácter y devuelve int (-1 si es fin).
+
+P: ¿Puedo usar StreamReader con MemoryStream?
+R: Sí. StreamReader acepta cualquier Stream, incluyendo MemoryStream.
+   Útil para procesar strings como si fueran archivos.
+
+P: ¿StreamWriter sin using deja datos sin escribir?
+R: Sí. Sin Dispose/Close, el buffer no se vacía y los últimos datos se pierden.
+   Siempre usa using.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Implementa un "Procesador de Archivos de Texto con Pipeline" que:
+
+  - Lea un archivo de texto usando StreamReader.
+  - Aplique una cadena de transformaciones (pipeline) configurables:
+      - ToUpperCase, ToLowerCase, TrimLines, RemoveEmptyLines
+      - FilterByRegex(string pattern), Replace(string old, string new)
+      - NumberLines(int start), AddPrefix(string), AddSuffix(string)
+  - Escriba el resultado usando StreamWriter.
+  - Cada transformación implemente la interfaz:
+
+  ```csharp
+  public interface ITransformacionLinea
+  {
+      string Nombre { get; }
+      string Aplicar(string linea);
+  }
+  ```
+
+  - Soporte procesamiento lazy: no cargar todo en memoria.
+  - Mida y reporte el tiempo de cada transformación.
+  - Permita guardar la configuración del pipeline en JSON.
+
+Ejemplo de uso:
+  ```csharp
+  var pipeline = new PipelineTexto();
+  pipeline.Agregar(new ToUpperCase());
+  pipeline.Agregar(new FilterByRegex("^[A-Z].*"));
+  pipeline.Agregar(new NumberLines(100));
+  pipeline.Procesar("entrada.txt", "salida.txt");
+  ```
+
+Pistas:
+  - StreamReader.ReadLine en un foreach con yield return para el pipeline.
+  - Cada transformación envuelve el IEnumerable<string> anterior.
+  - Medir tiempo con Stopwatch en cada etapa.
+  - Para el JSON de configuración, usa System.Text.Json.
+
+Criterios de éxito:
+  - Soporta archivos de cualquier tamaño.
+  - Las transformaciones se aplican en orden.
+  - El pipeline se puede serializar/deserializar a JSON.
+  - Reporte de rendimiento por etapa.
+  - Código modular y extensible (nuevas transformaciones son fáciles de añadir).
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+=============================================================================
+
+Hemos aprendido:
+
+  - StreamReader: ReadLine (línea a línea), ReadToEnd (completo), Peek (sin
+    consumir), Read (carácter a carácter).
+  - StreamWriter: WriteLine, Write, Flush, AutoFlush.
+  - Encoding: detección automática por BOM, especificación manual.
+  - Constructores: desde path, desde Stream, con leaveOpen.
+  - Patrones: copia, filtrado, procesamiento CSV, transformaciones.
+  - Comparativa: métodos estáticos para simplicidad, StreamReader/Writer
+    para control y grandes volúmenes.
+  - Buenas prácticas: using, encoding explícito, AutoFlush según necesidad.
+
+================================================================================
+  CIERRE
+================================================================================
+
+¡Felicidades! Has dominado StreamReader y StreamWriter, las herramientas más
+versátiles para el procesamiento de texto en C#. Ya puedes construir
+aplicaciones que procesen archivos de texto de cualquier tamaño con eficiencia
+y elegancia.
+
+En el Capítulo 45: BinaryReader / BinaryWriter, exploraremos el mundo de los
+datos binarios estructurados, aprendiendo a leer y escribir tipos primitivos
+directamente desde streams.
+
+¡Continúa, el conocimiento binario te espera!
+
+================================================================================
+  PREPARACIÓN PARA EL PRÓXIMO CAPÍTULO
+================================================================================
+
+En el Capítulo 45 exploraremos:
+  - BinaryReader y BinaryWriter
+  - Lectura/escritura de tipos primitivos
+  - Endianness y compatibilidad
+  - Serialización binaria simple
+  - Diferencias con StreamReader/Writer
+
+================================================================================
+  FIN DEL CAPÍTULO 44
+================================================================================

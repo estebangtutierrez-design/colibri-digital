@@ -1,0 +1,1347 @@
+================================================================================
+  CAPITULO 67: CODIGO UNSAFE
+  MODULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+!Bienvenido al Capitulo 67! El codigo unsafe permite trabajar con punteros
+y memoria no administrada directamente en C#. Esto es necesario para
+operaciones de muy alto rendimiento, interoperabilidad con C/C++, y
+escenarios donde el recolector de basura introduce latencia no deseada.
+
+FRASE DEL DIA
+-------------
+"El verdadero poder conlleva una gran responsabilidad. El codigo unsafe te da
+poder; usalo con sabiduria." — Anonimo
+
+OBJETIVOS DEL CAPITULO
+----------------------
+1. Comprender el proposito y riesgos del codigo unsafe.
+2. Usar la palabra clave unsafe en bloques y metodos.
+3. Trabajar con punteros y aritmetica de punteros.
+4. Usar fixed para fijar objetos en memoria.
+5. Conocer Marshal para interoperacion con memoria no administrada.
+6. Optimizar codigo critico con punteros.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. INTRODUCCION A CODIGO UNSAFE ---
+
+C# normalmente administra la memoria automaticamente (GC) y no permite
+acceso directo a punteros. El codigo unsafe desactiva estas protecciones
+en bloques especificos, permitiendo:
+
+- Declarar y usar punteros
+- Aritmetica de punteros
+- Acceso directo a memoria
+- Llamadas a funciones C/C++ que requieren punteros
+
+REQUISITOS:
+- Compilar con /unsafe (en csproj: <AllowUnsafeBlocks>true</AllowUnsafeBlocks>)
+- Marcar bloques con la palabra clave unsafe
+- Confianza total (full trust) para ejecucion
+
+```csharp
+// Para compilar: csc /unsafe Program.cs
+// O en csproj: <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+using System;
+
+class Program
+{
+    // Metodo marcado como unsafe
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== CODIGO UNSAFE ===\n");
+
+        int numero = 42;
+        int* puntero = &numero;  // Puntero a la direccion de 'numero'
+
+        Console.WriteLine($"Valor: {numero}");
+        Console.WriteLine($"Direccion: {(long)puntero:X}");
+        Console.WriteLine($"Valor via puntero: {*puntero}");
+
+        // Modificar via puntero
+        *puntero = 100;
+        Console.WriteLine($"Valor modificado: {numero}");
+
+        // Aritmetica de punteros
+        int* p = &numero;
+        Console.WriteLine($"\np = {(long)p:X}");
+        Console.WriteLine($"*p = {*p}");
+        Console.WriteLine($"*(p + 1) = (memoria adyacente, peligroso)");
+    }
+}
+```
+
+--- 2. BLOQUES UNSAFE ---
+
+Puede marcar bloques especificos como unsafe, no todo el metodo:
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== BLOQUES UNSAFE ===\n");
+
+        int a = 10;
+        int b = 20;
+        int resultado;
+
+        // Bloque unsafe dentro de metodo seguro
+        unsafe
+        {
+            int* pa = &a;
+            int* pb = &b;
+
+            resultado = *pa + *pb;
+
+            Console.WriteLine($"Suma via punteros: {a} + {b} = {resultado}");
+            Console.WriteLine($"Direccion de a: {(long)pa:X}");
+            Console.WriteLine($"Direccion de b: {(long)pb:X}");
+        }
+
+        Console.WriteLine($"Resultado: {resultado}");
+
+        // El codigo fuera del bloque es seguro
+        Console.WriteLine("\nEste codigo es SEGURO.");
+    }
+}
+```
+
+--- 3. DECLARACION DE PUNTEROS ---
+
+Tipos de punteros permitidos:
+- Tipos primitivos: int*, long*, float*, double*, char*, byte*, bool*
+- Enums: TipoEnum*
+- Structs: MiStruct* (debe ser unmanaged)
+- NO: object*, string*, class* (tipos reference)
+
+```csharp
+using System;
+
+unsafe struct Point
+{
+    public int X;
+    public int Y;
+}
+
+enum Color { Rojo, Verde, Azul }
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== DECLARACION DE PUNTEROS ===\n");
+
+        int entero = 10;
+        long largo = 100L;
+        float flotante = 3.14f;
+        double doble = 2.718;
+        byte b = 255;
+        char c = 'A';
+        bool booleano = true;
+
+        // Punteros a tipos valor
+        int* pEntero = &entero;
+        long* pLargo = &largo;
+        float* pFlotante = &flotante;
+        double* pDoble = &doble;
+        byte* pByte = &b;
+        char* pChar = &c;
+        bool* pBool = &booleano;
+
+        Console.WriteLine("Punteros creados:");
+
+        // Puntero a struct
+        Point punto;
+        punto.X = 10;
+        punto.Y = 20;
+        Point* pPunto = &punto;
+        Console.WriteLine($"Point via puntero: X={pPunto->X}, Y={pPunto->Y}");
+
+        // Puntero a enum
+        Color color = Color.Verde;
+        Color* pColor = &color;
+        Console.WriteLine($"Color via puntero: {*pColor}");
+
+        // void* (puntero generico)
+        void* pVoid = &entero;
+        Console.WriteLine($"Puntero void: {(long)pVoid:X}");
+    }
+}
+```
+
+--- 4. OPERADORES DE PUNTEROS ---
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== OPERADORES DE PUNTEROS ===\n");
+
+        // & : direccion de
+        // * : indireccion (acceder al valor apuntado)
+        // -> : acceso a miembro (puntero a struct)
+        // [] : indexacion de puntero
+
+        int[] numeros = { 10, 20, 30, 40, 50 };
+
+        fixed (int* p = numeros)
+        {
+            Console.WriteLine("Array via puntero:");
+
+            // Acceso por indireccion
+            Console.WriteLine($"  *p = {*p}");
+
+            // Acceso por indexacion
+            Console.WriteLine($"  p[0] = {p[0]}");
+            Console.WriteLine($"  p[1] = {p[1]}");
+            Console.WriteLine($"  p[2] = {p[2]}");
+            Console.WriteLine($"  p[3] = {p[3]}");
+            Console.WriteLine($"  p[4] = {p[4]}");
+
+            // Aritmetica
+            Console.WriteLine("\nAritmetica de punteros:");
+            int* q = p + 2;
+            Console.WriteLine($"  p + 2 = {*q}");
+            Console.WriteLine($"  q - p = {q - p}");  // Diferencia en elementos
+
+            // Pre-incremento
+            int* r = p;
+            Console.WriteLine($"\n  r = p: {*r}");
+            r++;
+            Console.WriteLine($"  r++: {*r}");
+            r++;
+            Console.WriteLine($"  r++: {*r}");
+
+            // Comparacion
+            Console.WriteLine($"\n  p < q: {p < q}");
+            Console.WriteLine($"  p == p: {p == p}");
+        }
+
+        // Acceso a struct via flecha
+        Punto punto;
+        punto.X = 100;
+        punto.Y = 200;
+
+        Punto* pp = &punto;
+        Console.WriteLine($"\nPunto: X={pp->X}, Y={pp->Y}");
+        Console.WriteLine($"  Equivalente: (*pp).X = {(*pp).X}");
+    }
+}
+
+unsafe struct Punto
+{
+    public int X;
+    public int Y;
+}
+```
+
+--- 5. FIXED STATEMENT ---
+
+El GC puede mover objetos en memoria durante la compactacion. fixed
+"clava" un objeto en una direccion de memoria fija mientras se usa un
+puntero.
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== FIXED STATEMENT ===\n");
+
+        // Fijar un array
+        int[] numeros = new int[5] { 1, 2, 3, 4, 5 };
+
+        fixed (int* p = numeros)
+        {
+            Console.WriteLine("Array fijado:");
+            for (int i = 0; i < numeros.Length; i++)
+                Console.WriteLine($"  p[{i}] = {p[i]}");
+        }
+        // Aqui el GC puede mover el array nuevamente
+
+        // Fijar un string
+        string texto = "Hola Mundo";
+        fixed (char* p = texto)
+        {
+            Console.WriteLine($"\nString fijado: ");
+            char* q = p;
+            while (*q != '\0')
+            {
+                Console.Write(*q);
+                q++;
+            }
+            Console.WriteLine();
+        }
+
+        // Multiples fixed
+        int a = 10, b = 20, c = 30;
+        fixed (int* pa = &a, pb = &b, pc = &c)
+        {
+            Console.WriteLine($"\nMultiples punteros: {*pa}, {*pb}, {*pc}");
+        }
+
+        // Fixed con array bidimensional
+        int[,] matriz = new int[2, 3] { { 1, 2, 3 }, { 4, 5, 6 } };
+        fixed (int* p = matriz)
+        {
+            Console.WriteLine("\nMatriz 2D como lineal:");
+            for (int i = 0; i < 6; i++)
+                Console.Write($"  {p[i]}");
+            Console.WriteLine();
+        }
+    }
+}
+```
+
+--- 6. STACKALLOC ---
+
+stackalloc asigna memoria en la pila (stack) en lugar del heap.
+Es extremadamente rapido pero limitado al ambito del metodo y con tamano
+fijo. No requiere GC.
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== STACKALLOC ===\n");
+
+        // Asignar array en la pila
+        int* numeros = stackalloc int[10];
+        Console.WriteLine($"Memoria asignada en stack para 10 ints = {10 * sizeof(int)} bytes");
+
+        // Inicializar
+        for (int i = 0; i < 10; i++)
+            numeros[i] = i * i;
+
+        // Mostrar
+        Console.WriteLine("Valores:");
+        for (int i = 0; i < 10; i++)
+            Console.Write($"  {numeros[i]}");
+        Console.WriteLine();
+
+        // stackalloc con inicializador (C# 8+)
+        int* arr = stackalloc int[] { 100, 200, 300, 400, 500 };
+        Console.WriteLine("\nCon inicializador:");
+        for (int i = 0; i < 5; i++)
+            Console.Write($"  {arr[i]}");
+        Console.WriteLine();
+
+        // stackalloc en expresion (C# 8+)
+        Span<int> span = stackalloc int[3] { 1, 2, 3 };
+        Console.WriteLine("\nComo Span:");
+        foreach (var v in span)
+            Console.Write($"  {v}");
+        Console.WriteLine();
+
+        // stackalloc con char (util para strings temporales)
+        char* buffer = stackalloc char[256];
+        buffer[0] = 'H';
+        buffer[1] = 'o';
+        buffer[2] = 'l';
+        buffer[3] = 'a';
+        buffer[4] = '\0';
+        Console.WriteLine($"\nBuffer char: {new string(buffer, 0, 4)}");
+    }
+}
+```
+
+--- 7. sizeof ---
+
+sizeof obtiene el tamano en bytes de un tipo. En unsafe, funciona con
+tipos no administrados.
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== SIZEOF ===\n");
+
+        Console.WriteLine("Tamano de tipos primitivos:");
+        Console.WriteLine($"  sizeof(byte)   = {sizeof(byte)} bytes");
+        Console.WriteLine($"  sizeof(short)  = {sizeof(short)} bytes");
+        Console.WriteLine($"  sizeof(int)    = {sizeof(int)} bytes");
+        Console.WriteLine($"  sizeof(long)   = {sizeof(long)} bytes");
+        Console.WriteLine($"  sizeof(float)  = {sizeof(float)} bytes");
+        Console.WriteLine($"  sizeof(double) = {sizeof(double)} bytes");
+        Console.WriteLine($"  sizeof(decimal)= {sizeof(decimal)} bytes");
+        Console.WriteLine($"  sizeof(char)   = {sizeof(char)} bytes");
+        Console.WriteLine($"  sizeof(bool)   = {sizeof(bool)} bytes");
+
+        Console.WriteLine("\nTamano de structs:");
+        Console.WriteLine($"  sizeof(Punto)     = {sizeof(Punto)} bytes");
+        Console.WriteLine($"  sizeof(Rectangulo)= {sizeof(Rectangulo)} bytes");
+
+        // Marshal.SizeOf (no requiere unsafe, mas flexible)
+        Console.WriteLine("\nMarshal.SizeOf:");
+        Console.WriteLine($"  DateTime: {Marshal.SizeOf<DateTime>()} bytes");
+        Console.WriteLine($"  decimal: {Marshal.SizeOf<decimal>()} bytes");
+    }
+}
+
+unsafe struct Punto
+{
+    public int X;
+    public int Y;
+}
+
+unsafe struct Rectangulo
+{
+    public Punto SuperiorIzquierdo;
+    public Punto InferiorDerecho;
+    public Color Color;
+}
+
+enum Color : byte { Rojo, Verde, Azul }
+```
+
+--- 8. PUNTEROS A TIPOS REFERENCE ---
+
+No se puede obtener puntero directo a tipos reference (class, string,
+object). Pero se pueden fijar y tratar como punteros a tipos valor.
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== PUNTEROS Y REF TYPES ===\n");
+
+        // String como puntero a char
+        string mensaje = "Hello C#";
+        fixed (char* p = mensaje)
+        {
+            char* q = p;
+            while (*q != '\0')
+            {
+                // Convertir a mayuscula in-situ
+                if (*q >= 'a' && *q <= 'z')
+                    *q = (char)(*q - 32);
+                q++;
+            }
+            Console.WriteLine($"Modificado in-situ: {mensaje}");
+        }
+
+        // Array de bytes
+        byte[] datos = { 0x48, 0x65, 0x6C, 0x6C, 0x6F };  // "Hello"
+        fixed (byte* p = datos)
+        {
+            Console.Write("Bytes como texto: ");
+            for (int i = 0; i < datos.Length; i++)
+                Console.Write((char)p[i]);
+            Console.WriteLine();
+        }
+
+        // NO se puede hacer:
+        // object obj = new object();
+        // void* ptr = &obj;  // ERROR
+    }
+}
+```
+
+--- 9. ARITMETICA DE PUNTEROS AVANZADA ---
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== ARITMETICA AVANZADA ===\n");
+
+        int[] arr = { 10, 20, 30, 40, 50, 60, 70, 80 };
+
+        fixed (int* p = arr)
+        {
+            int* q = p;
+
+            // Recorrido con incremento
+            Console.WriteLine("Recorrido con ++:");
+            for (int i = 0; i < arr.Length; i++)
+                Console.Write($"  {*q++}");
+            Console.WriteLine();
+
+            // Restar punteros (da diferencia en elementos)
+            int* inicio = p;
+            int* fin = p + arr.Length - 1;
+            Console.WriteLine($"\nElementos entre inicio y fin: {fin - inicio + 1}");
+
+            // Copia de memoria con bucle
+            Console.WriteLine("\nCopia manual:");
+            int* destino = stackalloc int[arr.Length];
+            for (int i = 0; i < arr.Length; i++)
+                destino[i] = p[i];
+
+            for (int i = 0; i < arr.Length; i++)
+                Console.Write($"  {destino[i]}");
+            Console.WriteLine();
+
+            // Comparacion de punteros
+            Console.WriteLine($"\np < p+3: {p < p + 3}");
+            Console.WriteLine($"p+1 > p: {p + 1 > p}");
+
+            // Buffer circular simulado
+            Console.WriteLine("\nBuffer circular:");
+            int* buffer = stackalloc int[5];
+            for (int i = 0; i < 10; i++)
+            {
+                buffer[i % 5] = i * 10;
+                Console.Write($"  [{i % 5}]={buffer[i % 5]}");
+            }
+            Console.WriteLine();
+        }
+    }
+}
+```
+
+--- 10. BUFFER FIXO EN STRUCTS ---
+
+C# permite definir buffers de tamano fijo dentro de structs usando
+fixed:
+
+```csharp
+using System;
+
+unsafe struct Packet
+{
+    // Buffer de tamano fijo dentro del struct
+    public fixed byte Header[64];
+    public fixed byte Payload[1024];
+    public int Length;
+}
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== BUFFERS FIJOS EN STRUCTS ===\n");
+
+        Packet packet;
+        packet.Length = 0;
+
+        // Llenar header
+        for (int i = 0; i < 10; i++)
+            packet.Header[i] = (byte)i;
+
+        packet.Header[10] = 0xFF;
+        packet.Header[11] = 0xFE;
+
+        Console.WriteLine("Header del packet:");
+        for (int i = 0; i < 12; i++)
+            Console.Write($"  {packet.Header[i]:X2}");
+        Console.WriteLine();
+
+        Console.WriteLine($"\nTamano del struct Packet: {sizeof(Packet)} bytes");
+
+        // Copiar desde array a buffer fijo
+        byte[] datosHeader = { 0x01, 0x02, 0x03, 0x04 };
+        fixed (byte* p = packet.Header)
+        {
+            for (int i = 0; i < datosHeader.Length; i++)
+                p[i] = datosHeader[i];
+        }
+
+        Console.WriteLine("\nHeader despues de copiar:");
+        for (int i = 0; i < 4; i++)
+            Console.Write($"  {packet.Header[i]:X2}");
+        Console.WriteLine();
+    }
+}
+```
+
+--- 11. MARSHAL Y MEMORIA NO ADMINISTRADA ---
+
+System.Runtime.InteropServices.Marshal proporciona metodos para
+trabajar con memoria no administrada (Win32, COM, etc.).
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== MARSHAL ===\n");
+
+        // 1. Asignar memoria no administrada
+        IntPtr buffer = Marshal.AllocHGlobal(256);
+        Console.WriteLine($"Memoria asignada en: {buffer}");
+
+        try
+        {
+            // 2. Escribir en memoria no administrada
+            string texto = "Hola desde memoria no administrada!";
+            Marshal.WriteByte(buffer, 0, 0x48); // 'H'
+
+            // 3. Copiar string a memoria no administrada
+            IntPtr strPtr = Marshal.StringToHGlobalAnsi(texto);
+            Console.WriteLine($"String en memoria no administrada: {Marshal.PtrToStringAnsi(strPtr)}");
+
+            // 4. Leer bytes
+            byte primerByte = Marshal.ReadByte(buffer);
+            Console.WriteLine($"Primer byte: {primerByte:X2}");
+
+            // 5. Copiar memoria entre administrada y no administrada
+            byte[] managedArray = { 1, 2, 3, 4, 5 };
+            IntPtr unmanagedPtr = Marshal.AllocHGlobal(managedArray.Length);
+            Marshal.Copy(managedArray, 0, unmanagedPtr, managedArray.Length);
+
+            byte[] readBack = new byte[managedArray.Length];
+            Marshal.Copy(unmanagedPtr, readBack, 0, managedArray.Length);
+
+            Console.WriteLine("\nArray copiado y recuperado:");
+            foreach (var v in readBack)
+                Console.Write($"  {v}");
+            Console.WriteLine();
+
+            Marshal.FreeHGlobal(unmanagedPtr);
+            Marshal.FreeHGlobal(strPtr);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        // 6. Tamano de tipos
+        Console.WriteLine($"\nMarshal.SizeOf<int>(): {Marshal.SizeOf<int>()} bytes");
+        Console.WriteLine($"Marshal.OffsetOf<Datos>("Nombre"): {Marshal.OffsetOf<Datos>("Nombre")}");
+
+        // 7. Obtener direccion de objeto
+        GCHandle handle = GCHandle.Alloc(new byte[100], GCHandleType.Pinned);
+        IntPtr addr = handle.AddrOfPinnedObject();
+        Console.WriteLine($"\nObjeto pinned en: {addr}");
+        handle.Free();
+    }
+}
+
+[StructLayout(LayoutKind.Sequential)]
+struct Datos
+{
+    public int Id;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 50)]
+    public string Nombre;
+    public double Valor;
+}
+```
+
+--- 12. PERFORMANCE CON UNSAFE ---
+
+```csharp
+using System;
+using System.Diagnostics;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== PERFORMANCE UNSAFE ===\n");
+
+        const int size = 100_000_000;
+        int[] datos = new int[size];
+
+        // Inicializar con valores
+        for (int i = 0; i < size; i++)
+            datos[i] = i;
+
+        // 1. Suma segura con for
+        var sw = Stopwatch.StartNew();
+        long suma1 = SumaSegura(datos);
+        sw.Stop();
+        Console.WriteLine($"Suma segura: {suma1} en {sw.ElapsedMilliseconds}ms");
+
+        // 2. Suma unsafe con punteros
+        sw.Restart();
+        long suma2 = SumaUnsafe(datos);
+        sw.Stop();
+        Console.WriteLine($"Suma unsafe: {suma2} en {sw.ElapsedMilliseconds}ms");
+
+        // 3. Suma unsafe con aritmetica
+        sw.Restart();
+        long suma3 = SumaUnsafeAritmetica(datos);
+        sw.Stop();
+        Console.WriteLine($"Suma unsafe arit: {suma3} en {sw.ElapsedMilliseconds}ms");
+
+        // 4. Suma con foreach
+        sw.Restart();
+        long suma4 = SumaForeach(datos);
+        sw.Stop();
+        Console.WriteLine($"Suma foreach: {suma4} en {sw.ElapsedMilliseconds}ms");
+
+        // 5. Suma unsafe paralelo (concepto)
+        sw.Restart();
+        long suma5 = SumaUnsafeBloques(datos);
+        sw.Stop();
+        Console.WriteLine($"Suma unsafe bloques: {suma5} en {sw.ElapsedMilliseconds}ms");
+    }
+
+    static long SumaSegura(int[] arr)
+    {
+        long total = 0;
+        for (int i = 0; i < arr.Length; i++)
+            total += arr[i];
+        return total;
+    }
+
+    static unsafe long SumaUnsafe(int[] arr)
+    {
+        long total = 0;
+        fixed (int* p = arr)
+        {
+            for (int i = 0; i < arr.Length; i++)
+                total += p[i];
+        }
+        return total;
+    }
+
+    static unsafe long SumaUnsafeAritmetica(int[] arr)
+    {
+        long total = 0;
+        fixed (int* p = arr)
+        {
+            int* q = p;
+            int* end = p + arr.Length;
+            while (q < end)
+                total += *q++;
+        }
+        return total;
+    }
+
+    static long SumaForeach(int[] arr)
+    {
+        long total = 0;
+        foreach (var v in arr)
+            total += v;
+        return total;
+    }
+
+    static unsafe long SumaUnsafeBloques(int[] arr)
+    {
+        long total = 0;
+        fixed (int* p = arr)
+        {
+            int* q = p;
+            int* end = p + arr.Length;
+            // Procesar de 4 en 4 (desenrollamiento manual)
+            while (q + 4 <= end)
+            {
+                total += q[0] + q[1] + q[2] + q[3];
+                q += 4;
+            }
+            while (q < end)
+                total += *q++;
+        }
+        return total;
+    }
+}
+```
+
+--- 13. UNSAFE CON STRINGS ---
+
+```csharp
+using System;
+using System.Text;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== UNSAFE CON STRINGS ===\n");
+
+        // Los strings son inmutables en C# normal, pero unsafe permite
+        // modificarlos (NO RECOMENDADO en produccion)
+
+        string texto = "Hola Mundo";
+
+        Console.WriteLine($"Original: {texto}");
+
+        fixed (char* p = texto)
+        {
+            // Modificar el string in-situ
+            for (int i = 0; i < texto.Length; i++)
+            {
+                if (p[i] >= 'a' && p[i] <= 'z')
+                    p[i] = (char)(p[i] - 32);
+            }
+        }
+
+        Console.WriteLine($"Modificado: {texto}");
+
+        // Esto ROMpe la inmutabilidad de strings. NO hacer en produccion.
+
+        // Uso legitimo: procesamiento rapido de strings
+        string frase = "este es un ejemplo de conversion";
+        Console.WriteLine($"\nOriginal: {frase}");
+        string resultado = CapitalizarPalabras(frase);
+        Console.WriteLine($"Capitalizado: {resultado}");
+
+        // Contar vocales con punteros
+        string test = "Programacion Avanzada en C#";
+        int vocales = ContarVocales(test);
+        Console.WriteLine($"\nVocales en \"{test}\": {vocales}");
+    }
+
+    static unsafe string CapitalizarPalabras(string texto)
+    {
+        char[] buffer = texto.ToCharArray();
+        fixed (char* p = buffer)
+        {
+            bool capitalizar = true;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                if (p[i] == ' ')
+                {
+                    capitalizar = true;
+                }
+                else if (capitalizar && p[i] >= 'a' && p[i] <= 'z')
+                {
+                    p[i] = (char)(p[i] - 32);
+                    capitalizar = false;
+                }
+                else
+                {
+                    capitalizar = false;
+                }
+            }
+        }
+        return new string(buffer);
+    }
+
+    static unsafe int ContarVocales(string texto)
+    {
+        int count = 0;
+        fixed (char* p = texto)
+        {
+            for (int i = 0; i < texto.Length; i++)
+            {
+                char c = p[i];
+                if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' ||
+                    c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U')
+                    count++;
+            }
+        }
+        return count;
+    }
+}
+```
+
+--- 14. UNSAFE Y P/INVOKE ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    // Llamada a funcion C clasica que requiere punteros
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    static extern unsafe int memcpy(void* dest, void* src, int count);
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    static extern unsafe void* memset(void* dest, int c, int count);
+
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
+    static extern unsafe int memcmp(void* buf1, void* buf2, int count);
+
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== UNSAFE Y P/INVOKE ===\n");
+
+        byte[] origen = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        byte[] destino = new byte[origen.Length];
+
+        fixed (byte* pSrc = origen, pDst = destino)
+        {
+            // memcpy copia memoria
+            memcpy(pDst, pSrc, origen.Length);
+        }
+
+        Console.WriteLine("memcpy resultado:");
+        foreach (var b in destino)
+            Console.Write($"  {b}");
+        Console.WriteLine();
+
+        // memset sobre buffer nativo
+        IntPtr buffer = Marshal.AllocHGlobal(100);
+        memset((void*)buffer, 0xFF, 100);
+
+        // Leer algunos bytes
+        Console.WriteLine("\nmemset resultado:");
+        for (int i = 0; i < 10; i++)
+            Console.Write($"  {Marshal.ReadByte(buffer, i):X2}");
+        Console.WriteLine();
+
+        Marshal.FreeHGlobal(buffer);
+
+        // memcmp
+        byte[] a = { 1, 2, 3, 4, 5 };
+        byte[] b = { 1, 2, 3, 4, 5 };
+        byte[] c = { 1, 2, 3, 4, 0 };
+
+        fixed (byte* pa = a, pb = b, pc = c)
+        {
+            Console.WriteLine($"\nmemcmp(a, b): {memcmp(pa, pb, 5)} (0 = iguales)");
+            Console.WriteLine($"memcmp(a, c): {memcmp(pa, pc, 5)} (no 0 = diferentes)");
+        }
+    }
+}
+```
+
+--- 15. PATRONES SEGUROS CON UNSAFE ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== PATRONES SEGUROS ===\n");
+
+        // Pattern 1: Usar Span<T> en lugar de punteros cuando sea posible
+        Console.WriteLine("1. Span<T> como alternativa segura a punteros:");
+        Span<int> numeros = stackalloc int[5] { 1, 2, 3, 4, 5 };
+        foreach (ref var n in numeros)
+            n *= 2;
+        foreach (var n in numeros)
+            Console.Write($"  {n}");
+        Console.WriteLine();
+
+        // Pattern 2: Usar Marshal para memoria nativa
+        Console.WriteLine("\n2. Marshal para memoria nativa:");
+        IntPtr ptr = Marshal.AllocHGlobal(100);
+        try
+        {
+            Span<byte> span;
+            unsafe
+            {
+                span = new Span<byte>((void*)ptr, 100);
+            }
+            span.Fill(0xAB);
+            Console.WriteLine($"  Primer byte: {span[0]:X2}");
+            Console.WriteLine($"  Ultimo byte: {span[99]:X2}");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ptr);
+        }
+
+        // Pattern 3: fixed con using scope
+        Console.WriteLine("\n3. fixed con scope limitado:");
+        int[] datos = { 10, 20, 30 };
+        fixed (int* p = datos)
+        {
+            ProcessPointer(p, datos.Length);
+        }
+
+        // Pattern 4: Struct con buffer fijo para protocolos
+        Console.WriteLine("\n4. Buffer fijo para protocolos:");
+        MensajeRed msg;
+        msg.Tipo = 1;
+        msg.Longitud = 4;
+        msg.Checksum = 0;
+        // Llenar datos...
+        Console.WriteLine($"  Mensaje: tipo={msg.Tipo}, len={msg.Longitud}, size={sizeof(MensajeRed)}");
+    }
+
+    static unsafe void ProcessPointer(int* p, int length)
+    {
+        for (int i = 0; i < length; i++)
+            Console.Write($"  {p[i]}");
+        Console.WriteLine();
+    }
+}
+
+unsafe struct MensajeRed
+{
+    public byte Tipo;
+    public int Longitud;
+    public fixed byte Datos[1024];
+    public int Checksum;
+}
+```
+
+--- 16. COPY MEMORY CON UNSAFE ---
+
+```csharp
+using System;
+using System.Diagnostics;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== COPY MEMORY ===\n");
+
+        const int size = 10_000_000;
+        int[] source = new int[size];
+        int[] dest = new int[size];
+
+        for (int i = 0; i < size; i++)
+            source[i] = i;
+
+        // Buffer.Copy
+        var sw = Stopwatch.StartNew();
+        Buffer.BlockCopy(source, 0, dest, 0, size * sizeof(int));
+        sw.Stop();
+        Console.WriteLine($"Buffer.BlockCopy: {sw.ElapsedMilliseconds}ms");
+
+        // Array.Copy
+        sw.Restart();
+        Array.Copy(source, dest, size);
+        sw.Stop();
+        Console.WriteLine($"Array.Copy: {sw.ElapsedMilliseconds}ms");
+
+        // Unsafe memcpy
+        sw.Restart();
+        fixed (int* pSrc = source, pDst = dest)
+        {
+            CopyMemory(pSrc, pDst, size);
+        }
+        sw.Stop();
+        Console.WriteLine($"Unsafe memcpy: {sw.ElapsedMilliseconds}ms");
+    }
+
+    static unsafe void CopyMemory(int* src, int* dst, int count)
+    {
+        // Copia optimizada: 4 ints a la vez
+        int* end = src + count;
+        while (src + 4 <= end)
+        {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+            src += 4;
+            dst += 4;
+        }
+        while (src < end)
+            *dst++ = *src++;
+    }
+}
+```
+
+--- 17. UNSAFE Y BINARY SERIALIZATION ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+struct EncabezadoArchivo
+{
+    public int MagicNumber;     // 0x4D414753
+    public int Version;
+    public int NumeroRegistros;
+    public long TamanoTotal;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+    public string Descripcion;
+}
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== UNSAFE Y SERIALIZACION ===\n");
+
+        var enc = new EncabezadoArchivo
+        {
+            MagicNumber = 0x4D414753,
+            Version = 1,
+            NumeroRegistros = 100,
+            TamanoTotal = 1024000,
+            Descripcion = "Archivo de datos binarios"
+        };
+
+        // Serializar struct a bytes
+        byte[] bytes = StructToBytes(enc);
+        Console.WriteLine($"Struct serializado a {bytes.Length} bytes");
+        Console.WriteLine($"  Magic: {BitConverter.ToString(bytes, 0, 4)}");
+        Console.WriteLine($"  Version: {BitConverter.ToInt32(bytes, 4)}");
+
+        // Deserializar bytes a struct
+        EncabezadoArchivo enc2 = BytesToStruct<EncabezadoArchivo>(bytes);
+        Console.WriteLine($"\nDeserializado:");
+        Console.WriteLine($"  Magic: {enc2.MagicNumber:X8}");
+        Console.WriteLine($"  Version: {enc2.Version}");
+        Console.WriteLine($"  Registros: {enc2.NumeroRegistros}");
+        Console.WriteLine($"  Tamano: {enc2.TamanoTotal}");
+        Console.WriteLine($"  Desc: {enc2.Descripcion}");
+    }
+
+    static unsafe byte[] StructToBytes<T>(T obj) where T : unmanaged
+    {
+        byte[] bytes = new byte[sizeof(T)];
+        fixed (byte* p = bytes)
+        {
+            Buffer.MemoryCopy(&obj, p, sizeof(T), sizeof(T));
+        }
+        return bytes;
+    }
+
+    static unsafe T BytesToStruct<T>(byte[] bytes) where T : unmanaged
+    {
+        T result = default;
+        fixed (byte* p = bytes)
+        {
+            Buffer.MemoryCopy(p, &result, sizeof(T), sizeof(T));
+        }
+        return result;
+    }
+}
+```
+
+--- 18. UNSAFE Y CODIGO LEGACY ---
+
+```csharp
+using System;
+using System.Runtime.InteropServices;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== UNSAFE Y CODIGO LEGACY ===\n");
+
+        // Simular estructura legacy de C
+        LegacyPoint punto;
+        punto.X = 10;
+        punto.Y = 20;
+        punto.Nombre = "Origen";
+
+        // Acceso directo a memoria
+        byte* ptr = (byte*)&punto;
+
+        Console.WriteLine("Bytes del struct LegacyPoint:");
+        for (int i = 0; i < sizeof(LegacyPoint); i++)
+            Console.Write($"  {ptr[i]:X2}");
+        Console.WriteLine();
+
+        // Modificar bytes directamente
+        ptr[0] = 0xFF;  // Modificar primer byte de X
+        Console.WriteLine($"\nX modificado via byte: {punto.X} (era 10, ahora es {punto.X})");
+
+        // Interfaz con API Win32
+        Console.WriteLine("\nEjemplo: GetSystemTime (API Win32):");
+        SYSTEMTIME time;
+        GetSystemTime(&time);
+        Console.WriteLine($"  {time.Day}/{time.Month}/{time.Year} {time.Hour}:{time.Minute}:{time.Second}");
+    }
+}
+
+unsafe struct LegacyPoint
+{
+    public int X;
+    public int Y;
+    public fixed char Nombre[32];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+struct SYSTEMTIME
+{
+    public ushort Year;
+    public ushort Month;
+    public ushort DayOfWeek;
+    public ushort Day;
+    public ushort Hour;
+    public ushort Minute;
+    public ushort Second;
+    public ushort Milliseconds;
+}
+
+[DllImport("kernel32.dll")]
+static extern unsafe void GetSystemTime(SYSTEMTIME* lpSystemTime);
+```
+
+--- 19. SEGURIDAD EN UNSAFE ---
+
+```csharp
+using System;
+
+class Program
+{
+    static unsafe void Main()
+    {
+        Console.WriteLine("=== SEGURIDAD EN UNSAFE ===\n");
+
+        Console.WriteLine("RIESGOS del codigo unsafe:");
+        Console.WriteLine("  1. Acceso a memoria no valida (null pointer)");
+        Console.WriteLine("  2. Buffer overflow (escribir fuera de limites)");
+        Console.WriteLine("  3. Use-after-free (usar memoria liberada)");
+        Console.WriteLine("  4. Memory leak (no liberar memoria nativa)");
+        Console.WriteLine("  5. Violacion de acceso (AccessViolationException)");
+        Console.WriteLine("  6. Corrupcion del GC (fijar objetos incorrectamente)");
+
+        // Buffer overflow (DEMOSTRACION PELIGROSA - solo conceptual)
+        Console.WriteLine("\nEjemplo de buffer overflow (conceptual):");
+        Console.WriteLine("  int* buffer = stackalloc int[5];");
+        Console.WriteLine("  buffer[10] = 42; // ESCRITURA FUERA DE LIMITES!");
+        Console.WriteLine("  // Esto puede corromper memoria, causar crash,");
+        Console.WriteLine("  // o ser explotado como vulnerabilidad.");
+
+        // Null pointer
+        Console.WriteLine("\nNull pointer (conceptual):");
+        Console.WriteLine("  int* p = null;");
+        Console.WriteLine("  *p = 42; // AccessViolationException");
+        Console.WriteLine("  // Siempre verificar punteros antes de usarlos.");
+
+        // Buenas practicas
+        Console.WriteLine("\nBUENAS PRACTICAS:");
+        Console.WriteLine("  - Usar unsafe solo cuando sea absolutamente necesario");
+        Console.WriteLine("  - Preferir Span<T>, Memory<T>, ref struct");
+        Console.WriteLine("  - Verificar limites de buffers");
+        Console.WriteLine("  - Usar fixed correctamente");
+        Console.WriteLine("  - Liberar memoria nativa con try/finally");
+        Console.WriteLine("  - Mantener el codigo unsafe aislado");
+        Console.WriteLine("  - Documentar por que es necesario unsafe");
+        Console.WriteLine("  - Probar exhaustivamente con validacion de memoria");
+    }
+
+    static unsafe void EjemploBuenasPracticas()
+    {
+        // Verificar null
+        int* ptr = null;
+        if (ptr != null)
+            Console.WriteLine(*ptr);
+
+        // Verificar limites
+        int* buffer = stackalloc int[10];
+        int index = 5;
+        if (index >= 0 && index < 10)
+            buffer[index] = 42;
+
+        // Usar try/finally con memoria nativa
+        IntPtr hGlobal = System.Runtime.InteropServices.Marshal.AllocHGlobal(100);
+        try
+        {
+            // Usar memoria...
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(hGlobal);
+        }
+    }
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPITULO
+================================================================================
+
+1. El codigo unsafe permite usar punteros y acceso directo a memoria.
+2. Requiere compilacion con /unsafe y bloque/marcado unsafe.
+3. fixed evita que el GC mueva objetos mientras se usan punteros.
+4. stackalloc asigna memoria rapida en la pila.
+5. sizeof obtiene el tamano de tipos no administrados.
+6. Marshal permite interoperar con memoria nativa (Alloc/Free/Copy).
+7. El codigo unsafe puede ser mas rapido pero conlleva riesgos.
+8. Siempre prefiera alternativas seguras (Span, Memory, ref struct).
+9. Use unsafe solo en codigo critico de rendimiento o interoperabilidad.
+
+================================================================================
+  EJERCICIOS PRACTICOS
+================================================================================
+
+Ejercicio 1: Implemente una funcion que sume los elementos de un array
+de ints de 10 millones de elementos usando punteros y compare con for.
+
+Ejercicio 2: Use stackalloc para crear un buffer temporal y procesar
+un string (ej: convertir a mayusculas, invertir, etc.).
+
+Ejercicio 3: Cree un struct con buffer fijo para representar un paquete
+de red con header de 20 bytes y payload de 1460 bytes.
+
+Ejercicio 4: Use Marshal.AllocHGlobal para copiar un array managed a
+memoria nativa, modificarlo y copiarlo de vuelta.
+
+Ejercicio 5: Implemente una version de memcpy optimizada que procese
+8 bytes a la vez (usando long*).
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Cuando debo usar codigo unsafe? R: Solo cuando el rendimiento es
+critico (procesamiento de imagenes, audio, criptografia, games) o para
+interoperar con C/C++ que requiere punteros.
+
+P: Es peligroso? R: Si. Puede causar crashes, corrupcion de memoria,
+y vulnerabilidades de seguridad. Use solo cuando sea necesario.
+
+P: Puedo usar unsafe en ASP.NET? R: No se recomienda. Los entornos
+hosteados pueden no tener confianza total para ejecutar unsafe.
+
+P: stackalloc es mas rapido que new? R: Si, porque asigna en la pila
+(sin GC). Pero el tamano debe ser conocido en compilacion y el ambito
+limitado al metodo.
+
+P: Que es unmanaged constraint? R: C# 7.3+ permite where T : unmanaged
+para restringir genericos a tipos que pueden ser punteros.
+Ej: void Method<T>(T* ptr) where T : unmanaged {}
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+Implemente un procesador de imagenes en escala de grises usando unsafe:
+
+1. Cargue una imagen BMP (formato simple) o genere una imagen artificial.
+2. Use punteros para acceder directamente a los pixels.
+3. Convierta cada pixel a gris usando la formula: 0.299*R + 0.587*G + 0.114*B.
+4. Implemente las siguientes operaciones:
+   - Brillo: sumar/restar valor a cada pixel
+   - Contraste: multiplicar cada pixel por factor
+   - Invertir: 255 - valor
+   - Threshold: pixel < umbral -> 0, sino -> 255
+5. Procese en bloques de 64x64 para mejor cache locality.
+6. Compare rendimiento con implementacion segura usando GetPixel/SetPixel.
+
+Requisitos:
+- Use fixed para fijar el array de bytes de la imagen
+- Use aritmetica de punteros para recorrer pixels
+- Use stackalloc para buffers temporales
+- Maneje correctamente el stride (padding entre filas)
+- Implemente al menos un filtro con desenrollamiento de bucle
+
+Extension: Agregue procesamiento paralelo con System.Threading.Tasks
+dividiendo la imagen en franjas horizontales.
+
+================================================================================
+  CIERRE DEL CAPITULO
+================================================================================
+
+El codigo unsafe es una herramienta poderosa para escenarios de alto
+rendimiento e interoperabilidad. Debe usarse con extrema precaucion,
+solo cuando sea estrictamente necesario y siempre siguiendo las mejores
+practicas de seguridad. En el proximo capitulo exploraremos la
+interoperabilidad con codigo nativo mediante P/Invoke.
+
+!Felicidades! Ha conquistado el codigo unsafe en C#.
+
+PROXIMO CAPITULO: 68 - Interoperabilidad (P/Invoke)
+================================================================================

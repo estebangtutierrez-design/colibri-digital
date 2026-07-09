@@ -1,0 +1,1009 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           RUBY MASTER BOOK — MÓDULO VIII: PROYECTO               ║
+║              CAPÍTULO 76: SEGURIDAD                              ║
+║         "Protege tu castillo de Ruby con murallas de código"      ║
+╚══════════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, maestro guardián. La seguridad no es una característica,
+es una responsabilidad. Cada línea que escribes puede ser una puerta
+abierta o una muralla. En este capítulo aprenderás a proteger tus
+aplicaciones Ruby contra SQL injection, XSS, CSRF y más. Un verdadero
+maestro no solo construye, también protege.
+
+FRASE DEL SABIO
+───────────────
+"Confiar está bien, pero verificar es mejor. Y sanitizar es
+obligatorio." — Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Prevenir SQL Injection en consultas Active Record y SQL raw.
+2. Proteger contra Cross-Site Scripting (XSS) en vistas.
+3. Implementar CSRF tokens en formularios.
+4. Sanitizar y validar parámetros de entrada.
+5. Usar bcrypt para hash de contraseñas.
+6. Gestionar secretos y variables de entorno.
+
+SQL INJECTION
+─────────────
+
+La SQL injection ocurre cuando datos del usuario se interpolan
+directamente en consultas SQL. Es la vulnerabilidad más peligrosa
+y la más fácil de evitar.
+
+```ruby
+# ============================================================
+# VULNERABLE — NUNCA HAGAS ESTO
+# ============================================================
+
+class ProductosController < ApplicationController
+  # MAL: Interpolación directa
+  def buscar_vulnerable
+    termino = params[:q]
+    # Si params[:q] = "'; DROP TABLE productos; --"
+    # Se ejecuta: SELECT * FROM productos WHERE nombre LIKE ''; DROP TABLE productos; --'
+    @productos = ActiveRecord::Base.connection.execute(
+      "SELECT * FROM productos WHERE nombre LIKE '%#{termino}%'"
+    )
+  end
+
+  # MAL: Usando sanitize_sql directamente
+  def buscar_vulnerable2
+    @productos = Producto.where("nombre = '#{params[:nombre]}'")
+  end
+end
+
+# ============================================================
+# SEGURO — Formas correctas
+# ============================================================
+
+class ProductosController < ApplicationController
+  # BIEN: Placeholders con ?
+  def buscar_seguro
+    @productos = Producto.where('nombre LIKE ?', "%#{params[:q]}%")
+  end
+
+  # BIEN: Hash conditions
+  def buscar_por_categoria
+    @productos = Producto.where(categoria: params[:categoria])
+  end
+
+  # BIEN: Active Record query interface
+  def buscar_activos
+    @productos = Producto.where(activo: params[:activo])
+  end
+
+  # BIEN: Con named placeholders
+  def buscar_avanzada
+    @productos = Producto.where(
+      'nombre LIKE :query AND precio BETWEEN :min AND :max',
+      query: "%#{params[:q]}%",
+      min: params[:min],
+      max: params[:max]
+    )
+  end
+
+  # BIEN: Usando Arel (seguro internamente)
+  def buscar_arel
+    tabla = Producto.arel_table
+    @productos = Producto.where(
+      tabla[:nombre].matches("%#{params[:q]}%")
+        .and(tabla[:activo].eq(true))
+    )
+  end
+
+  # BIEN: Usando scopes
+  def buscar_scope
+    @productos = Producto.buscar(params[:q])
+                         .por_rango_precio(params[:min], params[:max])
+  end
+end
+
+# app/models/producto.rb
+class Producto < ApplicationRecord
+  scope :buscar, ->(termino) {
+    return all if termino.blank?
+    where('nombre LIKE ?', "%#{termino}%")
+  }
+
+  scope :por_rango_precio, ->(min, max) {
+    return all if min.blank? && max.blank?
+    query = {}
+    query[:precio_gt] = min if min.present?
+    query[:precio_lt] = max if max.present?
+    where(query)
+  }
+end
+
+# ============================================================
+# SQL Injection en ORDER BY
+# ============================================================
+# PELIGROSO:
+# Producto.order(params[:orden])
+
+# SEGURO:
+def listar_productos
+  columnas_permitidas = %w[nombre precio created_at]
+  orden = params[:orden]
+  if columnas_permitidas.include?(orden)
+    @productos = Producto.order(orden => :asc)
+  else
+    @productos = Producto.order(:created_at)
+  end
+end
+
+# ============================================================
+# SQL Injection en LIKE
+# ============================================================
+# PELIGROSO:
+# Producto.where("nombre ILIKE '%#{params[:q]}%'")
+
+# SEGURO:
+# Producto.where('nombre ILIKE ?', "%#{Producto.sanitize_sql_like(params[:q])}%")
+
+# La diferencia: sanitize_sql_like escapa caracteres especiales como %, _
+```
+
+CROSS-SITE SCRIPTING (XSS)
+───────────────────────────
+
+```ruby
+# ============================================================
+# XSS Reflejado — El atacante inyecta script en la URL
+# ============================================================
+
+# app/controllers/busqueda_controller.rb
+class BusquedaController < ApplicationController
+  def mostrar
+    # VULNERABLE: params[:q] puede contener <script>
+    # http://ejemplo.com/buscar?q=<script>alert('XSS')</script>
+  end
+end
+
+# VULNERABLE:
+# <%# app/views/busqueda/mostrar.html.erb %>
+# <p>Buscaste: <%= params[:q] %></p>
+
+# SEGURO (ERB escapa automáticamente):
+# <p>Buscaste: <%= params[:q] %></p>
+# ERB escapa HTML con html_escape. Esto convierte < en &lt; y > en &gt;
+
+# ============================================================
+# XSS Almacenado — El atacante inyecta en la base de datos
+# ============================================================
+
+# app/models/comentario.rb
+class Comentario < ApplicationRecord
+  belongs_to :usuario
+  belongs_to :producto
+
+  # VULNERABLE: guardamos HTML sin sanitizar
+  # validates :contenido, presence: true
+
+  # SEGURO: Sanitizamos antes de guardar
+  before_save :sanitizar_contenido
+
+  private
+
+  def sanitizar_contenido
+    self.contenido = ActionController::Base.helpers.sanitize(
+      contenido,
+      tags: %w[b i em strong a],
+      attributes: %w[href]
+    )
+  end
+end
+
+# ============================================================
+# XSS en atributos HTML
+# ============================================================
+# VULNERABLE:
+# <img src="<%= @usuario.avatar_url %>">
+# Si @usuario.avatar_url = "x\" onerror=\"alert('XSS')\"
+
+# SEGURO:
+# <img src="<%= j @usuario.avatar_url %>">
+# j es el helper escape_javascript
+
+# ============================================================
+# XSS en enlaces
+# ============================================================
+# VULNERABLE:
+# <a href="<%= @enlace %>">Click</a>
+# Si @enlace = "javascript:alert('XSS')"
+
+# SEGURO:
+# <a href="<%= sanitize_url(@enlace) %>">Click</a>
+
+def sanitize_url(url)
+  url if url.match?(/\Ahttps?:\/\//)
+end
+
+# ============================================================
+# XSS en JSON (para APIs)
+# ============================================================
+# VULNERABLE:
+# render json: { mensaje: params[:texto] }
+
+# SEGURO:
+# render json: { mensaje: ERB::Util.html_escape(params[:texto]) }
+```
+
+CROSS-SITE REQUEST FORGERY (CSRF)
+───────────────────────────────────
+
+```ruby
+# ============================================================
+# CSRF — El atacante engaña al navegador para ejecutar acciones
+# ============================================================
+
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  # Rails protege contra CSRF por defecto:
+  protect_from_forgery with: :exception
+
+  # Alternativas:
+  # protect_from_forgery with: :null_session (para APIs)
+  # protect_from_forgery with: :reset_session
+end
+
+# ============================================================
+# CSRF Token en formularios
+# ============================================================
+# Rails incluye automáticamente el token CSRF:
+# <%= form_with model: @producto do |f| %>
+#   <!-- Rails genera: -->
+#   <!-- <input type="hidden" name="authenticity_token" value="..."> -->
+# <% end %>
+
+# Para peticiones AJAX, incluir el token:
+# <meta name="csrf-param" content="authenticity_token" />
+# <meta name="csrf-token" content="<%= form_authenticity_token %>" />
+
+# JavaScript (fetch):
+# const token = document.querySelector('[name="csrf-token"]').content
+# fetch('/productos', {
+#   method: 'POST',
+#   headers: {
+#     'X-CSRF-Token': token,
+#     'Content-Type': 'application/json'
+#   },
+#   body: JSON.stringify(data)
+# })
+
+# ============================================================
+# CSRF en APIs (sin cookies)
+# ============================================================
+# Para APIs, usar tokens de acceso en lugar de CSRF:
+class Api::V1::BaseController < ActionController::API
+  before_action :autenticar_con_token
+
+  private
+
+  def autenticar_con_token
+    token = request.headers['Authorization']&.split(' ')&.last
+    @usuario = Usuario.find_by(api_token: token)
+    render json: { error: 'No autorizado' }, status: :unauthorized unless @usuario
+  end
+end
+
+# ============================================================
+# SameSite Cookies
+# ============================================================
+# config/initializers/session_store.rb
+# Rails.application.config.session_store :cookie_store,
+#   key: '_mi_app_session',
+#   same_site: :lax  # :strict o :none para cross-site
+```
+
+SANITIZACIÓN DE PARÁMETROS
+───────────────────────────
+
+```ruby
+# ============================================================
+# Strong Parameters — El guardián de los parámetros
+# ============================================================
+
+class ProductosController < ApplicationController
+  def create
+    @producto = Producto.new(producto_params)
+    # producto_params solo contiene los atributos permitidos
+    # Si alguien envía { producto: { admin: true, precio: -100 } }
+    # admin será ignorado y precio pasará por validación del modelo
+  end
+
+  private
+
+  def producto_params
+    params.require(:producto).permit(
+      :nombre,
+      :descripcion,
+      :precio,
+      :stock,
+      :categoria,
+      :imagen,
+      etiquetas: []
+    )
+  end
+end
+
+# ============================================================
+# Parámetros anidados
+# ============================================================
+def pedido_params
+  params.require(:pedido).permit(
+    :direccion,
+    items_attributes: [
+      :producto_id,
+      :cantidad,
+      :precio_unitario
+    ]
+  )
+end
+
+# ============================================================
+# Sanitización personalizada
+# ============================================================
+module Sanitizers
+  module TextoSanitizer
+    def self.sanitizar(texto)
+      texto.to_s.strip.gsub(/[<>\n\r]/, '')
+    end
+
+    def self.sanitizar_email(email)
+      email.to_s.strip.downcase.gsub(/\s+/, '')
+    end
+
+    def self.sanitizar_numero(valor)
+      valor.to_s.gsub(/[^0-9.]/, '').to_f
+    end
+
+    def self.sanitizar_slug(texto)
+      texto.to_s.downcase
+           .gsub(/[^a-z0-9\s-]/, '')
+           .gsub(/\s+/, '-')
+           .gsub(/-+/, '-')
+    end
+  end
+end
+
+# Uso en modelos:
+# app/models/usuario.rb
+class Usuario < ApplicationRecord
+  before_save :sanitizar_campos
+
+  private
+
+  def sanitizar_campos
+    self.nombre  = Sanitizers::TextoSanitizer.sanitizar(nombre)
+    self.email   = Sanitizers::TextoSanitizer.sanitizar_email(email)
+  end
+end
+
+# ============================================================
+# Validación vs Sanitización
+# ============================================================
+# Validación rechaza datos incorrectos
+# Sanitización limpia datos para hacerlos seguros
+
+# Ejemplo completo:
+class Comentario < ApplicationRecord
+  validates :contenido, presence: true,
+                        length: { maximum: 1000 }
+
+  before_save :sanitizar_contenido
+  after_create :detectar_spam
+
+  private
+
+  def sanitizar_contenido
+    self.contenido = ActionController::Base.helpers.strip_tags(contenido)
+    self.contenido = contenido.strip
+  end
+
+  def detectar_spam
+    SpamDetectorJob.perform_later(id) if contenido.match?(/http/)
+  end
+end
+```
+
+ENCRIPTACIÓN Y CONTRASEÑAS
+───────────────────────────
+
+```ruby
+# ============================================================
+# bcrypt — El estándar para hash de contraseñas
+# ============================================================
+
+# Gemfile
+# gem 'bcrypt', '~> 3.1'
+
+# app/models/usuario.rb
+class Usuario < ApplicationRecord
+  has_secure_password
+
+  # has_secure_password agrega:
+  # 1. Atributo virtual password y password_confirmation
+  # 2. Validación de presencia de password
+  # 3. Validación de confirmación (password == password_confirmation)
+  # 4. Método authenticate(password)
+  # 5. Almacena password_digest (hash bcrypt)
+end
+
+# ============================================================
+# Implementación manual con bcrypt
+# ============================================================
+require 'bcrypt'
+
+class Autenticacion
+  def self.hash_password(password)
+    BCrypt::Password.create(password, cost: 12)
+  end
+
+  def self.verificar(password_hash, password)
+    BCrypt::Password.new(password_hash) == password
+  end
+
+  def self.costo_recomendado
+    # Ajustar dinámicamente el costo según el hardware
+    benchmark = Benchmark.measure { BCrypt::Password.create('test', cost: 12) }
+    benchmark.real > 0.5 ? 12 : 13
+  end
+end
+
+# ============================================================
+# Encriptación simétrica (Active Record Encryption)
+# ============================================================
+# Rails 7+ incluye encriptación a nivel de atributo
+
+# config/application.rb
+# config.active_record.encryption.primary_key = ENV['ENCRYPTION_PRIMARY_KEY']
+# config.active_record.encryption.deterministic_key = ENV['ENCRYPTION_DETERMINISTIC_KEY']
+# config.active_record.encryption.key_derivation_salt = ENV['ENCRYPTION_KEY_DERIVATION_SALT']
+
+# app/models/usuario.rb
+class Usuario < ApplicationRecord
+  encrypts :email
+  encrypts :telefono, deterministic: true  # Permite búsquedas exactas
+  encrypts :direccion
+end
+
+# ============================================================
+# Encriptación con OpenSSL (bajo nivel)
+# ============================================================
+require 'openssl'
+require 'base64'
+
+module Encriptador
+  ALGORITMO = 'aes-256-gcm'.freeze
+
+  def self.encriptar(datos, clave)
+    cifrador = OpenSSL::Cipher.new(ALGORITMO)
+    cifrador.encrypt
+    cifrador.key = Digest::SHA256.digest(clave)
+
+    iv = cifrador.random_iv
+    texto_cifrado = cifrador.update(datos) + cifrador.final
+    tag = cifrador.auth_tag
+
+    Base64.strict_encode64(iv + tag + texto_cifrado)
+  end
+
+  def self.desencriptar(datos_cifrados, clave)
+    datos = Base64.decode64(datos_cifrados)
+    iv = datos[0..11]
+    tag = datos[12..27]
+    texto_cifrado = datos[28..]
+
+    descifrador = OpenSSL::Cipher.new(ALGORITMO)
+    descifrador.decrypt
+    descifrador.key = Digest::SHA256.digest(clave)
+    descifrador.iv = iv
+    descifrador.auth_tag = tag
+
+    descifrador.update(texto_cifrado) + descifrador.final
+  rescue OpenSSL::Cipher::CipherError
+    nil
+  end
+end
+```
+
+GESTIÓN DE SECRETOS
+────────────────────
+
+```ruby
+# ============================================================
+# Rails Credentials — Gestión integrada de secretos
+# ============================================================
+
+# Editar credenciales:
+# $ rails credentials:edit
+
+# Esto abre config/credentials.yml.enc
+# y genera config/master.key (no incluir en git)
+
+# Contenido típico de credentials.yml.enc:
+# production:
+#   secret_key_base: abc123...
+#   db_password: super_segura
+#   stripe:
+#     api_key: sk_live_...
+#     webhook_secret: whsec_...
+#   mailer:
+#     username: api_key
+#     password: sg_...
+
+# Acceder en el código:
+# Rails.application.credentials.stripe[:api_key]
+# Rails.application.credentials.db_password
+
+# ============================================================
+# Variables de entorno — 12 Factor App
+# ============================================================
+# Recomendadas para plataformas como Heroku, Render, Railway
+
+# .env (no incluir en git):
+# DATABASE_URL=postgresql://usuario:pass@localhost:5432/mi_app
+# STRIPE_API_KEY=sk_test_...
+# SECRET_KEY_BASE=abc123...
+# MAILER_PASSWORD=pass123
+# REDIS_URL=redis://localhost:6379/0
+
+# Acceder en código:
+# ENV['DATABASE_URL']
+# ENV.fetch('STRIPE_API_KEY')
+# ENV.fetch('SECRET_KEY_BASE')
+
+# ============================================================
+# Gem 'dotenv' — Cargar .env en desarrollo
+# ============================================================
+# Gemfile
+# gem 'dotenv-rails', groups: [:development, :test]
+
+# .env
+# MI_VARIABLE=valor_seguro
+
+# ============================================================
+# Validar que los secretos están presentes
+# ============================================================
+# config/initializers/check_secrets.rb
+Rails.application.config.after_initialize do
+  required_secrets = %w[
+    SECRET_KEY_BASE
+    DATABASE_URL
+  ]
+
+  missing = required_secrets.select { |s| ENV[s].blank? }
+  if missing.any?
+    raise "Faltan variables de entorno: #{missing.join(', ')}"
+  end
+end
+
+# ============================================================
+# Rotación de secretos
+# ============================================================
+module RotadorSecretos
+  def self.rotar_secreto(secreto_actual, nuevo_secreto)
+    begin
+      descifrado = Encriptador.desencriptar(dato_almacenado, secreto_actual)
+      Encriptador.encriptar(descifrado, nuevo_secreto)
+    rescue
+      raise "Error al rotar secreto"
+    end
+  end
+end
+```
+
+AUTENTICACIÓN Y AUTORIZACIÓN
+─────────────────────────────
+
+```ruby
+# ============================================================
+# has_secure_token — Tokens de acceso
+# ============================================================
+class Usuario < ApplicationRecord
+  has_secure_token :auth_token
+  has_secure_token :reset_password_token
+
+  # Regenerar token (al cerrar sesión)
+  def regenerar_token!
+    regenerate_auth_token
+  end
+end
+
+# ============================================================
+# JWT — JSON Web Tokens
+# ============================================================
+# gem 'jwt'
+
+module JwtHelper
+  SECRETO = ENV.fetch('JWT_SECRET')
+
+  def self.generar_token(usuario_id, expiracion: 24.hours.from_now)
+    payload = {
+      usuario_id: usuario_id,
+      exp: expiracion.to_i,
+      iat: Time.current.to_i
+    }
+    JWT.encode(payload, SECRETO, 'HS256')
+  end
+
+  def self.decodificar_token(token)
+    decoded = JWT.decode(token, SECRETO, true, algorithm: 'HS256')
+    decoded.first.symbolize_keys
+  rescue JWT::ExpiredSignature
+    { error: 'Token expirado' }
+  rescue JWT::DecodeError
+    { error: 'Token inválido' }
+  end
+
+  def self.usuario_desde_token(token)
+    payload = decodificar_token(token)
+    return nil if payload[:error]
+
+    Usuario.find_by(id: payload[:usuario_id])
+  end
+end
+
+# ============================================================
+# Rate Limiting — Prevenir ataques de fuerza bruta
+# ============================================================
+class RateLimiter
+  def initialize(clave, max_peticiones: 5, ventana: 60)
+    @clave = "rate_limit:#{clave}"
+    @max = max_peticiones
+    @ventana = ventana
+  end
+
+  def permitido?
+    Redis.new.get(@clave).to_i < @max
+  end
+
+  def registrar!
+    Redis.new.multi do |redis|
+      redis.incr(@clave)
+      redis.expire(@clave, @ventana)
+    end
+  end
+
+  def self.limitar_intentos_login(email)
+    limitador = new("login:#{email}", max_peticiones: 5, ventana: 300)
+    return true if limitador.permitido?
+
+    raise "Demasiados intentos. Espera 5 minutos."
+  end
+end
+```
+
+AUDITORÍA Y LOGS DE SEGURIDAD
+───────────────────────────────
+
+```ruby
+# ============================================================
+# Logging de eventos de seguridad
+# ============================================================
+module AuditoriaSeguridad
+  def self.registrar(evento:, usuario: nil, ip: nil, datos: {})
+    registro = {
+      evento: evento,
+      usuario: usuario,
+      ip: ip,
+      datos: datos,
+      timestamp: Time.current.iso8601
+    }
+
+    Rails.logger.warn("[SEGURIDAD] #{registro.to_json}")
+
+    if evento.match?(/fallido|rechazado|error/)
+      AlertasSeguridad.notificar(registro)
+    end
+
+    Auditorium.create!(registro)
+  end
+end
+
+# app/controllers/sesiones_controller.rb
+class SesionesController < ApplicationController
+  def create
+    usuario = Usuario.find_by(email: params[:email])
+
+    if usuario&.authenticate(params[:password])
+      AuditoriaSeguridad.registrar(
+        evento: 'login_exitoso',
+        usuario: usuario,
+        ip: request.remote_ip
+      )
+      session[:usuario_id] = usuario.id
+      redirect_to root_path
+    else
+      AuditoriaSeguridad.registrar(
+        evento: 'login_fallido',
+        datos: { email: params[:email] },
+        ip: request.remote_ip
+      )
+      flash[:alert] = 'Email o contraseña incorrectos'
+      render :new
+    end
+  end
+end
+```
+
+CONTRA ATAQUES COMUNES
+───────────────────────
+
+```ruby
+# ============================================================
+# Clickjacking
+# ============================================================
+# config/initializers/content_security_policy.rb
+Rails.application.config.action_dispatch.default_headers.merge!(
+  'X-Frame-Options' => 'SAMEORIGIN'
+)
+
+# ============================================================
+# Content Security Policy (CSP)
+# ============================================================
+# config/initializers/content_security_policy.rb
+Rails.application.config.content_security_policy do |policy|
+  policy.default_src :self, :https
+  policy.font_src    :self, :https, :data
+  policy.img_src     :self, :https, :data
+  policy.object_src  :none
+  policy.script_src  :self, :https
+  policy.style_src   :self, :https
+end
+
+# ============================================================
+# HTTP Strict Transport Security (HSTS)
+# ============================================================
+# config/environments/production.rb
+# config.force_ssl = true
+# Esto agrega header: Strict-Transport-Security
+
+# ============================================================
+# Protección contra Mass Assignment
+# ============================================================
+class Usuario < ApplicationRecord
+  # Rails 4+ usa Strong Parameters (en el controlador)
+  # No usar attr_accessible ni attr_protected (Rails 3)
+end
+
+# ============================================================
+# Protección contra Timeout en sesiones
+# ============================================================
+# config/initializers/session_store.rb
+Rails.application.config.session_store :cookie_store,
+  expire_after: 2.hours,
+  secure: Rails.env.production?,
+  httponly: true
+
+# ============================================================
+# Protección contra Directory Traversal
+# ============================================================
+def servir_archivo(nombre)
+  ruta_base = Rails.root.join('public', 'archivos')
+  ruta = File.expand_path(File.join(ruta_base, nombre))
+
+  unless ruta.start_with?(ruta_base.to_s)
+    raise "Acceso denegado"
+  end
+
+  send_file(ruta)
+end
+
+# ============================================================
+# Protección contra Inyección de Comandos
+# ============================================================
+# VULNERABLE:
+# system("ping #{params[:ip]}")
+
+# SEGURO:
+# system('ping', '-c', '4', params[:ip])
+
+# system con array evita inyección de comandos
+# params[:ip] = "8.8.8.8; rm -rf /"
+# Esto se ejecuta como: ping -c 4 "8.8.8.8; rm -rf /"
+# NO como: ping -c 4 8.8.8.8; rm -rf /
+```
+
+SEGURIDAD EN GEMAS Y DEPENDENCIAS
+────────────────────────────────────
+
+```ruby
+# ============================================================
+# Bundler Audit — Escáner de vulnerabilidades
+# ============================================================
+# $ gem install bundler-audit
+# $ bundle audit check --update
+# $ bundle audit check --ignore CVE-2023-...
+
+# ============================================================
+# Dependabot / Renovate — Actualizaciones automáticas
+# ============================================================
+# Configurar en GitHub: Settings > Security > Dependabot
+
+# ============================================================
+# Revisar gemas por vulnerabilidades conocidas
+# ============================================================
+# $ gem install haml_lint
+# $ gem install brakeman
+# $ brakeman
+```
+
+BRAKEMAN — ANÁLISIS ESTÁTICO DE SEGURIDAD
+───────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Brakeman: El guardián automático
+# ============================================================
+# $ gem install brakeman
+# $ brakeman
+# $ brakeman -o report.html
+# $ brakeman --quiet --skip-libs
+
+# Brakeman detecta:
+# - SQL Injection
+# - XSS
+# - CSRF
+# - Mass Assignment
+# - Redirect peligrosos
+# - Archivos peligrosos
+# - Configuraciones inseguras
+
+# ============================================================
+# Integrar Brakeman en CI
+# ============================================================
+# .github/workflows/security.yml
+# name: Security Audit
+# on: [push, pull_request]
+# jobs:
+#   brakeman:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v3
+#       - uses: ruby/setup-ruby@v1
+#       - run: gem install brakeman
+#       - run: brakeman --no-pager --quiet --exit-on-warn
+```
+
+CHECKLIST DE SEGURIDAD
+───────────────────────
+
+```ruby
+# ============================================================
+# Lista de verificación para todo proyecto Ruby/Rails
+# ============================================================
+
+module ChecklistSeguridad
+  LISTA = [
+    {
+      area: 'SQL Injection',
+      ok: 'Usar placeholders (?) en todas las consultas SQL',
+      mal: 'Interpolar variables en strings SQL'
+    },
+    {
+      area: 'XSS',
+      ok: 'ERB escapa HTML automáticamente; sanitize para HTML permitido',
+      mal: 'html_safe sin sanitizar; raw sin control'
+    },
+    {
+      area: 'CSRF',
+      ok: 'protect_from_forgery; tokens en formularios',
+      mal: 'Deshabilitar CSRF sin alternativa segura'
+    },
+    {
+      area: 'Strong Parameters',
+      ok: 'params.permit con lista blanca de atributos',
+      mal: 'params.permit! sin restricciones'
+    },
+    {
+      area: 'Contraseñas',
+      ok: 'bcrypt con costo >= 12; has_secure_password',
+      mal: 'Almacenar contraseñas en texto plano; MD5'
+    },
+    {
+      area: 'Secretos',
+      ok: 'Rails credentials o variables de entorno',
+      mal: 'Secretos en código fuente o archivos de configuración'
+    },
+    {
+      area: 'SSL/TLS',
+      ok: 'force_ssl en producción; HSTS',
+      mal: 'HTTP sin cifrar en producción'
+    },
+    {
+      area: 'Dependencias',
+      ok: 'bundle audit periódico; Dependabot activo',
+      mal: 'Ignorar actualizaciones de seguridad'
+    },
+    {
+      area: 'Logs',
+      ok: 'Filter sensitive parameters; no loggear contraseñas',
+      mal: 'Loggear datos sensibles (tarjetas, passwords)'
+    },
+    {
+      area: 'Headers HTTP',
+      ok: 'X-Frame-Options, CSP, X-Content-Type-Options',
+      mal: 'Headers de seguridad ausentes'
+    }
+  ].freeze
+
+  def self.verificar
+    LISTA.each { |item| puts "- #{item[:area]}: #{item[:ok]}" }
+  end
+end
+```
+
+RESUMEN DEL CAPÍTULO
+─────────────────────
+- SQL Injection se previene con placeholders (?) y query interface.
+- XSS se bloquea escapando HTML en vistas (ERB lo hace automático).
+- CSRF se protege con tokens de autenticidad en formularios.
+- Strong Parameters filtran atributos masivos del usuario.
+- bcrypt hashea contraseñas de forma segura (costo >= 12).
+- Rails Credentials y variables de entorno gestionan secretos.
+- Brakeman escanea vulnerabilidades estáticamente.
+- bundler-audit revisa gemas por CVEs conocidos.
+- Rate limiting protege contra fuerza bruta.
+- Content Security Policy mitiga XSS y clickjacking.
+
+EJERCICIOS DEL CAPÍTULO
+────────────────────────
+1. Identifica y corrige una SQL injection en una app legacy.
+2. Implementa sanitización de contenido en un foro de comentarios.
+3. Configura Content Security Policy para una app Rails.
+4. Integra Brakeman en el pipeline de CI.
+5. Crea un rate limiter para el formulario de login.
+6. Implementa encriptación de datos sensibles con Rails 7+.
+7. Configura credenciales para múltiples entornos.
+8. Escribe pruebas de seguridad para SQL injection en RSpec.
+9. Implementa autenticación con JWT en una API Rails.
+10. Crea un dashboard de auditoría de seguridad.
+
+PREGUNTAS FRECUENTES (FAQ)
+───────────────────────────
+P: ¿Rails es seguro por defecto?
+R: Rails tiene muchas protecciones por defecto (CSRF, parámetros
+   fuertes, escape ERB). Pero la seguridad nunca es automática;
+   depende de cómo uses el framework.
+
+P: ¿Con qué frecuencia debo auditar seguridad?
+R: Con cada deploy. Idealmente automatizado con Brakeman y
+   bundler-audit en CI.
+
+P: ¿Qué hago si descubro una vulnerabilidad?
+R: No la publiques. Reporta a través de canales responsables:
+   security@rubygems.org o el maintainer de la gema afectada.
+
+P: ¿bcrypt es suficiente para contraseñas?
+R: Sí, bcrypt es el estándar de la industria. Con costo >= 12 es
+   extremadamente resistente a ataques de fuerza bruta.
+
+DESAFÍO DEL GUARDIÁN
+─────────────────────
+Crea una gema de seguridad llamada 'fortaleza' que incluya:
+1. Rate limiter configurable con almacenamiento en Redis y memoria.
+2. Sanitizador de HTML con configuración de tags permitidos.
+3. Escáner de SQL injection para consultas raw.
+4. Logger de auditoría con rotación y alertas.
+5. Encriptación AES-256-GCM con rotación de claves.
+6. Middleware Rack para agregar headers de seguridad.
+7. CLI para auditar proyectos Rails completos.
+
+Este desafío demuestra que puedes construir herramientas de seguridad
+profesionales que protegen ecosistemas Ruby completos.
+
+CIERRE DEL CAPÍTULO
+────────────────────
+La seguridad es un viaje, no un destino. Ahora tienes las armaduras,
+escudos y guardianes para proteger tus aplicaciones Ruby. Pero el
+verdadero guardián eres tú, con tu conocimiento y vigilancia. En el
+próximo capítulo pondremos a prueba todo lo aprendido con un examen
+profesional completo.
+
+PRÓXIMO CAPÍTULO
+─────────────────
+▶ CAPÍTULO 77: EXAMEN PROFESIONAL — Demuestra tu maestría en Ruby

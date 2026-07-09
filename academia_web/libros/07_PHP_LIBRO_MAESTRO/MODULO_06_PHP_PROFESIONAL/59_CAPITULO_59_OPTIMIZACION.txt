@@ -1,0 +1,1074 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                    CAPÍTULO 59: OPTIMIZACIÓN
+##
+################################################################################
+
+"El código lento no es un bug, es deuda técnica que cobra
+intereses cada vez que un usuario espera. Optimizar no es
+acelerar, es eliminar lo que sobra."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Una aplicación puede ser correcta (funciona) y aun así ser inútil
+(si es demasiado lenta). Los usuarios abandonan una página que
+tarda más de 3 segundos en cargar. Google penaliza en rankings
+a los sitios lentos.
+
+La optimización en PHP tiene varias capas:
+  - Código: algoritmos eficientes, evitar código redundante.
+  - Base de datos: consultas optimizadas, índices.
+  - Caché: OpCache, Redis/Memcached, HTTP caching.
+  - Infraestructura: PHP-FPM, servidor web, CDN.
+
+En este capítulo aprenderás a identificar cuellos de botella,
+aplicar técnicas de optimización y medir el impacto de cada
+cambio.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La optimización prematura es la raíz de todos los males, pero
+la pereza de no optimizar lo obvio es la raíz de las malas apps."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Configurar y verificar OpCache para acelerar PHP.
+✓ Identificar consultas SQL lentas y optimizarlas.
+✓ Implementar caché con Redis o Memcached.
+✓ Optimizar el autoload de Composer para producción.
+✓ Usar técnicas de profiling (Xdebug, Blackfire).
+✓ Implementar HTTP caching (ETag, Cache-Control).
+✓ Optimizar consultas con índices en MySQL.
+✓ Aplicar lazy loading y eager loading en modelos.
+
+===============================================================================
+1. OPCACHE
+===============================================================================
+
+OpCache es una extensión de PHP que almacena en memoria los scripts
+PHP compilados (opcodes). Sin OpCache, PHP lee, parsea y compila
+cada archivo en cada petición. Con OpCache, esto ocurre una sola vez.
+
+Habilitar OpCache en php.ini:
+
+```ini
+[opcache]
+zend_extension=opcache.so
+opcache.enable=1
+opcache.enable_cli=0
+opcache.memory_consumption=256
+opcache.interned_strings_buffer=16
+opcache.max_accelerated_files=10000
+opcache.revalidate_freq=2
+opcache.fast_shutdown=1
+opcache.validate_timestamps=1
+opcache.revalidate_path=0
+```
+
+Configuración recomendada para producción:
+
+```ini
+opcache.enable=1
+opcache.memory_consumption=256        ; 256 MB para opcodes
+opcache.interned_strings_buffer=16     ; 16 MB para strings
+opcache.max_accelerated_files=20000    ; hasta 20000 archivos
+opcache.max_wasted_percentage=5        ; reiniciar si 5% desperdiciado
+opcache.validate_timestamps=0          ; NO verificar cambios (producción)
+opcache.revalidate_freq=0              ; no relevante si validate_timestamps=0
+opcache.fast_shutdown=1                ; limpieza rápida al finalizar
+opcache.enable_cli=0                   ; no necesario en CLI
+```
+
+En desarrollo:
+
+```ini
+opcache.enable=1
+opcache.validate_timestamps=1          ; Verificar cambios en cada petición
+opcache.revalidate_freq=0              ; Verificar siempre
+```
+
+Verificar estado de OpCache:
+
+```php
+<?php
+// diagnostic/opcache.php
+if (!function_exists('opcache_get_status')) {
+    echo "OpCache no está disponible.\n";
+    exit;
+}
+
+$status = opcache_get_status(false);
+
+if (!$status || !$status['opcache_enabled']) {
+    echo "OpCache está deshabilitado.\n";
+    exit;
+}
+
+echo "OpCache: ACTIVADO\n";
+echo "Memoria usada: " . round($status['memory_usage']['used_memory'] / 1024 / 1024, 2) . " MB\n";
+echo "Memoria libre: " . round($status['memory_usage']['free_memory'] / 1024 / 1024, 2) . " MB\n";
+echo "Archivos cacheados: " . $status['opcache_statistics']['num_cached_scripts'] . "\n";
+echo "Hits: " . $status['opcache_statistics']['hits'] . "\n";
+echo "Misses: " . $status['opcache_statistics']['misses'] . "\n";
+echo "Hit rate: " . round($status['opcache_statistics']['opcache_hit_rate'], 2) . "%\n";
+```
+
+Limpieza de OpCache después de deploys:
+
+```php
+<?php
+// public/deploy.php
+// Llamar después de cada deploy
+if (function_exists('opcache_reset')) {
+    opcache_reset();
+    echo "OpCache reiniciado.\n";
+}
+```
+
+O desde la línea de comandos:
+
+```bash
+# Reiniciar OpCache vía web (si hay un endpoint)
+curl -X POST https://mi-app.com/__opcache-reset
+
+# O mediante PHP CLI
+php -r "opcache_reset(); echo 'OpCache reiniciado\n';"
+```
+
+===============================================================================
+2. OPTIMIZACIÓN DEL AUTOLOAD
+===============================================================================
+
+En desarrollo, PSR-4 busca archivos en disco. En producción, el
+classmap elimina esa búsqueda.
+
+```bash
+# Producción: autoload optimizado
+composer install --no-dev --optimize-autoloader
+
+# O sin instalar, solo regenerar
+composer dump-autoload --optimize
+```
+
+El classmap generado:
+
+```php
+<?php
+// vendor/composer/autoload_classmap.php
+return array(
+    'App\\Controllers\\HomeController' => '/var/www/app/src/Controllers/HomeController.php',
+    'App\\Models\\Usuario' => '/var/www/app/src/Models/Usuario.php',
+    // ...todas las clases mapeadas directamente
+);
+```
+
+Con el classmap, cargar una clase es una operación O(1) (array lookup)
+en lugar de O(n) (búsqueda en disco).
+
+Configuración de composer.json para optimización:
+
+```json
+{
+    "config": {
+        "optimize-autoloader": true,
+        "apcu-autoloader": true,
+        "classmap-authoritative": true
+    }
+}
+```
+
+- optimize-autoloader: genera classmap.
+- apcu-autoloader: usa APCu para cachear el classmap.
+- classmap-authoritative: solo usa classmap (no busca PSR-4).
+
+En producción, usa classmap-authoritative para máxima velocidad:
+
+```bash
+composer install --no-dev --classmap-authoritative
+```
+
+===============================================================================
+3. CACHÉ CON REDIS
+===============================================================================
+
+Redis es un almacén de datos en memoria (in-memory data store) que
+sirve como caché ultrarrápida.
+
+```bash
+composer require predis/predis
+```
+
+```php
+<?php
+// src/Core/Cache.php
+namespace App\Core;
+
+use Predis\Client;
+
+class Cache
+{
+    private static ?Client $client = null;
+    private static int $defaultTtl = 3600; // 1 hora
+
+    public static function connect(): Client
+    {
+        if (self::$client === null) {
+            self::$client = new Client([
+                'scheme' => 'tcp',
+                'host'   => $_ENV['REDIS_HOST'] ?? '127.0.0.1',
+                'port'   => $_ENV['REDIS_PORT'] ?? 6379,
+                'password' => $_ENV['REDIS_PASSWORD'] ?? null,
+            ]);
+        }
+        return self::$client;
+    }
+
+    public static function get(string $key): mixed
+    {
+        $data = self::connect()->get($key);
+        if ($data === null) {
+            return null;
+        }
+        return unserialize($data);
+    }
+
+    public static function set(string $key, mixed $value, ?int $ttl = null): void
+    {
+        $data = serialize($value);
+        $ttl  = $ttl ?? self::$defaultTtl;
+        self::connect()->setex($key, $ttl, $data);
+    }
+
+    public static function remember(string $key, callable $callback, ?int $ttl = null): mixed
+    {
+        $cached = self::get($key);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $value = $callback();
+        self::set($key, $value, $ttl);
+        return $value;
+    }
+
+    public static function delete(string $key): void
+    {
+        self::connect()->del([$key]);
+    }
+
+    public static function flush(): void
+    {
+        self::connect()->flushall();
+    }
+
+    public static function has(string $key): bool
+    {
+        return self::connect()->exists($key) === 1;
+    }
+}
+```
+
+Uso en consultas a BD:
+
+```php
+<?php
+$categorias = Cache::remember('categorias_activas', function () use ($db) {
+    // Consulta lenta
+    $stmt = $db->query('SELECT * FROM categorias WHERE activo = 1 ORDER BY nombre');
+    return $stmt->fetchAll();
+}, 3600); // 1 hora
+
+$usuarios = Cache::remember('usuarios_top', function () use ($db) {
+    $stmt = $db->query('
+        SELECT u.*, COUNT(p.id) as total_pedidos
+        FROM usuarios u
+        JOIN pedidos p ON p.usuario_id = u.id
+        GROUP BY u.id
+        ORDER BY total_pedidos DESC
+        LIMIT 10
+    ');
+    return $stmt->fetchAll();
+}, 600); // 10 minutos
+```
+
+Invalidación de caché:
+
+```php
+<?php
+// Cuando se crea una categoría
+Cache::delete('categorias_activas');
+
+// Cuando se actualiza un usuario
+Cache::delete('usuarios_top');
+
+// O usar tags (Redis no tiene tags nativos, pero se simulan)
+Cache::connect()->sadd('cache:tags:usuarios', 'usuarios_top');
+Cache::connect()->sadd('cache:tags:usuarios', 'usuarios_recientes');
+
+// Invalidar por tag
+$keys = Cache::connect()->smembers('cache:tags:usuarios');
+foreach ($keys as $key) {
+    Cache::delete($key);
+}
+Cache::connect()->del('cache:tags:usuarios');
+```
+
+Para sesiones con Redis:
+
+```php
+<?php
+// config/session.php
+ini_set('session.save_handler', 'redis');
+ini_set('session.save_path', 'tcp://127.0.0.1:6379?prefix=session:');
+
+// O en código
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379);
+session_set_save_handler(
+    function () use ($redis) { return true; },
+    function () use ($redis) { return true; },
+    function (string $id) use ($redis) { return $redis->get('session:' . $id) ?: ''; },
+    function (string $id, string $data) use ($redis) { $redis->setex('session:' . $id, 3600, $data); return true; },
+    function (string $id) use ($redis) { $redis->del('session:' . $id); return true; },
+    function (int $maxlifetime) use ($redis) { /* Redis expira automáticamente */ return true; }
+);
+session_start();
+```
+
+===============================================================================
+4. CACHÉ DE CONSULTAS SQL
+===============================================================================
+
+```php
+<?php
+// src/Core/CachedQueryBuilder.php
+namespace App\Core;
+
+class CachedQueryBuilder
+{
+    private \PDO $db;
+    private string $table;
+    private array $conditions = [];
+
+    public function __construct(\PDO $db, string $table)
+    {
+        $this->db = $db;
+        $this->table = $table;
+    }
+
+    public function where(string $column, string $operator, mixed $value): static
+    {
+        $this->conditions[] = compact('column', 'operator', 'value');
+        return $this;
+    }
+
+    public function get(int $ttl = 300): array
+    {
+        // Generar clave de caché única para esta consulta
+        $cacheKey = 'query:' . $this->table . ':' . md5(serialize($this->conditions));
+
+        return Cache::remember($cacheKey, function () {
+            $sql = "SELECT * FROM {$this->table}";
+            $params = [];
+
+            if (!empty($this->conditions)) {
+                $wheres = [];
+                foreach ($this->conditions as $i => $cond) {
+                    $param = ":param_{$i}";
+                    $wheres[] = "{$cond['column']} {$cond['operator']} {$param}";
+                    $params[$param] = $cond['value'];
+                }
+                $sql .= ' WHERE ' . implode(' AND ', $wheres);
+            }
+
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll();
+        }, $ttl);
+    }
+
+    public function first(int $ttl = 300): ?array
+    {
+        $results = $this->get($ttl);
+        return $results[0] ?? null;
+    }
+}
+```
+
+Uso:
+
+```php
+<?php
+$productos = (new CachedQueryBuilder($db, 'productos'))
+    ->where('activo', '=', 1)
+    ->where('precio', '>', 100)
+    ->get(600); // 10 minutos de caché
+```
+
+===============================================================================
+5. OPTIMIZACIÓN DE CONSULTAS SQL
+===============================================================================
+
+Índices en MySQL:
+
+```sql
+-- Índice simple
+CREATE INDEX idx_usuarios_email ON usuarios (email);
+
+-- Índice compuesto (orden importa)
+CREATE INDEX idx_pedidos_usuario_fecha ON pedidos (usuario_id, fecha_pedido);
+
+-- Índice para búsqueda LIKE
+CREATE INDEX idx_productos_nombre ON productos (nombre);
+
+-- Índice único
+CREATE UNIQUE INDEX idx_usuarios_email_unique ON usuarios (email);
+```
+
+Analizar consultas lentas:
+
+```sql
+EXPLAIN SELECT * FROM pedidos WHERE usuario_id = 42;
+/*
+id  select_type  table    type  possible_keys  key    rows  Extra
+1   SIMPLE       pedidos  ref   idx_usuario     idx    5     Using where
+*/
+
+-- Si type es 'ALL', es un full table scan (sin índice)
+-- Si rows es muy grande, la consulta es lenta
+```
+
+Identificar consultas lentas en PHP:
+
+```php
+<?php
+// core/Profiler.php
+namespace App\Core;
+
+class Profiler
+{
+    private static array $queries = [];
+
+    public static function startQuery(string $sql, array $params = []): void
+    {
+        self::$queries[] = [
+            'sql'      => $sql,
+            'params'   => $params,
+            'start'    => microtime(true),
+        ];
+    }
+
+    public static function endQuery(): void
+    {
+        $last = &self::$queries[count(self::$queries) - 1];
+        $last['time'] = (microtime(true) - $last['start']) * 1000; // ms
+    }
+
+    public static function getSlowQueries(float $threshold = 100): array
+    {
+        return array_filter(self::$queries, fn($q) => ($q['time'] ?? 0) > $threshold);
+    }
+
+    public static function getStats(): array
+    {
+        $times = array_column(self::$queries, 'time');
+        return [
+            'total_queries' => count($times),
+            'total_time'    => array_sum($times),
+            'avg_time'      => count($times) > 0 ? array_sum($times) / count($times) : 0,
+            'max_time'      => max($times),
+            'slow_queries'  => count(self::getSlowQueries()),
+        ];
+    }
+}
+
+// Uso en Model base
+class Model
+{
+    protected function query(string $sql, array $params = []): \PDOStatement
+    {
+        Profiler::startQuery($sql, $params);
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        Profiler::endQuery();
+        return $stmt;
+    }
+}
+```
+
+Consejos de optimización SQL:
+
+```sql
+-- MAL: SELECT * (trae columnas innecesarias)
+SELECT * FROM usuarios;
+
+-- BIEN: Solo columnas necesarias
+SELECT id, nombre, email FROM usuarios;
+
+-- MAL: Funciones en WHERE (no usa índice)
+SELECT * FROM pedidos WHERE YEAR(fecha) = 2024;
+
+-- BIEN: Rango de fechas (usa índice)
+SELECT * FROM pedidos WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01';
+
+-- MAL: LIKE con wildcard al inicio (no usa índice)
+SELECT * FROM productos WHERE nombre LIKE '%iphone%';
+
+-- BIEN: LIKE sin wildcard inicial (usa índice)
+SELECT * FROM productos WHERE nombre LIKE 'iphone%';
+```
+
+===============================================================================
+6. LAZY LOADING VS EAGER LOADING
+===============================================================================
+
+En modelos con relaciones, el lazy loading carga las relaciones
+bajo demanda (más consultas). El eager loading las carga todas
+juntas (JOIN).
+
+```php
+<?php
+// Model con relaciones
+class Usuario extends Model
+{
+    public function pedidos(): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM pedidos WHERE usuario_id = :id');
+        $stmt->execute([':id' => $this->id]);
+        return $stmt->fetchAll();
+    }
+
+    public function pedidosConDetalles(): array
+    {
+        // Eager loading con JOIN
+        $stmt = $this->db->prepare('
+            SELECT p.*, d.producto_id, d.cantidad, d.precio, pr.nombre as producto_nombre
+            FROM pedidos p
+            LEFT JOIN pedidos_detalles d ON d.pedido_id = p.id
+            LEFT JOIN productos pr ON pr.id = d.producto_id
+            WHERE p.usuario_id = :id
+        ');
+        $stmt->execute([':id' => $this->id]);
+        return $stmt->fetchAll();
+    }
+}
+
+// MAL: Lazy loading en loop (N+1 queries)
+$usuarios = $db->query('SELECT * FROM usuarios')->fetchAll();
+foreach ($usuarios as &$usuario) {
+    $stmt = $db->prepare('SELECT * FROM pedidos WHERE usuario_id = ?');
+    $stmt->execute([$usuario['id']]);
+    $usuario['pedidos'] = $stmt->fetchAll();
+}
+// Si hay 100 usuarios, son 101 consultas (1 + 100)
+
+// BIEN: Eager loading con JOIN
+$stmt = $db->query('
+    SELECT u.*, p.id as pedido_id, p.total as pedido_total, p.fecha as pedido_fecha
+    FROM usuarios u
+    LEFT JOIN pedidos p ON p.usuario_id = u.id
+');
+$rows = $stmt->fetchAll();
+
+// Agrupar en PHP
+$usuarios = [];
+foreach ($rows as $row) {
+    $userId = $row['id'];
+    if (!isset($usuarios[$userId])) {
+        $usuarios[$userId] = [
+            'id'       => $row['id'],
+            'nombre'   => $row['nombre'],
+            'email'    => $row['email'],
+            'pedidos'  => [],
+        ];
+    }
+    if ($row['pedido_id']) {
+        $usuarios[$userId]['pedidos'][] = [
+            'id'    => $row['pedido_id'],
+            'total' => $row['pedido_total'],
+            'fecha' => $row['pedido_fecha'],
+        ];
+    }
+}
+// Solo 1 consulta, sin importar cuántos usuarios
+```
+
+===============================================================================
+7. HTTP CACHING
+===============================================================================
+
+ETag y Last-Modified permiten al navegador validar si el contenido
+ha cambiado, evitando descargas innecesarias.
+
+```php
+<?php
+// src/Core/HttpCache.php
+namespace App\Core;
+
+class HttpCache
+{
+    public static function setCache(int $maxAge = 3600): void
+    {
+        header("Cache-Control: public, max-age=$maxAge, must-revalidate");
+        header('Pragma: cache');
+        header('Expires: ' . gmdate('D, d M Y H:i:s', time() + $maxAge) . ' GMT');
+    }
+
+    public static function setNoCache(): void
+    {
+        header('Cache-Control: no-store, no-cache, must-revalidate, private');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
+
+    public static function setEtag(string $etag): void
+    {
+        header("ETag: \"$etag\"");
+
+        if (isset($_SERVER['HTTP_IF_NONE_MATCH'])) {
+            $clientEtag = trim($_SERVER['HTTP_IF_NONE_MATCH'], '"');
+            if ($clientEtag === $etag) {
+                http_response_code(304);
+                exit;
+            }
+        }
+    }
+
+    public static function setLastModified(int $timestamp): void
+    {
+        $lastModified = gmdate('D, d M Y H:i:s', $timestamp) . ' GMT';
+        header("Last-Modified: $lastModified");
+
+        if (isset($_SERVER['HTTP_IF_MODIFIED_SINCE'])) {
+            $clientSince = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE']);
+            if ($clientSince >= $timestamp) {
+                http_response_code(304);
+                exit;
+            }
+        }
+    }
+}
+```
+
+Uso en controlador:
+
+```php
+<?php
+public function index(): void
+{
+    // Caché de 1 hora para listado de productos
+    $lastUpdated = $this->getLastUpdatedTimestamp();
+    HttpCache::setLastModified($lastUpdated);
+    HttpCache::setCache(3600);
+
+    // Si llegamos aquí, el contenido cambió
+    $productos = Cache::remember('productos_activos', function () {
+        return $this->model->getAll();
+    }, 3600);
+
+    Response::success($productos);
+}
+```
+
+===============================================================================
+8. PROFILING CON XDEBUG
+===============================================================================
+
+Xdebug es la herramienta estándar para profiling de PHP.
+
+```bash
+# Instalar Xdebug
+pecl install xdebug
+
+# O en Linux
+apt install php-xdebug
+```
+
+Configuración para profiling:
+
+```ini
+[xdebug]
+zend_extension=xdebug.so
+xdebug.mode=profile
+xdebug.output_dir=/tmp/xdebug-profiling
+xdebug.profiler_output_name=cachegrind.out.%p
+```
+
+Iniciar profiling:
+
+```bash
+# Por petición (con trigger)
+export XDEBUG_TRIGGER=1
+curl https://mi-app.com/productos
+
+# O por cookie
+# Agregar cookie XDEBUG_TRIGGER=1
+```
+
+Analizar resultados con herramientas:
+
+```bash
+# kcachegrind (Linux) o qcachegrind (Mac)
+kcachegrind /tmp/xdebug-profiling/cachegrind.out.12345
+
+# O con Webgrind (PHP)
+composer require --dev jokkedk/webgrind
+# http://localhost/webgrind
+```
+
+Blackfire.io (servicio de profiling en la nube):
+
+```bash
+# Instalar Blackfire
+composer require --dev blackfire/php-sdk
+
+# Perfilar
+$blackfire = new \Blackfire\Client();
+$probe = $blackfire->createProbe();
+// código a perfilar
+$blackfire->endProbe($probe);
+```
+
+===============================================================================
+9. COMPRESIÓN DE RESPUESTAS
+===============================================================================
+
+```php
+<?php
+// Habilitar compresión Gzip en PHP
+ini_set('zlib.output_compression', '1');
+ini_set('zlib.output_compression_level', '6');
+
+// O en Apache
+// AddOutputFilterByType DEFLATE text/html text/plain text/css application/json
+
+// O en Nginx
+/*
+gzip on;
+gzip_types text/plain text/css application/json application/javascript;
+gzip_comp_level 6;
+*/
+```
+
+Minificación de HTML (opcional):
+
+```php
+<?php
+function minifyHtml(string $html): string
+{
+    $search = [
+        '/\>[^\S ]+/s',     // Eliminar espacios después de >
+        '/[^\S ]+\</s',     // Eliminar espacios antes de <
+        '/(\s)+/s',         // Colapsar espacios múltiples
+        '/<!--(.|\s)*?-->/', // Eliminar comentarios HTML
+    ];
+    $replace = ['>', '<', '\\1', ''];
+    return preg_replace($search, $replace, $html);
+}
+```
+
+===============================================================================
+10. BENCHMARK Y MONITOREO
+===============================================================================
+
+Benchmark de código:
+
+```php
+<?php
+function benchmark(callable $fn, int $iterations = 1000): float
+{
+    $start = microtime(true);
+    for ($i = 0; $i < $iterations; $i++) {
+        $fn();
+    }
+    return (microtime(true) - $start) / $iterations;
+}
+
+// Comparación
+$timeA = benchmark(function () {
+    $result = array_map(fn($n) => $n * 2, range(1, 1000));
+});
+
+$timeB = benchmark(function () {
+    $result = [];
+    for ($i = 1; $i <= 1000; $i++) {
+        $result[] = $i * 2;
+    }
+});
+
+echo "array_map: " . round($timeA * 1000, 4) . " ms\n";
+echo "for loop: " . round($timeB * 1000, 4) . " ms\n";
+echo "Diferencia: " . round(($timeA - $timeB) * 1000, 4) . " ms\n";
+```
+
+Monitoreo de rendimiento:
+
+```php
+<?php
+// core/Monitor.php
+namespace App\Core;
+
+class Monitor
+{
+    private static float $startTime;
+    private static float $startMemory;
+
+    public static function start(): void
+    {
+        self::$startTime   = microtime(true);
+        self::$startMemory = memory_get_usage();
+    }
+
+    public static function end(): array
+    {
+        return [
+            'time'       => round((microtime(true) - self::$startTime) * 1000, 2) . ' ms',
+            'memory'     => round((memory_get_peak_usage() - self::$startMemory) / 1024, 2) . ' KB',
+            'queries'    => Profiler::getStats(),
+            'php_version' => PHP_VERSION,
+        ];
+    }
+
+    public static function header(): void
+    {
+        $stats = self::end();
+        header('X-Debug-Time: ' . $stats['time']);
+        header('X-Debug-Memory: ' . $stats['memory']);
+        header('X-Debug-Queries: ' . $stats['queries']['total_queries']);
+    }
+}
+
+// Uso
+Monitor::start();
+// ... ejecutar aplicación ...
+Monitor::header();
+```
+
+Para monitoreo en producción:
+
+```bash
+composer require phpunit/php-timer
+```
+
+Servicios de monitoreo externos:
+  - New Relic: monitoreo completo de APM.
+  - Datadog: trazas, métricas, logs.
+  - Sentry: errores y rendimiento.
+  - Scout APM: específico para PHP.
+
+===============================================================================
+11. PHP-FPM: OPTIMIZACIÓN DEL PROCESADOR
+===============================================================================
+
+PHP-FPM (FastCGI Process Manager) es la interfaz entre el servidor
+web y PHP. Su configuración afecta drásticamente el rendimiento.
+
+```ini
+; /etc/php/8.2/fpm/pool.d/www.conf
+
+[www]
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+pm.max_requests = 500
+```
+
+Cálculo de max_children:
+
+```
+RAM disponible para PHP = 8GB
+Memoria por proceso PHP ≈ 50MB
+max_children = 8192 / 50 ≈ 163
+
+Pero considera que no todo es PHP. Deja margen:
+max_children = 100 (para 8GB RAM)
+```
+
+Modo de gestión de procesos:
+
+  - dynamic: ajusta procesos según demanda (recomendado).
+  - static: número fijo de procesos (predecible pero desperdicia).
+  - ondemand: crea procesos solo cuando hay peticiones (ahorra RAM).
+
+===============================================================================
+12. LISTA DE VERIFICACIÓN DE OPTIMIZACIÓN
+===============================================================================
+
+✓ OpCache activado y configurado para producción.
+✓ Autoloader optimizado (classmap-authoritative).
+✓ Consultas SQL con índices adecuados.
+✓ No hay N+1 queries (eager loading donde aplica).
+✓ Redis/Memcached implementado para caché de consultas.
+✓ Caché de respuestas HTTP (ETag, Cache-Control).
+✓ Compresión Gzip activada.
+✓ PHP-FPM configurado con pm.max_children adecuado.
+✓ Sesiones en Redis (no en archivos).
+✓ Monitoreo de rendimiento implementado.
+✓ Profiling realizado para identificar cuellos de botella.
+✓ Benchmark de funciones críticas.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- OpCache acelera PHP almacenando opcodes en memoria.
+- El autoload optimizado (classmap) elimina búsquedas en disco.
+- Redis proporciona caché ultrarrápida en memoria.
+- Los índices SQL aceleran consultas de búsqueda y filtrado.
+- Eager loading (JOIN) es mejor que lazy loading (N+1).
+- ETag y Last-Modified evitan descargas innecesarias.
+- Xdebug y Blackfire identifican cuellos de botella.
+- La compresión Gzip reduce el tamaño de las respuestas.
+- PHP-FPM debe configurarse según la RAM disponible.
+- El monitoreo continuo detecta problemas antes que los usuarios.
+- La optimización es un proceso iterativo: medir, mejorar, medir.
+- No optimices lo que no necesita ser optimizado.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa un script que active OpCache y
+   muestre estadísticas: hits, misses, memoria usada, archivos
+   cacheados. Compara el tiempo de carga con y sin OpCache.
+
+🧩 **Ejercicio 2:** Crea un benchmark que compare el rendimiento
+   de una consulta SQL con y sin índice. Genera 100,000 registros
+   de prueba y mide el tiempo de búsqueda.
+
+🧩 **Ejercicio 3:** Implementa un sistema de caché con Redis que
+   almacene resultados de consultas lentas. Las claves deben
+   invalidarse automáticamente cuando los datos cambien.
+
+🧩 **Ejercicio 4:** Configura Xdebug para profiling. Genera un
+   archivo cachegrind de una página y analiza qué funciones
+   consumen más tiempo.
+
+🧩 **Ejercicio 5:** Crea un middleware que agregue headers de
+   caché (Cache-Control, ETag, Last-Modified) a las respuestas
+   GET. Implementa la validación 304 Not Modified.
+
+🧩 **Ejercicio 6:** Implementa un dashboard de monitoreo que
+   muestre: tiempo de respuesta, memoria, consultas SQL, hits
+   de caché, y uptime del servidor.
+
+🧩 **Ejercicio 7:** Crea un script que analice consultas SQL del
+   log de MySQL lento (slow query log) y genere recomendaciones
+   de índices.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿OpCache funciona con PHP 8?**
+   Sí, OpCache viene incluido y habilitado por defecto en PHP 8.
+   Solo necesitas configurarlo para producción.
+
+❓ **¿Cuánta memoria debo asignar a OpCache?**
+   256 MB es suficiente para la mayoría de proyectos. Monitorea
+   con opcache_get_status() y ajusta si el hit rate es bajo.
+
+❓ **¿Redis o Memcached?**
+   Redis es más versátil (estructuras de datos, persistencia,
+   pub/sub). Memcached es más simple y rápido para caché pura.
+   Para la mayoría de proyectos, Redis es mejor.
+
+❓ **¿Cuándo debo optimizar?**
+   1. Mide (profiling). 2. Identifica cuellos de botella.
+   3. Optimiza. 4. Mide otra vez. No optimices por adivinar.
+
+❓ **¿El uso de caché siempre es bueno?**
+   No. La caché introduce complejidad y posible servir datos
+   desactualizados. Úsala solo para datos que cambian poco
+   y se leen mucho (categorías, configuraciones, stats).
+
+❓ **¿Cómo sé si mi aplicación es lenta?**
+   Monitorea tiempo de respuesta (p75, p95, p99). Herramientas:
+   New Relic, Datadog, o logs de acceso con tiempos.
+
+❓ **¿PHP es lento comparado con otros lenguajes?**
+   PHP moderno (8.x) es muy rápido para aplicaciones web gracias
+   a JIT y OpCache. Para la mayoría de casos, el cuello de botella
+   es la BD, no PHP.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Optimización y Monitoreo**
+
+   Construye un sistema completo de optimización con:
+
+   1. Dashboard de rendimiento en tiempo real:
+      - Tiempo de respuesta por endpoint.
+      - Consultas SQL lentas.
+      - Uso de memoria y CPU.
+      - Hits/misses de caché.
+      - Tráfico por ruta.
+
+   2. Sistema de caché multi-nivel:
+      - Nivel 1: OpCache (opcodes).
+      - Nivel 2: APCu (datos locales).
+      - Nivel 3: Redis (datos compartidos).
+      - Nivel 4: HTTP Cache (navegador/CDN).
+
+   3. Query Analyzer:
+      - Captura todas las consultas SQL.
+      - Sugiere índices faltantes.
+      - Detecta N+1 queries automáticamente.
+      - Recomienda refactorizaciones.
+
+   4. Auto-scaling de PHP-FPM:
+      - Monitorea carga del servidor.
+      - Ajusta pm.max_children dinámicamente.
+      - Envía alertas cuando se acerca al límite.
+
+   5. Profiler integrado:
+      - Mide tiempo de cada capa (routing, controller,
+        modelo, vista).
+      - Genera reportes semanales.
+      - Compara rendimiento antes/después de deploys.
+
+   6. Cache Warmup:
+      - Script que precarga las URL más visitadas.
+      - Distribuye la carga de caché en horas valle.
+      - Mantiene la caché caliente para usuarios reales.
+
+   El dashboard debe mostrar en tiempo real:
+   ```
+   Endpoint          | Tiempo  | QPS | P95    | Cache
+   GET /api/v1/users | 45ms    | 120 | 120ms  | 85%
+   POST /api/v1/users| 120ms   | 30  | 250ms  | 0%
+   ```
+
+   Este sistema profesional lleva la optimización al nivel de
+   empresas como Etsy, Shopify y GitHub.
+
+===============================================================================
+FIN DEL CAPÍTULO 59
+===============================================================================
+
+"La velocidad no es un lujo, es respeto por el tiempo del usuario.
+Optimizar no es hacer más rápido, es eliminar la espera innecesaria."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+60_CAPITULO_60_PROYECTO_MODULO_VI.txt
+===============================================================================

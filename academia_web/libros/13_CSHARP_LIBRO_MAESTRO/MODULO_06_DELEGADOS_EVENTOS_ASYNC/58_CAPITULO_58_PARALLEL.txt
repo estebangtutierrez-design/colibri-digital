@@ -1,0 +1,638 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 58: PARALLEL (PLINQ)
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 58 de C# MASTER BOOK. Hasta ahora has visto cómo
+trabajar con una o varias tareas. Pero ¿cómo procesas MILLONES de elementos
+en paralelo aprovechando todos los núcleos de la CPU?
+
+La respuesta: Parallel y PLINQ.
+
+  • Parallel clase estática con métodos For, ForEach, e Invoke.
+  • PLINQ (Parallel LINQ): versión paralela de LINQ con .AsParallel().
+
+Estas herramientas están diseñadas para trabajo CPU-bound: procesamiento
+de imágenes, simulaciones, cálculos numéricos, transformaciones de datos
+masivos.
+
+La diferencia clave con async/await:
+  • async/await → no bloqueante, I/O bound (esperar).
+  • Parallel/PLINQ → paralelismo, CPU bound (procesar).
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"Parallel no hace que tu código sea más rápido en un solo núcleo.
+Lo que hace es usar todos los núcleos que tienes."
+— Autor desconocido
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Usar Parallel.For para bucles paralelos.
+  • Usar Parallel.ForEach para enumeraciones paralelas.
+  • Usar Parallel.Invoke para ejecutar métodos en paralelo.
+  • Configurar el grado de paralelismo (MaxDegreeOfParallelism).
+  • Manejar cancelación en Parallel.
+  • Manejar excepciones en Parallel (AggregateException).
+  • Usar ParallelLoopState para break/stop.
+  • Usar PLINQ con AsParallel().
+  • Configurar PLINQ: WithDegreeOfParallelism, WithCancellation.
+  • Entender cuándo usar Parallel y cuándo no.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. Parallel.For
+
+Ejecuta un bucle for donde las iteraciones pueden ejecutarse en paralelo.
+
+  Parallel.For(0, 100, i =>
+  {
+      Console.WriteLine($"Iteración {i} en hilo {Thread.CurrentThread.ManagedThreadId}");
+      Procesar(i);
+  });
+
+No hay garantía de orden. Cada iteración puede ejecutarse en cualquier
+hilo, en cualquier orden.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. Parallel.ForEach
+
+Similar, pero para IEnumerable<T>:
+
+  var items = Enumerable.Range(1, 1000);
+  Parallel.ForEach(items, item =>
+  {
+      RealizarTrabajo(item);
+  });
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. Parallel.Invoke
+
+Ejecuta múltiples acciones en paralelo:
+
+  Parallel.Invoke(
+      () => Console.WriteLine("Tarea 1"),
+      () => Console.WriteLine("Tarea 2"),
+      () => Console.WriteLine("Tarea 3")
+  );
+
+Espera a que todas completen antes de continuar.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. ParallelOptions y MaxDegreeOfParallelism
+
+Controla cuántos hilos se usan:
+
+  var options = new ParallelOptions
+  {
+      MaxDegreeOfParallelism = Environment.ProcessorCount / 2,
+      CancellationToken = cancellationToken
+  };
+
+  Parallel.For(0, 1000, options, i => { });
+
+Usa MaxDegreeOfParallelism para:
+  • Limitar el uso de CPU en servidores compartidos.
+  • Evitar saturación en operaciones I/O-bound.
+  • Dejar recursos para otros procesos.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. ParallelLoopState: Break y Stop
+
+Dentro de un bucle paralelo, puedes controlar el flujo:
+
+  Parallel.For(0, 100, (i, state) =>
+  {
+      if (i >= 50)
+          state.Break();  // No más iteraciones después de i=50
+      Procesar(i);
+  });
+
+  // Stop: detiene tan pronto como sea posible
+  Parallel.For(0, 100, (i, state) =>
+  {
+      if (EncontreResultado())
+          state.Stop();
+  });
+
+Break vs Stop:
+  • Break: asegura que todas las iteraciones antes del índice se ejecuten.
+  • Stop: detiene lo antes posible (no garantiza orden).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Excepciones en Parallel
+
+Las excepciones se agregan en AggregateException:
+
+  try
+  {
+      Parallel.For(0, 100, i =>
+      {
+          if (i == 42) throw new Exception($"Error en {i}");
+          Console.WriteLine($"Procesando {i}");
+      });
+  }
+  catch (AggregateException ae)
+  {
+      foreach (var ex in ae.InnerExceptions)
+          Console.WriteLine($"Error: {ex.Message}");
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. Thread-Local Data con Parallel.For
+
+Para acumular resultados sin locks:
+
+  long total = 0;
+
+  Parallel.For(0, 1000,
+      // Inicialización local
+      () => 0L,
+      // Iteración
+      (i, state, subtotal) =>
+      {
+          subtotal += i;
+          return subtotal;
+      },
+      // Combinación final
+      subtotal => Interlocked.Add(ref total, subtotal)
+  );
+
+  Console.WriteLine($"Total: {total}");
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. PLINQ: AsParallel()
+
+Convierte cualquier LINQ a paralelo:
+
+  var numeros = Enumerable.Range(1, 10000000);
+
+  var resultado = numeros
+      .AsParallel()
+      .Where(n => n % 2 == 0)
+      .Select(n => n * n)
+      .ToArray();
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. PLINQ: Opciones avanzadas
+
+  var resultado = datos
+      .AsParallel()
+      .WithDegreeOfParallelism(4)           // Hilos
+      .WithExecutionMode(ParallelExecutionMode.ForceParallelism)
+      .WithCancellation(cts.Token)
+      .WithMergeOptions(ParallelMergeOptions.NotBuffered)
+      .Where(FiltroCostoso)
+      .Select(TransformacionCostosa)
+      .ToList();
+
+ParallelMergeOptions:
+  • NotBuffered → resultados tan pronto como están listos.
+  • AutoBuffered → buffer para mejor rendimiento (default).
+  • FullyBuffered → espera todos los resultados.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+10. ForAll en PLINQ
+
+ForAll ejecuta una acción para cada resultado (en paralelo):
+
+  datos.AsParallel()
+       .Where(x => x > 0)
+       .Select(x => x * 2)
+       .ForAll(resultado =>
+       {
+           Console.WriteLine($"Resultado: {resultado}");
+       });
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Capitulo58_ParallelPLINQ
+{
+    public class Program
+    {
+        static void Main()
+        {
+            Console.WriteLine("═══════ CAPÍTULO 58: PARALLEL (PLINQ) ═══════\n");
+
+            Console.WriteLine($"Procesadores lógicos: {Environment.ProcessorCount}\n");
+
+            // ─── 1. Parallel.For ───
+            Console.WriteLine("─── 1. Parallel.For ───");
+
+            var sw = Stopwatch.StartNew();
+
+            Parallel.For(0, 10, i =>
+            {
+                Console.WriteLine($"  [{Thread.CurrentThread.ManagedThreadId}] i={i}");
+                Thread.Sleep(200);  // Simula trabajo
+            });
+
+            sw.Stop();
+            Console.WriteLine($"  Tiempo: {sw.ElapsedMilliseconds}ms\n");
+
+            // ─── 2. Parallel.ForEach ───
+            Console.WriteLine("─── 2. Parallel.ForEach ───");
+
+            var items = Enumerable.Range(1, 10).ToList();
+
+            Parallel.ForEach(items, item =>
+            {
+                Console.WriteLine($"  [{Thread.CurrentThread.ManagedThreadId}] item={item}");
+                Thread.Sleep(150);
+            });
+
+            // ─── 3. Parallel.Invoke ───
+            Console.WriteLine("\n─── 3. Parallel.Invoke ───");
+
+            Parallel.Invoke(
+                () => { Console.WriteLine("  Tarea A"); Thread.Sleep(500); },
+                () => { Console.WriteLine("  Tarea B"); Thread.Sleep(300); },
+                () => { Console.WriteLine("  Tarea C"); Thread.Sleep(700); },
+                () => {
+                    Console.WriteLine("  Tarea D");
+                    Thread.Sleep(400);
+                }
+            );
+            Console.WriteLine("  Todas las tareas completadas\n");
+
+            // ─── 4. ParallelOptions ───
+            Console.WriteLine("─── 4. MaxDegreeOfParallelism ───");
+
+            var options = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 2
+            };
+
+            sw.Restart();
+            Parallel.For(0, 8, options, i =>
+            {
+                Console.WriteLine($"  [{Thread.CurrentThread.ManagedThreadId}] i={i}");
+                Thread.Sleep(300);
+            });
+            sw.Stop();
+            Console.WriteLine($"  Tiempo con MaxDOP=2: {sw.ElapsedMilliseconds}ms\n");
+
+            // ─── 5. Break vs Stop ───
+            Console.WriteLine("─── 5. ParallelLoopState (Break) ───");
+
+            var resultadoBusqueda = -1;
+
+            Parallel.For(0, 100, (i, state) =>
+            {
+                if (i == 30)
+                {
+                    resultadoBusqueda = i;
+                    state.Break();
+                }
+                Thread.Sleep(10);
+            });
+            Console.WriteLine($"  Break encontró: {resultadoBusqueda}\n");
+
+            // ─── 6. Excepciones ───
+            Console.WriteLine("─── 6. Excepciones en Parallel ───");
+
+            try
+            {
+                Parallel.For(0, 5, i =>
+                {
+                    if (i == 2) throw new InvalidOperationException($"Error en i={i}");
+                    Console.WriteLine($"  i={i} OK");
+                    Thread.Sleep(50);
+                });
+            }
+            catch (AggregateException ae)
+            {
+                foreach (var ex in ae.InnerExceptions)
+                    Console.WriteLine($"  💥 {ex.Message}");
+            }
+            Console.WriteLine();
+
+            // ─── 7. Thread-Local Data ───
+            Console.WriteLine("─── 7. Thread-Local Data ───");
+
+            long sumaTotal = 0;
+
+            Parallel.For(0, 1001,
+                () => 0L,                          // Initialize
+                (i, state, subtotal) =>           // Body
+                {
+                    subtotal += i;
+                    return subtotal;
+                },
+                subtotal => Interlocked.Add(ref sumaTotal, subtotal)  // Finally
+            );
+
+            Console.WriteLine($"  Suma 0-1000: {sumaTotal} (esperado: 500500)\n");
+
+            // ─── 8. PLINQ básico ───
+            Console.WriteLine("─── 8. PLINQ AsParallel ───");
+
+            var numeros = Enumerable.Range(1, 10000000);
+
+            sw.Restart();
+            var pares = numeros
+                .AsParallel()
+                .Where(n => n % 2 == 0)
+                .Select(n => n * 2)
+                .Count();
+            sw.Stop();
+            Console.WriteLine($"  PLINQ count: {pares} en {sw.ElapsedMilliseconds}ms\n");
+
+            // ─── 9. PLINQ con opciones ───
+            Console.WriteLine("─── 9. PLINQ con Opciones ───");
+
+            var datos = Enumerable.Range(1, 100);
+
+            var resultado = datos
+                .AsParallel()
+                .WithDegreeOfParallelism(4)
+                .WithExecutionMode(ParallelExecutionMode.ForceParallelism)
+                .Where(n =>
+                {
+                    Thread.Sleep(10);
+                    return n > 50;
+                })
+                .Select(n => n * 10)
+                .ToList();
+
+            Console.WriteLine($"  Resultados: {resultado.Count} elementos\n");
+
+            // ─── 10. PLINQ ForAll ───
+            Console.WriteLine("─── 10. PLINQ ForAll ───");
+
+            var itemsPar = Enumerable.Range(1, 10);
+
+            // ForAll ejecuta action en paralelo
+            itemsPar
+                .AsParallel()
+                .WithDegreeOfParallelism(3)
+                .ForAll(item =>
+                {
+                    Console.WriteLine($"  [{Thread.CurrentThread.ManagedThreadId}] ForAll: {item}");
+                    Thread.Sleep(100);
+                });
+            Console.WriteLine();
+
+            // ─── 11. Parallel.For + ConcurrentBag ───
+            Console.WriteLine("─── 11. Concurrent Collection ───");
+
+            var resultados = new ConcurrentBag<int>();
+
+            Parallel.For(0, 100, i =>
+            {
+                resultados.Add(i * i);
+            });
+
+            Console.WriteLine($"  Items en ConcurrentBag: {resultados.Count}\n");
+
+            // ─── 12. Performance: secuencial vs paralelo ───
+            Console.WriteLine("─── 12. Performance: Secuencial vs Paralelo ───");
+
+            var datosPerf = Enumerable.Range(1, 1000000).ToArray();
+
+            // Secuencial
+            sw.Restart();
+            var sumSec = datosPerf.Sum(x => (long)x);
+            sw.Stop();
+            Console.WriteLine($"  Secuencial: {sw.ElapsedMilliseconds}ms");
+
+            // Paralelo (PLINQ)
+            sw.Restart();
+            var sumPar = datosPerf.AsParallel().Sum(x => (long)x);
+            sw.Stop();
+            Console.WriteLine($"  PLINQ Sum: {sw.ElapsedMilliseconds}ms");
+
+            // Parallel.For con thread-local
+            sw.Restart();
+            long sumFor = 0;
+            Parallel.For(0, datosPerf.Length,
+                () => 0L,
+                (i, state, subtotal) => subtotal + datosPerf[i],
+                subtotal => Interlocked.Add(ref sumFor, subtotal));
+            sw.Stop();
+            Console.WriteLine($"  Parallel.For: {sw.ElapsedMilliseconds}ms\n");
+
+            // ─── 13. Ordered vs Unordered ───
+            Console.WriteLine("─── 13. PLINQ Ordered ───");
+
+            var desordenado = Enumerable.Range(1, 10)
+                .AsParallel()
+                .Select(x => x)
+                .ToList();
+
+            var ordenado = Enumerable.Range(1, 10)
+                .AsParallel()
+                .AsOrdered()
+                .Select(x => x)
+                .ToList();
+
+            Console.WriteLine($"  Desordenado: {string.Join(", ", desordenado)}");
+            Console.WriteLine($"  Ordenado:    {string.Join(", ", ordenado)}\n");
+
+            // ─── 14. Cancelación en Parallel ───
+            Console.WriteLine("─── 14. Cancelación en Parallel ───");
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            var parallelOpts = new ParallelOptions
+            {
+                CancellationToken = cts.Token,
+                MaxDegreeOfParallelism = 4
+            };
+
+            try
+            {
+                Parallel.For(0, 1000, parallelOpts, i =>
+                {
+                    Console.WriteLine($"  Procesando {i}");
+                    Thread.Sleep(50);
+                    parallelOpts.CancellationToken.ThrowIfCancellationRequested();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("  ✅ Parallel.For cancelado\n");
+            }
+
+            // ─── 15. Parallel.ForEach con OrderablePartitioner ───
+            Console.WriteLine("─── 15. Parallel.ForEach con índice ───");
+
+            var lista = Enumerable.Range(0, 5).ToList();
+
+            Parallel.ForEach(lista, (item, state, index) =>
+            {
+                Console.WriteLine($"  Índice: {index}, Valor: {item}");
+                Thread.Sleep(100);
+            });
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 58 ═══════");
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Parallel.For / ForEach / Invoke ejecutan trabajo CPU-bound en paralelo.
+  • MaxDegreeOfParallelism controla la concurrencia.
+  • ParallelLoopState.Break/Stop para control de flujo.
+  • Las excepciones se agregan en AggregateException.
+  • Thread-Local Data evita locks en acumulaciones.
+  • PLINQ (AsParallel) paraleliza consultas LINQ.
+  • Opciones: WithDegreeOfParallelism, WithCancellation, AsOrdered, ForAll.
+  • ParallelMergeOptions controla el buffer de resultados.
+  • No usar Parallel en I/O-bound ni en operaciones muy pequeñas.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Calcula la suma de 1 a 10,000,000 usando Parallel.For
+    con thread-local data. Compara con un bucle for normal.
+
+  ✦ Ejercicio 2: Crea un procesador de imágenes simulado: Parallel.ForEach
+    sobre una lista de "imágenes" que tarden 100ms cada una.
+
+  ✦ Ejercicio 3: Implementa una búsqueda en paralelo: encuentra el primer
+    número primo mayor a 100,000 usando Break.
+
+  ✦ Ejercicio 4: Usa Parallel.Invoke para ejecutar 4 algoritmos de
+    ordenamiento diferentes en paralelo sobre el mismo array.
+
+  ✦ Ejercicio 5: Usa PLINQ para procesar un millón de registros:
+    filtrar, transformar y agregar en una sola consulta.
+
+  ✦ Ejercicio 6: Demuestra la diferencia entre AsOrdered y sin orden
+    en PLINQ con resultados visibles.
+
+  ✦ Ejercicio 7: Cancela un Parallel.ForEach después de 1 segundo usando
+    CancellationToken.
+
+  ✦ Ejercicio 8: Implementa un contador de palabras en paralelo: dado un
+    array de strings, cuenta el total de palabras usando PLINQ.
+
+  ✦ Ejercicio 9: Crea un pipeline paralelo: carga → transforma → guarda
+    usando ConcurrentBag y Parallel.ForEach.
+
+  ✦ Ejercicio 10: Mide el speedup de Parallel.For con 1, 2, 4, 8 hilos
+    en una operación CPU-bound.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿Parallel siempre es más rápido que un bucle for?
+  → No. Para colecciones pequeñas (< 50 items), el overhead es mayor
+    que el beneficio. Mide antes de optimizar.
+
+  ❓ ¿Parallel.ForEach es lo mismo que Task.WhenAll?
+  → No. Parallel.ForEach es para CPU-bound y bloquea el hilo actual.
+    Task.WhenAll es para I/O-bound y no bloquea.
+
+  ❓ ¿Cuántos hilos usa Parallel por defecto?
+  → Tantos como procesadores lógicos tenga la máquina.
+
+  ❓ ¿Puedo usar Parallel en ASP.NET?
+  → Sí, pero con cuidado. ASP.NET ya usa ThreadPool. Parallel puede
+    saturar los hilos del pool.
+
+  ❓ ¿Qué es ParallelMergeOptions?
+  → Controla cómo PLINQ bufferiza los resultados: NotBuffered,
+    AutoBuffered, FullyBuffered.
+
+  ❓ ¿PLINQ preserva el orden por defecto?
+  → No. Usa AsOrdered() si necesitas preservar el orden.
+
+  ❓ ¿Puedo cancelar una operación Parallel?
+  → Sí, usando CancellationToken en ParallelOptions.
+
+  ❓ ¿Qué pasa si lanzo una excepción dentro de Parallel.For?
+  → Se captura en AggregateException. Las iteraciones restantes se
+    detienen.
+
+  ❓ ¿Parallel.ForEach es thread-safe?
+  → Depende de lo que hagas dentro. Los datos compartidos necesitan
+    sincronización (locks, Concurrent collections).
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Implementa un procesador de archivos en paralelo que analice un   │
+  │  directorio completo buscando patrones de texto.                  │
+  │                                                                     │
+  │  ParallelFileAnalyzer                                              │
+  │    • Escanea recursivamente un directorio buscando archivos .txt.  │
+  │    • Parallel.ForEach para procesar archivos en paralelo.         │
+  │    • PLINQ para analizar líneas dentro de cada archivo.           │
+  │    • Reporta:                                                      │
+  │      - Archivos procesados, líneas totales, líneas con match.     │
+  │      - Archivo con más matches.                                   │
+  │      - Palabra más frecuente.                                     │
+  │      - Tiempo total y promedio por archivo.                       │
+  │    • Soporta filtro por extensión y patrón de búsqueda.           │
+  │    • Soporta cancelación.                                          │
+  │    • Progressive output: muestra resultados a medida que          │
+  │      los archivos se procesan (usando ConcurrentDictionary).       │
+  │                                                                     │
+  │  Ejemplo de uso:                                                   │
+  │    var analyzer = new ParallelFileAnalyzer();                     │
+  │    var report = analyzer.AnalyzeDirectory(                         │
+  │        @"C:\logs", "*.txt", "ERROR", cts.Token);                  │
+  │    Console.WriteLine(report);                                      │
+  │                                                                     │
+  │  Entrega: ParallelFileAnalyzer.cs completo con demo.              │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+Parallel y PLINQ son herramientas increíblemente poderosas para trabajo
+CPU-bound. Con solo agregar .AsParallel() conviertes una consulta LINQ
+secuencial en paralela. Con Parallel.ForEach procesas colecciones
+aprovechando todos los núcleos.
+
+Pero recuerda: no todo debe ser paralelo. Paralelizar tiene overhead.
+Mide siempre antes y después. Y para I/O-bound, usa async/await en
+lugar de Parallel.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 59: TPL (TASK PARALLEL LIBRARY)
+    Profundizarás en la Task Parallel Library: Task.Factory,
+    TaskScheduler, child tasks, dataflow y más.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 58 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,1195 @@
+================================================================================
+  CAPÍTULO 63: MOVE SEMANTICS
+  MÓDULO VII: C++ MODERNO
+  C++ MASTER BOOK
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo sobre semántica de movimiento (move semantics).
+Esta característica de C++11 permite transferir recursos de un objeto a
+otro eficientemente, eliminando copias innecesarias y mejorando el
+rendimiento de forma significativa.
+
+FRASE DEL CAPÍTULO
+------------------
+"Move semantics permite a los compiladores reemplazar copias costosas con
+movimientos baratos. Es una de las optimizaciones más importantes en C++11."
+— Scott Meyers
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Comprender el problema que resuelve la semántica de movimiento.
+2. Implementar move constructor y move assignment operator.
+3. Usar std::move para convertir lvalues en rvalues.
+4. Aplicar la regla de cinco (Rule of Five).
+5. Entender la optimización de retorno por valor (RVO/NRVO).
+6. Distinguir entre copia superficial, copia profunda y movimiento.
+7. Reconocer cuándo el movimiento ocurre automáticamente.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--- 1. EL PROBLEMA DE LAS COPIAS COSTOSAS ---
+
+Antes de C++11, pasar y retornar objetos implicaba copias profundas que
+afectaban el rendimiento.
+
+```cpp
+#include <iostream>
+#include <cstring>
+#include <vector>
+
+class StringAntigua {
+    char* data;
+    size_t len;
+
+public:
+    // Constructor
+    StringAntigua(const char* str = "") {
+        len = std::strlen(str);
+        data = new char[len + 1];
+        std::strcpy(data, str);
+        std::cout << "Constructor: copiando \"" << str << "\"\n";
+    }
+
+    // Copy constructor (SIEMPRE se llama, incluso en returns)
+    StringAntigua(const StringAntigua& other) {
+        len = other.len;
+        data = new char[len + 1];
+        std::strcpy(data, other.data);
+        std::cout << "Copy constructor: copia profunda de \"" << other.data << "\"\n";
+    }
+
+    // Copy assignment
+    StringAntigua& operator=(const StringAntigua& other) {
+        if (this != &other) {
+            delete[] data;
+            len = other.len;
+            data = new char[len + 1];
+            std::strcpy(data, other.data);
+            std::cout << "Copy assignment: copia profunda\n";
+        }
+        return *this;
+    }
+
+    // Destructor
+    ~StringAntigua() {
+        delete[] data;
+        std::cout << "Destructor: liberando memoria\n";
+    }
+
+    const char* c_str() const { return data; }
+};
+
+StringAntigua crearSaludo() {
+    StringAntigua s("Hola Mundo");
+    return s;  // Copia innecesaria
+}
+
+int main() {
+    std::cout << "=== PROBLEMA: COPIAS INNECESARIAS ===\n";
+
+    StringAntigua s1("Original");
+    StringAntigua s2 = s1;            // Copia (quizás necesaria)
+    StringAntigua s3 = crearSaludo(); // Copia innecesaria!
+
+    std::cout << "s1: " << s1.c_str() << "\n";
+    std::cout << "s2: " << s2.c_str() << "\n";
+    std::cout << "s3: " << s3.c_str() << "\n";
+
+    std::cout << "\nSe realizaron copias profundas innecesarias!\n";
+
+    return 0;
+}
+```
+
+--- 2. MOVE CONSTRUCTOR Y MOVE ASSIGNMENT ---
+
+La solución: mover recursos en lugar de copiarlos.
+
+```cpp
+#include <iostream>
+#include <cstring>
+#include <utility>
+
+class StringModern {
+    char* data;
+    size_t len;
+
+public:
+    // Constructor
+    StringModern(const char* str = "") {
+        len = std::strlen(str);
+        data = new char[len + 1];
+        std::strcpy(data, str);
+        std::cout << "Constructor: \"" << str << "\"\n";
+    }
+
+    // Copy constructor
+    StringModern(const StringModern& other)
+        : len(other.len), data(new char[other.len + 1]) {
+        std::strcpy(data, other.data);
+        std::cout << "Copy constructor: copia de \"" << other.data << "\"\n";
+    }
+
+    // Copy assignment
+    StringModern& operator=(const StringModern& other) {
+        if (this != &other) {
+            delete[] data;
+            len = other.len;
+            data = new char[len + 1];
+            std::strcpy(data, other.data);
+            std::cout << "Copy assignment\n";
+        }
+        return *this;
+    }
+
+    // MOVE CONSTRUCTOR
+    StringModern(StringModern&& other) noexcept
+        : data(other.data), len(other.len) {
+        other.data = nullptr;
+        other.len = 0;
+        std::cout << "Move constructor: robando recursos!\n";
+    }
+
+    // MOVE ASSIGNMENT
+    StringModern& operator=(StringModern&& other) noexcept {
+        if (this != &other) {
+            delete[] data;
+            data = other.data;
+            len = other.len;
+            other.data = nullptr;
+            other.len = 0;
+            std::cout << "Move assignment: robando recursos!\n";
+        }
+        return *this;
+    }
+
+    // Destructor
+    ~StringModern() {
+        if (data) {
+            delete[] data;
+            std::cout << "Destructor: liberando \"" << data << "\"\n";
+        } else {
+            std::cout << "Destructor: objeto vacio (movido)\n";
+        }
+    }
+
+    const char* c_str() const { return data ? data : ""; }
+};
+
+StringModern crearModerna() {
+    StringModern s("Movido!");
+    return s;  // Move constructor (o RVO)
+}
+
+int main() {
+    std::cout << "=== MOVE SEMANTICS EN ACCION ===\n";
+
+    StringModern s1("Objeto fuente");
+    StringModern s2 = std::move(s1);  // Move constructor
+
+    std::cout << "s2: " << s2.c_str() << "\n";
+    std::cout << "s1: '" << s1.c_str() << "' (vacio, movido)\n";
+
+    StringModern s3("Temporal");
+    StringModern s4("Destino");
+    s4 = std::move(s3);  // Move assignment
+
+    std::cout << "s4: " << s4.c_str() << "\n";
+    std::cout << "s3: '" << s3.c_str() << "' (vacio, movido)\n";
+
+    std::cout << "\nCreando desde funcion:\n";
+    StringModern s5 = crearModerna();
+
+    return 0;
+}
+```
+
+--- 3. STD::MOVE: CONVERSIÓN A RVALUE ---
+
+std::move no mueve nada, simplemente convierte un lvalue a rvalue.
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <utility>
+
+class Recurso {
+    int id;
+public:
+    Recurso(int i) : id(i) {
+        std::cout << "Creando recurso " << id << "\n";
+    }
+    ~Recurso() {
+        std::cout << "Destruyendo recurso " << id << "\n";
+    }
+    Recurso(const Recurso& o) : id(o.id) {
+        std::cout << "Copiando recurso " << id << "\n";
+    }
+    Recurso(Recurso&& o) noexcept : id(o.id) {
+        o.id = -1;
+        std::cout << "Moviendo recurso " << id << "\n";
+    }
+    void usar() const { std::cout << "Usando recurso " << id << "\n"; }
+};
+
+int main() {
+    // std::move es esencialmente un static_cast a T&&
+    Recurso r1(1);
+    Recurso r2 = std::move(r1);  // r1 → rvalue → move constructor
+
+    // r1 ya no debe usarse (excepto para destruirlo o reasignarlo)
+    // r1.usar();  // PELIGRO: r1.id es -1
+
+    // std::move con contenedores STL
+    std::vector<std::string> origen = {
+        "texto largo 1", "texto largo 2", "texto largo 3"
+    };
+
+    std::cout << "\nMoviendo vector:\n";
+    std::vector<std::string> destino = std::move(origen);
+
+    std::cout << "Tamano origen: " << origen.size() << "\n";
+    std::cout << "Tamano destino: " << destino.size() << "\n";
+
+    // Insertar con move
+    std::vector<std::string> palabras;
+    std::string hola = "Hola";
+    std::string mundo = "Mundo";
+
+    std::cout << "\nInsertando con move:\n";
+    palabras.push_back(std::move(hola));
+    palabras.push_back(std::move(mundo));
+
+    std::cout << "hola: '" << hola << "'\n";  // Vacio
+    std::cout << "palabras[0]: '" << palabras[0] << "'\n";
+
+    return 0;
+}
+```
+
+--- 4. LA REGLA DE CINCO (RULE OF FIVE) ---
+
+Si una clase gestiona recursos, debe implementar: destructor, copy
+constructor, copy assignment, move constructor, move assignment.
+
+```cpp
+#include <iostream>
+#include <cstring>
+#include <utility>
+
+class Buffer {
+    int* datos;
+    size_t tam;
+
+public:
+    // 1. Constructor
+    explicit Buffer(size_t n) : tam(n), datos(new int[n]{0}) {
+        std::cout << "Buffer(" << n << ")\n";
+    }
+
+    // 2. Destructor
+    ~Buffer() {
+        delete[] datos;
+        std::cout << "~Buffer()\n";
+    }
+
+    // 3. Copy constructor
+    Buffer(const Buffer& otro) : tam(otro.tam), datos(new int[otro.tam]) {
+        std::copy(otro.datos, otro.datos + tam, datos);
+        std::cout << "Buffer(copy)\n";
+    }
+
+    // 4. Copy assignment
+    Buffer& operator=(const Buffer& otro) {
+        if (this != &otro) {
+            delete[] datos;
+            tam = otro.tam;
+            datos = new int[tam];
+            std::copy(otro.datos, otro.datos + tam, datos);
+            std::cout << "Buffer copy=\n";
+        }
+        return *this;
+    }
+
+    // 5a. Move constructor
+    Buffer(Buffer&& otro) noexcept
+        : datos(otro.datos), tam(otro.tam) {
+        otro.datos = nullptr;
+        otro.tam = 0;
+        std::cout << "Buffer(move)\n";
+    }
+
+    // 5b. Move assignment
+    Buffer& operator=(Buffer&& otro) noexcept {
+        if (this != &otro) {
+            delete[] datos;
+            datos = otro.datos;
+            tam = otro.tam;
+            otro.datos = nullptr;
+            otro.tam = 0;
+            std::cout << "Buffer move=\n";
+        }
+        return *this;
+    }
+
+    void llenar(int valor) {
+        for (size_t i = 0; i < tam; ++i) datos[i] = valor;
+    }
+
+    void mostrar() const {
+        if (!datos) { std::cout << "[movido]\n"; return; }
+        for (size_t i = 0; i < tam; ++i) std::cout << datos[i] << " ";
+        std::cout << "\n";
+    }
+};
+
+int main() {
+    std::cout << "=== REGLA DE CINCO ===\n";
+
+    Buffer b1(5);
+    b1.llenar(42);
+
+    Buffer b2 = b1;       // Copy constructor
+    Buffer b3(3);
+    b3 = b1;              // Copy assignment
+
+    Buffer b4 = std::move(b1);  // Move constructor
+    b1.llenar(100);             // Reusar b1 (seguro después de move)
+
+    Buffer b5(2);
+    b5 = std::move(b2);         // Move assignment
+
+    std::cout << "\nEstado final:\n";
+    std::cout << "b1: "; b1.mostrar();
+    std::cout << "b2: "; b2.mostrar();
+    std::cout << "b3: "; b3.mostrar();
+    std::cout << "b4: "; b4.mostrar();
+    std::cout << "b5: "; b5.mostrar();
+
+    return 0;
+}
+```
+
+--- 5. OBJETOS EN ESTADO "MOVIDO-FUERA" (MOVED-FROM) ---
+
+Los objetos movidos deben estar en un estado válido pero no especificado.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <utility>
+
+class EstadoValido {
+    std::string nombre;
+    int* datos;
+    size_t tam;
+
+public:
+    EstadoValido(const std::string& nom, size_t n)
+        : nombre(nom), tam(n), datos(new int[n]{0}) {
+        std::cout << nombre << ": creado\n";
+    }
+
+    // Move constructor: dejar objeto origen en estado válido
+    EstadoValido(EstadoValido&& otro) noexcept
+        : nombre(std::move(otro.nombre))
+        , datos(otro.datos)
+        , tam(otro.tam) {
+        otro.datos = nullptr;
+        otro.tam = 0;
+        // nombre ya se movió (std::string tiene move constructor)
+        std::cout << nombre << ": movido desde " << otro.nombre << "\n";
+    }
+
+    // Después del move, el origen puede:
+    // - Ser destruido (seguro)
+    // - Ser reasignado (seguro)
+    // - Llamar a funciones que no dependan del estado interno (limitado)
+
+    void reset() {
+        delete[] datos;
+        datos = new int[tam]{0};
+        std::cout << nombre << ": reset\n";
+    }
+
+    void mostrarEstado() const {
+        std::cout << nombre << ": datos=" << (datos ? "valido" : "nulo")
+                  << ", tam=" << tam << "\n";
+    }
+
+    ~EstadoValido() {
+        std::cout << nombre << ": destruido (datos="
+                  << (datos ? "no-nulo" : "nulo") << ")\n";
+        delete[] datos;
+    }
+
+    EstadoValido(const EstadoValido&) = delete;
+    EstadoValido& operator=(const EstadoValido&) = delete;
+    EstadoValido& operator=(EstadoValido&&) = delete;
+};
+
+int main() {
+    std::cout << "=== ESTADO MOVED-FROM ===\n";
+
+    EstadoValido origen("origen", 10);
+    EstadoValido destino("destino", 5);
+
+    origen.mostrarEstado();
+    destino.mostrarEstado();
+
+    destino = std::move(origen);  // Usando move assignment...
+
+    // origen está en estado moved-from: válido pero vacío
+    std::cout << "\nDespues del move:\n";
+    origen.mostrarEstado();
+    destino.mostrarEstado();
+
+    // Usos seguros de un objeto moved-from:
+    // 1. Destruirlo (el destructor maneja nullptr)
+    // 2. Reasignarlo
+    origen.reset();  // Ahora origen tiene nuevos datos
+    origen.mostrarEstado();
+
+    std::cout << "\n--- Ejemplo con std::vector ---\n";
+    std::vector<int> v1 = {1, 2, 3, 4, 5};
+    std::vector<int> v2 = std::move(v1);
+
+    std::cout << "v1 size despues de move: " << v1.size() << "\n";
+    std::cout << "v2 size: " << v2.size() << "\n";
+
+    // v1 está vacío pero podemos asignarle nuevo contenido
+    v1 = {10, 20, 30};
+    std::cout << "v1 reasignado: " << v1.size() << " elementos\n";
+
+    return 0;
+}
+```
+
+--- 6. OPTIMIZACIÓN DE RETORNO (RVO/NRVO) ---
+
+El compilador puede elidir (omitir) copias/movimientos en ciertos casos.
+
+```cpp
+#include <iostream>
+
+struct Objeto {
+    int id;
+    static int contador;
+
+    Objeto(int i) : id(i) {
+        std::cout << "Constructor(" << id << ")\n";
+    }
+
+    Objeto(const Objeto& o) : id(o.id + 100) {
+        std::cout << "Copia(" << id << " desde " << o.id << ")\n";
+    }
+
+    Objeto(Objeto&& o) noexcept : id(o.id + 200) {
+        std::cout << "Move(" << id << " desde " << o.id << ")\n";
+    }
+
+    ~Objeto() {
+        std::cout << "Destructor(" << id << ")\n";
+    }
+};
+
+int Objeto::contador = 0;
+
+// RVO: Return Value Optimization
+Objeto crearRVO(int id) {
+    return Objeto(id);  // Construcción directa en el destino
+}
+
+// NRVO: Named Return Value Optimization
+Objeto crearNRVO(int id) {
+    Objeto obj(id);
+    return obj;  // El compilador puede elidir la copia/move
+}
+
+// Sin optimización (obligar a copia con std::move explícito)
+Objeto crearSinOpt(int id) {
+    Objeto obj(id);
+    return std::move(obj);  // Inhibe RVO/NRVO (fuerza move)
+}
+
+int main() {
+    std::cout << "=== RVO (Return Value Optimization) ===\n";
+    Objeto a = crearRVO(1);
+    std::cout << "a.id = " << a.id << "\n\n";
+
+    std::cout << "=== NRVO (Named RVO) ===\n";
+    Objeto b = crearNRVO(2);
+    std::cout << "b.id = " << b.id << "\n\n";
+
+    std::cout << "=== Sin optimización (std::move) ===\n";
+    Objeto c = crearSinOpt(3);
+    std::cout << "c.id = " << c.id << "\n";
+
+    return 0;
+}
+```
+
+--- 7. SWAP EFICIENTE CON MOVE ---
+
+La semántica de movimiento permite implementar swap sin copias.
+
+```cpp
+#include <iostream>
+#include <utility>
+#include <chrono>
+#include <vector>
+#include <string>
+
+class BigData {
+    std::vector<double> data;
+    std::string nombre;
+
+public:
+    BigData(std::string nom, size_t n)
+        : nombre(std::move(nom)), data(n) {}
+
+    // Swap eficiente con move
+    friend void swap(BigData& a, BigData& b) noexcept {
+        using std::swap;
+        swap(a.nombre, b.nombre);
+        swap(a.data, b.data);
+    }
+
+    // Copy-and-swap assignment (unifica copia y movimiento)
+    BigData& operator=(BigData other) noexcept {
+        swap(*this, other);
+        return *this;
+    }
+
+    // Constructor de movimiento
+    BigData(BigData&&) noexcept = default;
+    // Constructor de copia
+    BigData(const BigData&) = default;
+
+    void mostrar() const {
+        std::cout << nombre << " [" << data.size() << " elementos]\n";
+    }
+};
+
+template<typename T>
+void miSwap(T& a, T& b) {
+    T tmp = std::move(a);
+    a = std::move(b);
+    b = std::move(tmp);
+}
+
+int main() {
+    std::cout << "=== SWAP CON MOVE ===\n";
+
+    BigData obj1("Objeto1", 1000000);
+    BigData obj2("Objeto2", 2000000);
+
+    // Swap con move (muy eficiente)
+    auto inicio = std::chrono::high_resolution_clock::now();
+    miSwap(obj1, obj2);
+    auto fin = std::chrono::high_resolution_clock::now();
+
+    auto duracion = std::chrono::duration_cast<std::chrono::microseconds>(
+        fin - inicio);
+    std::cout << "Swap con move: " << duracion.count() << " us\n";
+
+    obj1.mostrar();
+    obj2.mostrar();
+
+    // En C++11, std::swap usa move semantics internamente
+    std::string s1 = "texto muy largo que seria costoso copiar";
+    std::string s2 = "otro texto largo";
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    std::swap(s1, s2);
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    std::cout << "std::swap (con move): "
+              << std::chrono::duration_cast<std::chrono::nanoseconds>(
+                     t2 - t1).count() << " ns\n";
+
+    return 0;
+}
+```
+
+--- 8. MOVE CON STL: CASOS PRÁCTICOS ---
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <memory>
+#include <map>
+#include <algorithm>
+
+class Costoso {
+    std::vector<int> datos;
+
+public:
+    explicit Costoso(size_t n) : datos(n) {
+        std::cout << "Costoso(" << n << ") construido\n";
+    }
+
+    Costoso(const Costoso& o) : datos(o.datos) {
+        std::cout << "Costoso copiado (" << datos.size() << ")\n";
+    }
+
+    Costoso(Costoso&& o) noexcept : datos(std::move(o.datos)) {
+        std::cout << "Costoso movido (" << datos.size() << ")\n";
+    }
+};
+
+int main() {
+    std::cout << "=== MOVE CON STL ===\n";
+
+    // 1. Insertar en vector con push_back
+    std::vector<Costoso> vec;
+    vec.reserve(3);
+
+    Costoso c1(1000);
+    vec.push_back(std::move(c1));  // Move
+
+    vec.emplace_back(2000);  // Construcción in-place (mejor)
+
+    // 2. Reasignar elementos
+    Costoso c2(500);
+    vec[0] = std::move(c2);  // Move assignment
+
+    // 3. Map con strings (move para evitar copias)
+    std::map<int, std::string> mapa;
+
+    std::string valor = "valor muy largo que queremos evitar copiar";
+    mapa[1] = std::move(valor);
+    // valor está vacío ahora
+
+    // 4. Algoritmos con move
+    std::vector<Costoso> origen;
+    origen.emplace_back(100);
+    origen.emplace_back(200);
+
+    std::vector<Costoso> destino;
+    destino.reserve(origen.size());
+
+    std::move(origen.begin(), origen.end(),
+              std::back_inserter(destino));
+
+    std::cout << "\nOrigen size despues de move: " << origen.size() << "\n";
+
+    // 5. unique_ptr (solo movimiento)
+    std::vector<std::unique_ptr<int>> punteros;
+    auto p = std::make_unique<int>(42);
+    punteros.push_back(std::move(p));
+    // p es nullptr ahora
+
+    std::cout << "Valor: " << *punteros[0] << "\n";
+
+    // 6. Move en algoritmos de ordenación
+    std::vector<Costoso> paraOrdenar;
+    paraOrdenar.emplace_back(300);
+    paraOrdenar.emplace_back(100);
+    paraOrdenar.emplace_back(200);
+
+    // std::sort usa move internamente
+    std::sort(paraOrdenar.begin(), paraOrdenar.end(),
+              [](const Costoso& a, const Costoso& b) {
+                  return &a < &b;  // Solo para demostración
+              });
+
+    return 0;
+}
+```
+
+--- 9. COPY-AND-SWAP IDIOM ---
+
+El idiom copy-and-swap unifica copy y move assignment.
+
+```cpp
+#include <iostream>
+#include <cstring>
+#include <utility>
+
+class StringCS {
+    char* data;
+    size_t len;
+
+public:
+    StringCS(const char* str = "") {
+        len = std::strlen(str);
+        data = new char[len + 1];
+        std::strcpy(data, str);
+        std::cout << "StringCS(\"" << str << "\")\n";
+    }
+
+    // Copy constructor
+    StringCS(const StringCS& other)
+        : len(other.len), data(new char[other.len + 1]) {
+        std::strcpy(data, other.data);
+        std::cout << "StringCS(copy: \"" << other.data << "\")\n";
+    }
+
+    // Move constructor
+    StringCS(StringCS&& other) noexcept
+        : data(other.data), len(other.len) {
+        other.data = nullptr;
+        other.len = 0;
+        std::cout << "StringCS(move)\n";
+    }
+
+    // UNIFICADO: copy-and-swap assignment
+    // Toma el parámetro por valor (copia si lvalue, move si rvalue)
+    StringCS& operator=(StringCS other) noexcept {
+        std::cout << "StringCS operator= (copy-and-swap)\n";
+        swap(*this, other);
+        return *this;
+    }
+
+    friend void swap(StringCS& a, StringCS& b) noexcept {
+        using std::swap;
+        swap(a.data, b.data);
+        swap(a.len, b.len);
+    }
+
+    ~StringCS() {
+        if (data) {
+            std::cout << "~StringCS(\"" << data << "\")\n";
+            delete[] data;
+        } else {
+            std::cout << "~StringCS(nullptr)\n";
+        }
+    }
+
+    const char* c_str() const { return data ? data : ""; }
+};
+
+int main() {
+    std::cout << "=== COPY-AND-SWAP IDIOM ===\n";
+
+    StringCS s1("Hola");
+    StringCS s2("Mundo");
+
+    // Lvalue: copia
+    s2 = s1;
+    std::cout << "s2 = " << s2.c_str() << "\n\n";
+
+    // Rvalue: move
+    s2 = StringCS("Temporal");
+    std::cout << "s2 = " << s2.c_str() << "\n\n";
+
+    // std::move: move
+    StringCS s3("Movido");
+    s2 = std::move(s3);
+    std::cout << "s2 = " << s2.c_str() << "\n";
+
+    return 0;
+}
+```
+
+--- 10. MOVE CON MIEMBROS QUE NO SOPORTAN MOVE ---
+
+No todos los tipos se benefician del movimiento.
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <array>
+#include <string>
+#include <utility>
+
+struct TipoTrivial {
+    int x, y, z;
+    // Movimiento = copia (no hay recursos externos)
+};
+
+struct TipoConRecursos {
+    std::string nombre;
+    std::vector<int> datos;
+
+    // El movimiento de string y vector ya es eficiente
+    // No necesitamos implementar move constructor manualmente
+};
+
+class Mixto {
+    std::string nombre;         // Movible eficientemente
+    std::array<int, 100> arr;   // Se copia (no hay beneficio en move)
+    std::vector<double> vec;    // Movible eficientemente
+
+public:
+    Mixto(const std::string& n, size_t sz)
+        : nombre(n), vec(sz) {}
+
+    // No necesitamos implementar move — el compilador lo genera
+    // si todos los miembros son movibles
+};
+
+class NoMovible {
+    int id;
+    // Tipo con delete move
+    // NoMovible(NoMovible&&) = delete;
+};
+
+int main() {
+    std::cout << "=== TIPOS Y MOVIMIENTO ===\n";
+
+    // std::array: move = copy (no hay beneficio)
+    std::array<int, 1000> arr1 = {};
+    std::array<int, 1000> arr2 = std::move(arr1);  // Copia 1000 ints
+
+    // std::vector: move eficiente (solo 3 punteros)
+    std::vector<int> vec1(1000000);
+    std::vector<int> vec2 = std::move(vec1);  // Solo mueve punteros
+
+    std::cout << "vec1 size despues de move: " << vec1.size() << "\n";
+    std::cout << "vec2 size: " << vec2.size() << "\n";
+
+    // Verificar si un tipo es movible
+    std::cout << "std::is_move_constructible<int>: "
+              << std::is_move_constructible<int>::value << "\n";
+    std::cout << "std::is_move_constructible<std::string>: "
+              << std::is_move_constructible<std::string>::value << "\n";
+    std::cout << "std::is_move_constructible<NoMovible>: "
+              << std::is_move_constructible<NoMovible>::value << "\n";
+
+    return 0;
+}
+```
+
+--- 11. MOVE Y EXCEPCIONES: NOEXCEPT ---
+
+Marcar move constructor y move assignment como noexcept es importante.
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <utility>
+
+class Seguro {
+    int* datos;
+public:
+    Seguro() : datos(new int(42)) {}
+    Seguro(Seguro&& otro) noexcept : datos(otro.datos) {
+        otro.datos = nullptr;
+    }
+    ~Seguro() { delete datos; }
+};
+
+class Inseguro {
+    int* datos;
+public:
+    Inseguro() : datos(new int(42)) {}
+    Inseguro(Inseguro&& otro) : datos(otro.datos) {
+        otro.datos = nullptr;
+        // No noexcept — podría lanzar
+    }
+    ~Inseguro() { delete datos; }
+};
+
+int main() {
+    std::cout << "=== NOEXCEPT Y MOVE ===\n";
+
+    std::cout << "std::is_nothrow_move_constructible<Seguro>::value: "
+              << std::is_nothrow_move_constructible<Seguro>::value << "\n";
+
+    std::cout << "std::is_nothrow_move_constructible<Inseguro>::value: "
+              << std::is_nothrow_move_constructible<Inseguro>::value << "\n";
+
+    // Si un move constructor es noexcept, los vectores lo usarán
+    // durante la reasignación. Si no, usarán copy (más lento pero seguro).
+
+    std::vector<Seguro> vecSeguro(10);
+    vecSeguro.reserve(20);  // Usará move (noexcept)
+
+    std::vector<Inseguro> vecInseguro(10);
+    vecInseguro.reserve(20);  // Usará copy (no noexcept disponible)
+
+    std::cout << "\nLos vectores prefieren move noexcept sobre copy\n";
+    std::cout << "para reubicar elementos durante la reserva de memoria.\n";
+    std::cout << "Si el move constructor no es noexcept, el vector usara copy.\n";
+
+    return 0;
+}
+```
+
+--- 12. EJEMPLO INTEGRADOR ---
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <memory>
+#include <utility>
+#include <algorithm>
+
+class Imagen {
+    std::vector<unsigned char> pixeles;
+    int ancho, alto;
+    std::string nombre;
+
+public:
+    Imagen(std::string nom, int w, int h)
+        : nombre(std::move(nom)), ancho(w), alto(h)
+        , pixeles(w * h) {
+        std::cout << "Imagen(" << nombre << ", " << w << "x" << h << ")\n";
+    }
+
+    // Copy constructor
+    Imagen(const Imagen& o)
+        : nombre(o.nombre), ancho(o.ancho), alto(o.alto)
+        , pixeles(o.pixeles) {
+        std::cout << "Imagen(copy: " << nombre << ")\n";
+    }
+
+    // Move constructor
+    Imagen(Imagen&& o) noexcept
+        : nombre(std::move(o.nombre))
+        , ancho(o.ancho), alto(o.alto)
+        , pixeles(std::move(o.pixeles)) {
+        o.ancho = 0;
+        o.alto = 0;
+        std::cout << "Imagen(move: " << nombre << ")\n";
+    }
+
+    // Copy-and-swap assignment
+    Imagen& operator=(Imagen o) noexcept {
+        std::swap(nombre, o.nombre);
+        std::swap(ancho, o.ancho);
+        std::swap(alto, o.alto);
+        std::swap(pixeles, o.pixeles);
+        return *this;
+    }
+
+    void aplicarFiltro() {
+        for (auto& p : pixeles) p = static_cast<unsigned char>(p * 0.8);
+    }
+
+    void mostrar() const {
+        std::cout << nombre << ": " << ancho << "x" << alto
+                  << " (" << pixeles.size() << " pixeles)\n";
+    }
+};
+
+class Galeria {
+    std::vector<Imagen> imagenes;
+    std::string nombre;
+
+public:
+    explicit Galeria(std::string nom) : nombre(std::move(nom)) {}
+
+    // Solo movimiento (no copia de galerías)
+    Galeria(const Galeria&) = delete;
+    Galeria& operator=(const Galeria&) = delete;
+    Galeria(Galeria&&) = default;
+    Galeria& operator=(Galeria&&) = default;
+
+    void agregarImagen(Imagen img) {
+        imagenes.push_back(std::move(img));
+    }
+
+    template<typename... Args>
+    void emplaceImagen(Args&&... args) {
+        imagenes.emplace_back(std::forward<Args>(args)...);
+    }
+
+    void aplicarFiltroATodas() {
+        for (auto& img : imagenes) img.aplicarFiltro();
+    }
+
+    void mostrar() const {
+        std::cout << "\nGaleria: " << nombre << "\n";
+        for (const auto& img : imagenes) img.mostrar();
+    }
+};
+
+int main() {
+    std::cout << "=== SISTEMA DE GALERIA CON MOVE ===\n";
+
+    Galeria galeria("Mis Fotos");
+
+    // Agregar imágenes (con movimiento automático)
+    Imagen foto1("vacaciones.jpg", 1920, 1080);
+    Imagen foto2("familia.jpg", 3840, 2160);
+
+    galeria.agregarImagen(std::move(foto1));
+    galeria.agregarImagen(std::move(foto2));
+
+    // foto1 y foto2 están en estado moved-from
+    // foto1.mostrar();  // No mostraría datos válidos
+
+    // Construcción in-place (más eficiente)
+    galeria.emplaceImagen("panorama.jpg", 4096, 2048);
+
+    // Mover galería completa
+    Galeria otraGaleria = std::move(galeria);
+    // galeria está vacía ahora
+
+    otraGaleria.aplicarFiltroATodas();
+    otraGaleria.mostrar();
+
+    return 0;
+}
+```
+
+--- 13. BENEFICIOS DE RENDIMIENTO ---
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <chrono>
+
+class BigObject {
+    std::vector<int> data;
+    std::string name;
+
+public:
+    BigObject(std::string n, size_t s)
+        : name(std::move(n)), data(s) {
+        for (size_t i = 0; i < s; ++i) data[i] = i;
+    }
+
+    BigObject(const BigObject&) = default;
+    BigObject(BigObject&&) = default;
+    BigObject& operator=(const BigObject&) = default;
+    BigObject& operator=(BigObject&&) = default;
+};
+
+int main() {
+    const size_t TAM = 10000000;
+    const size_t REPETICIONES = 100;
+
+    std::cout << "=== COMPARATIVA RENDIMIENTO ===\n";
+
+    // Copia vs Movimiento
+    BigObject fuente("datos", TAM);
+
+    auto inicio = std::chrono::high_resolution_clock::now();
+    for (size_t i = 0; i < REPETICIONES; ++i) {
+        BigObject copia = fuente;
+    }
+    auto fin = std::chrono::high_resolution_clock::now();
+    auto tiempoCopia = std::chrono::duration_cast<std::chrono::milliseconds>(
+        fin - inicio);
+
+    inicio = std::chrono::high_resolution_clock::now();
+    for (size_t i = 0; i < REPETICIONES; ++i) {
+        BigObject copia = fuente;           // Copia
+        BigObject movido = std::move(copia); // Move
+    }
+    fin = std::chrono::high_resolution_clock::now();
+    auto tiempoMove = std::chrono::duration_cast<std::chrono::milliseconds>(
+        fin - inicio);
+
+    std::cout << "Copia (" << REPETICIONES << "x): " << tiempoCopia.count() << "ms\n";
+    std::cout << "Move (" << REPETICIONES << "x): " << tiempoMove.count() << "ms\n";
+    std::cout << "El move es ~"
+              << (tiempoCopia.count() / (tiempoMove.count() + 1))
+              << "x mas rapido!\n";
+
+    return 0;
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+La semántica de movimiento permite transferir recursos sin copiarlos:
+
+• Move constructor: T(T&&) noexcept — roba recursos del origen.
+• Move assignment: T& operator=(T&&) noexcept — libera recursos propios
+  y roba del origen.
+• std::move: convierte un lvalue a rvalue (no mueve nada por sí mismo).
+• Rule of Five: si implementas destructor, copy constructor o copy
+  assignment, considera implementar también los move equivalents.
+• noexcept en move es importante para contenedores como std::vector.
+• RVO/NRVO: el compilador puede elidir copias/movimientos.
+• Copy-and-swap idiom: unifica copy y move assignment.
+• Objetos moved-from deben estar en estado válido (usualmente vacío).
+• No todos los tipos se benefician del movimiento (ej: std::array, tipos triviales).
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+1. Implementa una clase "DynamicArray" con Rule of Five completa.
+2. Escribe un programa que demuestre que std::move no mueve nada.
+3. Crea una clase "UniqueResource" que solo sea movible (no copiable).
+4. Compara el rendimiento de copia vs movimiento para std::vector grande.
+5. Implementa el copy-and-swap idiom para una clase con recursos.
+6. Escribe una función que retorne un objeto grande y verifica si
+   ocurre RVO/NRVO (observa constructores llamados).
+7. Crea un swap genérico que use move semantics.
+8. Implementa un "move_iterator" que convierta iteración normal a move.
+9. Escribe una clase "Logger" que use move para archivos de log.
+10. Demuestra la importancia de noexcept en move constructors.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿std::move realmente mueve algo?
+R: No. std::move solo convierte un lvalue a rvalue (static_cast<T&&>).
+El movimiento real ocurre en el move constructor o move assignment.
+
+P: ¿Qué estado queda en un objeto después de ser movido?
+R: Un estado válido pero no especificado. Generalmente vacío o por
+defecto. Puedes reasignarlo o destruirlo.
+
+P: ¿Necesito implementar move constructor para todas mis clases?
+R: No. Si todos los miembros son movibles, el compilador genera uno
+automáticamente. Solo implementa si gestionas recursos manualmente.
+
+P: ¿Por qué es importante noexcept en move?
+R: std::vector y otros contenedores usan move solo si es noexcept.
+Si no es noexcept, usan copy (más lento) para garantizar seguridad
+frente a excepciones.
+
+P: ¿Move es siempre más rápido que copy?
+R: Generalmente sí, para tipos que gestionan recursos (punteros,
+handles). Para tipos triviales (int, array fijo), move = copy.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseña un "Memory Pool" (gestor de memoria) en C++11 que:
+
+1. Administre un bloque de memoria contiguo usando move semantics.
+2. Implemente Rule of Five completa con move constructor y move
+   assignment noexcept.
+3. Use copy-and-swap idiom para la asignación.
+4. Tenga iteradores que usen std::move para transferir ownership.
+5. Demuestre la diferencia de rendimiento entre copy y move.
+6. Incluya un "moved-from" state testing.
+7. Use static_assert para verificar noexcept de move.
+
+El Memory Pool debe ser eficiente y seguro, demostrando el poder
+de la semántica de movimiento en C++ Moderno.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+La semántica de movimiento es una de las características más
+importantes de C++11. Permite escribir código más eficiente sin
+sacrificar seguridad o claridad. Combinada con lambdas y la STL,
+forma el núcleo del C++ moderno.
+
+En el próximo capítulo exploraremos las referencias rvalue (&&) y
+cómo habilitan el perfect forwarding y las reference collapsing rules.
+
+================================================================================
+  PRÓXIMO CAPÍTULO: RVALUE REFERENCES
+================================================================================
+
+Las referencias rvalue (&&) son el mecanismo subyacente que hace
+posible la semántica de movimiento y el forwarding perfecto.
+
+================================================================================
+  FIN DEL CAPÍTULO 63
+================================================================================

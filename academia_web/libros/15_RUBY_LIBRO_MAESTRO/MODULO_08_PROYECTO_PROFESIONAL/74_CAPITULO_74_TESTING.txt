@@ -1,0 +1,1082 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           RUBY MASTER BOOK — MÓDULO VIII: PROYECTO               ║
+║              CAPÍTULO 74: TESTING (RSPEC)                       ║
+║          "Un test hoy vale por cien deploys mañana"              ║
+╚══════════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, maestro tester. El testing no es opcional en el desarrollo
+profesional. RSpec es el framework de pruebas más usado en Ruby y te
+permitirá escribir especificaciones legibles, mantenibles y poderosas.
+Hoy dejarás de adivinar si tu código funciona y empezarás a saberlo.
+
+FRASE DEL SABIO
+───────────────
+"El código sin pruebas no es código, es un experimento."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Configurar RSpec en un proyecto Ruby.
+2. Escribir tests con describe, context, it y expect.
+3. Usar let, subject y before/after hooks.
+4. Implementar mocks, stubs y doubles.
+5. Integrar Factory Bot para crear datos de prueba.
+6. Aplicar TDD (Test Driven Development) correctamente.
+
+INSTALACIÓN Y CONFIGURACIÓN DE RSPEC
+──────────────────────────────────────
+
+```ruby
+# ============================================================
+# Instalación
+# ============================================================
+# Gemfile
+group :test do
+  gem 'rspec'
+  gem 'rspec-core'
+  gem 'rspec-expectations'
+  gem 'rspec-mocks'
+  gem 'factory_bot'
+  gem 'faker'
+  gem 'database_cleaner'
+  gem 'shoulda-matchers'
+  gem 'simplecov', require: false
+end
+
+# Terminal:
+# $ bundle install
+# $ rspec --init
+
+# Esto genera:
+# .rspec
+# spec/spec_helper.rb
+
+# ============================================================
+# .rspec
+# ============================================================
+# --color
+# --format documentation
+# --require spec_helper
+
+# ============================================================
+# spec/spec_helper.rb
+# ============================================================
+require 'simplecov'
+SimpleCov.start do
+  add_filter '/spec/'
+  add_filter '/vendor/'
+  minimum_coverage 90
+end
+
+require 'bundler/setup'
+require 'rspec'
+
+RSpec.configure do |config|
+  config.expect_with :rspec do |expectations|
+    expectations.include_chain_clauses_in_custom_matcher_descriptions = true
+  end
+
+  config.mock_with :rspec do |mocks|
+    mocks.verify_partial_doubles = true
+  end
+
+  config.shared_context_metadata_behavior = :apply_to_host_groups
+  config.filter_run_when_matching :focus
+  config.disable_monkey_patching!
+  config.default_formatter = 'doc' if config.files_to_run.one?
+  config.profile_examples = 10
+  config.order = :random
+  Kernel.srand config.seed
+end
+```
+
+ESTRUCTURA BÁSICA DE UN TEST
+──────────────────────────────
+
+```ruby
+# spec/models/producto_spec.rb
+require 'spec_helper'
+require_relative '../../app/models/producto'
+
+RSpec.describe Producto do
+  describe '#initialize' do
+    it 'crea un producto con atributos por defecto' do
+      producto = Producto.new
+
+      expect(producto.nombre).to be_nil
+      expect(producto.precio).to be_nil
+      expect(producto.stock).to eq(0)
+    end
+
+    it 'asigna atributos correctamente' do
+      producto = Producto.new(nombre: 'Laptop', precio: 1500, stock: 10)
+
+      expect(producto.nombre).to eq('Laptop')
+      expect(producto.precio).to eq(1500)
+      expect(producto.stock).to eq(10)
+    end
+  end
+
+  describe '#disponible?' do
+    it 'es disponible si tiene stock positivo' do
+      producto = Producto.new(stock: 5)
+      expect(producto).to be_disponible
+    end
+
+    it 'no es disponible si stock es cero' do
+      producto = Producto.new(stock: 0)
+      expect(producto).not_to be_disponible
+    end
+
+    it 'no es disponible si stock es negativo' do
+      producto = Producto.new(stock: -1)
+      expect(producto).not_to be_disponible
+    end
+  end
+
+  describe '#precio_con_impuesto' do
+    it 'calcula precio con impuesto por defecto' do
+      producto = Producto.new(precio: 100)
+      expect(producto.precio_con_impuesto).to eq(116.0)
+    end
+
+    it 'usa la tasa de impuesto proporcionada' do
+      producto = Producto.new(precio: 100)
+      expect(producto.precio_con_impuesto(0.08)).to eq(108.0)
+    end
+  end
+
+  describe '#to_s' do
+    it 'formatea el producto como string' do
+      producto = Producto.new(nombre: 'Mouse', precio: 25.50, stock: 3)
+      expect(producto.to_s).to match(/Mouse/)
+      expect(producto.to_s).to match(/\$25\.50/)
+    end
+  end
+end
+```
+
+LET Y SUBJECT — VARIABLES INTELIGENTES
+────────────────────────────────────────
+
+```ruby
+# spec/models/producto_spec.rb (versión optimizada)
+RSpec.describe Producto do
+  # let crea una variable perezosa (solo se evalúa cuando se usa)
+  let(:atributos) { { nombre: 'Teclado', precio: 80, stock: 15 } }
+  subject(:producto) { Producto.new(atributos) }
+
+  describe '#initialize' do
+    it 'asigna nombre' do
+      expect(producto.nombre).to eq('Teclado')
+    end
+
+    it 'asigna precio' do
+      expect(producto.precio).to eq(80)
+    end
+
+    context 'sin atributos' do
+      subject(:producto_sin_atributos) { Producto.new }
+
+      it 'tiene valores por defecto' do
+        expect(producto_sin_atributos.stock).to eq(0)
+      end
+    end
+  end
+
+  describe '#disponible?' do
+    it { is_expected.to be_disponible }
+
+    context 'cuando no hay stock' do
+      let(:atributos) { { stock: 0 } }
+      it { is_expected.not_to be_disponible }
+    end
+  end
+
+  describe '#precio_con_impuesto' do
+    it 'calcula correctamente' do
+      expect(producto.precio_con_impuesto).to eq(92.8) # 80 * 1.16
+    end
+  end
+end
+```
+
+LET! — EVALUACIÓN INMEDIATA
+─────────────────────────────
+
+```ruby
+RSpec.describe 'let vs let!' do
+  $contador = 0
+
+  let(:perezoso) { $contador += 1 }
+  let!(:inmediato) { $contador += 1 }
+
+  it 'let! se evalúa antes del test (inmediato)' do
+    expect($contador).to eq(1) # inmediato ya se ejecutó
+  end
+
+  it 'let se evalúa solo cuando se referencia' do
+    expect($contador).to eq(1) # inmediato se ejecutó otra vez
+    perezoso # ahora se evalúa let
+    expect($contador).to eq(2)
+  end
+end
+```
+
+HOOKS: BEFORE, AFTER, AROUND
+─────────────────────────────
+
+```ruby
+RSpec.describe 'Hooks en RSpec' do
+  before(:suite) { puts 'Antes de TODA la suite' }
+  after(:suite)  { puts 'Después de TODA la suite' }
+
+  before(:context) { puts 'Antes de este grupo describe' }
+  after(:context)  { puts 'Después de este grupo describe' }
+
+  before(:each) { @valor = 42 }
+  after(:each)  { @valor = nil }
+
+  around(:each) do |test|
+    puts "  Antes de #{test.description}"
+    test.run
+    puts "  Después de #{test.description}"
+  end
+
+  before do
+    # Equivalente a before(:each), el más común
+    @usuario = Usuario.new(nombre: 'Test')
+  end
+
+  it 'usa hooks' do
+    expect(@valor).to eq(42)
+  end
+end
+```
+
+MATCHERS COMUNES
+─────────────────
+
+```ruby
+RSpec.describe 'Matchers de RSpec' do
+  # ============================================================
+  # MATCHERS DE IGUALDAD
+  # ============================================================
+  it 'compara valores' do
+    expect(5).to eq(5)
+    expect('hola').to eq('hola')
+    expect([1, 2]).to eq([1, 2])
+  end
+
+  it 'compara identidad de objeto' do
+    a = 'hola'
+    b = a
+    expect(a).to be(b)
+    expect('hola').not_to be('hola') # son strings diferentes
+  end
+
+  it 'compara con eql (valor y tipo)' do
+    expect(5).to eql(5)
+    expect(5).not_to eql(5.0) # Integer vs Float
+  end
+
+  it 'compara con equal (alias de be)' do
+    expect(5).to equal(5) # cuidado con integers pequeños
+  end
+
+  # ============================================================
+  # MATCHERS BOOLEANOS
+  # ============================================================
+  it 'evalúa booleanos' do
+    expect(true).to be_truthy
+    expect(false).to be_falsy
+    expect(nil).to be_falsy
+    expect(0).to be_truthy # ¡En Ruby 0 es truthy!
+    expect([]).to be_truthy
+    expect(nil).to be_nil
+  end
+
+  # ============================================================
+  # MATCHERS DE COMPARACIÓN
+  # ============================================================
+  it 'compara números' do
+    expect(5).to be > 3
+    expect(5).to be >= 5
+    expect(5).to be < 10
+    expect(5).to be <= 5
+    expect(5).to be_between(1, 10).inclusive
+    expect(5).to be_between(1, 10).exclusive
+  end
+
+  # ============================================================
+  # MATCHERS DE TIPO
+  # ============================================================
+  it 'verifica tipos' do
+    expect('hola').to be_a(String)
+    expect(5).to be_an(Integer)
+    expect([]).to be_an(Array)
+    expect([1, 2]).to be_kind_of(Enumerable)
+    expect(5).to respond_to(:to_s)
+  end
+
+  # ============================================================
+  # MATCHERS DE STRING
+  # ============================================================
+  it 'trabaja con strings' do
+    expect('Hola Mundo').to include('Mundo')
+    expect('Hola Mundo').to start_with('Hola')
+    expect('Hola Mundo').to end_with('Mundo')
+    expect('hola@email.com').to match(/\A[\w.]+@\w+\.\w+\z/)
+  end
+
+  # ============================================================
+  # MATCHERS DE ARREGLOS
+  # ============================================================
+  it 'trabaja con arreglos' do
+    expect([1, 2, 3]).to include(2)
+    expect([1, 2, 3]).to include(1, 3)
+    expect([1, 2, 3]).to match_array([3, 1, 2]) # sin orden
+    expect([1, 2, 3]).to contain_exactly(3, 1, 2) # sin orden
+    expect([1, 2, 3]).to start_with(1)
+    expect([1, 2, 3]).to end_with(3)
+  end
+
+  # ============================================================
+  # MATCHERS DE HASH
+  # ============================================================
+  it 'trabaja con hashes' do
+    expect({ a: 1, b: 2 }).to include(:a)
+    expect({ a: 1, b: 2 }).to include(a: 1)
+    expect({ a: 1, b: 2 }).to have_key(:a)
+    expect({ a: 1, b: 2 }).to have_value(2)
+  end
+
+  # ============================================================
+  # MATCHERS DE ERRORES
+  # ============================================================
+  it 'captura errores' do
+    expect { 1 / 0 }.to raise_error(ZeroDivisionError)
+    expect { raise 'Error' }.to raise_error('Error')
+    expect { raise ArgumentError }.to raise_error(ArgumentError)
+    expect { 'no block' }.not_to raise_error
+  end
+
+  # ============================================================
+  # MATCHERS DE CAMBIOS
+  # ============================================================
+  it 'detecta cambios' do
+    arreglo = []
+    expect { arreglo << 1 }.to change { arreglo.size }.by(1)
+    expect { arreglo << 2 }.to change { arreglo.size }.from(1).to(2)
+    expect { arreglo.clear }.to change { arreglo }.to([])
+  end
+
+  # ============================================================
+  # MATCHERS DE SATISFACCIÓN
+  # ============================================================
+  it 'usa predicados y bloques' do
+    expect(5).to satisfy { |n| n.positive? && n.even? == false }
+    expect('ruby').to satisfy(:include?, 'ru')
+  end
+
+  # ============================================================
+  # COMPOSICIÓN DE MATCHERS
+  # ============================================================
+  it 'compone matchers' do
+    expect('RSpec es genial').to(
+      start_with('RSpec').and(
+        include('genial').or(
+          include('increíble')
+        )
+      )
+    )
+  end
+end
+```
+
+MOCKS, STUBS Y DOUBLES
+───────────────────────
+
+```ruby
+# ============================================================
+# DOUBLES — Objetos de prueba
+# ============================================================
+RSpec.describe 'Doubles' do
+  it 'crea un objeto doble simple' do
+    usuario = double('usuario')
+    allow(usuario).to receive(:nombre).and_return('Juan')
+    expect(usuario.nombre).to eq('Juan')
+  end
+
+  it 'crea un doble con hash' do
+    usuario = double('usuario', nombre: 'María', email: 'maria@test.com')
+    expect(usuario.nombre).to eq('María')
+    expect(usuario.email).to eq('maria@test.com')
+  end
+
+  it 'verifica mensajes recibidos' do
+    usuario = double('usuario')
+    expect(usuario).to receive(:salvar).once
+    expect(usuario).to receive(:notificar).exactly(3).times
+    expect(usuario).to receive(:email).at_least(:once)
+
+    usuario.salvar
+    usuario.notificar
+    usuario.notificar
+    usuario.notificar
+    usuario.email
+  end
+
+  it 'usa doubles con verificación de método' do
+    usuario = instance_double('Usuario', nombre: 'admin')
+    expect(usuario).to be_a(instance_double('Usuario'))
+  end
+end
+
+# ============================================================
+# STUBS — Simular respuestas
+# ============================================================
+RSpec.describe 'Stubs' do
+  let(:cliente_api) { instance_double('ClienteAPI') }
+  let(:servicio) { ProcesarPago.new(cliente_api) }
+
+  before do
+    allow(cliente_api).to receive(:cargar)
+      .with(hash_including(:monto))
+      .and_return(ResultadoTransaccion.new(exitosa: true))
+  end
+
+  it 'procesa pago exitosamente' do
+    resultado = servicio.call(pedido_id: 1, monto: 100)
+    expect(resultado).to be_success
+  end
+end
+
+# ============================================================
+# MESSAGE EXPECTATIONS — Verificar interacciones
+# ============================================================
+RSpec.describe 'Message expectations' do
+  it 'verifica que un método fue llamado' do
+    usuario = instance_double('Usuario')
+    expect(usuario).to receive(:guardar).with(no_args).and_return(true)
+
+    RepositorioUsuarios.new.guardar(usuario)
+  end
+
+  it 'verifica argumentos específicos' do
+    notificador = instance_double('Notificador')
+    expect(notificador).to receive(:enviar)
+      .with(hash_including(:email, :mensaje))
+      .once
+
+    notificador.enviar(email: 'a@b.com', mensaje: 'Hola', adjunto: nil)
+  end
+end
+
+# ============================================================
+# SPIES — Observadores
+# ============================================================
+RSpec.describe 'Spies' do
+  let(:notificador) { spy('notificador') }
+
+  it 'registra llamadas para verificación posterior' do
+    # Ejecutar la acción que debería llamar al notificador
+    UsuarioService.new(notificador).crear(nombre: 'Ana')
+
+    # Verificar después de la acción
+    expect(notificador).to have_received(:enviar_bienvenida).once
+    expect(notificador).to have_received(:enviar_bienvenida)
+      .with(hash_including(:nombre))
+  end
+end
+```
+
+FACTORY BOT — FÁBRICAS DE DATOS
+──────────────────────────────────
+
+```ruby
+# ============================================================
+# Definir fábricas
+# ============================================================
+
+# spec/factories/usuarios.rb
+FactoryBot.define do
+  factory :usuario do
+    nombre { Faker::Name.name }
+    email  { Faker::Internet.email }
+    admin  { false }
+
+    trait :admin do
+      admin { true }
+    end
+
+    trait :con_telefono do
+      telefono { Faker::PhoneNumber.cell_phone }
+    end
+
+    factory :usuario_admin, traits: [:admin]
+
+    after(:build) do |usuario|
+      usuario.password = 'password123' if usuario.respond_to?(:password=)
+    end
+
+    after(:create) do |usuario|
+      usuario.activar! if usuario.respond_to?(:activar!)
+    end
+  end
+end
+
+# spec/factories/productos.rb
+FactoryBot.define do
+  factory :producto do
+    nombre    { Faker::Commerce.product_name }
+    precio    { Faker::Commerce.price(range: 10..1000) }
+    stock     { rand(0..100) }
+    categoria { Faker::Commerce.department }
+
+    trait :agotado do
+      stock { 0 }
+    end
+
+    trait :caro do
+      precio { 5000 }
+    end
+
+    trait :barato do
+      precio { 5.99 }
+    end
+  end
+end
+
+# ============================================================
+# Usar fábricas en tests
+# ============================================================
+RSpec.describe Producto do
+  it 'crea un producto con factory' do
+    producto = build(:producto)
+    expect(producto.nombre).to be_present
+    expect(producto.precio).to be > 0
+  end
+
+  it 'crea un producto agotado' do
+    producto = build(:producto, :agotado)
+    expect(producto.stock).to eq(0)
+  end
+
+  it 'persiste un producto' do
+    producto = create(:producto)
+    expect(producto).to be_persisted
+  end
+
+  it 'usa atributos específicos' do
+    producto = build(:producto, nombre: 'Laptop Gamer', precio: 25000)
+    expect(producto.nombre).to eq('Laptop Gamer')
+    expect(producto.precio).to eq(25000)
+  end
+end
+```
+
+DATABASE CLEANER — LIMPIEZA DE BASE DE DATOS
+───────────────────────────────────────────────
+
+```ruby
+# spec/support/database_cleaner.rb
+RSpec.configure do |config|
+  config.before(:suite) do
+    DatabaseCleaner.strategy = :transaction
+    DatabaseCleaner.clean_with(:truncation)
+  end
+
+  config.around(:each) do |example|
+    DatabaseCleaner.cleaning do
+      example.run
+    end
+  end
+end
+```
+
+TDD — TEST DRIVEN DEVELOPMENT
+───────────────────────────────
+
+```ruby
+# ============================================================
+# Ciclo TDD: RED → GREEN → REFACTOR
+# ============================================================
+
+# PASO 1: RED — Escribir un test que falla
+# spec/services/calculadora_impuestos_spec.rb
+
+RSpec.describe CalculadoraImpuestos do
+  describe '#calcular' do
+    subject(:calculadora) { described_class.new }
+
+    it 'calcula impuesto para un monto dado' do
+      resultado = calculadora.calcular(monto: 100, tasa: 0.16)
+      expect(resultado[:impuesto]).to eq(16.0)
+      expect(resultado[:total]).to eq(116.0)
+    end
+
+    it 'lanza error si la tasa es negativa' do
+      expect {
+        calculadora.calcular(monto: 100, tasa: -0.5)
+      }.to raise_error(ArgumentError, 'Tasa debe ser positiva')
+    end
+
+    it 'lanza error si el monto es cero o negativo' do
+      expect {
+        calculadora.calcular(monto: 0, tasa: 0.16)
+      }.to raise_error(ArgumentError, 'Monto debe ser positivo')
+    end
+
+    it 'usa tasa por defecto si no se proporciona' do
+      resultado = calculadora.calcular(monto: 100)
+      expect(resultado[:tasa_usada]).to eq(0.16)
+    end
+  end
+end
+
+# PASO 2: GREEN — Implementar el código mínimo
+
+# app/services/calculadora_impuestos.rb
+class CalculadoraImpuestos
+  TASA_POR_DEFECTO = 0.16
+
+  def initialize(tasa_por_defecto: TASA_POR_DEFECTO)
+    @tasa_por_defecto = tasa_por_defecto
+  end
+
+  def calcular(monto:, tasa: nil)
+    raise ArgumentError, 'Monto debe ser positivo' if monto <= 0
+
+    tasa ||= @tasa_por_defecto
+    raise ArgumentError, 'Tasa debe ser positiva' if tasa < 0
+
+    impuesto = (monto * tasa).round(2)
+    { monto: monto, tasa: tasa, impuesto: impuesto,
+      total: (monto + impuesto).round(2), tasa_usada: tasa }
+  end
+end
+
+# PASO 3: REFACTOR — Mejorar el diseño
+
+# app/services/calculadora_impuestos.rb (refactorizado)
+class CalculadoraImpuestos
+  RESULTADO = Struct.new(:monto, :tasa, :impuesto, :total,
+                          keyword_init: true)
+
+  TASA_POR_DEFECTO = 0.16
+
+  def initialize(tasa_por_defecto: TASA_POR_DEFECTO)
+    @tasa_por_defecto = tasa_por_defecto
+  end
+
+  def calcular(monto:, tasa: nil)
+    validar_monto!(monto)
+    tasa ||= @tasa_por_defecto
+    validar_tasa!(tasa)
+
+    impuesto = (monto * tasa).round(2)
+
+    RESULTADO.new(
+      monto: monto,
+      tasa: tasa,
+      impuesto: impuesto,
+      total: (monto + impuesto).round(2)
+    )
+  end
+
+  private
+
+  def validar_monto!(monto)
+    raise ArgumentError, 'Monto debe ser positivo' unless monto.is_a?(Numeric)
+    raise ArgumentError, 'Monto debe ser positivo' if monto <= 0
+  end
+
+  def validar_tasa!(tasa)
+    raise ArgumentError, 'Tasa debe ser positiva' if tasa < 0
+  end
+end
+```
+
+TEST DE SERVICE OBJECTS
+────────────────────────
+
+```ruby
+# spec/services/registrar_usuario_spec.rb
+RSpec.describe RegistrarUsuario do
+  subject(:servicio) { described_class.new(repositorio, notificador) }
+
+  let(:repositorio) { instance_double('RepositorioUsuarios') }
+  let(:notificador) { instance_double('Notificador') }
+
+  describe '#call' do
+    context 'con parámetros válidos' do
+      let(:params) { { nombre: 'Ana', email: 'ana@email.com' } }
+
+      before do
+        allow(repositorio).to receive(:existe_email?).and_return(false)
+        allow(repositorio).to receive(:guardar)
+        allow(notificador).to receive(:enviar_bienvenida)
+      end
+
+      it 'crea un usuario' do
+        expect(repositorio).to receive(:guardar).once
+        servicio.call(params)
+      end
+
+      it 'envía notificación de bienvenida' do
+        expect(notificador).to receive(:enviar_bienvenida).once
+        servicio.call(params)
+      end
+
+      it 'retorna éxito' do
+        resultado = servicio.call(params)
+        expect(resultado.success?).to be true
+      end
+
+      it 'incluye el usuario en el resultado' do
+        resultado = servicio.call(params)
+        expect(resultado.usuario).to be_a(Usuario)
+        expect(resultado.usuario.nombre).to eq('Ana')
+      end
+    end
+
+    context 'con email duplicado' do
+      let(:params) { { nombre: 'Luis', email: 'existente@email.com' } }
+
+      before do
+        allow(repositorio).to receive(:existe_email?)
+          .with('existente@email.com').and_return(true)
+      end
+
+      it 'no guarda el usuario' do
+        expect(repositorio).not_to receive(:guardar)
+        servicio.call(params)
+      end
+
+      it 'retorna error' do
+        resultado = servicio.call(params)
+        expect(resultado.success?).to be false
+        expect(resultado.errors).to include('Email duplicado')
+      end
+    end
+
+    context 'con email inválido' do
+      let(:params) { { nombre: 'Pepe', email: 'invalido' } }
+
+      it 'rechaza el email' do
+        resultado = servicio.call(params)
+        expect(resultado.errors).to include('Email inválido')
+      end
+    end
+
+    context 'con nombre vacío' do
+      let(:params) { { nombre: '', email: 'a@b.com' } }
+
+      it 'rechaza el nombre vacío' do
+        resultado = servicio.call(params)
+        expect(resultado.errors).to include('Nombre requerido')
+      end
+    end
+
+    context 'cuando falla el repositorio' do
+      let(:params) { { nombre: 'Luis', email: 'luis@test.com' } }
+
+      before do
+        allow(repositorio).to receive(:existe_email?).and_return(false)
+        allow(repositorio).to receive(:guardar)
+          .and_raise(StandardError, 'Error de base de datos')
+        allow(notificador).to receive(:enviar_bienvenida)
+      end
+
+      it 'captura la excepción' do
+        resultado = servicio.call(params)
+        expect(resultado.success?).to be false
+        expect(resultado.errors.first).to include('Error interno')
+      end
+    end
+  end
+end
+```
+
+TEST DE CONCERNS
+─────────────────
+
+```ruby
+# spec/concerns/auditable_spec.rb
+RSpec.describe Auditable do
+  # Creamos una clase anónima para probar el concern
+  let(:clase_con_auditoria) do
+    Class.new do
+      include Auditable
+      auditar_atributos :nombre, :precio
+
+      attr_accessor :nombre, :precio, :stock
+
+      def initialize(attrs = {})
+        @nombre = attrs[:nombre]
+        @precio = attrs[:precio]
+        @stock  = attrs[:stock]
+      end
+    end
+  end
+
+  subject(:objeto) { clase_con_auditoria.new(nombre: 'Test', precio: 100) }
+
+  describe '.auditar_atributos' do
+    it 'registra los atributos a auditar' do
+      expect(clase_con_auditoria.atributos_auditados).to eq([:nombre, :precio])
+    end
+  end
+
+  describe '#cambios_auditados' do
+    it 'detecta cambios en atributos auditados' do
+      objeto.nombre = 'Nuevo Nombre'
+      cambios = objeto.cambios_auditados
+      expect(cambios).to have_key(:nombre)
+      expect(cambios[:nombre][:de]).to eq('Test')
+      expect(cambios[:nombre][:a]).to eq('Nuevo Nombre')
+    end
+
+    it 'ignora atributos no auditados' do
+      objeto.stock = 50
+      expect(objeto.cambios_auditados).to be_empty
+    end
+  end
+end
+```
+
+TEST DE REPOSITORIOS
+─────────────────────
+
+```ruby
+# spec/models/repositorio_productos_spec.rb
+RSpec.describe RepositorioProductos do
+  subject(:repositorio) { described_class.new }
+
+  describe '#guardar' do
+    it 'asigna un id autoincremental' do
+      p1 = repositorio.guardar(Producto.new(nombre: 'A'))
+      p2 = repositorio.guardar(Producto.new(nombre: 'B'))
+      expect(p1.id).to eq(1)
+      expect(p2.id).to eq(2)
+    end
+  end
+
+  describe '#buscar' do
+    let!(:producto) { repositorio.guardar(Producto.new(nombre: 'Laptop')) }
+
+    it 'encuentra producto por id' do
+      expect(repositorio.buscar(producto.id).nombre).to eq('Laptop')
+    end
+
+    it 'retorna nil si no existe' do
+      expect(repositorio.buscar(999)).to be_nil
+    end
+  end
+
+  describe '#todos' do
+    before do
+      repositorio.guardar(Producto.new(nombre: 'A'))
+      repositorio.guardar(Producto.new(nombre: 'B'))
+    end
+
+    it 'retorna todos los productos' do
+      expect(repositorio.todos.size).to eq(2)
+    end
+  end
+end
+```
+
+SHARED EXAMPLES — CÓDIGO REUTILIZABLE
+───────────────────────────────────────
+
+```ruby
+# spec/support/shared_examples.rb
+RSpec.shared_examples 'un modelo con validación de email' do
+  it 'es inválido sin email' do
+    subject.email = nil
+    expect(subject).not_to be_valid
+    expect(subject.errors[:email]).to include("no puede estar en blanco")
+  end
+
+  it 'es inválido con formato incorrecto' do
+    subject.email = 'invalido'
+    expect(subject).not_to be_valid
+  end
+
+  it 'es válido con email correcto' do
+    subject.email = 'test@ejemplo.com'
+    expect(subject).to be_valid
+  end
+end
+
+# Usar shared examples:
+RSpec.describe Usuario do
+  it_behaves_like 'un modelo con validación de email'
+end
+
+RSpec.describe Cliente do
+  it_behaves_like 'un modelo con validación de email'
+end
+```
+
+SIMPLE COV — COBERTURA DE CÓDIGO
+───────────────────────────────────
+
+```ruby
+# spec/spec_helper.rb
+require 'simplecov'
+
+SimpleCov.start do
+  add_group 'Models', 'app/models'
+  add_group 'Services', 'app/services'
+  add_group 'Controllers', 'app/controllers'
+  add_group 'Concerns', 'app/concerns'
+  add_group 'Validators', 'app/validators'
+
+  add_filter '/spec/'
+  add_filter '/config/'
+
+  minimum_coverage 85
+  refuse_coverage_drop
+end
+
+# Genera reporte: coverage/index.html
+# Abrir en navegador para ver cobertura detallada
+```
+
+RSEC CON RAILS
+───────────────
+
+```ruby
+# spec/rails_helper.rb
+require 'spec_helper'
+ENV['RAILS_ENV'] ||= 'test'
+require_relative '../config/environment'
+abort('The Rails environment is running in production mode!') if Rails.env.production?
+require 'rspec/rails'
+
+begin
+  ActiveRecord::Migration.maintain_test_schema!
+rescue ActiveRecord::PendingMigrationError => e
+  puts e.to_s.strip
+  exit 1
+end
+
+RSpec.configure do |config|
+  config.fixture_path = "#{::Rails.root}/spec/fixtures"
+  config.use_transactional_fixtures = true
+  config.infer_spec_type_from_file_location!
+  config.filter_rails_from_backtrace!
+end
+```
+
+TAGS Y FILTROS
+───────────────
+
+```ruby
+RSpec.describe 'Tags y filtros' do
+  it 'test normal', :focus do
+    # rspec --tag focus
+    # Solo ejecuta este test
+  end
+
+  it 'test lento', :slow do
+    # rspec --tag slow
+  end
+
+  it 'test de integración', type: :integration do
+    # rspec --tag type:integration
+  end
+
+  it 'test con skip', skip: 'No implementado aún' do
+  end
+
+  it 'test pendiente' do
+    pending 'En desarrollo'
+    raise 'Falla'
+  end
+end
+
+# Ejecución condicional por tags:
+# $ rspec --tag focus
+# $ rspec --tag ~slow (excluir lentos)
+# $ rspec --tag type:integration
+```
+
+RESUMEN DEL CAPÍTULO
+─────────────────────
+- RSpec es el framework de testing más usado en Ruby.
+- describe/context/it organizan las especificaciones.
+- let crea variables perezosas; let! las evalúa de inmediato.
+- subject define el objeto bajo prueba.
+- before/after/around son hooks del ciclo de vida.
+- Los matchers permiten afirmaciones expresivas (eq, be, include).
+- Los doubles reemplazan objetos reales; mocks verifican interacciones.
+- Factory Bot genera datos de prueba de forma declarativa.
+- TDD sigue el ciclo RED → GREEN → REFACTOR.
+- SimpleCov mide la cobertura de código.
+- Los shared examples reutilizan pruebas entre modelos.
+
+EJERCICIOS DEL CAPÍTULO
+────────────────────────
+1. Configura RSpec en un proyecto desde cero con SimpleCov.
+2. Escribe tests para una clase `Calculadora` (suma, resta, mult, div).
+3. Usa before/after para limpiar datos entre tests.
+4. Implementa un doble y verifica que recibe los mensajes esperados.
+5. Crea factories para un modelo `Pedido` con items asociados.
+6. Escribe un service object con TDD (RED → GREEN → REFACTOR).
+7. Usa `change` para verificar que una operación modifica el estado.
+8. Crea shared examples para validar presencia de atributos.
+9. Integra DatabaseCleaner en la configuración de RSpec.
+10. Ejecuta tests en paralelo con la gema `rspec-parallel`.
+
+PREGUNTAS FRECUENTES (FAQ)
+───────────────────────────
+P: ¿Debo escribir tests antes o después del código?
+R: TDD recomienda antes. Pero es mejor escribir tests después que
+   no escribirlos nunca. El hábito ideal es TDD.
+
+P: ¿Qué porcentaje de cobertura es adecuado?
+R: 80-90% es un buen objetivo. El 100% puede ser contraproducente
+   (tests triviales que solo inflan la métrica).
+
+P: ¿Cuándo usar mocks vs objetos reales?
+R: Mocks para servicios externos (API, email, base de datos).
+   Objetos reales para lógica de negocio pura.
+
+P: ¿let o variables de instancia (@)?
+R: let. Es perezoso, memoizado y limpio entre tests.
+
+P: ¿Cómo organizo mis archivos de test?
+R: Espeja la estructura de app/ en spec/. Cada clase tiene su
+   archivo _spec.rb correspondiente.
+
+DESAFÍO DEL TESTER
+───────────────────
+Crea una suite completa de pruebas para un sistema de gestión de
+biblioteca que incluya:
+1. Modelos: Libro, Usuario, Prestamo con validaciones y scopes.
+2. Service Objects: PrestarLibro, DevolverLibro, CalcularMulta.
+3. Un concern `Buscable` con método `buscar_por_titulo`.
+4. Integración con API externa (mocked) para obtener ISBN.
+5. Cobertura mínima del 95% con SimpleCov.
+6. Pruebas en paralelo con tiempo de ejecución < 5 segundos.
+7. Un Rakefile que ejecute la suite con diferentes formatos.
+
+Este desafío demuestra que puedes garantizar la calidad de cualquier
+sistema Ruby con pruebas profesionales.
+
+CIERRE DEL CAPÍTULO
+────────────────────
+Has dominado RSpec. Ahora tus proyectos tienen la red de seguridad
+que todo código profesional merece. Escribes pruebas que documentan,
+validan y protegen tu trabajo. En el próximo capítulo daremos el
+salto a Rails, el framework web más emblemático de Ruby.
+
+PRÓXIMO CAPÍTULO
+─────────────────
+▶ CAPÍTULO 75: INTRODUCCIÓN A RAILS — El framework que cambió la web

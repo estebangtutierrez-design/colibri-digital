@@ -1,0 +1,1647 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                    CAPÍTULO 70
+##
+##               PROYECTO: CALCULADORA MODULAR
+##
+################################################################################
+################################################################################
+
+"Un proyecto no es la suma de sus archivos, sino la sinfonía de sus
+módulos trabajando en armonía." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenidos al gran final del Módulo VII! Soy el Profesor Búho AI, y ha
+llegado el momento de poner en práctica todo lo aprendido. En este capítulo
+desarrollaremos un proyecto completo que integra: manipulación de bits,
+campos de bits, argumentos de línea de comandos, Makefiles, archivos de
+cabecera, y compilación separada. Nuestra meta es construir una calculadora
+científica modular con las siguientes características: operaciones básicas y
+avanzadas, historial de cálculos, configuración mediante flags, formato de
+salida configurable, y una biblioteca reutilizable. Todo el proyecto seguirá
+las mejores prácticas de diseño modular, con headers limpios, Makefile
+profesional, y compilación separada. ¡Manos a la obra!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El código que escribes hoy es la biblioteca que usarás mañana. Construye
+con visión, no con prisas." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Diseñar la arquitectura de un proyecto C modular desde cero
+✓ Implementar módulos separados para operaciones, I/O e historial
+✓ Crear una biblioteca estática reutilizable con las operaciones
+✓ Construir un sistema de configuración mediante flags de línea de comandos
+✓ Desarrollar un Makefile profesional con targets múltiples
+✓ Aplicar manipulación de bits en un contexto real (flags de estado)
+✓ Documentar cada módulo y generar un ejecutable funcional
+
+===============================================================================
+DESCRIPCIÓN DEL PROYECTO
+===============================================================================
+
+El proyecto "CalcMaster" es una calculadora científica que se ejecuta en la
+terminal. Acepta operaciones mediante argumentos de línea de comandos y
+también en modo interactivo. Sus características incluyen:
+
+1. Operaciones básicas: suma, resta, multiplicación, división
+2. Operaciones avanzadas: potencia, raíz cuadrada, logaritmos, trigonometría
+3. Modo interactivo con prompt
+4. Historial de operaciones con capacidad de consulta
+5. Configuración de precisión decimal y formato de salida
+6. Flags de estado usando bits para control de errores
+7. Salida formateada (texto, JSON, CSV)
+
+===============================================================================
+ESTRUCTURA DEL PROYECTO
+===============================================================================
+
+```
+calc_master/
+├── include/
+│   ├── calc_ops.h          # Operaciones matematicas
+│   ├── calc_io.h           # Entrada/salida y formato
+│   ├── calc_history.h      # Historial de operaciones
+│   ├── calc_config.h       # Configuracion global
+│   └── calc_errors.h       # Flags de error (bits)
+├── src/
+│   ├── calc_ops.c          # Implementacion de operaciones
+│   ├── calc_io.c           # Implementacion de I/O
+│   ├── calc_history.c      # Implementacion del historial
+│   └── main.c              # Punto de entrada
+├── Makefile
+└── README.md
+```
+
+===============================================================================
+1. MÓDULO DE ERRORES: calc_errors.h
+===============================================================================
+
+Primero, definamos el sistema de flags de error usando manipulación de bits:
+
+```c
+// include/calc_errors.h
+#ifndef CALC_ERRORS_H
+#define CALC_ERRORS_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
+
+// ============================================================================
+// Flags de error (manipulacion de bits)
+// Cada flag ocupa 1 bit en un uint16_t
+// ============================================================================
+
+typedef uint16_t ErrorFlags;
+
+// Definicion de flags individuales
+#define ERR_NINGUNO         0
+#define ERR_DIVISION_CERO   (1 << 0)   // Bit 0
+#define ERR_RAIZ_NEGATIVA   (1 << 1)   // Bit 1
+#define ERR_LOG_DOMINIO     (1 << 2)   // Bit 2
+#define ERR_ARG_INVALIDO    (1 << 3)   // Bit 3
+#define ERR_OVERFLOW        (1 << 4)   // Bit 4
+#define ERR_SINTAXIS        (1 << 5)   // Bit 5
+#define ERR_HISTORIAL_VACIO (1 << 6)   // Bit 6
+#define ERR_NO_IMPLEMENTADO (1 << 7)   // Bit 7
+#define ERR_MEMORIA         (1 << 8)   // Bit 8
+#define ERR_ARCHIVO         (1 << 9)   // Bit 9
+#define ERR_DESCONOCIDO     (1 << 15)  // Bit 15
+
+// Macros para manipular flags
+#define error_activar(flags, error)   ((flags) |= (error))
+#define error_desactivar(flags, error) ((flags) &= ~(error))
+#define error_tiene(flags, error)     (((flags) & (error)) != 0)
+#define error_limpiar(flags)          ((flags) = ERR_NINGUNO)
+
+// Obtener mensaje de error legible
+const char* error_a_string(ErrorFlags error);
+
+// Funcion helper: combinar flags en un solo chequeo
+int error_grave(ErrorFlags flags);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* CALC_ERRORS_H */
+```
+
+===============================================================================
+2. MÓDULO DE CONFIGURACIÓN: calc_config.h y calc_config.c
+===============================================================================
+
+```c
+// include/calc_config.h
+#ifndef CALC_CONFIG_H
+#define CALC_CONFIG_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "calc_errors.h"
+
+// ============================================================================
+// Configuracion global (almacenada como campos de bits + variables)
+// ============================================================================
+
+// Config flags como campo de bits
+typedef struct {
+    // Byte 0: flags de modo
+    uint32_t modo_interactivo  : 1;  // Bit 0
+    uint32_t modo_verbose      : 1;  // Bit 1
+    uint32_t modo_json         : 1;  // Bit 2
+    uint32_t modo_csv          : 1;  // Bit 3
+    uint32_t modo_hex          : 1;  // Bit 4 (salida en hex)
+    uint32_t modo_binario      : 1;  // Bit 5 (salida en binario)
+    uint32_t modo_cientifico   : 1;  // Bit 6 (notacion cientifica)
+    uint32_t mostrar_historial : 1;  // Bit 7
+    // Byte 1: flags de estado
+    uint32_t historial_activo  : 1;  // Bit 8
+    uint32_t colores_activados : 1;  // Bit 9
+    uint32_t sonido_activado   : 1;  // Bit 10
+    uint32_t auto_limpiar      : 1;  // Bit 11
+    uint32_t                   : 20; // Relleno
+} ConfigFlags;
+
+typedef struct {
+    ConfigFlags flags;
+    int precision_decimal;       // 0-15 digitos decimales
+    int base_numerica;           // 10, 16, 2, 8
+    char separador_decimal;      // '.' o ','
+    ErrorFlags ultimo_error;
+    int version_mayor;
+    int version_menor;
+} ConfigGlobal;
+
+// Variable global (definida en .c, declarada extern aqui)
+extern ConfigGlobal g_config;
+
+// Funciones de configuracion
+void config_init(void);
+void config_set_precision(int precision);
+void config_set_base(int base);
+void config_parse_arg(int argc, char *argv[], int *optind);
+void config_mostrar(void);
+
+// Macros de acceso rapido
+#define ES_INTERACTIVO()  (g_config.flags.modo_interactivo)
+#define ES_VERBOSE()      (g_config.flags.modo_verbose)
+#define ES_JSON()         (g_config.flags.modo_json)
+#define ES_CSV()          (g_config.flags.modo_csv)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* CALC_CONFIG_H */
+```
+
+```c
+// src/calc_config.c
+#include "calc_config.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Definicion de la variable global
+ConfigGlobal g_config;
+
+void config_init(void)
+{
+    g_config.flags.modo_interactivo = 0;
+    g_config.flags.modo_verbose = 0;
+    g_config.flags.modo_json = 0;
+    g_config.flags.modo_csv = 0;
+    g_config.flags.modo_hex = 0;
+    g_config.flags.modo_binario = 0;
+    g_config.flags.modo_cientifico = 0;
+    g_config.flags.mostrar_historial = 0;
+    g_config.flags.historial_activo = 1;
+    g_config.flags.colores_activados = 1;
+    g_config.flags.sonido_activado = 0;
+    g_config.flags.auto_limpiar = 0;
+
+    g_config.precision_decimal = 6;
+    g_config.base_numerica = 10;
+    g_config.separador_decimal = '.';
+    g_config.ultimo_error = ERR_NINGUNO;
+    g_config.version_mayor = 1;
+    g_config.version_menor = 0;
+}
+
+void config_set_precision(int precision)
+{
+    if (precision >= 0 && precision <= 15)
+        g_config.precision_decimal = precision;
+    else
+        error_activar(g_config.ultimo_error, ERR_ARG_INVALIDO);
+}
+
+void config_set_base(int base)
+{
+    if (base == 2 || base == 8 || base == 10 || base == 16)
+        g_config.base_numerica = base;
+    else
+        error_activar(g_config.ultimo_error, ERR_ARG_INVALIDO);
+}
+
+void config_mostrar(void)
+{
+    printf("Configuracion:\n");
+    printf("  Precision: %d\n", g_config.precision_decimal);
+    printf("  Base: %d\n", g_config.base_numerica);
+    printf("  Modos: ");
+    if (ES_INTERACTIVO()) printf("interactivo ");
+    if (ES_VERBOSE()) printf("verbose ");
+    if (ES_JSON()) printf("json ");
+    if (ES_CSV()) printf("csv ");
+    if (g_config.flags.modo_hex) printf("hex ");
+    if (g_config.flags.modo_binario) printf("bin ");
+    if (g_config.flags.modo_cientifico) printf("cientifico ");
+    printf("\n");
+}
+```
+
+===============================================================================
+3. MÓDULO DE OPERACIONES: calc_ops.h y calc_ops.c
+===============================================================================
+
+```c
+// include/calc_ops.h
+#ifndef CALC_OPS_H
+#define CALC_OPS_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "calc_errors.h"
+
+// ============================================================================
+// Tipos de operacion
+// ============================================================================
+
+typedef enum {
+    OP_SUMA,
+    OP_RESTA,
+    OP_MULTIPLICACION,
+    OP_DIVISION,
+    OP_POTENCIA,
+    OP_RAIZ_CUADRADA,
+    OP_LOG10,
+    OP_LOG_NATURAL,
+    OP_SENO,
+    OP_COSENO,
+    OP_TANGENTE,
+    OP_MODULO,
+    OP_VALOR_ABSOLUTO,
+    OP_PISO,
+    OP_TECHO,
+    OP_REDONDEO,
+    OP_INVERSO,
+    OP_NEGACION,
+    OP_FACTORIAL,
+    OP_PORCENTAJE,
+    OP_DESCONOCIDA = 255
+} TipoOperacion;
+
+typedef struct {
+    TipoOperacion tipo;
+    double operando_a;
+    double operando_b;    // Usado solo para operaciones binarias
+    double resultado;
+    ErrorFlags error;
+} Operacion;
+
+// ============================================================================
+// Funciones de operacion
+// ============================================================================
+
+Operacion op_crear(TipoOperacion tipo, double a, double b);
+double op_ejecutar(Operacion *op);
+
+// Operaciones individuales (exportadas para tests)
+double op_suma(double a, double b);
+double op_resta(double a, double b);
+double op_multiplicacion(double a, double b);
+double op_division(double a, double b, ErrorFlags *error);
+double op_potencia(double base, double exp);
+double op_raiz_cuadrada(double x, ErrorFlags *error);
+double op_log10(double x, ErrorFlags *error);
+double op_log_natural(double x, ErrorFlags *error);
+double op_seno(double x);
+double op_coseno(double x);
+double op_tangente(double x);
+double op_modulo(double a, double b);
+double op_valor_absoluto(double x);
+double op_piso(double x);
+double op_techo(double x);
+double op_redondeo(double x);
+double op_inverso(double x, ErrorFlags *error);
+double op_factorial(double x, ErrorFlags *error);
+double op_porcentaje(double a, double b);
+
+// Nombre legible de la operacion
+const char* op_a_string(TipoOperacion tipo);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* CALC_OPS_H */
+```
+
+```c
+// src/calc_ops.c
+#include "calc_ops.h"
+#include <math.h>
+#include <stdio.h>
+
+Operacion op_crear(TipoOperacion tipo, double a, double b)
+{
+    Operacion op;
+    op.tipo = tipo;
+    op.operando_a = a;
+    op.operando_b = b;
+    op.resultado = 0.0;
+    op.error = ERR_NINGUNO;
+    return op;
+}
+
+double op_suma(double a, double b)
+{
+    return a + b;
+}
+
+double op_resta(double a, double b)
+{
+    return a - b;
+}
+
+double op_multiplicacion(double a, double b)
+{
+    return a * b;
+}
+
+double op_division(double a, double b, ErrorFlags *error)
+{
+    if (b == 0.0)
+    {
+        if (error) error_activar(*error, ERR_DIVISION_CERO);
+        return 0.0;
+    }
+    return a / b;
+}
+
+double op_potencia(double base, double exp)
+{
+    return pow(base, exp);
+}
+
+double op_raiz_cuadrada(double x, ErrorFlags *error)
+{
+    if (x < 0)
+    {
+        if (error) error_activar(*error, ERR_RAIZ_NEGATIVA);
+        return 0.0;
+    }
+    return sqrt(x);
+}
+
+double op_log10(double x, ErrorFlags *error)
+{
+    if (x <= 0)
+    {
+        if (error) error_activar(*error, ERR_LOG_DOMINIO);
+        return 0.0;
+    }
+    return log10(x);
+}
+
+double op_log_natural(double x, ErrorFlags *error)
+{
+    if (x <= 0)
+    {
+        if (error) error_activar(*error, ERR_LOG_DOMINIO);
+        return 0.0;
+    }
+    return log(x);
+}
+
+double op_seno(double x)
+{
+    return sin(x);
+}
+
+double op_coseno(double x)
+{
+    return cos(x);
+}
+
+double op_tangente(double x)
+{
+    return tan(x);
+}
+
+double op_modulo(double a, double b)
+{
+    if (b == 0.0) return 0.0;
+    return fmod(a, b);
+}
+
+double op_valor_absoluto(double x)
+{
+    return fabs(x);
+}
+
+double op_piso(double x)
+{
+    return floor(x);
+}
+
+double op_techo(double x)
+{
+    return ceil(x);
+}
+
+double op_redondeo(double x)
+{
+    return round(x);
+}
+
+double op_inverso(double x, ErrorFlags *error)
+{
+    if (x == 0.0)
+    {
+        if (error) error_activar(*error, ERR_DIVISION_CERO);
+        return 0.0;
+    }
+    return 1.0 / x;
+}
+
+double op_factorial(double x, ErrorFlags *error)
+{
+    if (x < 0 || x > 170 || x != floor(x))
+    {
+        if (error) error_activar(*error, ERR_ARG_INVALIDO);
+        return 0.0;
+    }
+    double resultado = 1.0;
+    for (int i = 2; i <= (int)x; i++)
+        resultado *= i;
+    return resultado;
+}
+
+double op_porcentaje(double a, double b)
+{
+    return a * (b / 100.0);
+}
+
+double op_ejecutar(Operacion *op)
+{
+    op->error = ERR_NINGUNO;
+
+    switch (op->tipo)
+    {
+        case OP_SUMA:
+            op->resultado = op_suma(op->operando_a, op->operando_b);
+            break;
+        case OP_RESTA:
+            op->resultado = op_resta(op->operando_a, op->operando_b);
+            break;
+        case OP_MULTIPLICACION:
+            op->resultado = op_multiplicacion(op->operando_a, op->operando_b);
+            break;
+        case OP_DIVISION:
+            op->resultado = op_division(op->operando_a, op->operando_b,
+                                        &op->error);
+            break;
+        case OP_POTENCIA:
+            op->resultado = op_potencia(op->operando_a, op->operando_b);
+            break;
+        case OP_RAIZ_CUADRADA:
+            op->resultado = op_raiz_cuadrada(op->operando_a, &op->error);
+            break;
+        case OP_LOG10:
+            op->resultado = op_log10(op->operando_a, &op->error);
+            break;
+        case OP_LOG_NATURAL:
+            op->resultado = op_log_natural(op->operando_a, &op->error);
+            break;
+        case OP_SENO:
+            op->resultado = op_seno(op->operando_a);
+            break;
+        case OP_COSENO:
+            op->resultado = op_coseno(op->operando_a);
+            break;
+        case OP_TANGENTE:
+            op->resultado = op_tangente(op->operando_a);
+            break;
+        case OP_MODULO:
+            op->resultado = op_modulo(op->operando_a, op->operando_b);
+            break;
+        case OP_VALOR_ABSOLUTO:
+            op->resultado = op_valor_absoluto(op->operando_a);
+            break;
+        case OP_PISO:
+            op->resultado = op_piso(op->operando_a);
+            break;
+        case OP_TECHO:
+            op->resultado = op_techo(op->operando_a);
+            break;
+        case OP_REDONDEO:
+            op->resultado = op_redondeo(op->operando_a);
+            break;
+        case OP_INVERSO:
+            op->resultado = op_inverso(op->operando_a, &op->error);
+            break;
+        case OP_FACTORIAL:
+            op->resultado = op_factorial(op->operando_a, &op->error);
+            break;
+        case OP_PORCENTAJE:
+            op->resultado = op_porcentaje(op->operando_a, op->operando_b);
+            break;
+        default:
+            error_activar(op->error, ERR_NO_IMPLEMENTADO);
+            op->resultado = 0.0;
+    }
+
+    return op->resultado;
+}
+
+const char* op_a_string(TipoOperacion tipo)
+{
+    switch (tipo)
+    {
+        case OP_SUMA:           return "suma";
+        case OP_RESTA:          return "resta";
+        case OP_MULTIPLICACION: return "multiplicacion";
+        case OP_DIVISION:       return "division";
+        case OP_POTENCIA:       return "potencia";
+        case OP_RAIZ_CUADRADA:  return "raiz_cuadrada";
+        case OP_LOG10:          return "log10";
+        case OP_LOG_NATURAL:    return "log_natural";
+        case OP_SENO:           return "seno";
+        case OP_COSENO:         return "coseno";
+        case OP_TANGENTE:       return "tangente";
+        case OP_MODULO:         return "modulo";
+        case OP_VALOR_ABSOLUTO: return "valor_absoluto";
+        case OP_PISO:           return "piso";
+        case OP_TECHO:          return "techo";
+        case OP_REDONDEO:       return "redondeo";
+        case OP_INVERSO:        return "inverso";
+        case OP_FACTORIAL:      return "factorial";
+        case OP_PORCENTAJE:     return "porcentaje";
+        default:                return "desconocida";
+    }
+}
+```
+
+===============================================================================
+4. MÓDULO DE HISTORIAL: calc_history.h y calc_history.c
+===============================================================================
+
+```c
+// include/calc_history.h
+#ifndef CALC_HISTORY_H
+#define CALC_HISTORY_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "calc_ops.h"
+#include "calc_errors.h"
+
+#define HISTORIAL_MAX 100
+
+// ============================================================================
+// Estructura del historial (usando struct con campo de bits para flags)
+// ============================================================================
+
+typedef struct {
+    Operacion operaciones[HISTORIAL_MAX];
+    int total;
+    int capacidad;
+    // Campo de bits para flags del historial
+    unsigned int modificado : 1;
+    unsigned int guardado   : 1;
+    unsigned int lleno      : 1;
+    unsigned int            : 5;  // Relleno
+} Historial;
+
+// ============================================================================
+// Funciones del historial
+// ============================================================================
+
+Historial* hist_crear(void);
+void hist_destruir(Historial *h);
+int hist_agregar(Historial *h, const Operacion *op);
+int hist_obtener(const Historial *h, int indice, Operacion *op);
+int hist_total(const Historial *h);
+int hist_esta_lleno(const Historial *h);
+void hist_limpiar(Historial *h);
+int hist_exportar_csv(const Historial *h, const char *archivo);
+int hist_exportar_json(const Historial *h, const char *archivo);
+int hist_cargar(Historial *h, const char *archivo);
+void hist_mostrar_ultimos(const Historial *h, int n);
+void hist_mostrar_todo(const Historial *h);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* CALC_HISTORY_H */
+```
+
+```c
+// src/calc_history.c
+#include "calc_history.h"
+#include "calc_config.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+Historial* hist_crear(void)
+{
+    Historial *h = malloc(sizeof(Historial));
+    if (h)
+    {
+        h->total = 0;
+        h->capacidad = HISTORIAL_MAX;
+        h->modificado = 0;
+        h->guardado = 1;
+        h->lleno = 0;
+    }
+    return h;
+}
+
+void hist_destruir(Historial *h)
+{
+    free(h);
+}
+
+int hist_agregar(Historial *h, const Operacion *op)
+{
+    if (!h || !op) return -1;
+
+    if (h->total >= h->capacidad)
+    {
+        // Desplazar: eliminar el mas antiguo
+        for (int i = 0; i < h->capacidad - 1; i++)
+            h->operaciones[i] = h->operaciones[i + 1];
+        h->total = h->capacidad - 1;
+        h->lleno = 1;
+    }
+
+    h->operaciones[h->total++] = *op;
+    h->modificado = 1;
+    h->guardado = 0;
+    return h->total - 1;
+}
+
+int hist_obtener(const Historial *h, int indice, Operacion *op)
+{
+    if (!h || !op) return -1;
+    if (indice < 0 || indice >= h->total)
+    {
+        error_activar(g_config.ultimo_error, ERR_HISTORIAL_VACIO);
+        return -1;
+    }
+    *op = h->operaciones[indice];
+    return 0;
+}
+
+int hist_total(const Historial *h)
+{
+    return h ? h->total : 0;
+}
+
+int hist_esta_lleno(const Historial *h)
+{
+    return h ? h->lleno : 0;
+}
+
+void hist_limpiar(Historial *h)
+{
+    if (h)
+    {
+        h->total = 0;
+        h->modificado = 0;
+        h->guardado = 1;
+        h->lleno = 0;
+    }
+}
+
+void hist_mostrar_ultimos(const Historial *h, int n)
+{
+    if (!h || h->total == 0)
+    {
+        printf("(Historial vacio)\n");
+        return;
+    }
+
+    int inicio = (h->total > n) ? h->total - n : 0;
+    for (int i = inicio; i < h->total; i++)
+    {
+        const Operacion *op = &h->operaciones[i];
+        const char *nombre = op_a_string(op->tipo);
+
+        if (op->tipo <= OP_DIVISION || op->tipo == OP_POTENCIA ||
+            op->tipo == OP_MODULO || op->tipo == OP_PORCENTAJE)
+        {
+            printf("[%2d] %s(%.*f, %.*f) = %.*f\n",
+                   i, nombre,
+                   g_config.precision_decimal, op->operando_a,
+                   g_config.precision_decimal, op->operando_b,
+                   g_config.precision_decimal, op->resultado);
+        }
+        else
+        {
+            printf("[%2d] %s(%.*f) = %.*f\n",
+                   i, nombre,
+                   g_config.precision_decimal, op->operando_a,
+                   g_config.precision_decimal, op->resultado);
+        }
+
+        if (op->error != ERR_NINGUNO)
+            printf("      [ERROR: %s]\n",
+                   error_a_string(op->error));
+    }
+}
+
+void hist_mostrar_todo(const Historial *h)
+{
+    if (h) hist_mostrar_ultimos(h, h->total);
+}
+
+int hist_exportar_csv(const Historial *h, const char *archivo)
+{
+    if (!h) return -1;
+
+    FILE *f = fopen(archivo, "w");
+    if (!f) return -1;
+
+    fprintf(f, "indice,operacion,a,b,resultado,error\n");
+    for (int i = 0; i < h->total; i++)
+    {
+        const Operacion *op = &h->operaciones[i];
+        fprintf(f, "%d,%s,%f,%f,%f,%u\n",
+                i, op_a_string(op->tipo),
+                op->operando_a, op->operando_b,
+                op->resultado, (unsigned)op->error);
+    }
+
+    fclose(f);
+    return 0;
+}
+
+int hist_exportar_json(const Historial *h, const char *archivo)
+{
+    if (!h) return -1;
+
+    FILE *f = fopen(archivo, "w");
+    if (!f) return -1;
+
+    fprintf(f, "{\n  \"historial\": [\n");
+    for (int i = 0; i < h->total; i++)
+    {
+        const Operacion *op = &h->operaciones[i];
+        fprintf(f, "    {\"id\":%d,\"op\":\"%s\","
+                   "\"a\":%f,\"b\":%f,"
+                   "\"res\":%f,\"err\":%u}",
+                i, op_a_string(op->tipo),
+                op->operando_a, op->operando_b,
+                op->resultado, (unsigned)op->error);
+        if (i < h->total - 1) fprintf(f, ",");
+        fprintf(f, "\n");
+    }
+    fprintf(f, "  ]\n}\n");
+
+    fclose(f);
+    return 0;
+}
+
+int hist_cargar(Historial *h, const char *archivo)
+{
+    if (!h) return -1;
+
+    FILE *f = fopen(archivo, "r");
+    if (!f) return -1;
+
+    hist_limpiar(h);
+
+    char linea[256];
+    fgets(linea, sizeof(linea), f); // Saltar header
+
+    while (fgets(linea, sizeof(linea), f) && h->total < h->capacidad)
+    {
+        Operacion op;
+        char op_str[32];
+        unsigned err;
+        sscanf(linea, "%*d,%31[^,],%lf,%lf,%lf,%u",
+               op_str, &op.operando_a, &op.operando_b,
+               &op.resultado, &err);
+        op.error = (ErrorFlags)err;
+        // Convertir string a enum...
+        // Simplificado para el ejemplo
+        h->operaciones[h->total++] = op;
+    }
+
+    fclose(f);
+    h->modificado = 0;
+    h->guardado = 1;
+    return h->total;
+}
+```
+
+===============================================================================
+5. MÓDULO DE I/O: calc_io.h y calc_io.c
+===============================================================================
+
+```c
+// include/calc_io.h
+#ifndef CALC_IO_H
+#define CALC_IO_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "calc_ops.h"
+#include "calc_errors.h"
+
+// ============================================================================
+// Formateo de salida
+// ============================================================================
+
+typedef enum {
+    FORMATO_TEXTO,
+    FORMATO_JSON,
+    FORMATO_CSV
+} FormatoSalida;
+
+void io_print_resultado(const Operacion *op);
+void io_print_error(ErrorFlags error);
+void io_print_bienvenida(void);
+void io_print_ayuda(void);
+void io_print_configuracion(void);
+
+// Entrada
+int io_leer_operacion_desde_string(const char *linea,
+                                    Operacion *op);
+int io_prompt_interactivo(Historial *h);
+
+// Bits: mostrar numero en binario
+void io_print_binario(double valor);
+void io_print_hexadecimal(double valor);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* CALC_IO_H */
+```
+
+```c
+// src/calc_io.c
+#include "calc_io.h"
+#include "calc_config.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <math.h>
+
+void io_print_bienvenida(void)
+{
+    printf("========================================\n");
+    printf("  CalcMaster v%d.%d\n",
+           g_config.version_mayor,
+           g_config.version_menor);
+    printf("  Calculadora Cientifica Modular\n");
+    printf("========================================\n");
+    printf("  Escriba 'ayuda' para comandos\n");
+    printf("  Escriba 'salir' para terminar\n");
+    printf("========================================\n\n");
+}
+
+void io_print_ayuda(void)
+{
+    printf("=== Ayuda de CalcMaster ===\n\n");
+    printf("Operaciones binarias:\n");
+    printf("  suma <a> <b>         a + b\n");
+    printf("  resta <a> <b>        a - b\n");
+    printf("  mult <a> <b>         a * b\n");
+    printf("  division <a> <b>     a / b\n");
+    printf("  potencia <a> <b>     a ^ b\n");
+    printf("  modulo <a> <b>       a %% b\n");
+    printf("  porcentaje <a> <b>   a%% de b\n\n");
+    printf("Operaciones unarias:\n");
+    printf("  raiz <x>             sqrt(x)\n");
+    printf("  log10 <x>            log10(x)\n");
+    printf("  ln <x>               log(x)\n");
+    printf("  seno <x>             sin(x)\n");
+    printf("  coseno <x>           cos(x)\n");
+    printf("  tangente <x>         tan(x)\n");
+    printf("  abs <x>              |x|\n");
+    printf("  piso <x>             floor(x)\n");
+    printf("  techo <x>            ceil(x)\n");
+    printf("  factorial <x>        x!\n");
+    printf("  inverso <x>          1/x\n\n");
+    printf("Comandos:\n");
+    printf("  ayuda                 Muestra esta ayuda\n");
+    printf("  historial             Muestra el historial\n");
+    printf("  limpiar               Limpia el historial\n");
+    printf("  config                Muestra configuracion\n");
+    printf("  precision <n>         Establece precision\n");
+    printf("  salir                 Termina el programa\n");
+    printf("====================================\n");
+}
+
+void io_print_resultado(const Operacion *op)
+{
+    if (op->error != ERR_NINGUNO)
+    {
+        io_print_error(op->error);
+        return;
+    }
+
+    if (g_config.flags.modo_hex)
+    {
+        uint64_t *bits = (uint64_t *)&op->resultado;
+        printf("0x%016lX\n", *bits);
+    }
+    else if (g_config.flags.modo_binario)
+    {
+        io_print_binario(op->resultado);
+    }
+    else if (g_config.flags.modo_cientifico)
+    {
+        printf("%.*e\n", g_config.precision_decimal, op->resultado);
+    }
+    else
+    {
+        printf("%.*f\n", g_config.precision_decimal, op->resultado);
+    }
+}
+
+void io_print_error(ErrorFlags error)
+{
+    if (g_config.flags.colores_activados)
+        printf("\033[31m");  // Rojo
+
+    printf("ERROR: ");
+
+    if (error_tiene(error, ERR_DIVISION_CERO))
+        printf("Division por cero");
+    else if (error_tiene(error, ERR_RAIZ_NEGATIVA))
+        printf("Raiz cuadrada de numero negativo");
+    else if (error_tiene(error, ERR_LOG_DOMINIO))
+        printf("Logaritmo de numero no positivo");
+    else if (error_tiene(error, ERR_ARG_INVALIDO))
+        printf("Argumento invalido");
+    else if (error_tiene(error, ERR_OVERFLOW))
+        printf("Overflow numerico");
+    else if (error_tiene(error, ERR_SINTAXIS))
+        printf("Error de sintaxis");
+    else if (error_tiene(error, ERR_MEMORIA))
+        printf("Error de memoria");
+    else
+        printf("Error desconocido");
+
+    if (g_config.flags.colores_activados)
+        printf("\033[0m");  // Reset
+
+    printf("\n");
+}
+
+void io_print_binario(double valor)
+{
+    uint64_t bits;
+    memcpy(&bits, &valor, sizeof(bits));
+
+    printf("0b");
+    for (int i = 63; i >= 0; i--)
+    {
+        putchar((bits >> i) & 1 ? '1' : '0');
+        if (i == 63 || i == 52) putchar(' ');
+    }
+    printf("\n");
+}
+
+void io_print_hexadecimal(double valor)
+{
+    uint64_t bits;
+    memcpy(&bits, &valor, sizeof(bits));
+    printf("0x%016lX\n", bits);
+}
+
+int io_leer_operacion_desde_string(const char *linea, Operacion *op)
+{
+    char comando[32];
+    double a, b;
+    int leidos;
+
+    // Saltar espacios iniciales
+    while (*linea == ' ') linea++;
+
+    if (sscanf(linea, "%31s %lf %lf", comando, &a, &b) >= 2)
+    {
+        if (strcmp(comando, "suma") == 0 || strcmp(comando, "+") == 0)
+            *op = op_crear(OP_SUMA, a, b);
+        else if (strcmp(comando, "resta") == 0 || strcmp(comando, "-") == 0)
+            *op = op_crear(OP_RESTA, a, b);
+        else if (strcmp(comando, "mult") == 0 || strcmp(comando, "*") == 0)
+            *op = op_crear(OP_MULTIPLICACION, a, b);
+        else if (strcmp(comando, "division") == 0 || strcmp(comando, "/") == 0)
+            *op = op_crear(OP_DIVISION, a, b);
+        else if (strcmp(comando, "potencia") == 0 || strcmp(comando, "^") == 0)
+            *op = op_crear(OP_POTENCIA, a, b);
+        else if (strcmp(comando, "modulo") == 0 || strcmp(comando, "%") == 0)
+            *op = op_crear(OP_MODULO, a, b);
+        else if (strcmp(comando, "porcentaje") == 0)
+            *op = op_crear(OP_PORCENTAJE, a, b);
+        else
+        {
+            // Unario con dos argumentos? Ver si el segundo es opcional
+            if (strcmp(comando, "raiz") == 0 || strcmp(comando, "sqrt") == 0)
+                *op = op_crear(OP_RAIZ_CUADRADA, a, 0);
+            else if (strcmp(comando, "log10") == 0)
+                *op = op_crear(OP_LOG10, a, 0);
+            else if (strcmp(comando, "ln") == 0)
+                *op = op_crear(OP_LOG_NATURAL, a, 0);
+            else if (strcmp(comando, "seno") == 0 || strcmp(comando, "sin") == 0)
+                *op = op_crear(OP_SENO, a, 0);
+            else if (strcmp(comando, "coseno") == 0 || strcmp(comando, "cos") == 0)
+                *op = op_crear(OP_COSENO, a, 0);
+            else if (strcmp(comando, "tangente") == 0 || strcmp(comando, "tan") == 0)
+                *op = op_crear(OP_TANGENTE, a, 0);
+            else if (strcmp(comando, "abs") == 0)
+                *op = op_crear(OP_VALOR_ABSOLUTO, a, 0);
+            else if (strcmp(comando, "piso") == 0)
+                *op = op_crear(OP_PISO, a, 0);
+            else if (strcmp(comando, "techo") == 0)
+                *op = op_crear(OP_TECHO, a, 0);
+            else if (strcmp(comando, "factorial") == 0 || strcmp(comando, "!") == 0)
+                *op = op_crear(OP_FACTORIAL, a, 0);
+            else if (strcmp(comando, "inverso") == 0 || strcmp(comando, "inv") == 0)
+                *op = op_crear(OP_INVERSO, a, 0);
+            else
+            {
+                error_activar(g_config.ultimo_error, ERR_SINTAXIS);
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    error_activar(g_config.ultimo_error, ERR_SINTAXIS);
+    return -1;
+}
+
+int io_prompt_interactivo(Historial *h)
+{
+    char linea[256];
+    Operacion op;
+
+    while (1)
+    {
+        printf("calc> ");
+        fflush(stdout);
+
+        if (!fgets(linea, sizeof(linea), stdin))
+            break;
+
+        linea[strcspn(linea, "\n")] = '\0';
+
+        // Comandos especiales
+        if (strcmp(linea, "salir") == 0 || strcmp(linea, "exit") == 0 ||
+            strcmp(linea, "quit") == 0)
+            break;
+
+        if (strcmp(linea, "ayuda") == 0 || strcmp(linea, "help") == 0 ||
+            strcmp(linea, "?") == 0)
+        {
+            io_print_ayuda();
+            continue;
+        }
+
+        if (strcmp(linea, "historial") == 0 || strcmp(linea, "history") == 0)
+        {
+            hist_mostrar_todo(h);
+            continue;
+        }
+
+        if (strcmp(linea, "limpiar") == 0 || strcmp(linea, "clear") == 0)
+        {
+            hist_limpiar(h);
+            printf("Historial limpiado.\n");
+            continue;
+        }
+
+        if (strcmp(linea, "config") == 0)
+        {
+            config_mostrar();
+            continue;
+        }
+
+        if (sscanf(linea, "precision %d", &g_config.precision_decimal) == 1)
+        {
+            printf("Precision establecida a %d\n",
+                   g_config.precision_decimal);
+            continue;
+        }
+
+        // Intentar parsear como operacion
+        if (io_leer_operacion_desde_string(linea, &op) == 0)
+        {
+            op_ejecutar(&op);
+            io_print_resultado(&op);
+            hist_agregar(h, &op);
+        }
+        else
+        {
+            printf("Comando no reconocido. Escriba 'ayuda'.\n");
+        }
+    }
+
+    return 0;
+}
+```
+
+===============================================================================
+6. ARCHIVO PRINCIPAL: main.c
+===============================================================================
+
+```c
+// src/main.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <getopt.h>
+#include "calc_ops.h"
+#include "calc_io.h"
+#include "calc_history.h"
+#include "calc_config.h"
+
+void procesar_argumentos_modo_no_interactivo(int argc, char *argv[],
+                                              Historial *h)
+{
+    // Formato: calc <operacion> <a> [b]
+    if (argc - optind < 2)
+    {
+        fprintf(stderr, "Uso: %s <operacion> <a> [b]\n", argv[0]);
+        fprintf(stderr, "Use '%s --help' para ayuda.\n", argv[0]);
+        exit(1);
+    }
+
+    Operacion op;
+    const char *op_str = argv[optind];
+    double a = atof(argv[optind + 1]);
+    double b = (argc - optind > 2) ? atof(argv[optind + 2]) : 0;
+
+    if (strcmp(op_str, "suma") == 0 || strcmp(op_str, "+") == 0)
+        op = op_crear(OP_SUMA, a, b);
+    else if (strcmp(op_str, "resta") == 0 || strcmp(op_str, "-") == 0)
+        op = op_crear(OP_RESTA, a, b);
+    else if (strcmp(op_str, "mult") == 0 || strcmp(op_str, "*") == 0)
+        op = op_crear(OP_MULTIPLICACION, a, b);
+    else if (strcmp(op_str, "division") == 0 || strcmp(op_str, "/") == 0)
+        op = op_crear(OP_DIVISION, a, b);
+    else if (strcmp(op_str, "potencia") == 0 || strcmp(op_str, "^") == 0)
+        op = op_crear(OP_POTENCIA, a, b);
+    else if (strcmp(op_str, "modulo") == 0)
+        op = op_crear(OP_MODULO, a, b);
+    else if (strcmp(op_str, "raiz") == 0 || strcmp(op_str, "sqrt") == 0)
+        op = op_crear(OP_RAIZ_CUADRADA, a, 0);
+    else if (strcmp(op_str, "log10") == 0)
+        op = op_crear(OP_LOG10, a, 0);
+    else if (strcmp(op_str, "ln") == 0)
+        op = op_crear(OP_LOG_NATURAL, a, 0);
+    else if (strcmp(op_str, "seno") == 0 || strcmp(op_str, "sin") == 0)
+        op = op_crear(OP_SENO, a, 0);
+    else if (strcmp(op_str, "coseno") == 0 || strcmp(op_str, "cos") == 0)
+        op = op_crear(OP_COSENO, a, 0);
+    else if (strcmp(op_str, "factorial") == 0)
+        op = op_crear(OP_FACTORIAL, a, 0);
+    else if (strcmp(op_str, "abs") == 0)
+        op = op_crear(OP_VALOR_ABSOLUTO, a, 0);
+    else
+    {
+        fprintf(stderr, "Operacion desconocida: %s\n", op_str);
+        exit(1);
+    }
+
+    op_ejecutar(&op);
+    io_print_resultado(&op);
+    hist_agregar(h, &op);
+}
+
+int main(int argc, char *argv[])
+{
+    // Inicializar configuracion
+    config_init();
+
+    // Parsear opciones de linea de comandos
+    static struct option opciones[] = {
+        {"interactive", no_argument,       0, 'i'},
+        {"verbose",     no_argument,       0, 'v'},
+        {"json",        no_argument,       0, 'j'},
+        {"csv",         no_argument,       0, 'c'},
+        {"hex",         no_argument,       0, 'x'},
+        {"binary",      no_argument,       0, 'b'},
+        {"scientific",  no_argument,       0, 'e'},
+        {"precision",   required_argument, 0, 'p'},
+        {"help",        no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "ivjcxbehp:", opciones, NULL)) != -1)
+    {
+        switch (opt)
+        {
+            case 'i':
+                g_config.flags.modo_interactivo = 1;
+                break;
+            case 'v':
+                g_config.flags.modo_verbose = 1;
+                break;
+            case 'j':
+                g_config.flags.modo_json = 1;
+                break;
+            case 'c':
+                g_config.flags.modo_csv = 1;
+                break;
+            case 'x':
+                g_config.flags.modo_hex = 1;
+                break;
+            case 'b':
+                g_config.flags.modo_binario = 1;
+                break;
+            case 'e':
+                g_config.flags.modo_cientifico = 1;
+                break;
+            case 'p':
+                config_set_precision(atoi(optarg));
+                break;
+            case 'h':
+                printf("CalcMaster v%d.%d - Calculadora Cientifica Modular\n",
+                       g_config.version_mayor, g_config.version_menor);
+                printf("Uso: %s [opciones] [operacion a b]\n\n", argv[0]);
+                printf("Opciones:\n");
+                printf("  -i, --interactive   Modo interactivo\n");
+                printf("  -v, --verbose       Modo verbose\n");
+                printf("  -j, --json          Salida JSON\n");
+                printf("  -c, --csv           Salida CSV\n");
+                printf("  -x, --hex           Salida hexadecimal\n");
+                printf("  -b, --binary        Salida binaria\n");
+                printf("  -e, --scientific    Notacion cientifica\n");
+                printf("  -p, --precision N   Precision decimal (0-15)\n");
+                printf("  -h, --help          Muestra esta ayuda\n");
+                return 0;
+            default:
+                return 1;
+        }
+    }
+
+    // Crear historial
+    Historial *h = hist_crear();
+    if (!h)
+    {
+        fprintf(stderr, "Error: no se pudo crear el historial\n");
+        return 1;
+    }
+
+    // Modo interactivo o por argumentos
+    if (g_config.flags.modo_interactivo || (optind >= argc))
+    {
+        // Si no hay argumentos de operacion, modo interactivo
+        if (!g_config.flags.modo_interactivo && optind < argc)
+        {
+            // Hay argumentos, procesarlos no interactivamente
+            procesar_argumentos_modo_no_interactivo(argc, argv, h);
+        }
+        else
+        {
+            io_print_bienvenida();
+            io_prompt_interactivo(h);
+        }
+    }
+    else
+    {
+        procesar_argumentos_modo_no_interactivo(argc, argv, h);
+    }
+
+    // Si verbose, mostrar historial al final
+    if (ES_VERBOSE())
+    {
+        printf("\n=== Historial de la sesion ===\n");
+        hist_mostrar_todo(h);
+    }
+
+    hist_destruir(h);
+    return 0;
+}
+```
+
+===============================================================================
+7. MAKEFILE PROFESIONAL
+===============================================================================
+
+```makefile
+# ============================================================================
+# Makefile para CalcMaster - Calculadora Cientifica Modular
+# ============================================================================
+
+# Herramientas
+CC       ?= gcc
+AR       ?= ar
+RM       ?= rm -f
+MKDIR    ?= mkdir -p
+
+# Flags de compilacion
+CFLAGS   ?= -Wall -Wextra -Wpedantic -Wshadow -Wconversion
+CFLAGS   += -std=c17 -D_DEFAULT_SOURCE
+DEPFLAGS ?= -MMD -MP
+
+# Flags de enlazado
+LDFLAGS  ?=
+LDLIBS   ?= -lm
+
+# Directorios
+SRCDIR   ?= src
+INCDIR   ?= include
+BUILDDIR ?= build
+LIBDIR   ?= $(BUILDDIR)/lib
+BINDIR   ?= $(BUILDDIR)/bin
+
+# Archivos
+TARGET   := $(BINDIR)/calc
+LIBRARY  := $(LIBDIR)/libcalc.a
+SRCS     := $(wildcard $(SRCDIR)/*.c)
+OBJS     := $(patsubst $(SRCDIR)/%.c, $(BUILDDIR)/obj/%.o, $(SRCS))
+DEPS     := $(OBJS:.o=.d)
+
+# Modo de compilacion
+BUILD_TYPE ?= debug
+
+ifeq ($(BUILD_TYPE), release)
+    CFLAGS += -O3 -DNDEBUG -flto
+    LDFLAGS += -flto -s
+else
+    CFLAGS += -g -O0 -DDEBUG
+endif
+
+CFLAGS += -I$(INCDIR)
+
+# ============================================================================
+# Targets
+# ============================================================================
+
+.PHONY: all lib bin test clean help run
+
+all: lib bin
+
+# Biblioteca estatica
+lib: $(LIBRARY)
+
+$(LIBRARY): $(OBJS)
+	@$(MKDIR) $(LIBDIR)
+	@echo "  AR      $@"
+	$(Q)$(AR) rcs $@ $^
+
+# Ejecutable
+bin: $(TARGET)
+
+$(TARGET): $(LIBRARY)
+	@$(MKDIR) $(BINDIR)
+	@echo "  LINK    $@"
+	$(Q)$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+# Regla de compilacion
+$(BUILDDIR)/obj/%.o: $(SRCDIR)/%.c
+	@$(MKDIR) $(dir $@)
+	@echo "  CC      $<"
+	$(Q)$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# ============================================================================
+# Utilidades
+# ============================================================================
+
+run: $(TARGET)
+	./$(TARGET) $(ARGS)
+
+test: $(TARGET)
+	@echo "Ejecutando pruebas..."
+	./$(TARGET) -p 4 suma 3 7
+	./$(TARGET) -p 4 division 10 3
+	./$(TARGET) -p 4 raiz 144
+	./$(TARGET) -p 4 log10 100
+	./$(TARGET) -p 4 seno 1.5708
+	./$(TARGET) -i -c ayuda  # Modo interactivo, mostrar ayuda
+
+clean:
+	@echo "  CLEAN"
+	$(Q)$(RM) -r $(BUILDDIR)
+
+help:
+	@echo "CalcMaster Makefile"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all       - Construye biblioteca y ejecutable"
+	@echo "  lib       - Construye solo la biblioteca"
+	@echo "  bin       - Construye solo el ejecutable"
+	@echo "  run       - Ejecuta el programa"
+	@echo "  test      - Pruebas rapidas"
+	@echo "  clean     - Limpia archivos generados"
+	@echo "  help      - Muestra esta ayuda"
+	@echo ""
+	@echo "Variables:"
+	@echo "  BUILD_TYPE  debug|release (default: debug)"
+	@echo "  CC          Compilador (default: gcc)"
+	@echo "  ARGS        Argumentos para 'make run'"
+	@echo ""
+	@echo "Ejemplos:"
+	@echo "  make                     - Compilar debug"
+	@echo "  make BUILD_TYPE=release  - Compilar release"
+	@echo "  make run ARGS='-p 10 suma 3.14 2.71'"
+	@echo "  make run ARGS='-i'      - Modo interactivo"
+	@echo "  make test                - Pruebas"
+
+# Incluir dependencias
+-include $(DEPS)
+
+# Silenciar comandos
+Q ?= @
+```
+
+===============================================================================
+8. EJEMPLOS DE USO
+===============================================================================
+
+```bash
+# Compilar
+make
+
+# Modo no interactivo (desde la terminal)
+./build/bin/calc suma 5 3
+# 8.000000
+
+./build/bin/calc -p 2 division 10 3
+# 3.33
+
+./build/bin/calc -x suma 255 1
+# 0x0000000000000100
+
+./build/bin/calc -b multiplicacion 3 2
+# 0b 01000000000 0001000000000000000000000000000000000000000000000000000000000000
+
+./build/bin/calc -e potencia 1000 2
+# 1.000000e+06
+
+./build/bin/calc -j division 7 3
+# {"op":"division","a":7.000000,"b":3.000000,"resultado":2.333333}
+
+# Modo interactivo
+./build/bin/calc -i
+# CalcMaster v1.0
+# calc> suma 10 20
+# 30.000000
+# calc> raiz 144
+# 12.000000
+# calc> historial
+# [0] suma(10, 20) = 30.000000
+# [1] raiz_cuadrada(144) = 12.000000
+# calc> salir
+
+# Verbose con historial
+./build/bin/calc -v suma 5 3
+# 8.000000
+# === Historial de la sesion ===
+# [0] suma(5, 3) = 8.000000
+
+# Ayuda
+./build/bin/calc -h
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El proyecto integra todos los temas del Módulo VII en una aplicación real
+- Manipulación de bits: ErrorFlags como uint16_t con macros de activación,
+  desactivación y verificación
+- Campos de bits: ConfigFlags con modo_interactivo, modo_verbose, etc.
+- Argumentos de línea de comandos: getopt_long con opciones -i, -v, -j, -x
+- Makefile: targets all, lib, bin, test, clean, run; variables CC, CFLAGS
+- Archivos de cabecera: separación clara en include/ con guards y tipos
+- Compilación separada: cada .c a .o, biblioteca estática, enlazado final
+- El diseño modular permite reutilizar la biblioteca libcalc.a en otros
+  proyectos
+- El historial usa una estructura interna con capacidad circular
+- La salida soporta múltiples formatos: texto, JSON, CSV, hex, binario
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Añade una nueva operación "promedio" que calcule el
+promedio de 3 números. Extiende calc_ops.h, calc_ops.c, calc_io.c y main.c.
+
+🧩 **Ejercicio 2:** Implementa la opción --save <archivo> que guarde el
+historial al salir, y --load <archivo> que lo cargue al inicio.
+
+🧩 **Ejercicio 3:** Añade soporte para constantes (pi, e) como comandos
+especiales en el modo interactivo.
+
+🧩 **Ejercicio 4:** Extiende el Makefile con targets para documentación
+(Doxygen), análisis estático (cppcheck), y empaquetado (.tar.gz).
+
+🧩 **Ejercicio 5:** Implementa un modo "plot" que genere datos para
+graficar funciones matemáticas (seno, coseno, tangente) en formato CSV.
+
+🧩 **Ejercicio 6:** Añade al sistema de errores un flag ERR_ITERACIONES y
+una función que detecte cuando una operación requiere demasiadas iteraciones.
+
+🧩 **Ejercicio 7:** Convierte el programa para que soporte operaciones en
+línea: "calc 5+3" en lugar de "calc suma 5 3". Implementa un parser
+de expresiones simple.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usar una biblioteca estática si el ejecutable ya funciona?**
+La biblioteca permite que otros programas reutilicen las operaciones sin
+duplicar código. Es el primer paso hacia un ecosistema de módulos.
+
+❓ **¿Cómo añado una nueva operación?** Define el enum en calc_ops.h,
+implementa la función en calc_ops.c, añade el case en op_ejecutar(),
+registra el nombre en op_a_string(), y añade el parseo en calc_io.c y main.c.
+
+❓ **¿El historial persiste entre ejecuciones?** No por defecto. Puedes
+implementar la opción de guardado con hist_exportar_csv() y hist_cargar().
+
+❓ **¿Cómo se usa la biblioteca en otro proyecto?** Copia libcalc.a e
+include/. Luego: gcc mi_programa.c -L. -lcalc -lm -o mi_programa.
+
+❓ **¿Qué significan los flags de error como bits?** Cada flag es un bit
+independiente, permitiendo múltiples errores simultáneos y operaciones
+rápidas de verificación con &.
+
+❓ **¿Por qué separar en tantos archivos?** Para que cada módulo tenga una
+responsabilidad única, sea testeable independientemente, y pueda ser
+reutilizado o reemplazado sin afectar al resto.
+
+❓ **¿Cómo ejecuto en modo release?** make BUILD_TYPE=release. Cambia flags
+de optimización y elimina símbolos de depuración.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Extensión del proyecto: Servidor de cálculo remoto** — Extienda
+CalcMaster para funcionar como un servidor de cálculo remoto usando sockets.
+Debe: aceptar conexiones TCP en un puerto configurable, recibir operaciones
+en formato JSON, ejecutarlas usando la biblioteca libcalc.a, devolver
+resultados también en JSON, mantener un historial global de todas las
+operaciones realizadas por todos los clientes, y soportar autenticación
+simple mediante token. El servidor debe ser multi-cliente (fork o threads),
+con logging de cada petición. Incluya también un cliente de prueba que se
+conecte, envíe operaciones y muestre resultados.
+
+===============================================================================
+FIN DEL CAPÍTULO 70
+===============================================================================
+
+"Has llegado al final del Módulo VII. Pero recuerda: cada proyecto que
+construyes es el inicio de algo más grande. Sigue programando, sigue
+aprendiendo, sigue creando." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO MÓDULO:
+MÓDULO VIII: ESTRUCTURAS DE DATOS Y ALGORITMOS
+===============================================================================

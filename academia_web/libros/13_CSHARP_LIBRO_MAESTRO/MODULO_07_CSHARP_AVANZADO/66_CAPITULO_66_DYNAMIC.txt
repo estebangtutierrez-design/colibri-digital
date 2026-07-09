@@ -1,0 +1,733 @@
+================================================================================
+  CAPÍTULO 66: PALABRA CLAVE DYNAMIC
+  MÓDULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 66! La palabra clave dynamic, introducida en C# 4.0,
+permite escribir código que omite la comprobación de tipos en tiempo de
+compilación, delegándola al tiempo de ejecución. Esto es especialmente útil
+para interoperar con COM, lenguajes dinámicos (Python, JavaScript), y para
+simplificar ciertos patrones de reflection.
+
+FRASE DEL DÍA
+-------------
+"Lo estático da seguridad; lo dinámico da libertad. Un buen programador sabe
+cuándo usar cada uno." — Anónimo
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Comprender el tipo dynamic y el DLR.
+2. Diferenciar dynamic de object y var.
+3. Usar ExpandoObject para objetos dinámicos.
+4. Interoperar con COM mediante dynamic.
+5. Conocer las limitaciones y riesgos de dynamic.
+6. Aplicar dynamic en escenarios pragmáticos.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. INTRODUCCIÓN A DYNAMIC ---
+
+dynamic permite escribir código donde la resolución de miembros (métodos,
+propiedades, operadores) ocurre en tiempo de ejecución en lugar de
+compilación. El compilador no verifica que los miembros existan; el DLR
+(Dynamic Language Runtime) los resuelve al ejecutar.
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== INTRODUCCIÓN A DYNAMIC ===\n");
+
+        dynamic variable = "Hola, mundo";
+        Console.WriteLine($"Como string: {variable.Length} caracteres");
+
+        variable = 42;
+        Console.WriteLine($"Como int: {variable + 10}");
+
+        variable = DateTime.Now;
+        Console.WriteLine($"Como DateTime: {variable.Year}-{variable.Month}-{variable.Day}");
+
+        variable = new { Nombre = "Test", Valor = 100 };
+        Console.WriteLine($"Como anonimo: {variable.Nombre} = {variable.Valor}");
+
+        try
+        {
+            variable.MetodoInexistente();
+        }
+        catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException ex)
+        {
+            Console.WriteLine($"\nError en runtime: {ex.Message}");
+        }
+    }
+}
+```
+
+--- 2. DYNAMIC VS OBJECT VS VAR ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC vs OBJECT vs VAR ===\n");
+
+        var texto = "Hola";
+        object obj = "Hola";
+        dynamic dyn = "Hola";
+
+        int lenObj = ((string)obj).Length;
+        int lenDyn = dyn.Length;
+
+        Console.WriteLine($"var: {texto.GetType().Name}");
+        Console.WriteLine($"object: {obj.GetType().Name}");
+        Console.WriteLine($"dynamic: {dyn.GetType().Name}");
+
+        dyn = 123;
+        Console.WriteLine($"\ndynamic ahora es: {dyn.GetType().Name}");
+        Console.WriteLine($"  Suma: {dyn + 456}");
+
+        dyn = DateTime.Now;
+        Console.WriteLine($"  Ahora: {dyn.ToShortDateString()}");
+
+        obj = 123;
+        int numObj = (int)obj;
+        Console.WriteLine($"\nobject: {numObj}");
+    }
+}
+```
+
+--- 3. EL DLR (DYNAMIC LANGUAGE RUNTIME) ---
+
+El DLR es un conjunto de servicios que .NET anadio para soportar lenguajes
+dinamicos. Proporciona:
+- Expression trees: Representacion de operaciones en arbol.
+- Call sites: Puntos de llamada dinamica con cache.
+- Binders: Logica para resolver miembros en tiempo de ejecucion.
+
+```csharp
+using System;
+using System.Dynamic;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DLR - DYNAMIC LANGUAGE RUNTIME ===\n");
+
+        dynamic obj = new ObjetoDinamico();
+
+        Console.WriteLine("Llamando a propiedades/metodos dinamicos:");
+        Console.WriteLine($"  Nombre: {obj.Nombre}");
+        Console.WriteLine($"  Saldo: {obj.Saldo}");
+
+        obj.Saludar("Juan");
+        obj.Sumar(10, 20);
+
+        Console.WriteLine("\nSegunda llamada (usa cache DLR):");
+        Console.WriteLine($"  Saldo: {obj.Saldo}");
+        obj.Saludar("Maria");
+    }
+}
+
+public class ObjetoDinamico : DynamicObject
+{
+    private readonly Dictionary<string, object> _propiedades = new()
+    {
+        ["Nombre"] = "Objeto Dinamico",
+        ["Saldo"] = 1000.50
+    };
+
+    public override bool TryGetMember(GetMemberBinder binder, out object result)
+    {
+        Console.WriteLine($"  [DLR] Get: {binder.Name}");
+        return _propiedades.TryGetValue(binder.Name, out result);
+    }
+
+    public override bool TrySetMember(SetMemberBinder binder, object value)
+    {
+        Console.WriteLine($"  [DLR] Set: {binder.Name} = {value}");
+        _propiedades[binder.Name] = value;
+        return true;
+    }
+
+    public override bool TryInvokeMember(InvokeMemberBinder binder, object[] args, out object result)
+    {
+        Console.WriteLine($"  [DLR] Invoke: {binder.Name}({string.Join(", ", args)})");
+        if (binder.Name == "Saludar")
+        {
+            Console.WriteLine($"    !Hola, {args[0]}!");
+            result = null;
+            return true;
+        }
+        if (binder.Name == "Sumar")
+        {
+            result = (int)args[0] + (int)args[1];
+            Console.WriteLine($"    Resultado: {result}");
+            return true;
+        }
+        result = null;
+        return false;
+    }
+}
+```
+
+--- 4. EXPANDOOBJECT ---
+
+ExpandoObject es una clase sellada en System.Dynamic que permite crear
+objetos con miembros anadidos dinamicamente. Es la forma mas facil de
+crear objetos dinamicos sin implementar DynamicObject.
+
+```csharp
+using System;
+using System.Dynamic;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== EXPANDOOBJECT ===\n");
+
+        dynamic persona = new ExpandoObject();
+        persona.Nombre = "Juan Perez";
+        persona.Edad = 30;
+        persona.Email = "juan@email.com";
+        persona.Activo = true;
+        persona.FechaRegistro = DateTime.Now;
+
+        Console.WriteLine("Propiedades de persona:");
+        Console.WriteLine($"  Nombre: {persona.Nombre}");
+        Console.WriteLine($"  Edad: {persona.Edad}");
+        Console.WriteLine($"  Email: {persona.Email}");
+        Console.WriteLine($"  Activo: {persona.Activo}");
+        Console.WriteLine($"  Registro: {persona.FechaRegistro}");
+
+        persona.Saludar = (Action<string>)(nombre =>
+            Console.WriteLine($"  !Hola, {nombre}!"));
+
+        persona.Sumar = (Func<int, int, int>)((a, b) => a + b);
+
+        persona.Saludar("Ana");
+        int suma = persona.Sumar(10, 20);
+        Console.WriteLine($"  Suma: {suma}");
+
+        var diccionario = (IDictionary<string, object>)persona;
+        Console.WriteLine($"\nDiccionario ({diccionario.Count} items):");
+        foreach (var kvp in diccionario)
+            Console.WriteLine($"  {kvp.Key}: {kvp.Value} ({kvp.Value?.GetType().Name})");
+    }
+}
+```
+
+--- 5. USOS PRACTICOS DE EXPANDOOBJECT ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Dynamic;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== USOS PRACTICOS DE EXPANDOOBJECT ===\n");
+
+        Console.WriteLine("1. Desde diccionario:");
+        var datos = new Dictionary<string, object>
+        {
+            ["Producto"] = "Laptop",
+            ["Precio"] = 1500.99m,
+            ["Stock"] = 10
+        };
+        dynamic producto = DiccionarioAObjeto(datos);
+        Console.WriteLine($"   {producto.Producto} - ${producto.Precio} (stock: {producto.Stock})");
+
+        Console.WriteLine("\n2. JSON dinamico:");
+        dynamic config = new ExpandoObject();
+        config.Servidor = "localhost";
+        config.Puerto = 5432;
+        config.Credenciales = new ExpandoObject();
+        config.Credenciales.Usuario = "admin";
+        config.Credenciales.Password = "secreto";
+        Console.WriteLine($"   Conectando a {config.Servidor}:{config.Puerto}");
+        Console.WriteLine($"   Usuario: {config.Credenciales.Usuario}");
+
+        Console.WriteLine("\n3. Comportamiento dinamico:");
+        dynamic calculadora = new ExpandoObject();
+        calculadora.Operacion = (Func<string, int, int, int>)((op, a, b) =>
+        {
+            return op switch
+            {
+                "suma" => a + b,
+                "resta" => a - b,
+                "mult" => a * b,
+                "div" => b != 0 ? a / b : 0,
+                _ => throw new ArgumentException($"Operacion '{op}' no soportada")
+            };
+        });
+        Console.WriteLine($"   5 + 3 = {calculadora.Operacion("suma", 5, 3)}");
+        Console.WriteLine($"   10 - 4 = {calculadora.Operacion("resta", 10, 4)}");
+    }
+
+    static dynamic DiccionarioAObjeto(Dictionary<string, object> diccionario)
+    {
+        dynamic obj = new ExpandoObject();
+        var dict = (IDictionary<string, object>)obj;
+        foreach (var kvp in diccionario)
+            dict[kvp.Key] = kvp.Value;
+        return obj;
+    }
+}
+```
+
+--- 6. DYNAMIC EN INTEROPERABILIDAD COM ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC CON COM ===\n");
+
+        Console.WriteLine("Sin dynamic (tradicional): requiere referencias COM");
+        Console.WriteLine("\nCon dynamic (mucho mas limpio):");
+        Console.WriteLine("  dynamic excel = Activator.CreateInstance(");
+        Console.WriteLine("      Type.GetTypeFromProgID(\"Excel.Application\"));");
+        Console.WriteLine("  excel.Visible = true;");
+        Console.WriteLine("  excel.Workbooks.Add();");
+        Console.WriteLine("  excel.Cells[1, 1] = \"Hola desde C#!\";");
+
+        Console.WriteLine("\nBeneficios de dynamic con COM:");
+        Console.WriteLine("  - Sin casting intermedio");
+        Console.WriteLine("  - Sin PIA (Primary Interop Assemblies)");
+        Console.WriteLine("  - Codigo mas limpio y legible");
+        Console.WriteLine("  - Resuelve miembros opcionales correctamente");
+        Console.WriteLine("  - Maneja propiedades indexadas facilmente");
+    }
+}
+```
+
+--- 7. DYNAMIC CON TIPOS ANONIMOS ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC CON TIPOS ANONIMOS ===\n");
+
+        dynamic datos = new { Nombre = "Ana", Edad = 28, Ciudad = "Madrid" };
+
+        Console.WriteLine($"Nombre: {datos.Nombre}");
+        Console.WriteLine($"Edad: {datos.Edad}");
+        Console.WriteLine($"Ciudad: {datos.Ciudad}");
+
+        var resultado = ProcesarDatos(new { Id = 1, Valor = "test", Fecha = DateTime.Now });
+        Console.WriteLine($"\nResultado: {resultado}");
+    }
+
+    static string ProcesarDatos(dynamic item)
+    {
+        return $"Procesado: #{item.Id} - {item.Valor} - {item.Fecha:yyyy-MM-dd}";
+    }
+}
+```
+
+--- 8. DYNAMIC CON JSON ---
+
+```csharp
+using System;
+using System.Dynamic;
+using System.Text.Json;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC CON JSON ===\n");
+
+        string json = @{""}""{usuario: jperez, email: jperez@empresa.com, roles: [admin, usuario]}""@{""}"";
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        dynamic obj = JsonSerializer.Deserialize<ExpandoObject>(json, options);
+        Console.WriteLine($"Usuario: {obj.usuario}");
+        Console.WriteLine($"Email: {obj.email}");
+        Console.WriteLine($"Rol principal: {obj.roles[0]}");
+    }
+}
+```
+
+--- 9. DYNAMIC EN PARAMETROS Y RETORNOS ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC EN PARAMETROS Y RETORNOS ===\n");
+
+        EjecutarConDynamic("Hola mundo");
+        EjecutarConDynamic(42);
+        EjecutarConDynamic(DateTime.Now);
+
+        dynamic resultado1 = ObtenerValor("texto");
+        dynamic resultado2 = ObtenerValor("numero");
+        dynamic resultado3 = ObtenerValor("fecha");
+
+        Console.WriteLine($"\nRetornos dinamicos:");
+        Console.WriteLine($"  {resultado1} - {resultado1.GetType().Name}");
+        Console.WriteLine($"  {resultado2} - {resultado2.GetType().Name}");
+        Console.WriteLine($"  {resultado3} - {resultado3.GetType().Name}");
+
+        var lista = new List<dynamic>
+        {
+            "String", 123, DateTime.Now, new { X = 10, Y = 20 }
+        };
+
+        Console.WriteLine("\nLista dinamica:");
+        foreach (var item in lista)
+            Console.WriteLine($"  {item} ({item.GetType().Name})");
+    }
+
+    static void EjecutarConDynamic(dynamic parametro)
+    {
+        Console.WriteLine($"  Parametro: {parametro} ({parametro.GetType().Name})");
+        if (parametro is string s)
+            Console.WriteLine($"    Longitud: {s.Length}");
+        else if (parametro is int n)
+            Console.WriteLine($"    Cuadrado: {n * n}");
+        else if (parametro is DateTime dt)
+            Console.WriteLine($"    Anio: {dt.Year}");
+    }
+
+    static dynamic ObtenerValor(string tipo)
+    {
+        return tipo switch
+        {
+            "texto" => "Valor de texto",
+            "numero" => 999,
+            "fecha" => DateTime.Now,
+            _ => null
+        };
+    }
+}
+```
+
+--- 10. DYNAMIC CON OPERACIONES MATEMATICAS ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC CON OPERACIONES ===\n");
+
+        dynamic a = 10;
+        dynamic b = 20;
+        dynamic resultado = a + b;
+        Console.WriteLine($"10 + 20 = {resultado} ({resultado.GetType().Name})");
+
+        a = 10.5; b = 20.3;
+        resultado = a + b;
+        Console.WriteLine($"10.5 + 20.3 = {resultado}");
+
+        a = "Hola "; b = "Mundo";
+        resultado = a + b;
+        Console.WriteLine($"\"Hola \" + \"Mundo\" = {resultado}");
+
+        a = DateTime.Now; b = TimeSpan.FromDays(7);
+        resultado = a + b;
+        Console.WriteLine($"DateTime + 7 dias = {resultado:d}");
+
+        a = 100; b = 200;
+        Console.WriteLine($"\n100 < 200: {a < b}");
+        Console.WriteLine($"100 == 200: {a == b}");
+
+        a = "ABC"; b = "XYZ";
+        Console.WriteLine($"\"ABC\" < \"XYZ\": {a < b}");
+    }
+}
+```
+
+--- 11. LIMITACIONES DE DYNAMIC ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== LIMITACIONES DE DYNAMIC ===\n");
+
+        dynamic x = "test";
+        // x.MetodoInexistente(); // Compila, pero falla en runtime
+
+        Console.WriteLine("Limitaciones:");
+        Console.WriteLine("  - Sin IntelliSense / autocompletado");
+        Console.WriteLine("  - Sin type safety en compilacion");
+        Console.WriteLine("  - No soporta metodos de extension");
+        Console.WriteLine("  - No soporta lambdas directamente");
+        Console.WriteLine("  - Excepciones RuntimeBinderException");
+        Console.WriteLine("  - Rendimiento menor que tipos estaticos");
+        Console.WriteLine("  - Dificulta el mantenimiento");
+        Console.WriteLine("  - No usable en atributos");
+        Console.WriteLine("  - Problemas con tipos anonimos (readonly)");
+
+        dynamic anon = new { A = 1, B = 2 };
+        Console.WriteLine($"\nTipo anonimo via dynamic: {anon.A}, {anon.B}");
+    }
+}
+```
+
+--- 12. DYNAMIC VS REFLECTION ---
+
+```csharp
+using System;
+using System.Reflection;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC VS REFLECTION ===\n");
+
+        var calc = new Calculadora();
+
+        // Reflection
+        Type tipo = typeof(Calculadora);
+        var metodoSumar = tipo.GetMethod("Sumar");
+        int resultadoRef = (int)metodoSumar.Invoke(calc, new object[] { 5, 3 });
+        Console.WriteLine($"Reflection Sumar(5,3) = {resultadoRef}");
+
+        // Dynamic
+        dynamic calcDyn = calc;
+        int resultadoDyn = calcDyn.Sumar(5, 3);
+        Console.WriteLine($"Dynamic Sumar(5,3) = {resultadoDyn}");
+
+        Console.WriteLine("\nComparacion:");
+        Console.WriteLine("  Reflection: verboso, seguro, lento");
+        Console.WriteLine("  Dynamic:    conciso, menos seguro, rapido");
+        Console.WriteLine("  Dynamic usa DLR con cache");
+    }
+}
+
+public class Calculadora
+{
+    public int Id { get; set; }
+    public int Sumar(int a, int b) => a + b;
+    public int Restar(int a, int b) => a - b;
+}
+```
+
+--- 13. DYNAMIC Y SOBRECARGA DE OPERADORES ---
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC Y SOBRECARGA ===\n");
+
+        dynamic a = new Complejo(3, 4);
+        dynamic b = new Complejo(1, 2);
+
+        dynamic suma = a + b;
+        Console.WriteLine($"({a}) + ({b}) = {suma}");
+
+        dynamic resta = a - b;
+        Console.WriteLine($"({a}) - ({b}) = {resta}");
+
+        dynamic mult = a * b;
+        Console.WriteLine($"({a}) * ({b}) = {mult}");
+    }
+}
+
+public class Complejo
+{
+    public double Real { get; }
+    public double Imag { get; }
+    public Complejo(double r, double i = 0) { Real = r; Imag = i; }
+    public static Complejo operator +(Complejo a, Complejo b) => new(a.Real + b.Real, a.Imag + b.Imag);
+    public static Complejo operator -(Complejo a, Complejo b) => new(a.Real - b.Real, a.Imag - b.Imag);
+    public static Complejo operator *(Complejo a, Complejo b) =>
+        new(a.Real * b.Real - a.Imag * b.Imag, a.Real * b.Imag + a.Imag * b.Real);
+    public override string ToString() => $"{Real}{(Imag >= 0 ? "+" : "")}{Imag}i";
+}
+```
+
+--- 14. DYNAMIC CON LINQ ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC CON LINQ ===\n");
+
+        var numeros = new List<dynamic> { 1, 2, 3, 4, 5 };
+        var enumerable = numeros.AsEnumerable();
+        var pares = enumerable.Where(n => (int)n % 2 == 0);
+        Console.WriteLine("Pares:");
+        foreach (var p in pares) Console.WriteLine($"  {p}");
+
+        var datos = new List<dynamic>
+        {
+            new { Nombre = "Carlos", Edad = 25 },
+            new { Nombre = "Ana", Edad = 30 }
+        };
+        var ordenados = datos.OrderBy(d => (string)d.Nombre);
+        Console.WriteLine("\nOrdenado:");
+        foreach (var d in ordenados)
+            Console.WriteLine($"  {d.Nombre}, {d.Edad}");
+    }
+}
+```
+
+--- 15. DYNAMIC Y PERFORMANCE ---
+
+```csharp
+using System;
+using System.Diagnostics;
+using System.Reflection;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DYNAMIC Y PERFORMANCE ===\n");
+
+        var calc = new CalcRapida();
+        const int iter = 500000;
+
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < iter; i++) calc.Sumar(i, i + 1);
+        sw.Stop();
+        Console.WriteLine($"Directa: {sw.ElapsedMilliseconds}ms");
+
+        dynamic dyn = calc;
+        sw.Restart();
+        for (int i = 0; i < iter; i++) dyn.Sumar(i, i + 1);
+        sw.Stop();
+        Console.WriteLine($"Dynamic: {sw.ElapsedMilliseconds}ms");
+
+        var m = typeof(CalcRapida).GetMethod("Sumar");
+        sw.Restart();
+        for (int i = 0; i < iter; i++) m.Invoke(calc, new object[] { i, i + 1 });
+        sw.Stop();
+        Console.WriteLine($"Reflection: {sw.ElapsedMilliseconds}ms");
+    }
+}
+
+public class CalcRapida
+{
+    public int Sumar(int a, int b) => a + b;
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPITULO
+================================================================================
+
+1. dynamic omite la comprobacion de tipos en compilacion, delegandola al DLR.
+2. El DLR (Dynamic Language Runtime) resuelve miembros en tiempo de ejecucion.
+3. ExpandoObject permite crear objetos con miembros anadidos dinamicamente.
+4. Dynamic vs object: dynamic no requiere casting; object si.
+5. Dynamic vs var: var es estatico en compilacion; dynamic es dinamico.
+6. Es util para COM, lenguajes dinamicos, JSON, prototipado.
+7. Limitaciones: sin IntelliSense, sin type safety, rendimiento menor.
+8. Dynamic es mas rapido que reflection gracias al cache del DLR.
+
+================================================================================
+  EJERCICIOS PRACTICOS
+================================================================================
+
+Ejercicio 1: Cree un metodo que acepte dynamic y demuestre como responde
+a diferentes tipos (string, int, DateTime, array).
+
+Ejercicio 2: Use ExpandoObject para crear un objeto configuracion con
+propiedades anadidas dinamicamente y conviertalo a IDictionary.
+
+Ejercicio 3: Compare el rendimiento de llamada directa vs dynamic vs
+reflection con 1 millon de iteraciones.
+
+Ejercicio 4: Simule interoperabilidad COM con dynamic: cree una clase
+que exponga propiedades indexadas y metodos, acceda via dynamic.
+
+Ejercicio 5: Implemente un mapeador simple de JSON a objeto usando
+ExpandoObject y JsonSerializer.Deserialize.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Es dynamic lo mismo que var? R: NO. var es inferencia en compilacion
+(tipo fijo). dynamic es resolucion en runtime (tipo variable).
+
+P: Cuando debo usar dynamic? R: Para interoperar con COM, lenguajes
+dinamicos, JSON dinamico, o cuando necesita evitar reflection verbosa.
+
+P: Es seguro usar dynamic? R: Tiene el riesgo de RuntimeBinderException
+si el miembro no existe. Use con cuidado y prueba exhaustiva.
+
+P: Afecta el rendimiento? R: Si, ~10x mas lento que llamada directa,
+pero mas rapido que reflection (~10x mas rapido que Invoke).
+
+P: Puedo usar dynamic con async/await? R: Si, pero con cuidado.
+await sobre dynamic funciona, pero evite en produccion.
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+Construya un interprete de expresiones matematicas usando dynamic:
+
+1. Tome una expresion string como "3 + 4 * 2 / (1 - 5)"
+2. Parseela y ejecutela usando dynamic para soportar diferentes tipos
+3. Agregue variables: "x + y * 2" con valores pasados como diccionario
+4. Agregue funciones: "seno(0) + sqrt(16)"
+5. Use ExpandoObject como contexto de ejecucion
+6. Implemente operadores personalizados via DynamicObject
+7. Mida el rendimiento comparado con Expression Trees
+
+Extension: Agregue soporte para definir funciones personalizadas
+en runtime usando dynamic.
+
+================================================================================
+  CIERRE DEL CAPITULO
+================================================================================
+
+dynamic es una herramienta poderosa que debe usarse con criterio. Permite
+escribir codigo flexible y expresivo, especialmente para COM y lenguajes
+dinamicos, pero sacrifica type safety y rendimiento. En el proximo capitulo
+exploraremos el codigo unsafe para escenarios donde el rendimiento es
+critico.
+
+!Felicidades! Domina el tipo dynamic de C#.
+
+PROXIMO CAPITULO: 67 - Codigo Unsafe
+================================================================================

@@ -1,0 +1,746 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 53: EVENTOS
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 53 de C# MASTER BOOK. Si el capítulo 52 te mostró
+el poder de los delegados multicast, este capítulo te mostrará la forma
+correcta y segura de exponerlos: los EVENTOS.
+
+Los eventos son la implementación del patrón de diseño Observer en C#.
+Son la columna vertebral de la programación basada en eventos: UI (clicks,
+keypress), ASP.NET (page lifecycle), Unity (game events), servicios
+(notificaciones), y mucho más.
+
+Un evento es un "wrapper" sobre un delegado multicast que agrega dos
+capas de seguridad:
+  1. Solo el publicador puede invocar el evento (invocation restriction).
+  2. Los suscriptores solo pueden += y -= (suscripción segura).
+
+Hoy cubriremos:
+  • La palabra clave event.
+  • Declaración de eventos (field-like vs add/remove).
+  • Patrón Publisher/Subscriber.
+  • EventArgs y EventArgs<T>.
+  • EventHandler y EventHandler<TEventArgs>.
+  • Buenas prácticas y convenciones.
+  • Eventos estáticos, eventos de interfaz, eventos virtuales.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"Los eventos en C# son delegados multicast con un portero:
+solo el propietario puede convocar a los invitados,
+los suscriptores solo pueden apuntarse o darse de baja."
+— Bill Wagner
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Comprender la diferencia entre un delegado público y un evento.
+  • Declarar eventos con la palabra clave event.
+  • Implementar el patrón publisher/subscriber.
+  • Usar EventArgs y crear tipos personalizados de EventArgs.
+  • Usar EventHandler y EventHandler<T>.
+  • Suscribirse y desuscribirse de eventos con += y -=.
+  • Invocar eventos de forma segura (null check, thread-safe).
+  • Implementar add/remove accessors personalizados.
+  • Declarar eventos en interfaces.
+  • Conocer las convenciones de nomenclatura de eventos en .NET.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. ¿Qué es un evento?
+
+Un evento es un miembro de clase que permite que un objeto (el publicador)
+notifique a otros objetos (suscriptores) cuando ocurre algo.
+
+Internamente, un evento es un delegado multicast con restricciones:
+  • Solo se puede invocar (call) desde la clase que lo declara.
+  • Desde fuera, solo se puede suscribir (+=) o desuscribir (-=).
+
+Sin la palabra clave event, los suscriptores podrían:
+  • Reemplazar todos los handlers (usando = en vez de +=).
+  • Invocar el delegado directamente (no autorizado).
+
+Con event, el compilador genera un par de métodos add/remove que protegen
+el acceso.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. Declaración de eventos
+
+───────────────────────────────────────────────
+Forma 1: Field-like event (más común)
+───────────────────────────────────────────────
+
+  public event EventHandler ProcesadoCompletado;
+
+Equivalente a:
+
+  private EventHandler _procesadoCompletado;
+  public event EventHandler ProcesadoCompletado
+  {
+      add { _procesadoCompletado += value; }
+      remove { _procesadoCompletado -= value; }
+  }
+
+───────────────────────────────────────────────
+Forma 2: Evento con tipo delegado personalizado
+───────────────────────────────────────────────
+
+  public delegate void NotificacionHandler(object sender, string mensaje);
+  public event NotificacionHandler Notificado;
+
+───────────────────────────────────────────────
+Forma 3: Evento estático
+───────────────────────────────────────────────
+
+  public static event EventHandler AplicacionIniciada;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. Patrón Publisher/Subscriber
+
+El patrón básico:
+
+  ┌──────────────┐          ┌────────────────┐
+  │  Publisher   │──event──→│  Subscriber 1  │
+  │              │          │  Subscriber 2  │
+  │  - evento    │          │  Subscriber 3  │
+  │  - Disparar()│          └────────────────┘
+  └──────────────┘
+
+Pasos:
+  1. El publicador declara un evento.
+  2. Los suscriptores se suscriben con +=.
+  3. El publicador invoca el evento (dispara).
+  4. Todos los suscriptores reciben la notificación.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. EventArgs y EventArgs<T>
+
+Por convención, los eventos en .NET reciben dos parámetros:
+  • sender: el objeto que disparó el evento (object).
+  • e: EventArgs con datos del evento.
+
+EventArgs es la clase base vacía. Para pasar datos personalizados:
+
+  public class ProgresoEventArgs : EventArgs
+  {
+      public int Porcentaje { get; }
+      public string Mensaje { get; }
+      public ProgresoEventArgs(int porcentaje, string mensaje)
+      {
+          Porcentaje = porcentaje;
+          Mensaje = mensaje;
+      }
+  }
+
+  public event EventHandler<ProgresoEventArgs> ProgresoActualizado;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. EventHandler y EventHandler<T>
+
+.NET proporciona dos tipos delegados predefinidos para eventos:
+
+  public delegate void EventHandler(object sender, EventArgs e);
+  public delegate void EventHandler<TEventArgs>(object sender, TEventArgs e);
+
+Siempre que puedas, usa EventHandler<T> en lugar de declarar tu propio
+delegado para eventos.
+
+Ejemplo:
+
+  public event EventHandler PaginaCargada;
+  public event EventHandler<ErrorEventArgs> ErrorOcurrido;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Invocación segura de eventos
+
+Siempre verifica que el evento no sea null antes de invocarlo:
+
+  // Forma 1: null check
+  if (ProgresoActualizado != null)
+      ProgresoActualizado(this, new ProgresoEventArgs(50, "Mitad"));
+
+  // Forma 2: C# 6+ null-conditional
+  ProgresoActualizado?.Invoke(this, new ProgresoEventArgs(50, "Mitad"));
+
+  // Forma 3: Variable local (thread-safe)
+  var handler = ProgresoActualizado;
+  if (handler != null)
+      handler(this, new ProgresoEventArgs(50, "Mitad"));
+
+La forma 3 es thread-safe: captura el delegado en una variable local,
+evitando que otro hilo lo modifique entre el check y la invocación.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. Método protegido OnEvent (patrón)
+
+La convención de .NET sugiere crear un método virtual protegido para
+disparar cada evento. Esto permite que las subclases sobrescriban el
+comportamiento.
+
+  public class Procesador
+  {
+      public event EventHandler<ProgresoEventArgs> Progreso;
+
+      protected virtual void OnProgreso(ProgresoEventArgs e)
+      {
+          Progreso?.Invoke(this, e);
+      }
+
+      public void Ejecutar()
+      {
+          for (int i = 0; i <= 100; i += 25)
+          {
+              OnProgreso(new ProgresoEventArgs(i, $"Progreso: {i}%"));
+          }
+      }
+  }
+
+Ventajas:
+  • Las subclases pueden interceptar el evento (override).
+  • Centraliza la lógica de invocación.
+  • Permite agregar lógica antes/después sin modificar los suscriptores.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. Eventos en Interfaces
+
+Puedes declarar eventos en interfaces:
+
+  public interface INotificable
+  {
+      event EventHandler Notificado;
+  }
+
+  public class Notificador : INotificable
+  {
+      public event EventHandler Notificado;
+
+      public void Notificar() => Notificado?.Invoke(this, EventArgs.Empty);
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. Eventos virtuales y override
+
+Los eventos pueden ser virtuales, permitiendo que subclases modifiquen
+el comportamiento:
+
+  public class PublicadorBase
+  {
+      public virtual event EventHandler MiEvento;
+  }
+
+  public class PublicadorDerivado : PublicadorBase
+  {
+      public override event EventHandler MiEvento
+      {
+          add
+          {
+              Console.WriteLine($"Suscriptor agregado: {value.Method.Name}");
+              base.MiEvento += value;
+          }
+          remove
+          {
+              Console.WriteLine($"Suscriptor removido: {value.Method.Name}");
+              base.MiEvento -= value;
+          }
+      }
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+10. EventHandler<T> personalizado
+
+Creación de argumentos de evento personalizados:
+
+  public class ErrorEventArgs : EventArgs
+  {
+      public Guid Id { get; } = Guid.NewGuid();
+      public string Mensaje { get; }
+      public Exception Excepcion { get; }
+      public DateTime Timestamp { get; } = DateTime.UtcNow;
+
+      public ErrorEventArgs(string mensaje, Exception excepcion = null)
+      {
+          Mensaje = mensaje;
+          Excepcion = excepcion;
+      }
+  }
+
+  public event EventHandler<ErrorEventArgs> ErrorOcurrido;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+11. Evento con add/remove personalizados
+
+Útil cuando necesitas lógica adicional al suscribir/desuscribir:
+
+  private EventHandler _cambiado;
+  public event EventHandler Cambiado
+  {
+      add
+      {
+          Console.WriteLine($"Nuevo suscriptor: {value.Method.Name}");
+          _cambiado += value;
+      }
+      remove
+      {
+          Console.WriteLine($"Suscriptor removido: {value.Method.Name}");
+          _cambiado -= value;
+      }
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+12. Eventos estáticos
+
+Útiles para notificaciones globales:
+
+  public static class GestorAplicacion
+  {
+      public static event EventHandler AplicacionCerrandose;
+
+      public static void Cerrar()
+      {
+          AplicacionCerrandose?.Invoke(null, EventArgs.Empty);
+      }
+  }
+
+  // Suscripción:
+  GestorAplicacion.AplicacionCerrandose += (s, e) =>
+      Console.WriteLine("Guardando datos antes de cerrar...");
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+13. Eventos con solo un suscriptor (Weak Event)
+
+En aplicaciones WPF/XAML es común el patrón Weak Event para evitar memory
+leaks cuando el suscriptor vive más que el publicador. Aunque no entraremos
+en detalle, ten en cuenta que:
+
+  • Si el publicador tiene una referencia fuerte al suscriptor (event),
+    el suscriptor no será recolectado.
+  • WeakEventManager y IWeakEventListener solucionan esto.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+namespace Capitulo53_Eventos
+{
+    // ─── EventArgs personalizados ───
+    public class ProgresoEventArgs : EventArgs
+    {
+        public int Porcentaje { get; }
+        public string Mensaje { get; }
+
+        public ProgresoEventArgs(int porcentaje, string mensaje)
+        {
+            Porcentaje = porcentaje;
+            Mensaje = mensaje;
+        }
+    }
+
+    public class ErrorEventArgs : EventArgs
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Mensaje { get; }
+        public Exception Excepcion { get; }
+        public DateTime Timestamp { get; } = DateTime.UtcNow;
+
+        public ErrorEventArgs(string mensaje, Exception excepcion = null)
+        {
+            Mensaje = mensaje;
+            Excepcion = excepcion;
+        }
+
+        public override string ToString() =>
+            $"[{Timestamp:HH:mm:ss}] Error {Id}: {Mensaje}" +
+            (Excepcion != null ? $" | {Excepcion.Message}" : "");
+    }
+
+    public class DatoRecibidoEventArgs : EventArgs
+    {
+        public string Dato { get; }
+        public DatoRecibidoEventArgs(string dato) => Dato = dato;
+    }
+
+    // ─── Publisher ───
+    public class ProcesadorDatos
+    {
+        // Eventos field-like
+        public event EventHandler ProcesadorIniciado;
+        public event EventHandler<ProgresoEventArgs> Progreso;
+        public event EventHandler<ErrorEventArgs> Error;
+        public event EventHandler<DatoRecibidoEventArgs> DatoRecibido;
+        public event EventHandler ProcesadorCompletado;
+
+        // Evento con add/remove personalizado
+        private EventHandler _depurando;
+        public event EventHandler Depurando
+        {
+            add
+            {
+                Console.WriteLine($"[Depurando] Nuevo handler: {value.Method.Name}");
+                _depurando += value;
+            }
+            remove
+            {
+                Console.WriteLine($"[Depurando] Handler removido: {value.Method.Name}");
+                _depurando -= value;
+            }
+        }
+
+        // Métodos protect OnEvent
+        protected virtual void OnProcesadorIniciado() =>
+            ProcesadorIniciado?.Invoke(this, EventArgs.Empty);
+
+        protected virtual void OnProgreso(ProgresoEventArgs e) =>
+            Progreso?.Invoke(this, e);
+
+        protected virtual void OnError(ErrorEventArgs e) =>
+            Error?.Invoke(this, e);
+
+        protected virtual void OnDatoRecibido(DatoRecibidoEventArgs e) =>
+            DatoRecibido?.Invoke(this, e);
+
+        protected virtual void OnProcesadorCompletado() =>
+            ProcesadorCompletado?.Invoke(this, EventArgs.Empty);
+
+        // Método principal
+        public void Procesar(IEnumerable<string> datos)
+        {
+            OnProcesadorIniciado();
+            Console.WriteLine("[Procesador] Iniciando procesamiento...\n");
+
+            int total = 0;
+            int actual = 0;
+
+            foreach (var dato in datos)
+            {
+                total++;
+            }
+
+            foreach (var dato in datos)
+            {
+                try
+                {
+                    if (dato == null)
+                        throw new ArgumentNullException(nameof(dato));
+
+                    OnDatoRecibido(new DatoRecibidoEventArgs(dato));
+
+                    // Simula procesamiento
+                    System.Threading.Thread.Sleep(100);
+
+                    actual++;
+                    int porcentaje = (int)((double)actual / total * 100);
+                    OnProgreso(new ProgresoEventArgs(porcentaje,
+                        $"Procesado {actual} de {total}"));
+                }
+                catch (Exception ex)
+                {
+                    OnError(new ErrorEventArgs(
+                        $"Error procesando: {dato}", ex));
+                }
+            }
+
+            Console.WriteLine("\n[Procesador] Procesamiento completado.");
+            OnProcesadorCompletado();
+        }
+
+        // Método para probar depuración
+        public void DispararDepuracion() =>
+            _depurando?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ─── Suscriptores ───
+    public class Logger
+    {
+        public Logger(ProcesadorDatos procesador)
+        {
+            procesador.ProcesadorIniciado += OnIniciado;
+            procesador.Progreso += OnProgreso;
+            procesador.Error += OnError;
+            procesador.DatoRecibido += OnDatoRecibido;
+            procesador.ProcesadorCompletado += OnCompletado;
+        }
+
+        private void OnIniciado(object sender, EventArgs e)
+        {
+            Console.WriteLine("[Logger] PROCESADOR INICIADO");
+        }
+
+        private void OnProgreso(object sender, ProgresoEventArgs e)
+        {
+            Console.WriteLine($"[Logger] Progreso: {e.Porcentaje}% - {e.Mensaje}");
+        }
+
+        private void OnError(object sender, ErrorEventArgs e)
+        {
+            Console.WriteLine($"[Logger] ⚠ {e}");
+        }
+
+        private void OnDatoRecibido(object sender, DatoRecibidoEventArgs e)
+        {
+            Console.WriteLine($"[Logger] Dato recibido: '{e.Dato}'");
+        }
+
+        private void OnCompletado(object sender, EventArgs e)
+        {
+            Console.WriteLine("[Logger] PROCESADOR COMPLETADO");
+        }
+
+        // Desuscribirse
+        public void Desuscribir(ProcesadorDatos procesador)
+        {
+            procesador.ProcesadorIniciado -= OnIniciado;
+            procesador.Progreso -= OnProgreso;
+            procesador.Error -= OnError;
+            procesador.DatoRecibido -= OnDatoRecibido;
+            procesador.ProcesadorCompletado -= OnCompletado;
+            Console.WriteLine("[Logger] Desuscripto de todos los eventos");
+        }
+    }
+
+    public class Monitor
+    {
+        private int _datosProcesados;
+        private int _errores;
+
+        public Monitor(ProcesadorDatos procesador)
+        {
+            procesador.DatoRecibido += (s, e) =>
+            {
+                _datosProcesados++;
+                Console.WriteLine($"[Monitor] Contador: {_datosProcesados} datos");
+            };
+
+            procesador.Error += (s, e) =>
+            {
+                _errores++;
+                Console.WriteLine($"[Monitor] Errores: {_errores}");
+            };
+
+            procesador.ProcesadorCompletado += (s, e) =>
+            {
+                Console.WriteLine($"[Monitor] RESUMEN: {_datosProcesados} OK, {_errores} ERRORES");
+            };
+        }
+    }
+
+    // ─── Programa principal ───
+    class Program
+    {
+        static void Main()
+        {
+            Console.WriteLine("═══════ CAPÍTULO 53: EVENTOS ═══════\n");
+
+            var procesador = new ProcesadorDatos();
+
+            // Suscripción con expresión lambda
+            procesador.ProcesadorIniciado += (sender, e) =>
+                Console.WriteLine("[Lambda] ¡Procesador iniciado!");
+
+            procesador.ProcesadorCompletado += (sender, e) =>
+                Console.WriteLine("[Lambda] ¡Procesador completado!");
+
+            // 🔴 Esto NO compila (invoación desde fuera):
+            // procesador.Progreso(this, EventArgs.Empty);  // ❌
+
+            // Crear suscriptores
+            var logger = new Logger(procesador);
+            var monitor = new Monitor(procesador);
+
+            // Suscripción al evento con add/remove personalizado
+            procesador.Depurando += (s, e) =>
+                Console.WriteLine("[Depuración] Evento de depuración recibido");
+
+            // Ejecutar procesamiento
+            var datos = new List<string>
+            {
+                "archivo1.txt",
+                "archivo2.txt",
+                null,
+                "archivo4.txt",
+                "archivo5.txt",
+            };
+
+            Console.WriteLine("Presiona Enter para iniciar el procesamiento...");
+            Console.ReadLine();
+
+            procesador.Procesar(datos);
+
+            Console.WriteLine("\n─── Probando evento con add/remove personalizado ───");
+            procesador.DispararDepuracion();
+
+            Console.WriteLine("\n─── Desuscribiendo Logger ───");
+            logger.Desuscribir(procesador);
+
+            Console.WriteLine("\n─── Segundo procesamiento (sin Logger) ───");
+            procesador.Procesar(new[] { "solo.txt" });
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 53 ═══════");
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Un evento es un delegado multicast con acceso restringido.
+  • event impide invocación externa y reemplazo con =.
+  • Usa EventHandler/EventHandler<T> por convención.
+  • Implementa el patrón OnEvent virtual para disparar eventos.
+  • Siempre verifica null antes de invocar (?.Invoke).
+  • Los argumentos personalizados heredan de EventArgs.
+  • add/remove personalizados permiten lógica adicional.
+  • Los eventos soportan herencia, interfaces y static.
+  • Cuidado con memory leaks: weak events cuando sea necesario.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Crea una clase Temporizador con un event EventHandler
+    TiempoCumplido que se dispare después de N segundos.
+
+  ✦ Ejercicio 2: Implementa una clase Subastador con eventos OfertaRecibida
+    y SubastaFinalizada. El evento debe llevar el monto de la oferta.
+
+  ✦ Ejercicio 3: Crea un evento personalizado con add/remove que lleve
+    un contador de cuántos suscriptores hay registrados.
+
+  ✦ Ejercicio 4: Implementa el patrón OnEvent protegido para un evento
+    CambioPropiedad que notifique cambios en una propiedad Nombre.
+
+  ✦ Ejercicio 5: Crea tres suscriptores distintos para un mismo evento.
+    Cada uno debe hacer algo diferente. Luego desuscribe uno.
+
+  ✦ Ejercicio 6: Declara un evento en una interfaz IActualizable y
+    dos clases que lo implementen de manera diferente.
+
+  ✦ Ejercicio 7: Crea un EventArgs<T> genérico para reutilizar en
+    múltiples eventos que necesiten pasar un valor.
+
+  ✦ Ejercicio 8: Investiga qué pasa si un suscriptor lanza una excepción
+    dentro de un evento. Implementa manejo de errores en el publisher.
+
+  ✦ Ejercicio 9: Escribe un ejemplo de thread-safe event invocation
+    usando la copia local del delegado.
+
+  ✦ Ejercicio 10: Crea una clase GestorEventos que permita registrar,
+    desregistrar y disparar eventos por nombre (diccionario de eventos).
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿Cuál es la diferencia entre event y un delegado público?
+  → Con event, solo la clase declarante puede invocar el evento.
+    Con un delegado público, cualquiera puede invocarlo y reemplazarlo.
+
+  ❓ ¿Puedo tener un evento sin suscriptores?
+  → Sí. El evento es null hasta que se agregue al menos un suscriptor.
+
+  ❓ ¿Los eventos son sincrónicos?
+  → Sí, por defecto se ejecutan en el mismo hilo del publicador.
+    Para async, se usan delegados async o Task.
+
+  ❓ ¿Puedo devolver un valor desde un evento?
+  → Técnicamente sí (usando un delegado con retorno), pero no es convención.
+    Solo se obtiene el último valor. Usa GetInvocationList si necesitas más.
+
+  ❓ ¿Puedo declarar un event en un struct?
+  → Sí, pero ten cuidado con structs mutables. Los eventos en structs
+    tienen comportamientos especiales con boxing.
+
+  ❓ ¿Qué significa el prefijo "On" en los métodos protect?
+  → Es la convención de .NET: On[EventName] es el método virtual protected
+    que dispara el evento.
+
+  ❓ ¿Los eventos genéricos existen?
+  → Sí, puedes declarar event EventHandler<T> donde T es un tipo genérico.
+
+  ❓ ¿Cómo evito memory leaks con eventos?
+  → Desuscribiéndote siempre con -= cuando ya no necesitas el evento,
+    o usando WeakEventManager.
+
+  ❓ ¿Puedo usar async void en un event handler?
+  → Sí, pero no puedes esperar (await) la finalización desde el publisher.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Construye un sistema de eventos personalizados que replique el    │
+  │  patrón de eventos de UI (como Windows Forms) pero en consola.     │
+  │                                                                     │
+  │  Requisitos:                                                        │
+  │    • Clase Control (base) con eventos: Click, DoubleClick,         │
+  │      MouseEnter, MouseLeave, KeyPress.                             │
+  │    • Clases derivadas: Boton, TextBox, ListBox.                    │
+  │    • Cada control debe tener un método SimularEvento(string tipo)  │
+  │      que dispare el evento correspondiente.                        │
+  │    • Sistema de propagación: eventos "burbujean" al contenedor     │
+  │      padre (como en HTML/Windows Forms).                           │
+  │    • Clase Formulario que contiene controles y recibe eventos      │
+  │      burbujeantes.                                                 │
+  │    • Debe usar EventArgs personalizados (MouseEventArgs,           │
+  │      KeyEventArgs).                                                │
+  │                                                                     │
+  │  Ejemplo de uso:                                                    │
+  │    var form = new Formulario();                                     │
+  │    var btn = new Boton("Enviar");                                   │
+  │    form.AgregarControl(btn);                                        │
+  │    btn.Click += (s, e) => Console.WriteLine("Botón clickeado");    │
+  │    form.Click += (s, e) => Console.WriteLine("Form clickeado");    │
+  │    btn.SimularEvento("Click"); // Dispara ambos                     │
+  │                                                                     │
+  │  Entrega: UIEventSystem.cs con toda la implementación y un demo.   │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+Los eventos son una parte fundamental del ecosistema .NET. Los usas cada
+vez que haces clic en un botón, cada vez que recibes una notificación,
+cada vez que se completa una operación asíncrona.
+
+Comprender los eventos a fondo te permite diseñar sistemas débilmente
+acoplados, extensibles y mantenibles. El patrón publisher/subscriber es
+uno de los patrones de diseño más utilizados en la industria.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 54: FUNC Y ACTION
+    Aprenderás los delegados predefinidos de .NET: Func<>, Action<>,
+    Predicate<>, y cómo usarlos con lambdas para escribir código
+    más limpio y funcional.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 53 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

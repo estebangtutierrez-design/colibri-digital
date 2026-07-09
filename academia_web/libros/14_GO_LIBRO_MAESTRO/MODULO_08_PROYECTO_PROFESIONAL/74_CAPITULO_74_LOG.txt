@@ -1,0 +1,1023 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 74: LOGGING (LOG, ZAP, SLOG)                ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, cronista de sistemas. En un sistema profesional, los logs
+son los ojos del desarrollador en producción. En este capítulo
+aprenderás a usar el paquete estándar log, el estructurado slog (Go
+1.21+), y la potente biblioteca zap de Uber para logging de alto
+rendimiento.
+
+FRASE MOTIVACIONAL
+──────────────────
+"Un buen log es una carta al futuro. Cuando todo falla a las 3 AM,
+son tus logs quienes te toman de la mano y te guían al problema."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Usar el paquete log estándar correctamente.
+2. Implementar logging estructurado con slog (Go 1.21+).
+3. Dominar zap para logging de alto rendimiento.
+4. Configurar niveles de log (debug, info, warn, error).
+5. Escribir logs en múltiples destinos (archivo, stdout, syslog).
+6. Implementar middleware de logging para HTTP.
+7. Buenas prácticas y errores comunes en logging.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. EL PAQUETE ESTÁNDAR log
+──────────────────────────
+
+El paquete log es simple pero funcional:
+
+```go
+package main
+
+import (
+    "log"
+    "os"
+)
+
+func main() {
+    // Configuración básica
+    log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+    log.SetPrefix("[MYAPP] ")
+    log.SetOutput(os.Stdout)
+
+    log.Print("Iniciando aplicación")
+    log.Printf("Puerto: %s", "8080")
+    log.Println("Servicio iniciado correctamente")
+
+    // log.Fatal termina el programa con os.Exit(1)
+    if err := someFunction(); err != nil {
+        log.Fatalf("Error fatal: %v", err)
+    }
+
+    // log.Panic hace panic
+    if err := criticalFunction(); err != nil {
+        log.Panicf("Error crítico: %v", err)
+    }
+}
+
+func someFunction() error {
+    return nil
+}
+
+func criticalFunction() error {
+    return nil
+}
+```
+
+Flags disponibles:
+
+```go
+log.Ldate         // Fecha: 2024/01/15
+log.Ltime         // Hora: 15:04:05
+log.Lmicroseconds // Microsegundos: 15:04:05.000000
+log.Llongfile     // Archivo completo: /path/to/file.go:123
+log.Lshortfile    // Solo archivo: file.go:123
+log.LUTC          // Hora en UTC
+log.Lmsgprefix    // Prefix antes del mensaje (Go 1.14+)
+log.LstdFlags     // = Ldate | Ltime
+```
+
+2. LOGGER PERSONALIZADO
+───────────────────────
+
+Podemos crear múltiples loggers para diferentes propósitos:
+
+```go
+package main
+
+import (
+    "io"
+    "log"
+    "os"
+)
+
+var (
+    Debug   *log.Logger
+    Info    *log.Logger
+    Warning *log.Logger
+    Error   *log.Logger
+)
+
+func init() {
+    // Archivo de log
+    file, err := os.OpenFile("app.log",
+        os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Múltiples destinos: archivo + stdout
+    multiWriter := io.MultiWriter(file, os.Stdout)
+
+    Debug = log.New(os.Stdout,
+        "[DEBUG] ",
+        log.Ldate|log.Ltime|log.Lshortfile)
+
+    Info = log.New(multiWriter,
+        "[INFO] ",
+        log.Ldate|log.Ltime|log.Lshortfile)
+
+    Warning = log.New(multiWriter,
+        "[WARN] ",
+        log.Ldate|log.Ltime|log.Lshortfile)
+
+    Error = log.New(os.Stderr,
+        "[ERROR] ",
+        log.Ldate|log.Ltime|log.Lshortfile)
+}
+
+func main() {
+    Debug.Println("Esto solo va a stdout")
+    Info.Println("Servidor iniciado")
+    Warning.Println("Memoria alta: 85%")
+    Error.Println("Error al conectar con BD")
+}
+```
+
+3. LIMITACIONES DEL PAQUETE log
+────────────────────────────────
+
+1. No tiene niveles integrados (debug, info, warn, error).
+2. No soporta logging estructurado (pares clave-valor).
+3. No es eficiente para alto rendimiento (asigna memoria).
+4. Rotación de archivos no incluida.
+5. Formato limitado (solo texto plano).
+
+Para proyectos profesionales, necesitamos algo más robusto.
+
+4. SLOG — LOGGING ESTRUCTURADO (Go 1.21+)
+──────────────────────────────────────────
+
+Go 1.21 introdujo log/slog, el paquete oficial de logging
+estructurado:
+
+```go
+package main
+
+import (
+    "log/slog"
+    "os"
+    "time"
+)
+
+func main() {
+    // Logger básico a stdout
+    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+    logger.Info("aplicación iniciada", "version", "1.0.0")
+
+    // Formato JSON
+    jsonLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    jsonLogger.Info("servidor listo",
+        "puerto", 8080,
+        "host", "localhost",
+    )
+
+    // Con niveles
+    opts := &slog.HandlerOptions{
+        Level: slog.LevelDebug,
+    }
+    debugLogger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
+    debugLogger.Debug("mensaje de depuración")
+    debugLogger.Info("mensaje informativo")
+    debugLogger.Warn("mensaje de advertencia")
+    debugLogger.Error("mensaje de error")
+}
+```
+
+5. SLOG — CONFIGURACIÓN AVANZADA
+─────────────────────────────────
+
+```go
+package main
+
+import (
+    "io"
+    "log/slog"
+    "os"
+    "path/filepath"
+    "time"
+)
+
+type LogConfig struct {
+    Level     string
+    Format    string // "text" o "json"
+    Output    string // "stdout", "stderr", o ruta de archivo
+    AddSource bool
+}
+
+func NewLogger(cfg LogConfig) (*slog.Logger, error) {
+    var level slog.Level
+    switch cfg.Level {
+    case "debug":
+        level = slog.LevelDebug
+    case "info":
+        level = slog.LevelInfo
+    case "warn":
+        level = slog.LevelWarn
+    case "error":
+        level = slog.LevelError
+    default:
+        level = slog.LevelInfo
+    }
+
+    var writer io.Writer
+    switch cfg.Output {
+    case "stdout":
+        writer = os.Stdout
+    case "stderr":
+        writer = os.Stderr
+    default:
+        // Rotación simple por fecha
+        dir := filepath.Dir(cfg.Output)
+        if err := os.MkdirAll(dir, 0755); err != nil {
+            return nil, err
+        }
+        file, err := os.OpenFile(cfg.Output,
+            os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+        if err != nil {
+            return nil, err
+        }
+        writer = file
+    }
+
+    opts := &slog.HandlerOptions{
+        Level:     level,
+        AddSource: cfg.AddSource,
+        ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+            // Personalizar formato de tiempo
+            if a.Key == "time" {
+                if t, ok := a.Value.Any().(time.Time); ok {
+                    a.Value = slog.StringValue(
+                        t.Format(time.RFC3339))
+                }
+            }
+            return a
+        },
+    }
+
+    var handler slog.Handler
+    switch cfg.Format {
+    case "json":
+        handler = slog.NewJSONHandler(writer, opts)
+    default:
+        handler = slog.NewTextHandler(writer, opts)
+    }
+
+    return slog.New(handler), nil
+}
+
+func main() {
+    logger, err := NewLogger(LogConfig{
+        Level:     "debug",
+        Format:    "json",
+        Output:    "logs/app.log",
+        AddSource: true,
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    logger.Info("sistema iniciado",
+        "version", "2.0.0",
+        "entorno", "producción",
+    )
+}
+```
+
+6. SLOG — LOGGER CON CONTEXTO
+──────────────────────────────
+
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "os"
+)
+
+type contextKey string
+
+const RequestIDKey contextKey = "request_id"
+
+type ContextHandler struct {
+    handler slog.Handler
+}
+
+func (h *ContextHandler) Enabled(ctx context.Context, level slog.Level) bool {
+    return h.handler.Enabled(ctx, level)
+}
+
+func (h *ContextHandler) Handle(ctx context.Context, record slog.Record) error {
+    if requestID, ok := ctx.Value(RequestIDKey).(string); ok {
+        record.AddAttrs(slog.String("request_id", requestID))
+    }
+    return h.handler.Handle(ctx, record)
+}
+
+func (h *ContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+    return &ContextHandler{handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h *ContextHandler) WithGroup(name string) slog.Handler {
+    return &ContextHandler{handler: h.handler.WithGroup(name)}
+}
+
+func main() {
+    baseHandler := slog.NewJSONHandler(os.Stdout, nil)
+    ctxHandler := &ContextHandler{handler: baseHandler}
+    logger := slog.New(ctxHandler)
+
+    ctx := context.WithValue(context.Background(),
+        RequestIDKey, "req-abc-123")
+
+    // Este log incluirá automáticamente request_id
+    logger.InfoContext(ctx, "procesando solicitud",
+        "path", "/api/users",
+    )
+}
+```
+
+7. ZAP — LOGGING DE ALTO RENDIMIENTO
+─────────────────────────────────────
+
+Zap de Uber es la biblioteca de logging más rápida para Go. Su
+secreto: evitar asignaciones de memoria innecesarias.
+
+Instalación:
+
+```bash
+go get go.uber.org/zap
+```
+
+Uso básico:
+
+```go
+package main
+
+import (
+    "go.uber.org/zap"
+)
+
+func main() {
+    // Logger rápido para producción
+    logger, err := zap.NewProduction()
+    if err != nil {
+        panic(err)
+    }
+    defer logger.Sync() // Flush de buffers
+
+    logger.Info("servidor iniciado",
+        zap.String("host", "localhost"),
+        zap.Int("port", 8080),
+        zap.String("env", "production"),
+    )
+
+    logger.Warn("memoria alta",
+        zap.Float64("usage_pct", 85.5),
+    )
+
+    logger.Error("error al conectar BD",
+        zap.String("database", "users"),
+        zap.Error(fmt.Errorf("connection refused")),
+    )
+}
+```
+
+8. ZAP — MODOS DE LOGGER
+────────────────────────
+
+```go
+package main
+
+import (
+    "os"
+    "time"
+
+    "go.uber.org/zap"
+    "go.uber.org/zap/zapcore"
+)
+
+func main() {
+    // 1. Producción (JSON, niveles info+)
+    prod, _ := zap.NewProduction()
+    prod.Info("modo producción")
+
+    // 2. Desarrollo (texto colorizado, debug+)
+    dev, _ := zap.NewDevelopment()
+    dev.Debug("modo desarrollo")
+
+    // 3. Custom — control total
+    config := zap.Config{
+        Level:       zap.NewAtomicLevelAt(zap.DebugLevel),
+        Development: false,
+        Sampling: &zap.SamplingConfig{
+            Initial:    100,
+            Thereafter: 100,
+        },
+        Encoding: "json",
+        EncoderConfig: zapcore.EncoderConfig{
+            TimeKey:        "timestamp",
+            LevelKey:       "level",
+            NameKey:        "logger",
+            CallerKey:      "caller",
+            FunctionKey:    zapcore.OmitKey,
+            MessageKey:     "message",
+            StacktraceKey:  "stacktrace",
+            LineEnding:     zapcore.DefaultLineEnding,
+            EncodeLevel:    zapcore.LowercaseLevelEncoder,
+            EncodeTime:     zapcore.ISO8601TimeEncoder,
+            EncodeDuration: zapcore.SecondsDurationEncoder,
+            EncodeCaller:   zapcore.ShortCallerEncoder,
+        },
+        OutputPaths:      []string{"stdout", "logs/app.log"},
+        ErrorOutputPaths: []string{"stderr"},
+        InitialFields: map[string]interface{}{
+            "service": "myapp",
+            "version": "1.0.0",
+        },
+    }
+
+    custom, _ := config.Build()
+    custom.Info("logger personalizado")
+}
+```
+
+9. ZAP — SUGARED LOGGER
+────────────────────────
+
+Zap ofrece dos APIs: la rápida (zap.Logger) y la cómoda
+(zap.SugaredLogger):
+
+```go
+func main() {
+    logger, _ := zap.NewProduction()
+    sugar := logger.Sugar()
+
+    // API cómoda: printf-style
+    sugar.Infof("servidor en %s:%d", "localhost", 8080)
+    sugar.Infow("servidor iniciado",
+        "host", "localhost",
+        "port", 8080,
+    )
+    sugar.Errorf("error: %v", err)
+
+    // API rápida: type-safe, sin allocations
+    logger.Info("servidor iniciado",
+        zap.String("host", "localhost"),
+        zap.Int("port", 8080),
+    )
+}
+```
+
+10. ZAP — PERSONALIZACIÓN AVANZADA
+───────────────────────────────────
+
+```go
+package main
+
+import (
+    "os"
+    "time"
+
+    "go.uber.org/zap"
+    "go.uber.org/zap/zapcore"
+)
+
+func createLogger(logLevel string) (*zap.Logger, error) {
+    var level zapcore.Level
+    switch logLevel {
+    case "debug":
+        level = zap.DebugLevel
+    case "info":
+        level = zap.InfoLevel
+    case "warn":
+        level = zap.WarnLevel
+    case "error":
+        level = zap.ErrorLevel
+    default:
+        level = zap.InfoLevel
+    }
+
+    encoderConfig := zapcore.EncoderConfig{
+        TimeKey:        "time",
+        LevelKey:       "level",
+        NameKey:        "logger",
+        CallerKey:      "caller",
+        MessageKey:     "msg",
+        StacktraceKey:  "stack",
+        LineEnding:     zapcore.DefaultLineEnding,
+        EncodeLevel:    zapcore.CapitalLevelEncoder,
+        EncodeTime:     customTimeEncoder,
+        EncodeDuration: zapcore.StringDurationEncoder,
+        EncodeCaller:   zapcore.ShortCallerEncoder,
+    }
+
+    // Writer para archivo con rotación
+    fileWriter := getLogWriter()
+
+    core := zapcore.NewTee(
+        zapcore.NewCore(
+            zapcore.NewJSONEncoder(encoderConfig),
+            zapcore.AddSync(fileWriter),
+            level,
+        ),
+        zapcore.NewCore(
+            zapcore.NewConsoleEncoder(encoderConfig),
+            zapcore.AddSync(os.Stdout),
+            level,
+        ),
+    )
+
+    logger := zap.New(core,
+        zap.AddCaller(),
+        zap.AddStacktrace(zap.ErrorLevel),
+    )
+
+    return logger, nil
+}
+
+func customTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+    enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+}
+
+func getLogWriter() zapcore.WriteSyncer {
+    // En producción, usar lumberjack para rotación
+    return zapcore.AddSync(&lumberjack.Logger{
+        Filename:   "logs/app.log",
+        MaxSize:    100, // megabytes
+        MaxBackups: 3,
+        MaxAge:     28, // días
+    })
+}
+```
+
+11. MIDDLEWARE DE LOGGING PARA HTTP
+───────────────────────────────────
+
+Con logging estructurado:
+
+```go
+package middleware
+
+import (
+    "log/slog"
+    "net/http"
+    "time"
+)
+
+type responseWriter struct {
+    http.ResponseWriter
+    status int
+    bytes  int
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+    rw.status = status
+    rw.ResponseWriter.WriteHeader(status)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+    n, err := rw.ResponseWriter.Write(b)
+    rw.bytes += n
+    return n, err
+}
+
+func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            start := time.Now()
+            rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+
+            next.ServeHTTP(rw, r)
+
+            duration := time.Since(start)
+            logger.Info("request",
+                "method", r.Method,
+                "path", r.URL.Path,
+                "query", r.URL.RawQuery,
+                "status", rw.status,
+                "bytes", rw.bytes,
+                "duration_ms", duration.Milliseconds(),
+                "remote_addr", r.RemoteAddr,
+                "user_agent", r.UserAgent(),
+            )
+        })
+    }
+}
+```
+
+12. LOGGING EN APLICACIONES CONCURRENTES
+────────────────────────────────────────
+
+Slog y Zap son seguros para concurrencia. Sin embargo, debemos tener
+cuidado con el contexto:
+
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "os"
+    "sync"
+)
+
+func main() {
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    var wg sync.WaitGroup
+
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            // Cada goroutine tiene su propio contexto
+            ctx := context.WithValue(context.Background(),
+                "goroutine_id", id)
+
+            logger.InfoContext(ctx, "procesando",
+                "id", id,
+                "status", "ok",
+            )
+        }(i)
+    }
+
+    wg.Wait()
+}
+```
+
+13. ESTRUCTURA DE LOGS PROFESIONAL
+───────────────────────────────────
+
+Formato recomendado para logs estructurados:
+
+```json
+{
+    "time": "2024-01-15T10:30:00.000+0000",
+    "level": "error",
+    "service": "users-api",
+    "version": "1.0.0",
+    "request_id": "req-abc-123",
+    "trace_id": "trace-xyz-789",
+    "span_id": "span-456",
+    "message": "error al crear usuario",
+    "error": {
+        "message": "email ya registrado",
+        "type": "conflict",
+        "code": "DUPLICATE_EMAIL"
+    },
+    "user": {
+        "id": 42,
+        "email": "user@example.com"
+    },
+    "duration_ms": 245,
+    "caller": "handler/user_handler.go:58"
+}
+```
+
+14. BUENAS PRÁCTICAS DE LOGGING
+────────────────────────────────
+
+✅ Hacer:
+
+```go
+// Incluir contexto suficiente para diagnosticar
+logger.Error("fallo al procesar pago",
+    "order_id", orderID,
+    "amount", amount,
+    "payment_method", method,
+    "error", err,
+)
+
+// Usar niveles adecuadamente
+logger.Debug("procesando item")     // Solo desarrollo
+logger.Info("pedido creado")        // Eventos normales
+logger.Warn("latencia alta")        // Preocupante pero no crítico
+logger.Error("pago rechazado")      // Error operacional
+
+// Registrar duración de operaciones lentas
+logger.Warn("consulta lenta",
+    "query", "SELECT ...",
+    "duration_ms", 2500,
+)
+```
+
+❌ NO hacer:
+
+```go
+// No loguear información sensible
+logger.Info("login exitoso", "password", password)  // ¡NUNCA!
+
+// No loguear en exceso (ruido)
+logger.Debug("entrando a función")
+logger.Debug("saliendo de función")
+
+// No usar fmt.Print en lugar de logger
+fmt.Println("error: algo falló")  // Usar logger.Error
+
+// No tragar errores sin loguearlos
+err := doSomething()
+if err != nil {
+    // NO: err no se loguea
+    return err
+}
+
+// No loguear en bucles críticos de rendimiento
+for _, item := range items {
+    logger.Debug("procesando item")  // Demasiado ruido
+    process(item)
+}
+```
+
+15. ROTACIÓN DE ARCHIVOS DE LOG
+────────────────────────────────
+
+Usando lumberjack (estándar en producción):
+
+```bash
+go get gopkg.in/natefinch/lumberjack.v2
+```
+
+```go
+package main
+
+import (
+    "io"
+    "log"
+    "os"
+
+    "gopkg.in/natefinch/lumberjack.v2"
+)
+
+func main() {
+    log.SetOutput(io.MultiWriter(
+        os.Stdout,
+        &lumberjack.Logger{
+            Filename:   "logs/app.log",
+            MaxSize:    100, // MB
+            MaxBackups: 3,
+            MaxAge:     28, // días
+            Compress:   true,
+        },
+    ))
+
+    log.Println("Este log se rota automáticamente")
+}
+```
+
+16. LOGGING CON COLORES (DESARROLLO)
+────────────────────────────────────
+
+```go
+package main
+
+import (
+    "log/slog"
+    "os"
+)
+
+type ColorHandler struct {
+    handler slog.Handler
+}
+
+func (h *ColorHandler) Enabled(ctx context.Context, level slog.Level) bool {
+    return h.handler.Enabled(ctx, level)
+}
+
+func (h *ColorHandler) Handle(ctx context.Context, r slog.Record) error {
+    // Códigos de color ANSI
+    var color string
+    switch r.Level {
+    case slog.LevelDebug:
+        color = "\033[36m" // Cyan
+    case slog.LevelInfo:
+        color = "\033[32m" // Verde
+    case slog.LevelWarn:
+        color = "\033[33m" // Amarillo
+    case slog.LevelError:
+        color = "\033[31m" // Rojo
+    }
+    r.Message = color + r.Message + "\033[0m"
+    return h.handler.Handle(ctx, r)
+}
+
+func (h *ColorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+    return &ColorHandler{handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h *ColorHandler) WithGroup(name string) slog.Handler {
+    return &ColorHandler{handler: h.handler.WithGroup(name)}
+}
+```
+
+17. LOGGING EN MODO TEST
+────────────────────────
+
+```go
+package main
+
+import (
+    "bytes"
+    "log/slog"
+    "testing"
+)
+
+func TestLogging(t *testing.T) {
+    var buf bytes.Buffer
+    logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+        Level: slog.LevelDebug,
+    }))
+
+    logger.Info("test message", "key", "value")
+
+    output := buf.String()
+    if !strings.Contains(output, "test message") {
+        t.Errorf("expected log to contain message")
+    }
+    if !strings.Contains(output, "key=value") {
+        t.Errorf("expected log to contain key=value")
+    }
+}
+```
+
+18. LOGGING DISTRIBUIDO (TRACING)
+─────────────────────────────────
+
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "os"
+)
+
+type TraceContext struct {
+    TraceID   string
+    SpanID    string
+    ParentID  string
+}
+
+type traceHandler struct {
+    handler slog.Handler
+}
+
+func (h *traceHandler) Handle(ctx context.Context, r slog.Record) error {
+    if tc, ok := ctx.Value("trace").(*TraceContext); ok {
+        r.AddAttrs(
+            slog.String("trace_id", tc.TraceID),
+            slog.String("span_id", tc.SpanID),
+        )
+    }
+    return h.handler.Handle(ctx, r)
+}
+
+func main() {
+    handler := slog.NewJSONHandler(os.Stdout, nil)
+    handler = &traceHandler{handler: handler}
+    logger := slog.New(handler)
+
+    ctx := context.WithValue(context.Background(), "trace", &TraceContext{
+        TraceID: "trace-abc-123",
+        SpanID:  "span-456",
+    })
+
+    logger.InfoContext(ctx, "operación distribuida",
+        "service", "users",
+    )
+}
+```
+
+19. COMPARATIVA DE RENDIMIENTO
+───────────────────────────────
+
+Benchmark (operaciones/segundo, más es mejor):
+
+```
+log (estándar):     ~5,000,000 ops/s
+slog (texto):      ~8,000,000 ops/s
+slog (JSON):       ~6,000,000 ops/s
+zap (sugared):    ~10,000,000 ops/s
+zap (rápido):     ~20,000,000 ops/s
+```
+
+Benchmark de asignaciones de memoria por llamada:
+
+```
+log (estándar):    ~300 bytes
+slog (texto):      ~200 bytes
+slog (JSON):       ~250 bytes
+zap (sugared):     ~150 bytes
+zap (rápido):      ~0 bytes (sin allocaciones)
+```
+
+20. CUÁNDO USAR CADA UNO
+────────────────────────
+
+| Situación                     | Recomendación |
+|------------------------------|---------------|
+| Script pequeño, CLI          | log estándar  |
+| API REST, microservicio      | slog          |
+| Sistema de alta frecuencia   | zap           |
+| Biblioteca reutilizable      | slog (parte std) |
+| Legacy project               | mantener consistencia |
+| Serverless / Lambda          | slog o zap    |
+| Desarrollo local             | slog con colores |
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• log estándar: simple, flags personalizables, log.Fatal/log.Panic.
+• slog: logging estructurado nativo (Go 1.21+), niveles, JSON/texto.
+• zap: máximo rendimiento, cero allocaciones, dos APIs.
+• Configuración: niveles (debug, info, warn, error), destinos.
+• Contexto: incluir request_id, trace_id en cada entrada.
+• Middleware HTTP: registrar método, path, status, duración.
+• Rotación: lumberjack para archivos.
+
+EJERCICIOS
+──────────
+
+1. Configura un logger slog que escriba en JSON a stdout con nivel
+   debug. Añade un campo "service" a todas las entradas.
+
+2. Implementa un middleware HTTP con slog que registre cada request
+   incluyendo duración, status code y bytes escritos.
+
+3. Crea un logger zap que escriba a stdout y a un archivo con
+   rotación usando lumberjack.
+
+4. Escribe un handler de slog que añada automáticamente el
+   request_id desde el contexto.
+
+5. Compara el rendimiento de log, slog y zap usando testing.Benchmark.
+
+6. Implementa un sistema de niveles dinámico que permita cambiar el
+   nivel de log en caliente mediante una señal (SIGUSR1).
+
+7. Crea un logger que oculte campos sensibles (passwords, tokens)
+   automáticamente.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Slog o Zap para un proyecto nuevo?
+R: Si usas Go 1.21+, slog es buena opción por estar en la stdlib.
+   Para alto rendimiento, zap sigue siendo el rey.
+
+P: ¿Debo loguear en cada función?
+R: No. Loguea en los límites del sistema (handler, worker) y en
+   operaciones importantes (creación, error, timeout).
+
+P: ¿Cómo evito loguear información sensible?
+R: Filtra campos en el handler. Nunca loguees passwords, tokens,
+   o datos personales. Usa ReplaceAttr en slog.
+
+P: ¿Qué nivel de log usar en producción?
+R: Normalmente "info". "debug" solo para troubleshooting
+   temporal. "error" para fallos que requieren atención.
+
+P: ¿Cómo manejo la rotación de logs?
+R: lumberjack es el estándar. Alternativas: logrotate del sistema,
+   o docker logs si usas contenedores.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Construye un sistema de logging centralizado para un microservicio:
+
+Requisitos:
+• Logger estructurado en JSON con los campos estándar.
+• Middleware HTTP que registre todas las requests.
+• Nivel de log configurable por variable de entorno.
+• Rotación de archivos automática.
+• Logs a stdout y archivo simultáneamente.
+• Contexto con request_id propagado automáticamente.
+• Filtro de campos sensibles.
+• Handler de panic que loguee el stack trace.
+
+Tu entrega debe incluir:
+a) Paquete "logger" completo y configurable.
+b) Middleware HTTP que use el logger.
+c) Tests que verifiquen los niveles y formato.
+d) Benchmark comparando con zap.
+
+CIERRE
+──────
+El logging es tu sistema de alarma y tu caja negra. Con las
+herramientas de este capítulo, tus sistemas hablarán con claridad
+cuando más los necesites. En el próximo capítulo aprenderás a
+optimizar tu código Go para producción.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 75: Optimización — Profiling y performance

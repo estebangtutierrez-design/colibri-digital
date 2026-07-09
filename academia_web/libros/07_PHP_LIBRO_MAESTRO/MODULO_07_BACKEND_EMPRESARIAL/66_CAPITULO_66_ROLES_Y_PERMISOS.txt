@@ -1,0 +1,1152 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                        CAPÍTULO 66
+##
+##                      ROLES Y PERMISOS
+##
+################################################################################
+################################################################################
+
+"Los roles y permisos son las reglas del juego empresarial: definen quién
+puede hacer qué, cuándo y cómo, sin ambigüedades."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Saludos, arquitecto backend. Tu sistema ya puede autenticar usuarios.
+Ahora es momento de definir qué puede hacer cada usuario dentro del sistema.
+
+La autenticación responde "¿quién eres?". La autorización responde "¿qué
+se te permite hacer?". En una aplicación empresarial, no todos los usuarios
+tienen los mismos privilegios: los administradores pueden gestionar todo,
+los editores pueden modificar contenido, los revisores solo pueden leer.
+
+El modelo RBAC (Role-Based Access Control) es el estándar de la industria
+para gestionar autorización. Asigna permisos a roles y roles a usuarios,
+creando una jerarquía clara y mantenible. Si un usuario cambia de puesto,
+solo necesitas cambiar su rol; los permisos viajan con el rol.
+
+En este capítulo implementarás un sistema completo de roles y permisos,
+desde el diseño de la base de datos hasta el middleware de autorización,
+pasando por la verificación en controladores y la gestión desde una API.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El poder sin control es anarquía; el control sin poder es parálisis. RBAC
+es el equilibrio: cada usuario tiene exactamente el poder que necesita."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Comprender el modelo RBAC y sus componentes: usuarios, roles, permisos.
+✓ Diseñar el esquema de base de datos para roles, permisos y asignaciones.
+✓ Implementar la asignación de roles a usuarios y permisos a roles.
+✓ Construir un middleware de autorización que verifique roles y permisos.
+✓ Implementar verificación de permisos a nivel de controlador y endpoint.
+✓ Crear una API de gestión de roles y permisos para administradores.
+✓ Aplicar el principio de mínimo privilegio en el diseño de autorización.
+
+===============================================================================
+1. MODELO RBAC
+===============================================================================
+
+RBAC (Role-Based Access Control) es un modelo de control de acceso donde
+los permisos se asignan a roles, y los roles se asignan a usuarios. Es el
+modelo más utilizado en aplicaciones empresariales por su simplicidad y
+escalabilidad.
+
+Componentes del modelo:
+
+```
+USUARIOS ──── (N:N) ──── ROLES ──── (N:N) ──── PERMISOS
+   │                        │                       │
+   │                        │                       │
+   ├── id                   ├── id                  ├── id
+   ├── nombre               ├── nombre              ├── nombre
+   ├── email                ├── descripcion         ├── slug
+   └── ...                  ├── nivel               ├── recurso
+                            └── activo              └── accion
+```
+
+Jerarquía de roles recomendada para aplicaciones empresariales:
+
+| Rol         | Nivel | Descripción                          |
+|-------------|-------|--------------------------------------|
+| superadmin  | 100   | Acceso total al sistema              |
+| admin       | 80    | Gestión administrativa               |
+| gerente     | 60    | Gestión de equipos y recursos        |
+| editor      | 40    | Creación y modificación de contenido |
+| revisor     | 20    | Solo lectura y aprobación            |
+| usuario     | 10    | Funcionalidades básicas              |
+
+Los permisos se definen con el formato `recurso:accion`:
+
+| Permiso               | Significado                      |
+|-----------------------|----------------------------------|
+| usuarios:leer         | Ver lista de usuarios            |
+| usuarios:crear        | Crear nuevos usuarios            |
+| usuarios:editar       | Modificar usuarios existentes    |
+| usuarios:eliminar     | Eliminar usuarios                |
+| productos:leer        | Ver catálogo de productos        |
+| productos:crear       | Agregar productos                |
+| productos:editar      | Modificar productos              |
+| productos:eliminar    | Eliminar productos               |
+| pedidos:leer          | Ver pedidos                      |
+| pedidos:gestionar     | Procesar y actualizar pedidos    |
+| reportes:generar      | Generar reportes                 |
+| configuracion:gestionar| Configuración del sistema       |
+| roles:gestionar       | Administrar roles y permisos     |
+
+===============================================================================
+2. ESQUEMA DE BASE DE DATOS
+===============================================================================
+
+```sql
+-- Tabla de roles
+CREATE TABLE roles (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion VARCHAR(255) NULL,
+    nivel INT UNSIGNED DEFAULT 10,
+    activo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Tabla de permisos
+CREATE TABLE permisos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
+    recurso VARCHAR(50) NOT NULL,
+    accion VARCHAR(50) NOT NULL,
+    descripcion VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_recurso (recurso),
+    INDEX idx_slug (slug)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Tabla pivote: roles × permisos
+CREATE TABLE rol_permiso (
+    rol_id INT UNSIGNED NOT NULL,
+    permiso_id INT UNSIGNED NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (rol_id, permiso_id),
+    FOREIGN KEY (rol_id) REFERENCES roles(id) ON DELETE CASCADE,
+    FOREIGN KEY (permiso_id) REFERENCES permisos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Tabla pivote: usuarios × roles
+CREATE TABLE usuario_rol (
+    usuario_id INT UNSIGNED NOT NULL,
+    rol_id INT UNSIGNED NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (usuario_id, rol_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+    FOREIGN KEY (rol_id) REFERENCES roles(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Datos iniciales: roles por defecto
+INSERT INTO roles (nombre, descripcion, nivel) VALUES
+('superadmin', 'Acceso total al sistema', 100),
+('admin', 'Gestión administrativa del sistema', 80),
+('gerente', 'Gestión de equipos y recursos', 60),
+('editor', 'Creación y modificación de contenido', 40),
+('revisor', 'Revisión y aprobación de contenido', 20),
+('usuario', 'Funcionalidades básicas del sistema', 10);
+
+-- Datos iniciales: permisos por defecto
+INSERT INTO permisos (nombre, slug, recurso, accion) VALUES
+('Ver usuarios', 'usuarios:leer', 'usuarios', 'leer'),
+('Crear usuarios', 'usuarios:crear', 'usuarios', 'crear'),
+('Editar usuarios', 'usuarios:editar', 'usuarios', 'editar'),
+('Eliminar usuarios', 'usuarios:eliminar', 'usuarios', 'eliminar'),
+('Ver productos', 'productos:leer', 'productos', 'leer'),
+('Crear productos', 'productos:crear', 'productos', 'crear'),
+('Editar productos', 'productos:editar', 'productos', 'editar'),
+('Eliminar productos', 'productos:eliminar', 'productos', 'eliminar'),
+('Ver pedidos', 'pedidos:leer', 'pedidos', 'leer'),
+('Gestionar pedidos', 'pedidos:gestionar', 'pedidos', 'gestionar'),
+('Generar reportes', 'reportes:generar', 'reportes', 'generar'),
+('Gestionar configuración', 'configuracion:gestionar', 'configuracion', 'gestionar'),
+('Gestionar roles', 'roles:gestionar', 'roles', 'gestionar');
+```
+
+===============================================================================
+3. SERVICIO DE AUTORIZACIÓN
+===============================================================================
+
+El servicio central que verifica permisos y roles.
+
+```php
+<?php
+// src/Services/AuthorizationService.php
+namespace App\Services;
+
+class AuthorizationService
+{
+    private PDO $db;
+    private array $cachePermisos = [];
+
+    public function __construct(PDO $db)
+    {
+        $this->db = $db;
+    }
+
+    public function usuarioTienePermiso(int $usuarioId, string $permisoSlug): bool
+    {
+        $permisos = $this->obtenerPermisosUsuario($usuarioId);
+        return in_array($permisoSlug, $permisos, true);
+    }
+
+    public function usuarioTieneAlgunPermiso(int $usuarioId, array $permisos): bool
+    {
+        $permisosUsuario = $this->obtenerPermisosUsuario($usuarioId);
+
+        foreach ($permisos as $permiso) {
+            if (in_array($permiso, $permisosUsuario, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function usuarioTieneTodosPermisos(int $usuarioId, array $permisos): bool
+    {
+        $permisosUsuario = $this->obtenerPermisosUsuario($usuarioId);
+
+        foreach ($permisos as $permiso) {
+            if (!in_array($permiso, $permisosUsuario, true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function usuarioTieneRol(int $usuarioId, string $rolNombre): bool
+    {
+        $roles = $this->obtenerRolesUsuario($usuarioId);
+        return in_array($rolNombre, $roles, true);
+    }
+
+    public function usuarioTieneAlgunRol(int $usuarioId, array $roles): bool
+    {
+        $rolesUsuario = $this->obtenerRolesUsuario($usuarioId);
+
+        foreach ($roles as $rol) {
+            if (in_array($rol, $rolesUsuario, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function usuarioNivelMinimo(int $usuarioId, int $nivelMinimo): bool
+    {
+        $nivelMaximo = $this->obtenerNivelMaximoUsuario($usuarioId);
+        return $nivelMaximo >= $nivelMinimo;
+    }
+
+    public function obtenerPermisosUsuario(int $usuarioId): array
+    {
+        if (isset($this->cachePermisos[$usuarioId])) {
+            return $this->cachePermisos[$usuarioId];
+        }
+
+        $stmt = $this->db->prepare(
+            "SELECT DISTINCT p.slug
+             FROM permisos p
+             INNER JOIN rol_permiso rp ON p.id = rp.permiso_id
+             INNER JOIN usuario_rol ur ON rp.rol_id = ur.rol_id
+             WHERE ur.usuario_id = ?"
+        );
+        $stmt->execute([$usuarioId]);
+        $permisos = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $this->cachePermisos[$usuarioId] = $permisos;
+
+        return $permisos;
+    }
+
+    public function obtenerRolesUsuario(int $usuarioId): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT r.nombre
+             FROM roles r
+             INNER JOIN usuario_rol ur ON r.id = ur.rol_id
+             WHERE ur.usuario_id = ? AND r.activo = TRUE"
+        );
+        $stmt->execute([$usuarioId]);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    public function obtenerNivelMaximoUsuario(int $usuarioId): int
+    {
+        $stmt = $this->db->prepare(
+            "SELECT MAX(r.nivel)
+             FROM roles r
+             INNER JOIN usuario_rol ur ON r.id = ur.rol_id
+             WHERE ur.usuario_id = ? AND r.activo = TRUE"
+        );
+        $stmt->execute([$usuarioId]);
+        return (int)$stmt->fetchColumn();
+    }
+
+    public function asignarRol(int $usuarioId, int $rolId): void
+    {
+        $stmt = $this->db->prepare(
+            "INSERT IGNORE INTO usuario_rol (usuario_id, rol_id) VALUES (?, ?)"
+        );
+        $stmt->execute([$usuarioId, $rolId]);
+        unset($this->cachePermisos[$usuarioId]);
+    }
+
+    public function removerRol(int $usuarioId, int $rolId): void
+    {
+        $stmt = $this->db->prepare(
+            "DELETE FROM usuario_rol WHERE usuario_id = ? AND rol_id = ?"
+        );
+        $stmt->execute([$usuarioId, $rolId]);
+        unset($this->cachePermisos[$usuarioId]);
+    }
+
+    public function asignarPermisoARol(int $rolId, int $permisoId): void
+    {
+        $stmt = $this->db->prepare(
+            "INSERT IGNORE INTO rol_permiso (rol_id, permiso_id) VALUES (?, ?)"
+        );
+        $stmt->execute([$rolId, $permisoId]);
+        $this->cachePermisos = [];
+    }
+
+    public function removerPermisoDeRol(int $rolId, int $permisoId): void
+    {
+        $stmt = $this->db->prepare(
+            "DELETE FROM rol_permiso WHERE rol_id = ? AND permiso_id = ?"
+        );
+        $stmt->execute([$rolId, $permisoId]);
+        $this->cachePermisos = [];
+    }
+
+    public function crearPermiso(
+        string $nombre,
+        string $slug,
+        string $recurso,
+        string $accion,
+        ?string $descripcion = null
+    ): int {
+        $stmt = $this->db->prepare(
+            "INSERT INTO permisos (nombre, slug, recurso, accion, descripcion)
+             VALUES (?, ?, ?, ?, ?)"
+        );
+        $stmt->execute([$nombre, $slug, $recurso, $accion, $descripcion]);
+        return (int)$this->db->lastInsertId();
+    }
+
+    public function listarPermisos(): array
+    {
+        $stmt = $this->db->query(
+            "SELECT * FROM permisos ORDER BY recurso, accion"
+        );
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function listarRoles(): array
+    {
+        $stmt = $this->db->query(
+            "SELECT r.*, COUNT(ur.usuario_id) as total_usuarios
+             FROM roles r
+             LEFT JOIN usuario_rol ur ON r.id = ur.rol_id
+             GROUP BY r.id
+             ORDER BY r.nivel DESC"
+        );
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+}
+?>
+```
+
+===============================================================================
+4. MIDDLEWARE DE AUTORIZACIÓN
+===============================================================================
+
+El middleware verifica que el usuario tenga el rol o permiso requerido
+antes de ejecutar el controlador.
+
+```php
+<?php
+// src/Middleware/AuthorizationMiddleware.php
+namespace App\Middleware;
+
+use App\Services\AuthorizationService;
+
+class AuthorizationMiddleware implements MiddlewareInterface
+{
+    private AuthorizationService $authService;
+    private array $rolesRequeridos;
+    private array $permisosRequeridos;
+    private string $modo; // 'any' o 'all'
+
+    public function __construct(
+        AuthorizationService $authService,
+        array $rolesRequeridos = [],
+        array $permisosRequeridos = [],
+        string $modo = 'any'
+    ) {
+        $this->authService = $authService;
+        $this->rolesRequeridos = $rolesRequeridos;
+        $this->permisosRequeridos = $permisosRequeridos;
+        $this->modo = $modo;
+    }
+
+    public function handle(array $request, callable $next): array
+    {
+        $usuario = $request['usuario'] ?? null;
+
+        if (!$usuario || !isset($usuario['id'])) {
+            return [
+                'status' => 401,
+                'body'   => [
+                    'success' => false,
+                    'error'   => [
+                        'codigo'  => 401,
+                        'mensaje' => 'Se requiere autenticación'
+                    ]
+                ]
+            ];
+        }
+
+        $usuarioId = $usuario['id'];
+
+        // Verificar roles
+        if (!empty($this->rolesRequeridos)) {
+            $tieneRol = $this->modo === 'any'
+                ? $this->authService->usuarioTieneAlgunRol($usuarioId, $this->rolesRequeridos)
+                : $this->authService->usuarioTieneTodosLosRoles(
+                    $usuarioId,
+                    ...$this->rolesRequeridos
+                );
+
+            if (!$tieneRol) {
+                return $this->respuestaNoAutorizado($usuario);
+            }
+        }
+
+        // Verificar permisos
+        if (!empty($this->permisosRequeridos)) {
+            $tienePermiso = $this->modo === 'any'
+                ? $this->authService->usuarioTieneAlgunPermiso($usuarioId, $this->permisosRequeridos)
+                : $this->authService->usuarioTieneTodosPermisos($usuarioId, $this->permisosRequeridos);
+
+            if (!$tienePermiso) {
+                return $this->respuestaNoAutorizado($usuario);
+            }
+        }
+
+        return $next($request);
+    }
+
+    private function respuestaNoAutorizado(array $usuario): array
+    {
+        $mensaje = empty($this->rolesRequeridos)
+            ? 'No tienes los permisos necesarios para acceder a este recurso'
+            : 'Se requiere uno de los siguientes roles: ' . implode(', ', $this->rolesRequeridos);
+
+        return [
+            'status' => 403,
+            'body'   => [
+                'success' => false,
+                'error'   => [
+                    'codigo'  => 403,
+                    'mensaje' => $mensaje,
+                    'roles_requeridos' => $this->rolesRequeridos,
+                    'permisos_requeridos' => $this->permisosRequeridos
+                ]
+            ]
+        ];
+    }
+}
+
+// Factory para crear middlewares de autorización rápidamente
+class AuthorizationMiddlewareFactory
+{
+    private AuthorizationService $authService;
+
+    public function __construct(AuthorizationService $authService)
+    {
+        $this->authService = $authService;
+    }
+
+    public function requiereRol(string ...$roles): AuthorizationMiddleware
+    {
+        return new AuthorizationMiddleware(
+            $this->authService,
+            $roles,
+            [],
+            'any'
+        );
+    }
+
+    public function requiereTodosLosRoles(string ...$roles): AuthorizationMiddleware
+    {
+        return new AuthorizationMiddleware(
+            $this->authService,
+            $roles,
+            [],
+            'all'
+        );
+    }
+
+    public function requierePermiso(string ...$permisos): AuthorizationMiddleware
+    {
+        return new AuthorizationMiddleware(
+            $this->authService,
+            [],
+            $permisos,
+            'any'
+        );
+    }
+
+    public function requiereTodosLosPermisos(string ...$permisos): AuthorizationMiddleware
+    {
+        return new AuthorizationMiddleware(
+            $this->authService,
+            [],
+            $permisos,
+            'all'
+        );
+    }
+
+    public function requiereAdmin(): AuthorizationMiddleware
+    {
+        return $this->requiereRol('superadmin', 'admin');
+    }
+}
+?>
+```
+
+===============================================================================
+5. USO EN CONTROLADORES Y RUTAS
+===============================================================================
+
+Aplicación de roles y permisos en controladores y definición de rutas.
+
+```php
+<?php
+// routes/api.php — Rutas con autorización
+use App\Middleware\AuthenticationMiddleware;
+use App\Middleware\AuthorizationMiddlewareFactory;
+use App\Services\AuthorizationService;
+
+$authMiddleware = new AuthenticationMiddleware(['/api/v1/auth']);
+$authFactory = new AuthorizationMiddlewareFactory(
+    new AuthorizationService($db)
+);
+
+// Rutas públicas
+Router::post('/api/v1/auth/login', [AuthController::class, 'login']);
+
+// Grupo de rutas protegidas
+Router::group('/api/v1', function ($router) use ($authFactory) {
+
+    // Usuarios — Solo admins y gerentes
+    Router::get('/usuarios', [UsuarioController::class, 'index'],
+        $authFactory->requierePermiso('usuarios:leer')
+    );
+
+    Router::get('/usuarios/{id}', [UsuarioController::class, 'show'],
+        $authFactory->requierePermiso('usuarios:leer')
+    );
+
+    Router::post('/usuarios', [UsuarioController::class, 'store'],
+        $authFactory->requierePermiso('usuarios:crear')
+    );
+
+    Router::put('/usuarios/{id}', [UsuarioController::class, 'update'],
+        $authFactory->requierePermiso('usuarios:editar')
+    );
+
+    Router::delete('/usuarios/{id}', [UsuarioController::class, 'destroy'],
+        $authFactory->requierePermiso('usuarios:eliminar')
+    );
+
+    // Productos — Editores y superiores
+    Router::get('/productos', [ProductoController::class, 'index'],
+        $authFactory->requierePermiso('productos:leer')
+    );
+
+    Router::post('/productos', [ProductoController::class, 'store'],
+        $authFactory->requierePermiso('productos:crear')
+    );
+
+    Router::put('/productos/{id}', [ProductoController::class, 'update'],
+        $authFactory->requierePermiso('productos:editar')
+    );
+
+    Router::delete('/productos/{id}', [ProductoController::class, 'destroy'],
+        $authFactory->requierePermiso('productos:eliminar')
+    );
+
+    // Pedidos
+    Router::get('/pedidos', [PedidoController::class, 'index'],
+        $authFactory->requierePermiso('pedidos:leer')
+    );
+
+    Router::put('/pedidos/{id}/estado', [PedidoController::class, 'actualizarEstado'],
+        $authFactory->requierePermiso('pedidos:gestionar')
+    );
+
+    // Reportes — Solo gerentes y superiores
+    Router::get('/reportes/ventas', [ReporteController::class, 'ventas'],
+        $authFactory->requiereRol('gerente', 'admin', 'superadmin')
+    );
+
+    // Administración de roles — Solo superadmin
+    Router::get('/admin/roles', [AdminController::class, 'listarRoles'],
+        $authFactory->requierePermiso('roles:gestionar')
+    );
+
+    Router::post('/admin/roles/{rolId}/permisos', [AdminController::class, 'asignarPermiso'],
+        $authFactory->requiereRol('superadmin')
+    );
+
+    // Configuración del sistema
+    Router::put('/admin/configuracion', [AdminController::class, 'actualizarConfig'],
+        $authFactory->requierePermiso('configuracion:gestionar')
+    );
+});
+?>
+```
+
+Controlador con verificación de permisos explícita:
+
+```php
+<?php
+// src/Controllers/UsuarioController.php
+namespace App\Controllers;
+
+use App\Services\AuthorizationService;
+
+class UsuarioController
+{
+    private PDO $db;
+    private AuthorizationService $authService;
+
+    public function __construct(PDO $db)
+    {
+        $this->db = $db;
+        $this->authService = new AuthorizationService($db);
+    }
+
+    public function destroy(int $id, array $params): void
+    {
+        $usuarioAutenticado = $params['usuario_autenticado'];
+
+        // Verificación adicional: no eliminarse a sí mismo
+        if ((int)$usuarioAutenticado['id'] === $id) {
+            Response::error('No puedes eliminarte a ti mismo', 403);
+            return;
+        }
+
+        // Verificar nivel jerárquico: no eliminar admins siendo editor
+        $nivelObjetivo = $this->authService->obtenerNivelMaximoUsuario($id);
+        $nivelActual = $this->authService->obtenerNivelMaximoUsuario(
+            $usuarioAutenticado['id']
+        );
+
+        if ($nivelActual < $nivelObjetivo) {
+            Response::error(
+                'No tienes nivel suficiente para eliminar este usuario',
+                403
+            );
+            return;
+        }
+
+        // Eliminar usuario
+        $stmt = $this->db->prepare("DELETE FROM usuarios WHERE id = ?");
+        $stmt->execute([$id]);
+
+        http_response_code(204);
+    }
+}
+?>
+```
+
+===============================================================================
+6. API DE GESTIÓN DE ROLES Y PERMISOS
+===============================================================================
+
+Endpoints para que administradores gestionen roles y permisos.
+
+```php
+<?php
+// src/Controllers/AdminController.php
+namespace App\Controllers;
+
+use App\Services\AuthorizationService;
+
+class AdminController
+{
+    private AuthorizationService $authService;
+
+    public function __construct(PDO $db)
+    {
+        $this->authService = new AuthorizationService($db);
+    }
+
+    public function listarRoles(): void
+    {
+        $roles = $this->authService->listarRoles();
+
+        foreach ($roles as &$rol) {
+            $stmt = $this->db->prepare(
+                "SELECT p.id, p.nombre, p.slug, p.recurso, p.accion
+                 FROM permisos p
+                 INNER JOIN rol_permiso rp ON p.id = rp.permiso_id
+                 WHERE rp.rol_id = ?"
+            );
+            $stmt->execute([$rol['id']]);
+            $rol['permisos'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        Response::success($roles);
+    }
+
+    public function listarPermisos(): void
+    {
+        $permisos = $this->authService->listarPermisos();
+        Response::success($permisos);
+    }
+
+    public function asignarRol(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+        $usuarioId = (int)($datos['usuario_id'] ?? 0);
+        $rolId = (int)($datos['rol_id'] ?? 0);
+
+        if ($usuarioId <= 0 || $rolId <= 0) {
+            Response::error('usuario_id y rol_id son requeridos', 422);
+            return;
+        }
+
+        $this->authService->asignarRol($usuarioId, $rolId);
+
+        Response::success(null, 'Rol asignado exitosamente');
+    }
+
+    public function removerRol(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+        $usuarioId = (int)($datos['usuario_id'] ?? 0);
+        $rolId = (int)($datos['rol_id'] ?? 0);
+
+        if ($usuarioId <= 0 || $rolId <= 0) {
+            Response::error('usuario_id y rol_id son requeridos', 422);
+            return;
+        }
+
+        $this->authService->removerRol($usuarioId, $rolId);
+
+        Response::success(null, 'Rol removido exitosamente');
+    }
+
+    public function asignarPermiso(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+        $rolId = (int)($datos['rol_id'] ?? 0);
+        $permisoId = (int)($datos['permiso_id'] ?? 0);
+
+        if ($rolId <= 0 || $permisoId <= 0) {
+            Response::error('rol_id y permiso_id son requeridos', 422);
+            return;
+        }
+
+        $this->authService->asignarPermisoARol($rolId, $permisoId);
+
+        Response::success(null, 'Permiso asignado al rol exitosamente');
+    }
+
+    public function removerPermiso(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+        $rolId = (int)($datos['rol_id'] ?? 0);
+        $permisoId = (int)($datos['permiso_id'] ?? 0);
+
+        if ($rolId <= 0 || $permisoId <= 0) {
+            Response::error('rol_id y permiso_id son requeridos', 422);
+            return;
+        }
+
+        $this->authService->removerPermisoDeRol($rolId, $permisoId);
+
+        Response::success(null, 'Permiso removido del rol exitosamente');
+    }
+
+    public function usuariosDeRol(int $rolId): void
+    {
+        $stmt = $this->db->prepare(
+            "SELECT u.id, u.nombre, u.email, u.created_at
+             FROM usuarios u
+             INNER JOIN usuario_rol ur ON u.id = ur.usuario_id
+             WHERE ur.rol_id = ?
+             ORDER BY u.nombre"
+        );
+        $stmt->execute([$rolId]);
+        $usuarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        Response::success($usuarios);
+    }
+
+    public function rolesDeUsuario(int $usuarioId): void
+    {
+        $roles = $this->authService->obtenerRolesUsuario($usuarioId);
+        $nivel = $this->authService->obtenerNivelMaximoUsuario($usuarioId);
+
+        Response::success([
+            'usuario_id' => $usuarioId,
+            'roles'      => $roles,
+            'nivel'      => $nivel
+        ]);
+    }
+}
+?>
+```
+
+===============================================================================
+7. VERIFICACIÓN EN EL CONTROLADOR
+===============================================================================
+
+A veces necesitas verificar permisos dentro del controlador mismo, no solo
+en el middleware. Esto es útil para permisos condicionales.
+
+```php
+<?php
+// src/Controllers/PedidoController.php
+namespace App\Controllers;
+
+use App\Services\AuthorizationService;
+
+class PedidoController
+{
+    private PDO $db;
+    private AuthorizationService $authService;
+
+    public function __construct(PDO $db)
+    {
+        $this->db = $db;
+        $this->authService = new AuthorizationService($db);
+    }
+
+    public function show(int $id, array $params): void
+    {
+        $usuario = $params['usuario_autenticado'];
+
+        $stmt = $this->db->prepare(
+            "SELECT p.*, u.nombre as cliente_nombre
+             FROM pedidos p
+             INNER JOIN usuarios u ON p.usuario_id = u.id
+             WHERE p.id = ?"
+        );
+        $stmt->execute([$id]);
+        $pedido = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$pedido) {
+            Response::error('Pedido no encontrado', 404);
+            return;
+        }
+
+        // Regla de negocio: un usuario solo puede ver sus propios pedidos
+        // a menos que tenga permiso 'pedidos:leer' (gestores, admins)
+        $puedeVerTodos = $this->authService->usuarioTienePermiso(
+            $usuario['id'],
+            'pedidos:leer'
+        );
+
+        if (!$puedeVerTodos && (int)$pedido['usuario_id'] !== (int)$usuario['id']) {
+            Response::error('No tienes permiso para ver este pedido', 403);
+            return;
+        }
+
+        Response::success($pedido);
+    }
+
+    public function index(array $params): void
+    {
+        $usuario = $params['usuario_autenticado'];
+        $puedeVerTodos = $this->authService->usuarioTienePermiso(
+            $usuario['id'],
+            'pedidos:leer'
+        );
+
+        if ($puedeVerTodos) {
+            $stmt = $this->db->query(
+                "SELECT p.*, u.nombre as cliente_nombre
+                 FROM pedidos p
+                 INNER JOIN usuarios u ON p.usuario_id = u.id
+                 ORDER BY p.created_at DESC
+                 LIMIT 50"
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                "SELECT * FROM pedidos
+                 WHERE usuario_id = ?
+                 ORDER BY created_at DESC
+                 LIMIT 50"
+            );
+            $stmt->execute([$usuario['id']]);
+        }
+
+        Response::success($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+}
+?>
+```
+
+===============================================================================
+8. PRINCIPIO DE MÍNIMO PRIVILEGIO
+===============================================================================
+
+El principio de mínimo privilegio (PoLP — Principle of Least Privilege)
+establece que cada usuario debe tener exactamente los permisos necesarios
+para realizar su trabajo, ni más ni menos.
+
+```php
+<?php
+// src/Services/PermissionAuditService.php
+namespace App\Services;
+
+// Servicio de auditoría de permisos
+class PermissionAuditService
+{
+    private PDO $db;
+
+    public function __construct(PDO $db)
+    {
+        $this->db = $db;
+    }
+
+    public function verificarPrivilegioExcesivo(int $usuarioId): array
+    {
+        $alertas = [];
+
+        // Usuarios con roles conflictivos
+        $stmt = $this->db->prepare(
+            "SELECT GROUP_CONCAT(r.nombre SEPARATOR ', ') as roles
+             FROM roles r
+             INNER JOIN usuario_rol ur ON r.id = ur.rol_id
+             WHERE ur.usuario_id = ?
+             GROUP BY ur.usuario_id
+             HAVING COUNT(*) > 2"
+        );
+        $stmt->execute([$usuarioId]);
+        $rolesMultiples = $stmt->fetchColumn();
+
+        if ($rolesMultiples) {
+            $alertas[] = "El usuario tiene múltiples roles: {$rolesMultiples}";
+        }
+
+        // Permisos que nunca se usan (basado en logs de actividad)
+        $stmt = $this->db->prepare(
+            "SELECT p.nombre, p.slug
+             FROM permisos p
+             INNER JOIN rol_permiso rp ON p.id = rp.permiso_id
+             INNER JOIN usuario_rol ur ON rp.rol_id = ur.rol_id
+             WHERE ur.usuario_id = ?
+             AND p.slug NOT IN (
+                 SELECT DISTINCT permiso_requerido
+                 FROM activity_logs
+                 WHERE usuario_id = ?
+                 AND permiso_requerido IS NOT NULL
+                 AND created_at > DATE_SUB(NOW(), INTERVAL 90 DAY)
+             )"
+        );
+        $stmt->execute([$usuarioId, $usuarioId]);
+        $permisosNoUsados = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($permisosNoUsados as $permiso) {
+            $alertas[] = "Permiso no usado en 90 días: {$permiso['nombre']} ({$permiso['slug']})";
+        }
+
+        return $alertas;
+    }
+
+    public function recomendarPermisosMinimos(string $recurso, string $accion): array
+    {
+        // Análisis de qué roles necesitan cada permiso basado en uso real
+        $stmt = $this->db->query(
+            "SELECT r.nombre as rol, COUNT(DISTINCT al.usuario_id) as total_usuarios
+             FROM activity_logs al
+             INNER JOIN usuarios u ON al.usuario_id = u.id
+             INNER JOIN usuario_rol ur ON u.id = ur.usuario_id
+             INNER JOIN roles r ON ur.rol_id = r.id
+             WHERE al.permiso_requerido = CONCAT(?, ':', ?)
+             GROUP BY r.nombre
+             ORDER BY r.nivel ASC"
+        );
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+}
+?>
+```
+
+===============================================================================
+9. PRUEBAS DE AUTORIZACIÓN
+===============================================================================
+
+```bash
+# 1. Login como superadmin
+TOKEN_ADMIN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@ega.com","password":"admin123"}' | jq -r '.data.token_acceso')
+
+# 2. Listar roles
+curl -s http://localhost:8000/api/v1/admin/roles \
+  -H "Authorization: Bearer $TOKEN_ADMIN" | jq .
+
+# 3. Listar permisos de un rol
+curl -s http://localhost:8000/api/v1/admin/roles/2/permisos \
+  -H "Authorization: Bearer $TOKEN_ADMIN" | jq .
+
+# 4. Asignar rol a usuario
+curl -s -X POST http://localhost:8000/api/v1/admin/roles/asignar \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN_ADMIN" \
+  -d '{"usuario_id": 5, "rol_id": 3}' | jq .
+
+# 5. Verificar permiso: usuario sin permiso
+TOKEN_USER=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@ega.com","password":"user123"}' | jq -r '.data.token_acceso')
+
+# Intento de acceder a gestión de roles (debe dar 403)
+curl -s http://localhost:8000/api/v1/admin/roles \
+  -H "Authorization: Bearer $TOKEN_USER" | jq .
+
+# 6. Crear un permiso nuevo
+curl -s -X POST http://localhost:8000/api/v1/admin/permisos \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN_ADMIN" \
+  -d '{"nombre":"Exportar datos","slug":"datos:exportar","recurso":"datos","accion":"exportar"}' | jq .
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- RBAC es el modelo de control de acceso basado en roles: usuarios tienen
+  roles, roles tienen permisos, permisos definen acciones sobre recursos.
+- El esquema de BD incluye tablas: `roles`, `permisos`, `rol_permiso`,
+  `usuario_rol`, con relaciones N:N.
+- El `AuthorizationService` centraliza la verificación de roles y permisos,
+  con caché de permisos por usuario para evitar consultas repetitivas.
+- El `AuthorizationMiddleware` intercepta la petición y verifica que el
+  usuario tenga el rol o permiso requerido antes de pasar al controlador.
+- Los permisos se definen con el formato `recurso:accion` (ej. `productos:leer`).
+- El principio de mínimo privilegio guía la asignación de permisos: cada
+  usuario solo tiene los permisos estrictamente necesarios.
+- La jerarquía de roles (superadmin > admin > gerente > editor > revisor >
+  usuario) simplifica la gestión de autorización.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa un sistema de herencia de permisos donde un
+rol herede los permisos de roles de nivel inferior. Por ejemplo, un admin
+tiene automáticamente los permisos de editor y revisor.
+
+🧩 **Ejercicio 2:** Crea un endpoint `GET /api/v1/auth/mis-permisos` que
+devuelva todos los permisos del usuario autenticado, incluyendo los
+heredados de todos sus roles.
+
+🧩 **Ejercicio 3:** Implementa un middleware `ScopeMiddleware` que verifique
+que el usuario pertenece al mismo tenant/organización que el recurso que
+intenta acceder (multi-tenancy).
+
+🧩 **Ejercicio 4:** Agrega permisos temporales que expiren después de un
+tiempo definido. Almacena `rol_permiso_temporal` con columna `expires_at`.
+
+🧩 **Ejercicio 5:** Crea un panel de administración web (endpoints API) que
+permita: listar usuarios con sus roles, filtrar por rol, asignar/remover
+roles masivamente, y ver el historial de cambios de roles.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo usar roles o permisos directamente en las rutas?** Usa permisos
+en las rutas (`productos:leer`), no roles directos. Esto desacopla la lógica
+de autorización: puedes cambiar qué roles tienen ese permiso sin modificar
+el código de la ruta.
+
+❓ **¿Cómo manejo permisos que dependen del recurso específico?** Eso se
+llama autorización a nivel de objeto o instancia. Por ejemplo, "un usuario
+puede editar su propio perfil pero no el de otros". Esta lógica va en el
+controlador, no en el middleware.
+
+❓ **¿Los roles deben tener jerarquía?** Sí, la jerarquía simplifica la
+gestión. Un nivel numérico permite comparaciones rápidas: si nivel_usuario
+>= nivel_requerido, tiene acceso. Esto evita tener que listar roles
+explícitamente.
+
+❓ **¿Cómo evito que un admin se quite sus propios permisos?** En la lógica
+del controlador, verifica que el usuario no pueda modificar su propio rol
+a menos que tenga un nivel superior que lo autorice explícitamente.
+
+❓ **¿Debo cachear los permisos?** Sí, pero con cuidado. La caché en memoria
+(por request) es segura. La caché persistente debe tener invalidación
+inmediata cuando se modifiquen roles o permisos.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema RBAC empresarial con políticas de acceso dinámicas** — Diseña
+e implementa un sistema completo de autorización que incluya: roles
+jerárquicos con herencia de permisos (un gerente hereda permisos de editor
+y revisor), permisos granularizados con formato `recurso:accion:campo` (ej.
+`usuarios:leer:email`), permisos temporales con expiración automática,
+autorización a nivel de instancia (un usuario solo ve sus propios recursos
+a menos que tenga permiso global), políticas de acceso basadas en atributos
+(ABAC) que consideren ubicación, horario, dispositivo, y nivel de riesgo,
+sistema de aprobación para permisos elevados (un admin debe aprobar acceso
+a datos sensibles), auditoría completa de cambios de roles y accesos
+denegados, y un panel de administración para gestión visual de roles,
+permisos y asignaciones. Incluye middleware que pueda evaluar expresiones
+complejas como: `(rol = admin OR (permiso = 'reportes:leer' AND hora BETWEEN
+9 AND 18)) AND NOT ip_bloqueada`.
+
+===============================================================================
+FIN DEL CAPÍTULO 66
+===============================================================================
+
+"La autorización bien diseñada es invisible: los usuarios tienen acceso a
+lo que necesitan sin saber que existe una barrera para lo demás."
+                              — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+67_CAPITULO_67_DOCUMENTACION.txt
+===============================================================================

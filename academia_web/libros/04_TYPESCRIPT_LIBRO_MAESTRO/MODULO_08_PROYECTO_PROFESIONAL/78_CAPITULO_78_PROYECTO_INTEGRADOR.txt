@@ -1,0 +1,767 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                       CAPÍTULO 78
+##
+##                  PROYECTO INTEGRADOR
+##
+################################################################################
+################################################################################
+
+"Un proyecto integrador no une tecnologías: une el conocimiento, la
+disciplina y la creatividad del desarrollador."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante,
+
+Este es el capítulo donde todo cobra sentido. El proyecto integrador es la
+culminación de tu viaje: construirás una aplicación completa que integra
+TypeScript con HTML, CSS y JavaScript del lado del cliente, más una API
+backend también en TypeScript. El proyecto consiste en una aplicación web
+para la gestión de biblioteca personal: podrás agregar libros, marcarlos
+como leídos, buscar por título o autor, y persistir los datos en localStorage.
+Usaremos TypeScript para el tipado en frontend y backend, aplicaremos los
+patrones de arquitectura que aprendiste, y organizaremos el código de forma
+profesional. Al finalizar, tendrás una aplicación funcional y publicable
+que demostrará tu dominio completo de TypeScript en un contexto full-stack.
+Este es tu portafolio. Este es tu momento.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El proyecto integrador no es el final del aprendizaje: es la prueba de
+que el aprendizaje se ha convertido en habilidad."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Construir una aplicación full-stack con TypeScript (frontend + backend)
+✓ Integrar TypeScript con HTML, CSS y el DOM
+✓ Implementar una API REST con Express y TypeScript
+✓ Persistir datos en localStorage con tipos seguros
+✓ Aplicar la arquitectura limpia en un proyecto frontend
+✓ Validar formularios y datos con tipos
+✓ Manejar el estado de la aplicación de forma predecible
+✓ Desplegar la aplicación a producción
+
+===============================================================================
+1. VISIÓN GENERAL DEL PROYECTO
+===============================================================================
+
+Construiremos "LibroFlow", una aplicación web de gestión de biblioteca
+personal con las siguientes características:
+
+- Catálogo de libros con título, autor, género, año, portada (URL)
+- Búsqueda y filtrado por título, autor y género
+- Marcado de libros como leídos / no leídos
+- Agregar, editar y eliminar libros
+- Estadísticas: total de libros, leídos, por género
+- Persistencia en localStorage
+- Interfaz responsive con HTML y CSS modernos
+- API REST backend para exportación de datos
+
+Estructura del proyecto:
+
+```
+libroflow/
+├── frontend/
+│   ├── src/
+│   │   ├── domain/
+│   │   │   ├── book.entity.ts
+│   │   │   └── book.repository.ts
+│   │   ├── application/
+│   │   │   ├── book.service.ts
+│   │   │   └── book.stats.ts
+│   │   ├── infrastructure/
+│   │   │   ├── local-storage.repository.ts
+│   │   │   └── dom-renderer.ts
+│   │   ├── presentation/
+│   │   │   ├── components/
+│   │   │   ├── styles/
+│   │   │   └── main.ts
+│   │   └── types/
+│   │       └── index.ts
+│   ├── index.html
+│   └── tsconfig.json
+├── backend/
+│   ├── src/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   └── main.ts
+│   └── tsconfig.json
+└── README.md
+```
+
+===============================================================================
+2. DOMINIO: ENTIDADES Y REPOSITORIOS
+===============================================================================
+
+Comenzamos definiendo el modelo de dominio.
+
+```typescript
+// frontend/src/types/index.ts — Tipos compartidos
+export interface Libro {
+  id: string;
+  titulo: string;
+  autor: string;
+  genero: GeneroLiterario;
+  año: number;
+  portadaUrl: string;
+  leido: boolean;
+  fechaAgregado: Date;
+  calificacion?: number; // 1-5, opcional
+}
+
+export type GeneroLiterario =
+  | "ficcion"
+  | "no_ficcion"
+  | "ciencia_ficcion"
+  | "fantasia"
+  | "romance"
+  | "terror"
+  | "misterio"
+  | "biografia"
+  | "historia"
+  | "poesia";
+
+export type OrdenLibros = "titulo" | "autor" | "año" | "fecha_agregado";
+
+export interface FiltrosLibros {
+  busqueda?: string;
+  genero?: GeneroLiterario;
+  leido?: boolean;
+  ordenarPor?: OrdenLibros;
+  ordenAscendente?: boolean;
+}
+
+export interface EstadisticasLibros {
+  total: number;
+  leidos: number;
+  noLeidos: number;
+  porGenero: Record<GeneroLiterario, number>;
+  promedioCalificacion: number;
+}
+```
+
+```typescript
+// frontend/src/domain/book.repository.ts
+import { Libro, FiltrosLibros } from "../types";
+
+export interface BookRepository {
+  obtenerTodos(): Promise<Libro[]>;
+  buscarPorId(id: string): Promise<Libro | null>;
+  buscar(filtros: FiltrosLibros): Promise<Libro[]>;
+  guardar(libro: Libro): Promise<void>;
+  eliminar(id: string): Promise<void>;
+}
+```
+
+===============================================================================
+3. APLICACIÓN: SERVICIOS
+===============================================================================
+
+Los servicios contienen la lógica de negocio.
+
+```typescript
+// frontend/src/application/book.service.ts
+import { Libro, FiltrosLibros, GeneroLiterario } from "../types";
+import { BookRepository } from "../domain/book.repository";
+
+export class BookService {
+  constructor(private readonly repository: BookRepository) {}
+
+  async agregarLibro(datos: Omit<Libro, "id" | "fechaAgregado">): Promise<Libro> {
+    this.validarLibro(datos);
+
+    const libro: Libro = {
+      ...datos,
+      id: crypto.randomUUID(),
+      fechaAgregado: new Date()
+    };
+
+    await this.repository.guardar(libro);
+    return libro;
+  }
+
+  async editarLibro(id: string, cambios: Partial<Omit<Libro, "id" | "fechaAgregado">>): Promise<Libro> {
+    const libroExistente = await this.repository.buscarPorId(id);
+    if (!libroExistente) {
+      throw new Error(`Libro con id ${id} no encontrado`);
+    }
+
+    const libroActualizado: Libro = {
+      ...libroExistente,
+      ...cambios,
+      id // Aseguramos que el id no cambie
+    };
+
+    await this.repository.guardar(libroActualizado);
+    return libroActualizado;
+  }
+
+  async eliminarLibro(id: string): Promise<void> {
+    const existente = await this.repository.buscarPorId(id);
+    if (!existente) {
+      throw new Error(`Libro con id ${id} no encontrado`);
+    }
+    await this.repository.eliminar(id);
+  }
+
+  async buscarLibros(filtros: FiltrosLibros): Promise<Libro[]> {
+    return this.repository.buscar(filtros);
+  }
+
+  async marcarComoLeido(id: string, leido: boolean): Promise<Libro> {
+    return this.editarLibro(id, { leido });
+  }
+
+  private validarLibro(datos: Omit<Libro, "id" | "fechaAgregado">): void {
+    if (!datos.titulo || datos.titulo.trim().length === 0) {
+      throw new Error("El título es obligatorio");
+    }
+    if (!datos.autor || datos.autor.trim().length === 0) {
+      throw new Error("El autor es obligatorio");
+    }
+    if (datos.año < 1000 || datos.año > new Date().getFullYear()) {
+      throw new Error("El año debe ser válido");
+    }
+    if (datos.calificacion !== undefined && (datos.calificacion < 1 || datos.calificacion > 5)) {
+      throw new Error("La calificación debe estar entre 1 y 5");
+    }
+  }
+}
+```
+
+```typescript
+// frontend/src/application/book.stats.ts
+import { Libro, EstadisticasLibros, GeneroLiterario } from "../types";
+import { BookRepository } from "../domain/book.repository";
+
+export class BookStatsService {
+  constructor(private readonly repository: BookRepository) {}
+
+  async obtenerEstadisticas(): Promise<EstadisticasLibros> {
+    const libros = await this.repository.obtenerTodos();
+
+    const leidos = libros.filter(l => l.leido);
+    const porGenero = {} as Record<GeneroLiterario, number>;
+
+    for (const libro of libros) {
+      porGenero[libro.genero] = (porGenero[libro.genero] ?? 0) + 1;
+    }
+
+    const calificaciones = libros
+      .filter(l => l.calificacion !== undefined)
+      .map(l => l.calificacion!);
+
+    const promedioCalificacion = calificaciones.length > 0
+      ? Math.round((calificaciones.reduce((a, b) => a + b, 0) / calificaciones.length) * 10) / 10
+      : 0;
+
+    return {
+      total: libros.length,
+      leidos: leidos.length,
+      noLeidos: libros.length - leidos.length,
+      porGenero,
+      promedioCalificacion
+    };
+  }
+
+  async buscarPorGenero(genero: GeneroLiterario): Promise<Libro[]> {
+    const libros = await this.repository.obtenerTodos();
+    return libros.filter(l => l.genero === genero);
+  }
+}
+```
+
+===============================================================================
+4. INFRAESTRUCTURA: PERSISTENCIA LOCAL
+===============================================================================
+
+Implementamos el repositorio usando localStorage con tipos seguros.
+
+```typescript
+// frontend/src/infrastructure/local-storage.repository.ts
+import { Libro, FiltrosLibros } from "../types";
+import { BookRepository } from "../domain/book.repository";
+
+const STORAGE_KEY = "libroflow_libros";
+
+export class LocalStorageBookRepository implements BookRepository {
+  private leerLibros(): Libro[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) return [];
+      const parsed = JSON.parse(data) as unknown[];
+      return parsed.map(item => this.hidratarLibro(item));
+    } catch {
+      return [];
+    }
+  }
+
+  private guardarLibros(libros: Libro[]): void {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(libros));
+  }
+
+  private hidratarLibro(item: unknown): Libro {
+    const data = item as Record<string, unknown>;
+    return {
+      id: data.id as string,
+      titulo: data.titulo as string,
+      autor: data.autor as string,
+      genero: data.genero as Libro["genero"],
+      año: data.año as number,
+      portadaUrl: data.portadaUrl as string,
+      leido: data.leido as boolean,
+      fechaAgregado: new Date(data.fechaAgregado as string),
+      calificacion: data.calificacion as number | undefined
+    };
+  }
+
+  async obtenerTodos(): Promise<Libro[]> {
+    return this.leerLibros();
+  }
+
+  async buscarPorId(id: string): Promise<Libro | null> {
+    const libros = this.leerLibros();
+    return libros.find(l => l.id === id) ?? null;
+  }
+
+  async buscar(filtros: FiltrosLibros): Promise<Libro[]> {
+    let libros = this.leerLibros();
+
+    if (filtros.busqueda) {
+      const q = filtros.busqueda.toLowerCase();
+      libros = libros.filter(
+        l =>
+          l.titulo.toLowerCase().includes(q) ||
+          l.autor.toLowerCase().includes(q)
+      );
+    }
+
+    if (filtros.genero) {
+      libros = libros.filter(l => l.genero === filtros.genero);
+    }
+
+    if (filtros.leido !== undefined) {
+      libros = libros.filter(l => l.leido === filtros.leido);
+    }
+
+    if (filtros.ordenarPor) {
+      libros.sort((a, b) => {
+        const orden = filtros.ordenAscendente ?? true;
+        let comparacion: number;
+        switch (filtros.ordenarPor) {
+          case "titulo":
+            comparacion = a.titulo.localeCompare(b.titulo);
+            break;
+          case "autor":
+            comparacion = a.autor.localeCompare(b.autor);
+            break;
+          case "año":
+            comparacion = a.año - b.año;
+            break;
+          case "fecha_agregado":
+            comparacion = a.fechaAgregado.getTime() - b.fechaAgregado.getTime();
+            break;
+        }
+        return orden ? comparacion : -comparacion;
+      });
+    }
+
+    return libros;
+  }
+
+  async guardar(libro: Libro): Promise<void> {
+    const libros = this.leerLibros();
+    const idx = libros.findIndex(l => l.id === libro.id);
+    if (idx >= 0) {
+      libros[idx] = libro;
+    } else {
+      libros.push(libro);
+    }
+    this.guardarLibros(libros);
+  }
+
+  async eliminar(id: string): Promise<void> {
+    const libros = this.leerLibros();
+    const filtrados = libros.filter(l => l.id !== id);
+    this.guardarLibros(filtrados);
+  }
+}
+```
+
+===============================================================================
+5. PRESENTACIÓN: RENDERIZADO EN DOM
+===============================================================================
+
+Construimos la interfaz de usuario manipulando el DOM directamente.
+
+```typescript
+// frontend/src/presentation/components/book-list.ts
+import { Libro } from "../../types";
+
+export function renderizarListaLibros(
+  libros: Libro[],
+  contenedor: HTMLElement,
+  handlers: {
+    onToggleLeido: (id: string) => void;
+    onEliminar: (id: string) => void;
+    onEditar: (id: string) => void;
+  }
+): void {
+  if (libros.length === 0) {
+    contenedor.innerHTML = `
+      <div class="empty-state">
+        <p>No hay libros en tu biblioteca.</p>
+        <p>¡Agrega tu primer libro usando el formulario!</p>
+      </div>
+    `;
+    return;
+  }
+
+  contenedor.innerHTML = libros
+    .map(libro => `
+      <article class="book-card ${libro.leido ? "leido" : ""}" data-id="${libro.id}">
+        <div class="book-cover">
+          <img src="${libro.portadaUrl || "https://via.placeholder.com/120x180?text=Sin+Portada"}"
+               alt="${libro.titulo}"
+               loading="lazy"
+               onerror="this.src='https://via.placeholder.com/120x180?text=Sin+Portada'">
+        </div>
+        <div class="book-info">
+          <h3 class="book-title">${libro.titulo}</h3>
+          <p class="book-author">${libro.autor}</p>
+          <p class="book-meta">
+            <span class="genre-tag">${traducirGenero(libro.genero)}</span>
+            <span class="year">${libro.año}</span>
+          </p>
+          ${libro.calificacion ? renderizarEstrellas(libro.calificacion) : ""}
+        </div>
+        <div class="book-actions">
+          <button class="btn-toggle" data-action="toggle" title="${libro.leido ? "Marcar como no leído" : "Marcar como leído"}">
+            ${libro.leido ? "✓" : "○"}
+          </button>
+          <button class="btn-edit" data-action="edit" title="Editar libro">✎</button>
+          <button class="btn-delete" data-action="delete" title="Eliminar libro">✕</button>
+        </div>
+      </article>
+    `)
+    .join("");
+
+  // Asignar event listeners
+  contenedor.querySelectorAll("[data-action]").forEach(elemento => {
+    const card = elemento.closest("[data-id]") as HTMLElement;
+    if (!card) return;
+    const id = card.dataset.id!;
+    const accion = (elemento as HTMLElement).dataset.action!;
+
+    elemento.addEventListener("click", (e) => {
+      e.stopPropagation();
+      switch (accion) {
+        case "toggle": handlers.onToggleLeido(id); break;
+        case "delete": handlers.onEliminar(id); break;
+        case "edit": handlers.onEditar(id); break;
+      }
+    });
+  });
+}
+
+function traducirGenero(genero: string): string {
+  const mapa: Record<string, string> = {
+    ficcion: "Ficción",
+    no_ficcion: "No Ficción",
+    ciencia_ficcion: "Ciencia Ficción",
+    fantasia: "Fantasía",
+    romance: "Romance",
+    terror: "Terror",
+    misterio: "Misterio",
+    biografia: "Biografía",
+    historia: "Historia",
+    poesia: "Poesía"
+  };
+  return mapa[genero] ?? genero;
+}
+
+function renderizarEstrellas(calificacion: number): string {
+  const llena = "★";
+  const vacia = "☆";
+  return `<p class="rating">${llena.repeat(calificacion)}${vacia.repeat(5 - calificacion)}</p>`;
+}
+```
+
+```typescript
+// frontend/src/presentation/components/form.ts
+import { Libro, GeneroLiterario } from "../../types";
+
+export function renderizarFormularioLibro(
+  contenedor: HTMLElement,
+  onSubmit: (datos: Omit<Libro, "id" | "fechaAgregado">) => void,
+  libroExistente?: Libro
+): void {
+  const esEdicion = libroExistente !== undefined;
+  const titulo = esEdicion ? "Editar Libro" : "Agregar Nuevo Libro";
+  const libro = libroExistente ?? {
+    titulo: "",
+    autor: "",
+    genero: "ficcion" as GeneroLiterario,
+    año: new Date().getFullYear(),
+    portadaUrl: "",
+    leido: false,
+    calificacion: undefined
+  };
+
+  contenedor.innerHTML = `
+    <div class="form-overlay">
+      <form class="book-form" id="book-form">
+        <h2>${titulo}</h2>
+        <div class="form-group">
+          <label for="titulo">Título *</label>
+          <input type="text" id="titulo" name="titulo" required
+                 value="${libro.titulo}" placeholder="Título del libro">
+        </div>
+        <div class="form-group">
+          <label for="autor">Autor *</label>
+          <input type="text" id="autor" name="autor" required
+                 value="${libro.autor}" placeholder="Nombre del autor">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="genero">Género</label>
+            <select id="genero" name="genero">
+              ${Object.entries(traducirGeneros()).map(([valor, texto]) => `
+                <option value="${valor}" ${libro.genero === valor ? "selected" : ""}>
+                  ${texto}
+                </option>
+              `).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="año">Año</label>
+            <input type="number" id="año" name="año" min="1000"
+                   max="${new Date().getFullYear()}" value="${libro.año}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="portada">URL de Portada</label>
+          <input type="url" id="portada" name="portadaUrl"
+                 value="${libro.portadaUrl}" placeholder="https://...">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="leido" name="leido"
+                     ${libro.leido ? "checked" : ""}>
+              Ya leído
+            </label>
+          </div>
+          <div class="form-group">
+            <label for="calificacion">Calificación (1-5)</label>
+            <input type="number" id="calificacion" name="calificacion"
+                   min="1" max="5" value="${libro.calificacion ?? ""}">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">
+            ${esEdicion ? "Guardar Cambios" : "Agregar Libro"}
+          </button>
+          <button type="button" class="btn-secondary" id="cancelar-form">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  const form = document.getElementById("book-form") as HTMLFormElement;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const data = new FormData(form);
+    const formData: Omit<Libro, "id" | "fechaAgregado"> = {
+      titulo: data.get("titulo") as string,
+      autor: data.get("autor") as string,
+      genero: data.get("genero") as GeneroLiterario,
+      año: parseInt(data.get("año") as string, 10),
+      portadaUrl: data.get("portadaUrl") as string,
+      leido: data.get("leido") === "on",
+      calificacion: data.get("calificacion")
+        ? parseInt(data.get("calificacion") as string, 10)
+        : undefined
+    };
+    onSubmit(formData);
+  });
+
+  document.getElementById("cancelar-form")?.addEventListener("click", () => {
+    contenedor.innerHTML = "";
+  });
+}
+
+function traducirGeneros(): Record<string, string> {
+  return {
+    ficcion: "Ficción",
+    no_ficcion: "No Ficción",
+    ciencia_ficcion: "Ciencia Ficción",
+    fantasia: "Fantasía",
+    romance: "Romance",
+    terror: "Terror",
+    misterio: "Misterio",
+    biografia: "Biografía",
+    historia: "Historia",
+    poesia: "Poesía"
+  };
+}
+```
+
+===============================================================================
+6. API BACKEND CON EXPRESS
+===============================================================================
+
+Un backend simple para soporte de exportación y sincronización.
+
+```typescript
+// backend/src/main.ts
+import express from "express";
+import cors from "cors";
+import { libroRoutes } from "./routes/libros";
+
+const app = express();
+const PORT = process.env.PORT ?? 3000;
+
+app.use(cors());
+app.use(express.json());
+
+app.use("/api/libros", libroRoutes);
+
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.listen(PORT, () => {
+  console.log(`LibroFlow API corriendo en http://localhost:${PORT}`);
+});
+```
+
+```typescript
+// backend/src/routes/libros.ts
+import { Router, Request, Response } from "express";
+
+export const libroRoutes = Router();
+
+interface LibroExport {
+  titulo: string;
+  autor: string;
+  genero: string;
+  año: number;
+  leido: boolean;
+}
+
+// Endpoint para recibir exportación de libros desde el frontend
+libroRoutes.post("/exportar", (req: Request, res: Response) => {
+  try {
+    const libros: LibroExport[] = req.body.libros;
+    if (!Array.isArray(libros)) {
+      return res.status(400).json({ error: "Se esperaba un array de libros" });
+    }
+    console.log(`Recibidos ${libros.length} libros para exportar`);
+    res.json({ exito: true, mensaje: "Libros exportados correctamente" });
+  } catch (error) {
+    res.status(500).json({ error: "Error al procesar la exportación" });
+  }
+});
+
+libroRoutes.get("/", (_req: Request, res: Response) => {
+  res.json({
+    mensaje: "API de LibroFlow",
+    version: "1.0.0",
+    endpoints: [
+      "POST /api/libros/exportar",
+      "GET /api/libros"
+    ]
+  });
+});
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- LibroFlow integra TypeScript en frontend (DOM) y backend (Express)
+- El dominio se modela con interfaces y tipos puros
+- Los repositorios abstraen la persistencia (localStorage)
+- Los servicios contienen la lógica de negocio validada
+- La presentación manipula el DOM con event listeners tipados
+- El backend Express proporciona una API REST sencilla
+- La arquitectura limpia permite cambiar persistencia sin afectar el dominio
+- El proyecto completo es desplegable como aplicación web real
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:**
+Implementa la funcionalidad de ordenamiento en la vista de lista: permite
+ordenar por título, autor o año, tanto ascendente como descendente. Asegúrate
+de que los tipos reflejen las opciones de ordenamiento.
+
+🧩 **Ejercicio 2:**
+Agrega una nueva funcionalidad: "Lista de deseos". Los libros pueden marcarse
+como "deseados" además de "leídos". Modifica el tipo Libro, el repositorio,
+el servicio y la UI para soportar esta nueva característica.
+
+🧩 **Ejercicio 3:**
+Crea un componente de estadísticas que muestre: total de libros, libros
+leídos, libros no leídos, y un desglose por género. Usa el servicio
+BookStatsService y renderiza los datos en el DOM.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usar localStorage en lugar de una base de datos?**
+localStorage es ideal para aplicaciones cliente-solo sin backend. Es simple,
+no requiere servidor, y los datos persisten entre sesiones. Para una app
+real en producción, se reemplazaría por una API REST con base de datos.
+
+❓ **¿Cómo manejo la sincronización entre frontend y backend?**
+El backend de LibroFlow es opcional. La app funciona completamente en el
+frontend. El backend se usa para exportación y potencial sincronización
+futura. Puedes ampliarlo con endpoints CRUD completos.
+
+❓ **¿Puedo desplegar esta aplicación?**
+Sí. El frontend se despliega como sitio estático (Vercel, Netlify, GitHub
+Pages). El backend se despliega como servicio Node.js (Railway, Render,
+Fly.io).
+
+❓ **¿Cómo puedo extender el proyecto?**
+Agrega autenticación, base de datos real (SQLite con Prisma), categorías
+personalizadas, importación/exportación CSV, o una API REST completa.
+El límite es tu imaginación y dominio de TypeScript.
+
+===============================================================================
+FIN DEL CAPÍTULO 78
+===============================================================================
+
+"El proyecto integrador no es un ejercicio académico: es tu tarjeta de
+presentación como desarrollador TypeScript. Cuídalo, mejóralo, presúmelo."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+
+79_CAPITULO_79_EVALUACION_FINAL.txt
+===============================================================================

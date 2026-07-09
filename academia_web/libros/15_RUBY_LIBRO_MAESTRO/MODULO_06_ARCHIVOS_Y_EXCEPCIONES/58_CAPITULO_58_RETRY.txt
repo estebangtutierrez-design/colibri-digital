@@ -1,0 +1,1189 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 58: RETRY Y RAISE
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 58! En los capítulos anteriores aprendiste a
+capturar excepciones y a ejecutar código de limpieza. Pero hay un
+aspecto igualmente importante: cómo lanzar (raise) excepciones de
+forma controlada y cómo reintentar (retry) operaciones que fallan.
+
+raise te permite crear tus propias excepciones cuando detectas
+condiciones anómalas en tu programa. Es la forma de decir "esto no
+debería estar pasando" y delegar el manejo a niveles superiores.
+
+retry te permite reintentar un bloque begin desde el principio,
+útil para operaciones que pueden fallar de forma transitoria
+(conexiones de red, archivos temporales, etc.).
+
+Además, exploraremos las variables globales $! (última excepción)
+y $@ (backtrace de la última excepción), y cómo raise interactúa
+con rescue de formas poderosas.
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"Raise no es un grito de auxilio, es una señal de que el programa
+ha encontrado un límite que no puede cruzar." — Anónimo
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Usar raise para lanzar excepciones manualmente.
+2. Lanzar excepciones con mensajes personalizados.
+3. Lanzar excepciones de tipos específicos.
+4. Usar raise dentro de rescue para relanzar.
+5. Usar retry para reintentar bloques begin.
+6. Implementar reintentos con límite de intentos.
+7. Comprender $! y $@ después de raise.
+8. Usar raise con causa (chained exceptions).
+9. Aplicar patrones de raise/retry en el mundo real.
+10. Diferenciar raise, fail, y throw/catch.
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. INTRODUCCIÓN A RAISE
+----------------------------------------------------------------------
+
+raise es el método de Kernel que lanza una excepción. Puedes usarlo
+de varias formas:
+
+  raise                       # relanza $! (dentro de rescue)
+  raise "mensaje"             # RuntimeError con mensaje
+  raise Tipo, "mensaje"       # excepción de tipo específico
+  raise Tipo, "mensaje", backtrace  # con backtrace personalizado
+
+raise siempre interrumpe el flujo normal y busca un rescue que
+pueda manejar la excepción. Si no encuentra ninguno, el programa
+termina con un error.
+
+================================================================================
+EJEMPLO 1: Formas básicas de raise
+================================================================================
+
+#------ archivo: ej01_raise_basico.rb ------
+puts "=== RAISE BÁSICO ==="
+
+# raise con mensaje (crea RuntimeError)
+def verificar_edad(edad)
+  if edad < 0
+    raise "La edad no puede ser negativa"
+  end
+  if edad < 18
+    raise "Debes ser mayor de edad"
+  end
+  puts "Edad válida: #{edad}"
+end
+
+begin
+  verificar_edad(-5)
+rescue RuntimeError => e
+  puts "RuntimeError: #{e.message}"
+end
+
+begin
+  verificar_edad(15)
+rescue RuntimeError => e
+  puts "RuntimeError: #{e.message}"
+end
+
+verificar_edad(25)
+
+# raise con tipo específico
+def dividir(a, b)
+  raise ZeroDivisionError, "No se puede dividir por cero" if b == 0
+  raise TypeError, "Ambos argumentos deben ser números" unless a.is_a?(Numeric) && b.is_a?(Numeric)
+  a / b
+end
+
+begin
+  dividir(10, 0)
+rescue ZeroDivisionError => e
+  puts "ZeroDivisionError: #{e.message}"
+end
+
+begin
+  dividir(10, "hola")
+rescue TypeError => e
+  puts "TypeError: #{e.message}"
+end
+
+# raise con backtrace personalizado
+begin
+  raise ArgumentError, "Argumento inválido", ["archivo.rb:10:in `metodo'", "archivo.rb:20:in `<main>'"]
+rescue ArgumentError => e
+  puts "Backtrace personalizado:"
+  e.backtrace.each { |line| puts "  #{line}" }
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+2. RAISE DENTRO DE RESCUE (RELANZAR)
+----------------------------------------------------------------------
+
+raise sin argumentos dentro de rescue relanza la excepción actual
+($!). Esto es útil cuando quieres hacer logging o limpieza parcial
+y luego dejar que un nivel superior maneje el error.
+
+  begin
+    # código
+  rescue => e
+    logger.error(e)
+    raise  # relanza la misma excepción
+  end
+
+También puedes relanzar una excepción diferente (wrap):
+
+  rescue => e
+    raise ErrorPersonalizado, "Fallo en proceso: #{e.message}"
+
+================================================================================
+EJEMPLO 2: raise dentro de rescue
+================================================================================
+
+#------ archivo: ej02_raise_rescue.rb ------
+puts "=== RAISE DENTRO DE RESCUE ==="
+
+# Relanzar la misma excepción
+def operacion_con_logging
+  begin
+    puts "  Ejecutando operación..."
+    File.open("/no/existe")
+  rescue => e
+    puts "  [LOG] Error capturado: #{e.class}: #{e.message}"
+    puts "  [LOG] Relanzando..."
+    raise  # relanza $!
+  end
+end
+
+begin
+  operacion_con_logging
+rescue Errno::ENOENT => e
+  puts "  [NIVEL SUPERIOR] Error manejado: #{e.message}"
+end
+
+# Relanzar una excepción diferente (wrapping)
+def procesar_pago(monto)
+  begin
+    raise "Saldo insuficiente" if monto > 100
+    "Pago exitoso"
+  rescue RuntimeError => e
+    raise ArgumentError, "Error de pago: #{e.message}"
+  end
+end
+
+begin
+  procesar_pago(200)
+rescue ArgumentError => e
+  puts "\nWrapped error: #{e.message}"
+end
+
+# raise con causa (Ruby 2.1+)
+begin
+  begin
+    raise "Error original"
+  rescue => e_original
+    raise RuntimeError, "Error secundario", cause: e_original
+  end
+rescue RuntimeError => e
+  puts "\nExcepción con causa:"
+  puts "  Mensaje: #{e.message}"
+  puts "  Causa: #{e.cause.class}: #{e.cause.message}" if e.cause
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+3. RAISE CON MENSAJE Y TIPO
+----------------------------------------------------------------------
+
+Las combinaciones de raise:
+
+  raise ExceptionType, "message"
+  raise ExceptionType, "message", caller  # backtrace
+  raise ExceptionType.new("message")
+  raise "message"  # RuntimeError
+
+Es importante elegir el tipo correcto:
+
+  - ArgumentError: argumentos inválidos
+  - TypeError: tipo incorrecto
+  - RuntimeError: error genérico
+  - StandardError: para errores recuperables
+  - Excepciones personalizadas (próximo capítulo)
+
+NUNCA uses raise Exception (la clase base). Usa StandardError o
+subclases específicas.
+
+================================================================================
+EJEMPLO 3: Tipos correctos de excepción
+================================================================================
+
+#------ archivo: ej03_tipos_correctos.rb ------
+puts "=== TIPOS CORRECTOS DE EXCEPCIÓN ==="
+
+class Calculadora
+  def self.sumar(a, b)
+    validar_numeros(a, b)
+    a + b
+  end
+
+  def self.restar(a, b)
+    validar_numeros(a, b)
+    a - b
+  end
+
+  def self.dividir(a, b)
+    validar_numeros(a, b)
+    raise ZeroDivisionError, "División por cero" if b == 0
+    a / b
+  end
+
+  def self.raiz_cuadrada(n)
+    validar_numeros(n)
+    raise ArgumentError, "No se puede raíz de número negativo" if n < 0
+    Math.sqrt(n)
+  end
+
+  def self.factorial(n)
+    validar_numeros(n)
+    raise ArgumentError, "Factorial de número negativo" if n < 0
+    raise ArgumentError, "Factorial solo para enteros" unless n.is_a?(Integer)
+    (1..n).reduce(1, :*)
+  end
+
+  private
+
+  def self.validar_numeros(*args)
+    args.each do |arg|
+      raise TypeError, "Se esperaba un número, se recibió #{arg.class}" unless arg.is_a?(Numeric)
+    end
+  end
+end
+
+# Pruebas
+puts "sumar(5, 3): #{Calculadora.sumar(5, 3)}"
+puts "dividir(10, 2): #{Calculadora.dividir(10, 2)}"
+puts "raiz_cuadrada(9): #{Calculadora.raiz_cuadrada(9)}"
+puts "factorial(5): #{Calculadora.factorial(5)}"
+
+puts "\n--- Errores ---"
+begin
+  Calculadora.sumar(5, "hola")
+rescue TypeError => e
+  puts "TypeError: #{e.message}"
+end
+
+begin
+  Calculadora.dividir(10, 0)
+rescue ZeroDivisionError => e
+  puts "ZeroDivisionError: #{e.message}"
+end
+
+begin
+  Calculadora.raiz_cuadrada(-1)
+rescue ArgumentError => e
+  puts "ArgumentError: #{e.message}"
+end
+
+begin
+  Calculadora.factorial(3.5)
+rescue ArgumentError => e
+  puts "ArgumentError: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+4. FAIL — SINÓNIMO DE RAISE
+----------------------------------------------------------------------
+
+fail es un sinónimo de raise en Ruby. Históricamente, algunos
+desarrolladores usan fail para "lanzar" y raise para "relanzar",
+pero en la práctica son intercambiables.
+
+  fail "mensaje"        # igual que raise "mensaje"
+  fail TypeError, "msg" # igual que raise TypeError, "msg"
+
+La convención no oficial:
+  - Usa raise para relanzar (raise dentro de rescue).
+  - Usa fail para lanzar excepciones nuevas.
+
+Pero es solo una cuestión de estilo. Elige uno y sé consistente.
+
+================================================================================
+EJEMPLO 4: fail vs raise
+================================================================================
+
+#------ archivo: ej04_fail_raise.rb ------
+puts "=== FAIL VS RAISE ==="
+
+# Algunos desarrolladores usan fail para lanzar
+def conectar_servidor(url)
+  fail "URL inválida" if url.nil? || url.empty?
+  fail ArgumentError, "URL debe empezar con http" unless url.start_with?("http")
+
+  # simular conexión
+  puts "Conectando a #{url}..."
+  :conectado
+end
+
+# Y raise para relanzar
+begin
+  conectar_servidor("")
+rescue RuntimeError => e
+  puts "Error: #{e.message}"
+end
+
+begin
+  conectar_servidor("ftp://mal.com")
+rescue ArgumentError => e
+  puts "Error: #{e.message}"
+end
+
+# Pero son intercambiables
+puts "\nSon sinónimos: #{Kernel.method(:raise) == Kernel.method(:fail)}"
+puts "raise == fail? #{Kernel.instance_method(:raise) == Kernel.instance_method(:fail)}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+5. RETRY — REINTENTAR DESDE EL PRINCIPIO
+----------------------------------------------------------------------
+
+retry dentro de un bloque rescue reinicia la ejecución del bloque
+begin desde el principio. Es útil para operaciones que pueden fallar
+transitoriamente y que pueden tener éxito en un segundo intento.
+
+  intentos = 0
+  begin
+    intentos += 1
+    # operación que puede fallar
+  rescue
+    retry if intentos < 3
+  end
+
+CUIDADO: sin un límite, retry produce un bucle infinito. Siempre
+establece un máximo de reintentos.
+
+================================================================================
+EJEMPLO 5: retry básico
+================================================================================
+
+#------ archivo: ej05_retry_basico.rb ------
+puts "=== RETRY BÁSICO ==="
+
+# Operación que falla las primeras veces
+$intento = 0
+
+def operacion_inestable
+  $intento += 1
+  puts "  Intento ##{$intento}"
+  if $intento < 3
+    raise "Error transitorio en intento #{$intento}"
+  end
+  "Éxito en intento #{$intento}"
+end
+
+intentos_global = 0
+begin
+  intentos_global += 1
+  resultado = operacion_inestable
+  puts "Resultado: #{resultado}"
+rescue => e
+  puts "  Falló: #{e.message}"
+  if intentos_global < 5
+    puts "  Reintentando..."
+    sleep 0.1
+    retry
+  else
+    puts "  No más reintentos"
+    raise
+  end
+end
+
+puts "Total intentos: #{intentos_global}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+6. RETRY CON LÍMITE DE INTENTOS
+----------------------------------------------------------------------
+
+El patrón estándar para retry con límite:
+
+  max_attempts = 3
+  attempts = 0
+
+  begin
+    attempts += 1
+    # operación
+  rescue SomeError => e
+    if attempts < max_attempts
+      sleep(attempts)  # backoff exponencial
+      retry
+    else
+      raise  # relanzar después de agotar intentos
+    end
+  end
+
+================================================================================
+EJEMPLO 6: retry con límite y backoff
+================================================================================
+
+#------ archivo: ej06_retry_limite.rb ------
+puts "=== RETRY CON LÍMITE Y BACKOFF ==="
+
+def descargar_archivo(url)
+  max_intentos = 3
+  intentos = 0
+
+  begin
+    intentos += 1
+    puts "  [#{intentos}/#{max_intentos}] Descargando #{url}..."
+
+    # Simular descarga
+    if intentos < 3
+      raise "Timeout de red"
+    end
+
+    puts "  ¡Descarga completada!"
+    "DATOS_DEL_ARCHIVO"
+
+  rescue => e
+    puts "  Error: #{e.message}"
+    if intentos < max_intentos
+      espera = intentos * 0.5
+      puts "  Reintentando en #{espera}s..."
+      sleep espera
+      retry
+    else
+      puts "  No más reintentos"
+      raise
+    end
+  end
+end
+
+begin
+  datos = descargar_archivo("https://ejemplo.com/archivo.zip")
+  puts "Datos recibidos: #{datos.length} bytes"
+rescue => e
+  puts "Descarga fallida después de reintentos: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+7. RETRY CON BACKOFF EXPONENCIAL
+----------------------------------------------------------------------
+
+El backoff exponencial es una estrategia donde el tiempo de espera
+se incrementa exponencialmente con cada intento. Es el estándar en
+sistemas distribuidos.
+
+  espera = base * (2 ** (intentos - 1)) + random
+
+================================================================================
+EJEMPLO 7: Backoff exponencial
+================================================================================
+
+#------ archivo: ej07_backoff.rb ------
+puts "=== BACKOFF EXPONENCIAL ==="
+
+def conectar_servidor(host, puerto)
+  max_intentos = 5
+  intentos = 0
+
+  begin
+    intentos += 1
+    puts "  [#{intentos}] Conectando a #{host}:#{puerto}..."
+
+    # Simular fallo
+    if intentos < 4
+      raise Errno::ECONNREFUSED, "Conexión rechazada"
+    end
+
+    puts "  ¡Conectado!"
+    "CONEXIÓN_ESTABLECIDA"
+
+  rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT => e
+    if intentos < max_intentos
+      # Backoff exponencial: 1s, 2s, 4s, 8s
+      espera = 2 ** (intentos - 1)
+      jitter = rand(0.0..0.5)
+      total_espera = espera + jitter
+      puts "  Error: #{e.message}"
+      puts "  Esperando #{format('%.2f', total_espera)}s..."
+      sleep total_espera
+      retry
+    else
+      puts "  No más reintentos"
+      raise
+    end
+  end
+end
+
+begin
+  conexion = conectar_servidor("api.ejemplo.com", 443)
+  puts "Estado: #{conexion}"
+rescue => e
+  puts "Conexión fallida: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+8. RETRY EN DIFERENTES CONTEXTOS
+----------------------------------------------------------------------
+
+retry solo funciona dentro de un bloque rescue. No puedes usarlo
+en otros contextos.
+
+  # Válido:
+  begin
+    # código
+  rescue
+    retry
+  end
+
+  # Inválido (SyntaxError):
+  (1..10).each do |i|
+    retry if i == 5  # error!
+  end
+
+Para reintentar en loops, usa un enfoque manual:
+
+  loop do
+    # código
+    break if condición_de_éxito
+    # si falla, el loop continúa
+  end
+
+================================================================================
+EJEMPLO 8: retry en contextos
+================================================================================
+
+#------ archivo: ej08_retry_contextos.rb ------
+puts "=== RETRY EN CONTEXTOS ==="
+
+# retry DENTRO de rescue (válido)
+def procesar_con_retry
+  intentos = 0
+  begin
+    intentos += 1
+    raise "Error en #{intentos}" if intentos < 3
+    "OK"
+  rescue => e
+    puts "  Error: #{e.message}"
+    retry if intentos < 3
+    raise
+  end
+end
+
+puts "procesar_con_retry: #{procesar_con_retry}"
+
+# Para reintentar en loops, usa el loop manual
+puts "\n--- Reintento en loop (alternativa a retry) ---"
+def descargar_con_loop(max_intentos = 3)
+  intentos = 0
+  loop do
+    intentos += 1
+    begin
+      raise "Error simulado" if intentos < 2
+      return "OK en intento #{intentos}"
+    rescue => e
+      puts "  [#{intentos}] Error: #{e.message}"
+      raise if intentos >= max_intentos
+    end
+  end
+end
+
+puts "descargar_con_loop: #{descargar_con_loop}"
+
+# retry dentro de un iterador (no funciona)
+puts "\n--- retry NO funciona en iteradores ---"
+begin
+  eval(<<~RUBY)
+    [1, 2, 3].each do |i|
+      retry if i == 2
+    end
+  RUBY
+rescue SyntaxError => e
+  puts "SyntaxError (como se esperaba): #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+9. RETRY CON MÚLTIPLES TIPOS DE ERROR
+----------------------------------------------------------------------
+
+Puedes tener múltiples rescues, cada uno con su propia lógica de
+retry:
+
+  begin
+    # código
+  rescue NetworkError => e
+    retry if intentos < 3
+  rescue ValidationError => e
+    # no reintentar errores de validación
+    raise
+  rescue => e
+    retry if intentos < 2
+  end
+
+================================================================================
+EJEMPLO 9: retry con múltiples tipos
+================================================================================
+
+#------ archivo: ej09_retry_tipos.rb ------
+puts "=== RETRY CON MÚLTIPLES TIPOS ==="
+
+class NetworkError < StandardError; end
+class ValidationError < StandardError; end
+class TimeoutError < NetworkError; end
+
+def operacion_mixta(valor)
+  intentos_red = 0
+  begin
+    intentos_red += 1
+    puts "  Intento de red ##{intentos_red}..."
+
+    # Validación (no reintentar)
+    raise ValidationError, "Valor inválido: #{valor}" if valor.nil?
+
+    # Error de red (reintentar)
+    raise TimeoutError, "Timeout en intento #{intentos_red}" if intentos_red < 3
+
+    "Procesado: #{valor}"
+
+  rescue ValidationError => e
+    puts "  Error de validación (no se reintenta): #{e.message}"
+    raise
+
+  rescue TimeoutError => e
+    if intentos_red < 4
+      puts "  Timeout, reintentando..."
+      sleep 0.1
+      retry
+    else
+      puts "  Timeout, no más reintentos"
+      raise NetworkError, "Timeout después de #{intentos_red} intentos"
+    end
+
+  rescue NetworkError => e
+    if intentos_red < 2
+      puts "  Error de red, reintentando..."
+      retry
+    else
+      raise
+    end
+  end
+end
+
+# Prueba 1: valor válido
+begin
+  puts "\n--- Prueba 1: valor válido ---"
+  r = operacion_mixta("hola")
+  puts "Resultado: #{r}"
+rescue => e
+  puts "Error: #{e.class}: #{e.message}"
+end
+
+# Prueba 2: valor nulo
+begin
+  puts "\n--- Prueba 2: valor nulo (ValidationError) ---"
+  r = operacion_mixta(nil)
+  puts "Resultado: #{r}"
+rescue => e
+  puts "Error: #{e.class}: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+10. $! Y $@ DESPUÉS DE RAISE
+----------------------------------------------------------------------
+
+Después de un raise, las variables globales $! y $@ contienen la
+última excepción y su backtrace respectivamente.
+
+  $!   # última excepción lanzada (thread-local)
+  $@   # backtrace de $!
+
+Estas variables se actualizan CADA VEZ que se lanza una excepción,
+incluso si no se captura.
+
+================================================================================
+EJEMPLO 10: $! y $@ después de raise
+================================================================================
+
+#------ archivo: ej10_dolar_exclamacion.rb ------
+puts "=== $! Y $@ DESPUÉS DE RAISE ==="
+
+puts "Antes de raise: $! = #{$!.inspect}"
+
+begin
+  raise "Error de prueba"
+rescue => e
+  puts "Dentro de rescue:"
+  puts "  $! = #{$!.class}: #{$!.message}"
+  puts "  $@ primeras 2 líneas:"
+  $@.first(2).each { |l| puts "    #{l}" }
+end
+
+puts "Después de rescue: $! = #{$!.inspect}"
+
+# $! se actualiza en cada raise
+begin
+  raise "Primer error"
+rescue
+  puts "\nPrimer error: $! = #{$!.message}"
+  begin
+    raise "Segundo error"
+  rescue
+    puts "Segundo error: $! = #{$!.message}"
+  end
+  puts "De vuelta al primer rescue: $! = #{$!.message}"
+  # ¡$! ya no es el primer error! Fue sobrescrito.
+end
+
+# Para preservar el error original, asígnelo a una variable
+begin
+  raise "Error original"
+rescue => e_original
+  begin
+    raise "Error anidado"
+  rescue
+    puts "\nError original preservado: #{e_original.message}"
+    puts "Error actual ($!): #{$!.message}"
+  end
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+11. RAISE CON CAUSA (ENCADENAMIENTO)
+----------------------------------------------------------------------
+
+Ruby 2.1+ permite encadenar excepciones con la opción cause:
+
+  raise ErrorSecundario, "mensaje", cause: error_original
+
+Esto permite mantener la traza completa del error original.
+
+  e = excepción_rescatada
+  e.cause  # devuelve la excepción original (o nil)
+
+================================================================================
+EJEMPLO 11: raise con causa
+================================================================================
+
+#------ archivo: ej11_raise_causa.rb ------
+puts "=== RAISE CON CAUSA ==="
+
+class ErrorAplicacion < StandardError; end
+class ErrorBaseDatos < ErrorAplicacion; end
+
+def conectar_bd
+  raise Errno::ECONNREFUSED, "Conexión a BD rechazada"
+end
+
+def obtener_usuarios
+  conectar_bd
+rescue Errno::ECONNREFUSED => e
+  raise ErrorBaseDatos, "No se pudieron obtener usuarios", cause: e
+end
+
+begin
+  obtener_usuarios
+rescue ErrorBaseDatos => e
+  puts "Error: #{e.message}"
+  puts "Clase: #{e.class}"
+  if e.cause
+    puts "Causa original: #{e.cause.class}: #{e.cause.message}"
+    puts "Backtrace de causa:"
+    e.cause.backtrace.first(2).each { |l| puts "  #{l}" }
+  end
+end
+
+# También se puede acceder a toda la cadena de causas
+def cadena_causas(excepcion)
+  causas = []
+  actual = excepcion
+  while actual
+    causas << "#{actual.class}: #{actual.message}"
+    actual = actual.cause
+  end
+  causas
+end
+
+puts "\nCadena de causas:"
+begin
+  obtener_usuarios
+rescue => e
+  cadena_causas(e).each_with_index do |causa, i|
+    puts "  Nivel #{i}: #{causa}"
+  end
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+12. RAISE Y RETRY EN EL MUNDO REAL
+----------------------------------------------------------------------
+
+Patrones comunes en aplicaciones reales:
+
+  1. Cliente HTTP con reintentos:
+     - Timeout → reintentar con backoff
+     - 5xx → reintentar
+     - 4xx → no reintentar, lanzar error
+
+  2. Conexión a BD:
+     - Connection refused → reintentar
+     - Query timeout → reintentar
+     - Sintaxis SQL → no reintentar
+
+  3. Lectura de archivos:
+     - Archivo ocupado → reintentar
+     - Archivo no encontrado → no reintentar
+
+  4. API calls:
+     - Rate limit → esperar y reintentar
+     - Autenticación → no reintentar
+     - Error interno → reintentar
+
+================================================================================
+EJEMPLO 12: Cliente HTTP con reintentos
+================================================================================
+
+#------ archivo: ej12_cliente_http.rb ------
+puts "=== CLIENTE HTTP CON REINTENTOS ==="
+
+class ClienteHTTP
+  class ErrorHTTP < StandardError; end
+  class ErrorTimeout < ErrorHTTP; end
+  class ErrorServidor < ErrorHTTP; end
+  class ErrorCliente < ErrorHTTP; end
+
+  def self.get(url, max_intentos: 3)
+    intentos = 0
+
+    begin
+      intentos += 1
+      puts "  [#{intentos}] GET #{url}..."
+
+      # Simular respuestas
+      if intentos == 1
+        raise ErrorTimeout, "Timeout en intento 1"
+      elsif intentos == 2
+        raise ErrorServidor, "500 Internal Server Error"
+      end
+
+      puts "  ¡Respuesta exitosa!"
+      {status: 200, body: "Respuesta para #{url}"}
+
+    rescue ErrorTimeout => e
+      if intentos < max_intentos
+        espera = 2 ** (intentos - 1)
+        puts "  Timeout, esperando #{espera}s..."
+        sleep espera
+        retry
+      else
+        raise ErrorHTTP, "Timeout después de #{max_intentos} intentos"
+      end
+
+    rescue ErrorServidor => e
+      if intentos < max_intentos
+        puts "  Error servidor, reintentando..."
+        retry
+      else
+        raise
+      end
+
+    rescue ErrorCliente => e
+      # Errores 4xx no se reintentan
+      puts "  Error cliente (no reintentar): #{e.message}"
+      raise
+    end
+  end
+end
+
+# Probar
+begin
+  resultado = ClienteHTTP.get("https://api.ejemplo.com/data")
+  puts "Resultado: #{resultado[:status]}"
+rescue ClienteHTTP::ErrorHTTP => e
+  puts "Error HTTP: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+13. RAISE Y RETRY CON TIEMPO DE EXPIRACIÓN
+----------------------------------------------------------------------
+
+Puedes combinar reintentos con un tiempo máximo total (deadline):
+
+  tiempo_limite = Time.now + 10  # 10 segundos
+  begin
+    raise "error" if ...
+    sleep 1
+    retry if Time.now < tiempo_limite
+  rescue
+    raise if Time.now >= tiempo_limite
+    retry
+  end
+
+================================================================================
+EJEMPLO 13: Reintentos con deadline
+================================================================================
+
+#------ archivo: ej13_deadline.rb ------
+puts "=== REINTENTOS CON DEADLINE ==="
+
+def operacion_con_deadline
+  deadline = Time.now + 3  # 3 segundos de tiempo máximo
+  intentos = 0
+
+  begin
+    intentos += 1
+    puts "  Intento ##{intentos} a las #{Time.now.strftime('%H:%M:%S.%L')}"
+
+    # Simular operación que falla
+    raise "Operación fallida"
+
+    "Éxito"
+
+  rescue => e
+    if Time.now < deadline
+      espera = 0.5
+      puts "  Error, quedan #{(deadline - Time.now).round(2)}s, esperando #{espera}s..."
+      sleep espera
+      retry
+    else
+      puts "  Tiempo expirado después de #{intentos} intentos"
+      raise "Timeout: #{e.message}"
+    end
+  end
+end
+
+begin
+  resultado = operacion_con_deadline
+  puts "Resultado: #{resultado}"
+rescue => e
+  puts "Error final: #{e.message}"
+end
+
+#------ fin del ejemplo ------
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. raise: lanza excepciones manualmente.
+   - raise "msg" → RuntimeError
+   - raise Tipo, "msg" → excepción específica
+   - raise → relanza $!
+
+2. fail: sinónimo de raise (cuestión de estilo).
+
+3. retry: dentro de rescue, reinicia el bloque begin.
+   - Requiere límite de intentos para evitar bucles infinitos.
+   - Solo funciona dentro de rescue.
+
+4. Patrones de retry:
+   - Con límite de intentos.
+   - Con backoff exponencial.
+   - Con deadline de tiempo.
+   - Con diferentes estrategias según tipo de error.
+
+5. $! y $@: variables globales con la última excepción y backtrace.
+   - Se sobrescriben en cada raise.
+   - Para preservar, asigna a variable local.
+
+6. raise con causa: encadenamiento de excepciones (Ruby 2.1+).
+   - raise Error, "msg", cause: error_original
+   - Permite mantener la cadena completa de errores.
+
+7. Contextos válidos:
+   - retry solo en rescue.
+   - raise en cualquier lugar.
+
+Regla de oro: "Usa raise para comunicar errores a niveles superiores,
+y retry para darle a tu código una segunda oportunidad. Pero siempre
+con un límite."
+
+================================================================================
+EJERCICIOS
+================================================================================
+
+1. RAISE BÁSICO: Crea un método que reciba un email y lance
+   ArgumentError si no contiene "@".
+
+2. RELANZAR: Crea un método que capture una excepción de archivo,
+   registre un log, y la relance.
+
+3. RETRY SIMPLE: Implementa una función que intente leer un archivo
+   hasta 3 veces si falla con Errno::ENOENT (simula que el archivo
+   puede aparecer después).
+
+4. BACKOFF: Implementa un cliente de red con backoff exponencial
+   (1s, 2s, 4s, 8s) para 5 intentos.
+
+5. RETRY CON TIPO: Crea un método que reintente errores de red pero
+   no errores de validación.
+
+6. $! Y $@: Escribe un programa que muestre el valor de $! y $@
+   después de diferentes operaciones raise/rescue.
+
+7. CAUSA: Lanza una excepción con causa y recorre la cadena de
+   causas mostrando cada nivel.
+
+8. DEADLINE: Implementa una operación con reintentos que tenga un
+   tiempo máximo total de 5 segundos.
+
+9. WRAPPING: Captura una excepción de bajo nivel (Errno::*) y lanza
+   una excepción de aplicación con el mensaje original.
+
+10. DESAFÍO: Construye un módulo Reintentar con un método .intentar
+    que acepte:
+    - límite de intentos
+    - tiempo de espera entre intentos
+    - backoff (lineal o exponencial)
+    - tipos de error a reintentar
+    - un bloque a ejecutar
+    Ejemplo: Reintentar.intentar(max: 3, espera: 1, backoff: :exponencial) { ... }
+
+================================================================================
+PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Cuál es la diferencia entre raise y fail?
+R: Son sinónimos. La convención no oficial: fail para lanzar nuevas,
+   raise para relanzar existentes. Pero no es una regla estricta.
+
+P: ¿Qué significa raise sin argumentos?
+R: Relanza la excepción actual ($!). Solo funciona dentro de rescue.
+
+P: ¿retry funciona fuera de rescue?
+R: No. retry solo es válido dentro de un bloque rescue. En otros
+   contextos, lanza SyntaxError.
+
+P: ¿Cómo limito los reintentos?
+R: Usa un contador (intentos += 1) y retry solo si intentos < límite.
+
+P: ¿Qué es backoff exponencial?
+R: Es una estrategia donde el tiempo de espera entre reintentos se
+   duplica en cada intento: 1s, 2s, 4s, 8s...
+
+P: ¿Qué es $! y $@?
+R: $! es la última excepción lanzada. $@ es su backtrace. Son
+   variables globales thread-local.
+
+P: ¿Cómo encadeno excepciones?
+R: raise ErrorNuevo, "msg", cause: error_original. Luego usa
+   excepcion.cause para acceder a la original.
+
+P: ¿Puedo pasar un objeto como causa?
+R: Sí, cualquier objeto que sea una excepción (herede de Exception).
+
+P: ¿Qué pasa si retry sin límite?
+R: Bucle infinito. El programa se quedará reintentando para siempre.
+
+P: ¿Puedo usar retry con un bloque each?
+R: No directamente. Usa un loop manual con break para simularlo.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Construye una gema (módulo) llamada "Resilient" que proporcione
+patrones de reintento robustos para operaciones fallibles.
+
+Requisitos funcionales:
+
+1. Resilient.with_retry(opciones = {}, &bloque)
+   - Ejecuta el bloque con reintentos configurables.
+   - Opciones:
+     * max_attempts (default 3)
+     * base_delay (default 1 segundo)
+     * max_delay (default 30 segundos)
+     * backoff (:linear, :exponential, :constant, :random)
+     * retry_on (Array de clases de excepción a reintentar)
+     * ignore (Array de clases a NO reintentar)
+     * on_retry (Proc llamado en cada reintento)
+     * deadline (Time, timeout total)
+
+2. Resilient.with_circuit_breaker(opciones = {}, &bloque)
+   - Implementa patrón Circuit Breaker.
+   - Si el bloque falla N veces seguidas, el circuito se abre
+     y rechaza llamadas durante un período de enfriamiento.
+   - Opciones: failure_threshold, reset_timeout, half_open_max
+
+3. Resilient.with_bulkhead(opciones = {}, &bloque)
+   - Limita el número de ejecuciones concurrentes.
+   - Opciones: max_concurrent, queue_size
+
+4. Resilient.on_failure(&bloque)
+   - Registra un manejador global para fallos después de reintentos.
+
+Requisitos técnicos:
+  - Usa raise/retry internamente.
+  - Las excepciones no reintentables se propagan inmediatamente.
+  - Implementa logging en cada reintento.
+  - El backoff exponencial debe tener jitter (aleatoriedad).
+  - El Circuit Breaker debe ser thread-safe.
+  - Incluye ejemplos de uso para cada patrón.
+
+Este desafío integra raise, retry, backoff, y patrones de resiliencia
+utilizados en sistemas de producción como Netflix Hystrix o Ruby
+gemas como connection_pool y retriable.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+================================================================================
+
+Has dominado raise y retry, dos herramientas fundamentales para
+escribir código Ruby resiliente. Ahora sabes lanzar excepciones
+con precisión, reintentar operaciones fallidas, implementar backoff
+exponencial, y encadenar causas de error.
+
+El sistema de excepciones de Ruby es uno de sus puntos más fuertes.
+Con begin, rescue, else, ensure, raise, y retry, tienes un control
+completo sobre el flujo de errores de tu aplicación.
+
+En el próximo capítulo llevaremos esto un paso más allá: crearemos
+nuestras propias clases de excepción personalizadas para modelar
+dominios de error específicos de nuestras aplicaciones.
+
+¡Nos vemos en el Capítulo 59!
+
+================================================================================
+PRÓXIMO CAPÍTULO
+================================================================================
+
+Capítulo 59: EXCEPCIONES PERSONALIZADAS
+  - class MyError < StandardError
+  - Mensajes personalizados
+  - attr_reader en excepciones
+  - Atributos adicionales en excepciones
+  - Jerarquías de errores de aplicación
+  - Buenas prácticas de diseño
+
+================================================================================
+FIN DEL CAPÍTULO 58
+================================================================================

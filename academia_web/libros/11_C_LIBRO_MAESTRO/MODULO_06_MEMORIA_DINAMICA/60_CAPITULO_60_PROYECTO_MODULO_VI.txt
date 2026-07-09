@@ -1,0 +1,1007 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VI
+##                       MEMORIA DINÁMICA
+##
+##                        CAPÍTULO 60
+##
+##           PROYECTO: GESTIÓN DE ESTUDIANTES
+##
+################################################################################
+################################################################################
+
+"El mejor modo de aprender a programar es programando. El mejor modo de
+dominar la memoria dinámica es construyendo algo real." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Enhorabuena, arquitecto! Has llegado al capítulo final del Módulo VI.
+Has recorrido un largo camino: comenzaste con malloc y free, enfrentaste
+memory leaks, dominaste punteros dobles, construiste matrices dinámicas,
+y te convertiste en un experto en listas enlazadas.
+
+Ahora es momento de demostrar todo lo aprendido. Este proyecto integrador
+te llevará a construir un sistema completo de gestión de estudiantes
+usando TODAS las técnicas de memoria dinámica que has aprendido.
+
+El sistema gestionará estudiantes con sus datos personales y
+calificaciones, usando una lista doblemente enlazada como estructura
+principal. Incluirá carga/salva en archivos, ordenamiento, búsqueda,
+y estadísticas.
+
+No hay mejor prueba de conocimiento que construir algo real. ¡Manos a la
+obra!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"No basta con saber malloc y free: el verdadero maestro construye
+sistemas que ni pierden memoria ni corrompen el heap."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Diseñar un sistema completo usando memoria dinámica
+✓ Implementar una lista doblemente enlazada de estudiantes
+✓ Aplicar free y NULL en todas las operaciones de destrucción
+✓ Usar Valgrind para verificar cero memory leaks
+✓ Implementar persistencia en archivos binarios
+✓ Aplicar punteros dobles para modificar la lista
+✓ Desarrollar una interfaz de menú funcional en consola
+
+===============================================================================
+1. DESCRIPCIÓN DEL PROYECTO
+===============================================================================
+
+Vamos a construir un **Sistema de Gestión Académica** que permita:
+
+  - Registrar estudiantes con: ID, nombre, edad, y calificaciones.
+  - Almacenar las calificaciones en una matriz dinámica.
+  - Mantener los estudiantes en una lista doblemente enlazada.
+  - Cargar y guardar los datos en un archivo binario.
+  - Buscar estudiantes por ID o por nombre.
+  - Calcular estadísticas: promedio general, mejor/peor estudiante.
+  - Ordenar la lista por diferentes criterios.
+  - Liberar toda la memoria correctamente.
+
+Estructuras de datos utilizadas:
+
+  1. **Calificaciones**: matriz dinámica contigua (double *).
+  2. **Estudiante**: estructura con campos dinámicos (nombre, califs).
+  3. **ListaDoble**: lista doblemente enlazada de estudiantes.
+
+Flujo del programa:
+
+  1. Inicializar lista vacía.
+  2. Cargar datos de archivo (si existe).
+  3. Mostrar menú interactivo.
+  4. Ejecutar operaciones según entrada del usuario.
+  5. Guardar datos al salir.
+  6. Liberar toda la memoria.
+
+===============================================================================
+2. ESTRUCTURAS DEL SISTEMA
+===============================================================================
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX_NOMBRE 100
+#define MAX_MATERIAS 10
+#define ARCHIVO_DATOS "estudiantes.dat"
+
+// ============================================================
+// ESTRUCTURAS
+// ============================================================
+
+// Calificaciones como matriz dinámica
+typedef struct {
+    double *notas;       // Array dinámico contiguo
+    int num_materias;    // Cantidad de materias
+} Calificaciones;
+
+// Nodo de estudiante
+typedef struct Estudiante {
+    int id;
+    char *nombre;                // String dinámico
+    int edad;
+    Calificaciones califs;       // Calificaciones dinámicas
+    struct Estudiante *anterior;
+    struct Estudiante *siguiente;
+} Estudiante;
+
+// Lista doblemente enlazada
+typedef struct {
+    Estudiante *cabeza;
+    Estudiante *cola;
+    int total;
+} ListaEstudiantes;
+```
+
+===============================================================================
+3. FUNCIONES DE CALIFICACIONES
+===============================================================================
+
+```c
+// ============================================================
+// FUNCIONES DE CALIFICACIONES
+// ============================================================
+
+int califs_init(Calificaciones *c, int num_materias) {
+    c->notas = (double *)malloc(num_materias * sizeof(double));
+    if (c->notas == NULL) return -1;
+    c->num_materias = num_materias;
+    for (int i = 0; i < num_materias; i++) {
+        c->notas[i] = 0.0;
+    }
+    return 0;
+}
+
+void califs_liberar(Calificaciones *c) {
+    free(c->notas);
+    c->notas = NULL;
+    c->num_materias = 0;
+}
+
+double califs_promedio(Calificaciones *c) {
+    if (c == NULL || c->num_materias == 0) return 0.0;
+    double suma = 0.0;
+    for (int i = 0; i < c->num_materias; i++) {
+        suma += c->notas[i];
+    }
+    return suma / c->num_materias;
+}
+
+void califs_imprimir(Calificaciones *c) {
+    printf("[");
+    for (int i = 0; i < c->num_materias; i++) {
+        printf("%.1f", c->notas[i]);
+        if (i < c->num_materias - 1) printf(", ");
+    }
+    printf("] (prom: %.2f)", califs_promedio(c));
+}
+```
+
+===============================================================================
+4. FUNCIONES DE ESTUDIANTE
+===============================================================================
+
+```c
+// ============================================================
+// FUNCIONES DE ESTUDIANTE
+// ============================================================
+
+Estudiante *estudiante_crear(int id, const char *nombre, int edad,
+                              int num_materias) {
+    Estudiante *e = (Estudiante *)malloc(sizeof(Estudiante));
+    if (e == NULL) return NULL;
+
+    e->id = id;
+    e->nombre = (char *)malloc(strlen(nombre) + 1);
+    if (e->nombre == NULL) {
+        free(e);
+        return NULL;
+    }
+    strcpy(e->nombre, nombre);
+    e->edad = edad;
+
+    if (califs_init(&e->califs, num_materias) != 0) {
+        free(e->nombre);
+        free(e);
+        return NULL;
+    }
+
+    e->anterior = NULL;
+    e->siguiente = NULL;
+    return e;
+}
+
+void estudiante_imprimir(Estudiante *e) {
+    if (e == NULL) return;
+    printf("ID: %d | Nombre: %s | Edad: %d | ", e->id, e->nombre, e->edad);
+    califs_imprimir(&e->califs);
+    printf("\n");
+}
+
+void estudiante_liberar(Estudiante *e) {
+    if (e == NULL) return;
+    califs_liberar(&e->califs);
+    free(e->nombre);
+    e->nombre = NULL;
+    free(e);
+}
+```
+
+===============================================================================
+5. FUNCIONES DE LISTA DOBLE
+===============================================================================
+
+```c
+// ============================================================
+// FUNCIONES DE LISTA DOBLE
+// ============================================================
+
+void lista_init(ListaEstudiantes *lista) {
+    lista->cabeza = NULL;
+    lista->cola = NULL;
+    lista->total = 0;
+}
+
+// Insertar al final
+int lista_insertar(ListaEstudiantes *lista, Estudiante *e) {
+    if (e == NULL) return -1;
+
+    if (lista->cola == NULL) {
+        lista->cabeza = e;
+        lista->cola = e;
+    } else {
+        e->anterior = lista->cola;
+        lista->cola->siguiente = e;
+        lista->cola = e;
+    }
+    lista->total++;
+    return 0;
+}
+
+// Eliminar estudiante por ID
+int lista_eliminar(ListaEstudiantes *lista, int id) {
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        if (actual->id == id) {
+            // Ajustar punteros de vecinos
+            if (actual->anterior != NULL) {
+                actual->anterior->siguiente = actual->siguiente;
+            } else {
+                lista->cabeza = actual->siguiente;
+            }
+
+            if (actual->siguiente != NULL) {
+                actual->siguiente->anterior = actual->anterior;
+            } else {
+                lista->cola = actual->anterior;
+            }
+
+            estudiante_liberar(actual);
+            lista->total--;
+            return 0;
+        }
+        actual = actual->siguiente;
+    }
+    return -1;  // No encontrado
+}
+
+// Buscar por ID
+Estudiante *lista_buscar_id(ListaEstudiantes *lista, int id) {
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        if (actual->id == id) return actual;
+        actual = actual->siguiente;
+    }
+    return NULL;
+}
+
+// Buscar por nombre (primera coincidencia)
+Estudiante *lista_buscar_nombre(ListaEstudiantes *lista, const char *nombre) {
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        if (strcmp(actual->nombre, nombre) == 0) return actual;
+        actual = actual->siguiente;
+    }
+    return NULL;
+}
+
+// Mostrar todos los estudiantes
+void lista_mostrar(ListaEstudiantes *lista) {
+    if (lista->cabeza == NULL) {
+        printf("No hay estudiantes registrados.\n");
+        return;
+    }
+    printf("\n=== LISTA DE ESTUDIANTES (%d) ===\n", lista->total);
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        estudiante_imprimir(actual);
+        actual = actual->siguiente;
+    }
+    printf("================================\n");
+}
+
+// Mostrar en orden inverso
+void lista_mostrar_inverso(ListaEstudiantes *lista) {
+    if (lista->cola == NULL) {
+        printf("No hay estudiantes registrados.\n");
+        return;
+    }
+    printf("\n=== LISTA INVERSA (%d) ===\n", lista->total);
+    Estudiante *actual = lista->cola;
+    while (actual != NULL) {
+        estudiante_imprimir(actual);
+        actual = actual->anterior;
+    }
+    printf("============================\n");
+}
+
+// Liberar toda la lista
+void lista_liberar(ListaEstudiantes *lista) {
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        Estudiante *temp = actual;
+        actual = actual->siguiente;
+        estudiante_liberar(temp);
+    }
+    lista->cabeza = NULL;
+    lista->cola = NULL;
+    lista->total = 0;
+}
+```
+
+===============================================================================
+6. PERSISTENCIA EN ARCHIVO
+===============================================================================
+
+```c
+// ============================================================
+// PERSISTENCIA EN ARCHIVO BINARIO
+// ============================================================
+
+int guardar_datos(ListaEstudiantes *lista) {
+    FILE *f = fopen(ARCHIVO_DATOS, "wb");
+    if (f == NULL) {
+        perror("Error al guardar");
+        return -1;
+    }
+
+    // Escribir metadatos: número de estudiantes y materias
+    // Asumimos mismo número de materias para todos
+    int num_materias = 0;
+    if (lista->cabeza != NULL) {
+        num_materias = lista->cabeza->califs.num_materias;
+    }
+
+    int total = lista->total;
+    fwrite(&total, sizeof(int), 1, f);
+    fwrite(&num_materias, sizeof(int), 1, f);
+
+    // Escribir cada estudiante
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        // Escribir campos fijos
+        fwrite(&actual->id, sizeof(int), 1, f);
+        int len_nombre = strlen(actual->nombre) + 1;
+        fwrite(&len_nombre, sizeof(int), 1, f);
+        fwrite(actual->nombre, sizeof(char), len_nombre, f);
+        fwrite(&actual->edad, sizeof(int), 1, f);
+
+        // Escribir calificaciones
+        fwrite(actual->califs.notas, sizeof(double), num_materias, f);
+
+        actual = actual->siguiente;
+    }
+
+    fclose(f);
+    printf("Datos guardados en '%s' (%d estudiantes).\n",
+           ARCHIVO_DATOS, total);
+    return 0;
+}
+
+int cargar_datos(ListaEstudiantes *lista) {
+    FILE *f = fopen(ARCHIVO_DATOS, "rb");
+    if (f == NULL) return -1;  // Archivo no existe (no es error)
+
+    int total, num_materias;
+    fread(&total, sizeof(int), 1, f);
+    fread(&num_materias, sizeof(int), 1, f);
+
+    for (int i = 0; i < total; i++) {
+        int id, edad, len_nombre;
+        fread(&id, sizeof(int), 1, f);
+        fread(&len_nombre, sizeof(int), 1, f);
+
+        char *nombre = (char *)malloc(len_nombre);
+        if (nombre == NULL) {
+            fclose(f);
+            return -1;
+        }
+        fread(nombre, sizeof(char), len_nombre, f);
+        fread(&edad, sizeof(int), 1, f);
+
+        Estudiante *e = estudiante_crear(id, nombre, edad, num_materias);
+        free(nombre);
+
+        if (e == NULL) {
+            fclose(f);
+            return -1;
+        }
+
+        fread(e->califs.notas, sizeof(double), num_materias, f);
+        lista_insertar(lista, e);
+    }
+
+    fclose(f);
+    printf("Datos cargados desde '%s' (%d estudiantes).\n",
+           ARCHIVO_DATOS, total);
+    return 0;
+}
+```
+
+===============================================================================
+7. ORDENAMIENTO Y ESTADÍSTICAS
+===============================================================================
+
+```c
+// ============================================================
+// ORDENAMIENTO (Bubble sort sobre lista doble)
+// ============================================================
+
+void lista_ordenar_por_nombre(ListaEstudiantes *lista) {
+    if (lista->total <= 1) return;
+
+    int intercambiado;
+    do {
+        intercambiado = 0;
+        Estudiante *actual = lista->cabeza;
+        while (actual != NULL && actual->siguiente != NULL) {
+            if (strcmp(actual->nombre, actual->siguiente->nombre) > 0) {
+                // Intercambiar datos (no punteros)
+                // Intercambiar IDs
+                int temp_id = actual->id;
+                actual->id = actual->siguiente->id;
+                actual->siguiente->id = temp_id;
+
+                // Intercambiar nombres
+                char *temp_nom = actual->nombre;
+                actual->nombre = actual->siguiente->nombre;
+                actual->siguiente->nombre = temp_nom;
+
+                // Intercambiar edades
+                int temp_edad = actual->edad;
+                actual->edad = actual->siguiente->edad;
+                actual->siguiente->edad = temp_edad;
+
+                // Intercambiar calificaciones
+                Calificaciones temp_cal = actual->califs;
+                actual->califs = actual->siguiente->califs;
+                actual->siguiente->califs = temp_cal;
+
+                intercambiado = 1;
+            }
+            actual = actual->siguiente;
+        }
+    } while (intercambiado);
+}
+
+void lista_ordenar_por_promedio(ListaEstudiantes *lista) {
+    if (lista->total <= 1) return;
+
+    int intercambiado;
+    do {
+        intercambiado = 0;
+        Estudiante *actual = lista->cabeza;
+        while (actual != NULL && actual->siguiente != NULL) {
+            double p1 = califs_promedio(&actual->califs);
+            double p2 = califs_promedio(&actual->siguiente->califs);
+            if (p1 < p2) {
+                int temp_id = actual->id;
+                actual->id = actual->siguiente->id;
+                actual->siguiente->id = temp_id;
+
+                char *temp_nom = actual->nombre;
+                actual->nombre = actual->siguiente->nombre;
+                actual->siguiente->nombre = temp_nom;
+
+                int temp_edad = actual->edad;
+                actual->edad = actual->siguiente->edad;
+                actual->siguiente->edad = temp_edad;
+
+                Calificaciones temp_cal = actual->califs;
+                actual->califs = actual->siguiente->califs;
+                actual->siguiente->califs = temp_cal;
+
+                intercambiado = 1;
+            }
+            actual = actual->siguiente;
+        }
+    } while (intercambiado);
+}
+
+// ============================================================
+// ESTADÍSTICAS
+// ============================================================
+
+void calcular_estadisticas(ListaEstudiantes *lista) {
+    if (lista->cabeza == NULL) {
+        printf("No hay estudiantes para calcular estadísticas.\n");
+        return;
+    }
+
+    double suma_total = 0.0;
+    double max_prom = -1.0;
+    double min_prom = 101.0;
+    Estudiante *mejor = NULL;
+    Estudiante *peor = NULL;
+
+    Estudiante *actual = lista->cabeza;
+    while (actual != NULL) {
+        double prom = califs_promedio(&actual->califs);
+        suma_total += prom;
+
+        if (prom > max_prom) {
+            max_prom = prom;
+            mejor = actual;
+        }
+        if (prom < min_prom) {
+            min_prom = prom;
+            peor = actual;
+        }
+
+        actual = actual->siguiente;
+    }
+
+    double promedio_general = suma_total / lista->total;
+
+    printf("\n=== ESTADÍSTICAS ACADÉMICAS ===\n");
+    printf("Total estudiantes: %d\n", lista->total);
+    printf("Promedio general:  %.2f\n", promedio_general);
+    if (mejor) printf("Mejor estudiante:   %s (%.2f)\n", mejor->nombre, max_prom);
+    if (peor)  printf("Peor estudiante:    %s (%.2f)\n", peor->nombre, min_prom);
+    printf("================================\n");
+}
+```
+
+===============================================================================
+8. MENÚ INTERACTIVO
+===============================================================================
+
+```c
+// ============================================================
+// MENÚ INTERACTIVO
+// ============================================================
+
+void limpiar_buffer() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
+}
+
+void pausa() {
+    printf("\nPresiona Enter para continuar...");
+    limpiar_buffer();
+}
+
+int menu_principal() {
+    printf("\n");
+    printf("╔══════════════════════════════════════════╗\n");
+    printf("║     SISTEMA DE GESTIÓN ACADÉMICA         ║\n");
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║  1. Agregar estudiante                   ║\n");
+    printf("║  2. Eliminar estudiante (por ID)         ║\n");
+    printf("║  3. Buscar estudiante (por ID)           ║\n");
+    printf("║  4. Buscar estudiante (por nombre)       ║\n");
+    printf("║  5. Mostrar todos                       ║\n");
+    printf("║  6. Mostrar en orden inverso            ║\n");
+    printf("║  7. Ordenar por nombre                  ║\n");
+    printf("║  8. Ordenar por promedio                ║\n");
+    printf("║  9. Estadísticas                        ║\n");
+    printf("║ 10. Asignar calificación                ║\n");
+    printf("║  0. Salir y guardar                     ║\n");
+    printf("╚══════════════════════════════════════════╝\n");
+    printf("Opción: ");
+
+    int opcion;
+    scanf("%d", &opcion);
+    limpiar_buffer();
+    return opcion;
+}
+
+void agregar_estudiante(ListaEstudiantes *lista) {
+    int id, edad, num_materias;
+    char nombre[MAX_NOMBRE];
+
+    printf("ID: ");
+    scanf("%d", &id);
+    limpiar_buffer();
+
+    // Verificar que el ID no exista
+    if (lista_buscar_id(lista, id) != NULL) {
+        printf("Error: ya existe un estudiante con ID %d.\n", id);
+        return;
+    }
+
+    printf("Nombre: ");
+    fgets(nombre, MAX_NOMBRE, stdin);
+    nombre[strcspn(nombre, "\n")] = '\0';
+
+    printf("Edad: ");
+    scanf("%d", &edad);
+    limpiar_buffer();
+
+    printf("Número de materias: ");
+    scanf("%d", &num_materias);
+    limpiar_buffer();
+
+    if (num_materias <= 0 || num_materias > MAX_MATERIAS) {
+        printf("Error: número de materias inválido (1-%d).\n", MAX_MATERIAS);
+        return;
+    }
+
+    Estudiante *e = estudiante_crear(id, nombre, edad, num_materias);
+    if (e == NULL) {
+        printf("Error: no se pudo crear el estudiante.\n");
+        return;
+    }
+
+    // Ingresar calificaciones iniciales
+    printf("Ingresa las calificaciones (%d materias):\n", num_materias);
+    for (int i = 0; i < num_materias; i++) {
+        printf("  Materia %d: ", i + 1);
+        double nota;
+        scanf("%lf", &nota);
+        limpiar_buffer();
+        if (nota < 0.0) nota = 0.0;
+        if (nota > 10.0) nota = 10.0;
+        e->califs.notas[i] = nota;
+    }
+
+    lista_insertar(lista, e);
+    printf("Estudiante '%s' agregado correctamente.\n", nombre);
+}
+
+void eliminar_estudiante(ListaEstudiantes *lista) {
+    int id;
+    printf("ID del estudiante a eliminar: ");
+    scanf("%d", &id);
+    limpiar_buffer();
+
+    if (lista_eliminar(lista, id) == 0) {
+        printf("Estudiante con ID %d eliminado.\n", id);
+    } else {
+        printf("No se encontró estudiante con ID %d.\n", id);
+    }
+}
+
+void buscar_por_id(ListaEstudiantes *lista) {
+    int id;
+    printf("ID a buscar: ");
+    scanf("%d", &id);
+    limpiar_buffer();
+
+    Estudiante *e = lista_buscar_id(lista, id);
+    if (e) {
+        estudiante_imprimir(e);
+    } else {
+        printf("No encontrado.\n");
+    }
+}
+
+void buscar_por_nombre(ListaEstudiantes *lista) {
+    char nombre[MAX_NOMBRE];
+    printf("Nombre a buscar: ");
+    fgets(nombre, MAX_NOMBRE, stdin);
+    nombre[strcspn(nombre, "\n")] = '\0';
+
+    Estudiante *e = lista_buscar_nombre(lista, nombre);
+    if (e) {
+        estudiante_imprimir(e);
+    } else {
+        printf("No encontrado.\n");
+    }
+}
+
+void asignar_calificacion(ListaEstudiantes *lista) {
+    int id, materia;
+    double nota;
+
+    printf("ID del estudiante: ");
+    scanf("%d", &id);
+    limpiar_buffer();
+
+    Estudiante *e = lista_buscar_id(lista, id);
+    if (e == NULL) {
+        printf("Estudiante no encontrado.\n");
+        return;
+    }
+
+    printf("Número de materia (1-%d): ", e->califs.num_materias);
+    scanf("%d", &materia);
+    limpiar_buffer();
+
+    if (materia < 1 || materia > e->califs.num_materias) {
+        printf("Materia inválida.\n");
+        return;
+    }
+
+    printf("Nueva calificación (0-10): ");
+    scanf("%lf", &nota);
+    limpiar_buffer();
+
+    if (nota < 0.0) nota = 0.0;
+    if (nota > 10.0) nota = 10.0;
+
+    e->califs.notas[materia - 1] = nota;
+    printf("Calificación actualizada.\n");
+}
+```
+
+===============================================================================
+9. PROGRAMA PRINCIPAL
+===============================================================================
+
+```c
+// ============================================================
+// PROGRAMA PRINCIPAL
+// ============================================================
+
+int main() {
+    ListaEstudiantes lista;
+    lista_init(&lista);
+
+    // Cargar datos previos
+    cargar_datos(&lista);
+
+    int opcion;
+    do {
+        opcion = menu_principal();
+
+        switch (opcion) {
+            case 1:
+                agregar_estudiante(&lista);
+                break;
+            case 2:
+                eliminar_estudiante(&lista);
+                break;
+            case 3:
+                buscar_por_id(&lista);
+                break;
+            case 4:
+                buscar_por_nombre(&lista);
+                break;
+            case 5:
+                lista_mostrar(&lista);
+                break;
+            case 6:
+                lista_mostrar_inverso(&lista);
+                break;
+            case 7:
+                lista_ordenar_por_nombre(&lista);
+                printf("Lista ordenada por nombre.\n");
+                lista_mostrar(&lista);
+                break;
+            case 8:
+                lista_ordenar_por_promedio(&lista);
+                printf("Lista ordenada por promedio descendente.\n");
+                lista_mostrar(&lista);
+                break;
+            case 9:
+                calcular_estadisticas(&lista);
+                break;
+            case 10:
+                asignar_calificacion(&lista);
+                break;
+            case 0:
+                guardar_datos(&lista);
+                printf("¡Hasta luego!\n");
+                break;
+            default:
+                printf("Opción inválida.\n");
+                break;
+        }
+
+        if (opcion != 0) pausa();
+
+    } while (opcion != 0);
+
+    lista_liberar(&lista);
+    return 0;
+}
+```
+
+===============================================================================
+10. COMPILACIÓN Y EJECUCIÓN
+===============================================================================
+
+```bash
+# Compilar el programa
+gcc -Wall -Wextra -std=c11 -g gestion_estudiantes.c -o gestion_estudiantes
+
+# Verificar con Valgrind
+valgrind --leak-check=full --show-leak-kinds=all ./gestion_estudiantes
+
+# Compilar con AddressSanitizer (desarrollo)
+gcc -fsanitize=address -g gestion_estudiantes.c -o gestion_estudiantes
+```
+
+```c
+// Makefile para el proyecto
+/*
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -g
+LDFLAGS =
+TARGET = gestion_estudiantes
+SRC = gestion_estudiantes.c
+
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+    $(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+asan: CFLAGS += -fsanitize=address
+asan: $(TARGET)
+
+run: $(TARGET)
+    ./$(TARGET)
+
+valgrind: $(TARGET)
+    valgrind --leak-check=full --show-leak-kinds=all ./$(TARGET)
+
+clean:
+    rm -f $(TARGET) $(ARCHIVO_DATOS)
+
+.PHONY: all run valgrind clean
+*/
+```
+
+===============================================================================
+11. PRUEBAS Y VERIFICACIÓN
+===============================================================================
+
+Después de implementar el programa, realiza las siguientes pruebas:
+
+**Prueba 1: Operaciones básicas**
+  1. Agregar 3 estudiantes con diferentes nombres y calificaciones.
+  2. Mostrar la lista (forward y backward).
+  3. Buscar por ID y por nombre.
+  4. Eliminar un estudiante y verificar que desaparezca.
+  5. Mostrar estadísticas.
+
+**Prueba 2: Persistencia**
+  1. Agregar estudiantes y salir (guardar).
+  2. Ejecutar de nuevo el programa (debe cargar los datos).
+  3. Verificar que todos los estudiantes están presentes.
+
+**Prueba 3: Memory leaks**
+  1. Compilar con -g.
+  2. Ejecutar: valgrind --leak-check=full ./gestion_estudiantes
+  3. Realizar varias operaciones (agregar, eliminar, ordenar, etc.).
+  4. Salir del programa.
+  5. Verificar que Valgrind reporte "0 bytes in 0 blocks".
+
+**Prueba 4: Casos límite**
+  1. Ejecutar el programa sin archivo de datos (debe funcionar).
+  2. Agregar estudiante con ID duplicado (debe rechazarlo).
+  3. Eliminar estudiante inexistente (debe informar).
+  4. Mostrar estadísticas con lista vacía.
+
+===============================================================================
+12. POSIBLES MEJORAS
+===============================================================================
+
+El proyecto es completamente funcional, pero puedes extenderlo con:
+
+  1. **Múltiples semestres**: agregar una dimensión temporal a las calificaciones.
+  2. **Exportar a CSV**: generar un archivo de texto legible.
+  3. **Búsqueda difusa**: encontrar estudiantes por coincidencia parcial de nombre.
+  4. **Gráfico de barras**: mostrar promedios con ASCII art.
+  5. **Autenticación**: sistema de login para profesores/administradores.
+  6. **Conexión a base de datos**: usar SQLite en lugar de archivo binario.
+  7. **GUI**: interfaz gráfica simple con GTK o ncurses.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El proyecto integra todos los conceptos del Módulo VI: malloc/free,
+  punteros dobles, matrices dinámicas y listas enlazadas.
+- Las estructuras se liberan en cascada: calificaciones → estudiante → nodo.
+- Cada malloc tiene su correspondiente free, validado con Valgrind.
+- La lista doble permite inserción/eliminación O(1) en extremos.
+- El archivo binario proporciona persistencia entre ejecuciones.
+- El menú interactivo demuestra el sistema funcionando de forma real.
+- Las pruebas de memory leak son parte integral del desarrollo.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Añade una opción al menú para "duplicar" un estudiante.
+Crea una copia profunda (deep copy) de un estudiante existente, que
+incluya copiar el nombre (nuevo malloc) y las calificaciones (nuevo
+array). La copia debe tener un ID diferente.
+
+🧩 **Ejercicio 2:** Implementa una función que fusione dos listas de
+estudiantes en una sola, intercalando los estudiantes en orden
+alfabético por nombre. La función debe liberar las listas originales.
+
+🧩 **Ejercicio 3:** Añade un historial de operaciones (como en el capítulo
+59) que permita deshacer (undo) la última eliminación. Cuando se
+elimina un estudiante, se guarda en una "papelera" (otra lista).
+Añade opción "Restaurar último eliminado".
+
+🧩 **Ejercicio 4:** Implementa una función de búsqueda por rango de
+promedio. El usuario ingresa un mínimo y máximo, y el programa
+muestra todos los estudiantes cuyo promedio está en ese rango.
+Los resultados deben mostrarse ordenados por promedio descendente.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Cómo sé si mi programa tiene memory leaks?**
+Usa Valgrind: `valgrind --leak-check=full ./programa`. Si dice
+"definitely lost: 0 bytes in 0 blocks", no hay leaks. Si muestra
+pérdidas, revisa cada malloc/free.
+
+❓ **¿Por qué se intercambian los datos del nodo en lugar de los punteros?**
+Intercambiar datos es más simple para este proyecto. Intercambiar
+punteros es más eficiente para nodos grandes, pero requiere manejar
+cuidadosamente los punteros anterior/siguiente.
+
+❓ **¿Puedo usar el programa con cientos de estudiantes?**
+Sí. La lista doblemente enlazada maneja cualquier cantidad (dentro
+de la memoria disponible). El archivo binario es eficiente para
+grandes volúmenes.
+
+❓ **¿Qué hago si el archivo de datos se corrompe?**
+El programa intenta cargar pero si falla (fopen devuelve NULL),
+simplemente comienza con lista vacía. Puedes eliminar el archivo
+manualmente para reiniciar.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Gestión Universitaria Completo**
+
+Expande el proyecto para crear un sistema universitario completo:
+
+1. **Entidades**: Estudiantes, Profesores, Cursos, Matrículas.
+2. **Relaciones**: Un estudiante se matricula en varios cursos.
+   Un profesor imparte varios cursos. Un curso tiene muchos estudiantes.
+3. **Estructuras**: Usa listas dobles para estudiantes y cursos.
+   Usa matrices dinámicas para horarios y calificaciones.
+4. **Operaciones**:
+   - Matricular/desmatricular estudiantes en cursos.
+   - Asignar calificaciones por curso y estudiante.
+   - Calcular promedio por curso, por estudiante, por profesor.
+   - Generar reporte de rendimiento académico.
+   - Historial académico por estudiante.
+5. **Persistencia**: Archivos binarios separados por entidad,
+   con integridad referencial.
+6. **Interfaz**: Menú jerárquico con submenús por entidad.
+7. **Validación**: Sin memory leaks (Verificado con Valgrind).
+   Sin errores de sanidad (Verificado con AddressSanitizer).
+
+Este desafío final integra TODOS los conceptos del C MASTER BOOK
+en un sistema del mundo real que podría usarse en una institución
+educativa.
+
+===============================================================================
+FIN DEL CAPÍTULO 60
+===============================================================================
+
+"Has llegado al final del Módulo VI. Pero recuerda: en la memoria
+dinámica, como en la vida, todo lo que se reserva debe liberarse.
+Nunca dejes un puntero colgando." — Profesor Búho AI
+
+===============================================================================
+FIN DEL MÓDULO VI — MEMORIA DINÁMICA
+===============================================================================
+
+"La memoria dinámica no es solo una característica de C: es una
+responsabilidad. Úsala con sabiduría, libérala con disciplina,
+y tus programas vivirán para siempre." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO MÓDULO:
+MÓDULO VII — ESTRUCTURAS AVANZADAS
+===============================================================================

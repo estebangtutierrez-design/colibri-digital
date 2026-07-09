@@ -1,0 +1,620 @@
+================================================================================
+  C# MASTER BOOK — MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 75: OPTIMIZACIÓN
+================================================================================
+
+  BIENVENIDA
+  ----------
+  Bienvenido al Capítulo 75. Tu código funciona y está probado. Pero ¿es
+  rápido? ¿Usa la memoria eficientemente? En este capítulo aprenderás a
+  medir, identificar y optimizar el rendimiento de tus aplicaciones C#.
+  Porque el código no solo debe ser correcto: debe ser eficiente.
+
+  FRASE DEL DÍA
+  -------------
+  "La optimización prematura es la raíz de todos los males, pero la
+   optimización ignorada es la ruina de todos los proyectos." — Profesor Búho AI
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  • Comprender el perfilado de rendimiento (profiling).
+  • Usar Span<T> y Memory<T> para operaciones de memoria seguras y rápidas.
+  • Optimizar cadenas con StringBuilder.
+  • Escribir consultas LINQ eficientes.
+  • Gestionar la memoria correctamente (GC, pooling, structs).
+  • Identificar cuellos de botella con BenchmarkDotNet.
+  • Patrones de rendimiento en async/await.
+  • Uso de ValueTask para evitar asignaciones innecesarias.
+
+================================================================================
+  [CONTENIDO TEÓRICO]
+================================================================================
+
+  1. INTRODUCCIÓN AL RENDIMIENTO EN .NET
+  ---------------------------------------
+  El rendimiento en .NET depende de múltiples factores:
+    • Algoritmos: la elección del algoritmo correcto (O(n) vs O(n²)).
+    • Memoria: allocation, GC, pooling.
+    • I/O: operaciones de disco, red, base de datos.
+    • Concurrencia: hilos, async/await, paralelismo.
+
+  Regla de oro: MIDE antes de optimizar. Sin datos, toda optimización es
+  especulación.
+
+  2. SPAN<T> Y MEMORY<T>
+  -----------------------
+  Span<T> es un tipo de referencia que representa una región contigua de
+  memoria. Es seguro, eficiente y evita copias innecesarias.
+    • Span<T>: tipo stack-only (no puede ser campo de una clase).
+    • Memory<T>: wrapper que puede almacenarse en el heap.
+    • ReadOnlySpan<T> / ReadOnlyMemory<T>: versiones de solo lectura.
+
+  Beneficios:
+    • Sin allocations (trabaja sobre arrays existentes).
+    • Acceso directo a memoria nativa.
+    • Ideal para parsing, buffers, procesamiento de archivos.
+
+  3. STRINGBUILDER
+  -----------------
+  Las strings en C# son inmutables. Cada concatenación crea un nuevo objeto.
+  StringBuilder es la solución para construir cadenas en bucles.
+
+  4. LINQ Y RENDIMIENTO
+  ----------------------
+  LINQ es expresivo pero puede ser costoso:
+    • Las consultas difieren la ejecución (deferred execution).
+    • Cada operación (Where, Select) crea un iterador.
+    • ToList() fuerza la ejecución y crea una nueva lista.
+    • FirstOrDefault() sin predicado es más rápido que Where(p).First().
+
+  5. GESTIÓN DE MEMORIA
+  ----------------------
+  El Garbage Collector (GC) de .NET no es magia:
+    • Generación 0: objetos efímeros (se recolectan frecuentemente).
+    • Generación 1: objetos que sobreviven una colección.
+    • Generación 2: objetos longevos.
+    • Large Object Heap (LOH): objetos > 85 KB (fragmentación).
+
+  Estrategias:
+    • Pooling: reutilizar objetos en lugar de crear nuevos.
+    • Structs vs Classes: structs en stack (sin GC), pero ojo con copias.
+    • IDisposable: liberar recursos no administrados.
+
+  6. ASYNC/AWAIT Y RENDIMIENTO
+  ------------------------------
+  async/await no es gratis: cada await tiene overhead de estado.
+    • ValueTask: evita allocation cuando el resultado es síncrono.
+    • ConfigureAwait(false): evita volver al contexto original.
+    • Task.Run: solo para trabajo intensivo de CPU.
+
+  7. BENCHMARKDOTNET
+  -------------------
+  BenchmarkDotNet es la librería estándar para medir rendimiento en .NET.
+  Ejecuta cada método múltiples veces, calienta el JIT y produce reportes
+  detallados.
+
+================================================================================
+  [CÓDIGO — IMPLEMENTACIÓN PRÁCTICA]
+================================================================================
+
+  ------------------------------------------------------------------------------
+  Ejemplo 1: Span<T> para procesamiento eficiente
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Buffers;
+
+  public class ProcesadorArchivo
+  {
+      public int ContarLineasLargasIneficiente(string contenido)
+      {
+          int count = 0;
+          foreach (string linea in contenido.Split('\n'))
+          {
+              if (linea.Length > 100) count++;
+          }
+          return count;
+      }
+
+      public int ContarLineasLargasEficiente(ReadOnlySpan<char> contenido)
+      {
+          int count = 0;
+          int start = 0;
+          for (int i = 0; i < contenido.Length; i++)
+          {
+              if (contenido[i] == '\n')
+              {
+                  int lineLength = i - start;
+                  if (lineLength > 100) count++;
+                  start = i + 1;
+              }
+          }
+          if (start < contenido.Length)
+          {
+              int lineLength = contenido.Length - start;
+              if (lineLength > 100) count++;
+          }
+          return count;
+      }
+
+      public void ProcesarCSV(ReadOnlySpan<char> csv)
+      {
+          int start = 0, colIdx = 0, rowIdx = 0;
+          for (int i = 0; i < csv.Length; i++)
+          {
+              if (csv[i] == ',')
+              {
+                  var col = csv.Slice(start, i - start);
+                  if (col.StartsWith(" ") || col.EndsWith(" "))
+                      Console.WriteLine($"Espacios en [{rowIdx},{colIdx}]");
+                  start = i + 1; colIdx++;
+              }
+              else if (csv[i] == '\n')
+              {
+                  var col = csv.Slice(start, i - start);
+                  if (col.StartsWith(" ") || col.EndsWith(" "))
+                      Console.WriteLine($"Espacios en [{rowIdx},{colIdx}]");
+                  start = i + 1; rowIdx++; colIdx = 0;
+              }
+          }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 2: StringBuilder vs concatenación
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Diagnostics;
+  using System.Text;
+
+  public class ComparacionStrings
+  {
+      private const int Iter = 10000;
+      private const string T = "Hola ";
+
+      public void Ineficiente()
+      {
+          string r = "";
+          for (int i = 0; i < Iter; i++)
+              r += T + i + ", ";
+      }
+
+      public void Eficiente()
+      {
+          var sb = new StringBuilder(Iter * 10);
+          for (int i = 0; i < Iter; i++)
+          {
+              sb.Append(T); sb.Append(i); sb.Append(", ");
+          }
+          string r = sb.ToString();
+      }
+
+      public static void Medir()
+      {
+          var t = new ComparacionStrings();
+          var sw = Stopwatch.StartNew();
+          t.Ineficiente(); sw.Stop();
+          Console.WriteLine($"Ineficiente: {sw.ElapsedMilliseconds}ms");
+
+          sw.Restart();
+          t.Eficiente(); sw.Stop();
+          Console.WriteLine($"Eficiente: {sw.ElapsedMilliseconds}ms");
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 3: LINQ optimizado
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  public class OptimizacionLINQ
+  {
+      private readonly List<Producto> _p;
+
+      public OptimizacionLINQ()
+      {
+          _p = Enumerable.Range(1, 100000).Select(i => new Producto
+          {
+              Id = i, Nombre = $"P{i}", Precio = i * 1.5m,
+              Stock = i % 50, Categoria = i % 5 == 0 ? "Premium" : "Estandar"
+          }).ToList();
+      }
+
+      public void MultiplesIteraciones()
+      {
+          var caros = _p.Where(p => p.Precio > 100).ToList();
+          var bajos = _p.Where(p => p.Stock < 10).ToList();
+          var prem = _p.Where(p => p.Categoria == "Premium").ToList();
+      }
+
+      public void UnaIteracion()
+      {
+          var caros = new List<Producto>();
+          var bajos = new List<Producto>();
+          var prem = new List<Producto>();
+          foreach (var p in _p)
+          {
+              if (p.Precio > 100) caros.Add(p);
+              if (p.Stock < 10) bajos.Add(p);
+              if (p.Categoria == "Premium") prem.Add(p);
+          }
+      }
+
+      public int ContarCaros() => _p.Count(p => p.Precio > 100);
+      public Producto Buscar(int id) => _p.FirstOrDefault(p => p.Id == id);
+      public bool HayPremium() => _p.Any(p => p.Categoria == "Premium");
+  }
+
+  public class Producto
+  {
+      public int Id { get; set; }
+      public string Nombre { get; set; }
+      public decimal Precio { get; set; }
+      public int Stock { get; set; }
+      public string Categoria { get; set; }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 4: BenchmarkDotNet — medir rendimiento
+  ------------------------------------------------------------------------------
+
+  using BenchmarkDotNet.Attributes;
+  using BenchmarkDotNet.Running;
+  using System.Linq;
+  using System.Text;
+
+  public class BenchStrings
+  {
+      private const int N = 1000;
+      private readonly string[] _p = Enumerable.Range(0, N)
+          .Select(i => $"Palabra{i}").ToArray();
+
+      [Benchmark] public string ConMas()
+      { string r = ""; foreach (var p in _p) r += p + ","; return r; }
+
+      [Benchmark] public string ConSB()
+      { var sb = new StringBuilder(N * 10);
+        foreach (var p in _p) { sb.Append(p); sb.Append(','); }
+        return sb.ToString(); }
+
+      [Benchmark] public string ConJoin() => string.Join(",", _p);
+  }
+
+  public class BenchLINQ
+  {
+      private readonly List<int> _n = Enumerable.Range(1, 100000).ToList();
+
+      [Benchmark] public int SumLINQ() => _n.Where(n => n % 2 == 0).Sum();
+      [Benchmark] public int SumBucle()
+      { int s = 0; foreach (var n in _n) if (n % 2 == 0) s += n; return s; }
+  }
+
+  // static void Main() => BenchmarkRunner.Run<BenchStrings>();
+
+  ------------------------------------------------------------------------------
+  Ejemplo 5: Memory<T> y ArrayPool
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Buffers;
+  using System.IO;
+  using System.Threading.Tasks;
+
+  public class ProcesamientoBuffer
+  {
+      public void ProcesarDatos(byte[] entrada)
+      {
+          byte[] buf = ArrayPool<byte>.Shared.Rent(1024);
+          try
+          {
+              int len = Math.Min(entrada.Length, 1024);
+              Array.Copy(entrada, buf, len);
+              var mem = new Memory<byte>(buf, 0, len);
+              var cab = mem.Slice(0, 100);
+              var cuerpo = mem.Slice(100);
+              Console.WriteLine($"Cab: {cab.Length}, Cuerpo: {cuerpo.Length}");
+          }
+          finally { ArrayPool<byte>.Shared.Return(buf); }
+      }
+
+      public async Task LeerArchivoAsync(string ruta)
+      {
+          byte[] buf = ArrayPool<byte>.Shared.Rent(4096);
+          try
+          {
+              using var s = File.OpenRead(ruta);
+              int read = await s.ReadAsync(new Memory<byte>(buf));
+              while (read > 0)
+              {
+                  Console.WriteLine($"Leidos {read} bytes");
+                  read = await s.ReadAsync(new Memory<byte>(buf));
+              }
+          }
+          finally { ArrayPool<byte>.Shared.Return(buf); }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 6: Struct vs Class
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+
+  public class CompStructClass
+  {
+      public class PtoClass { public int X; public int Y; }
+      public struct PtoStruct { public int X; public int Y; }
+
+      public static void Medir()
+      {
+          const int N = 1000000;
+          var sw = Stopwatch.StartNew();
+          var lc = new List<PtoClass>(N);
+          for (int i = 0; i < N; i++) lc.Add(new PtoClass { X = i, Y = i });
+          sw.Stop();
+          Console.WriteLine($"Class: {sw.ElapsedMilliseconds}ms");
+
+          sw.Restart();
+          var ls = new List<PtoStruct>(N);
+          for (int i = 0; i < N; i++) ls.Add(new PtoStruct { X = i, Y = i });
+          sw.Stop();
+          Console.WriteLine($"Struct: {sw.ElapsedMilliseconds}ms");
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 7: ValueTask — evitar allocations
+  ------------------------------------------------------------------------------
+
+  using System;
+  using System.Threading.Tasks;
+
+  public class CacheService
+  {
+      private string _cached;
+      private bool _has;
+
+      public async Task<string> ObtenerMalo()
+      {
+          if (_has) return _cached;
+          _cached = await FetchAsync(); _has = true;
+          return _cached;
+      }
+
+      public ValueTask<string> ObtenerBueno()
+      {
+          if (_has) return new ValueTask<string>(_cached);
+          return new ValueTask<string>(FetchAsync());
+      }
+
+      private async Task<string> FetchAsync()
+      {
+          await Task.Delay(100);
+          return "Dato";
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 8: ObjectPool
+  ------------------------------------------------------------------------------
+
+  using Microsoft.Extensions.ObjectPool;
+  using System;
+
+  public class PoolDemo
+  {
+      public class Recurso
+      {
+          public byte[] Buf { get; } = new byte[1024];
+          public void Reset() => Array.Clear(Buf, 0, Buf.Length);
+      }
+
+      public class Policy : PooledObjectPolicy<Recurso>
+      {
+          public override Recurso Create() => new Recurso();
+          public override bool Return(Recurso obj) { obj.Reset(); return true; }
+      }
+
+      public static void Demo()
+      {
+          var pool = new DefaultObjectPool<Recurso>(new Policy(), 10);
+          var r = pool.Get();
+          try { Console.WriteLine("Usando recurso del pool"); }
+          finally { pool.Return(r); }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 9: Optimización de consultas a BD
+  ------------------------------------------------------------------------------
+
+  using Microsoft.EntityFrameworkCore;
+  using System.Linq;
+  using System.Threading.Tasks;
+
+  public class OptBD
+  {
+      private readonly AppDbContext _ctx;
+
+      public OptBD(AppDbContext ctx) => _ctx = ctx;
+
+      // MAL: N+1 queries
+      public async Task<List<Pedido>> ObtenerMAL()
+      {
+          var pedidos = await _ctx.Pedidos.ToListAsync();
+          foreach (var p in pedidos)
+              p.Cliente = await _ctx.Clientes.FindAsync(p.ClienteId);
+          return pedidos;
+      }
+
+      // BIEN: Eager Loading
+      public async Task<List<Pedido>> ObtenerBIEN()
+      {
+          return await _ctx.Pedidos
+              .Include(p => p.Cliente)
+              .Include(p => p.Detalles).ThenInclude(d => d.Producto)
+              .ToListAsync();
+      }
+
+      // BIEN: Proyección (SELECT solo necesario)
+      public async Task<List<ResumenDTO>> ObtenerResumen()
+      {
+          return await _ctx.Pedidos.Select(p => new ResumenDTO
+          {
+              Id = p.Id,
+              Cliente = p.Cliente.Nombre,
+              Total = p.Detalles.Sum(d => d.Precio * d.Cantidad)
+          }).AsNoTracking().ToListAsync();
+      }
+  }
+
+  public class AppDbContext : DbContext
+  {
+      public DbSet<Pedido> Pedidos { get; set; }
+      public DbSet<Cliente> Clientes { get; set; }
+  }
+  public class Pedido { public int Id { get; set; } public int ClienteId { get; set; } public Cliente Cliente { get; set; } public List<Detalle> Detalles { get; set; } }
+  public class Cliente { public int Id { get; set; } public string Nombre { get; set; } }
+  public class Detalle { public int Id { get; set; } public decimal Precio { get; set; } public int Cantidad { get; set; } public int ProductoId { get; set; } public Producto Producto { get; set; } }
+  public class ResumenDTO { public int Id { get; set; } public string Cliente { get; set; } public decimal Total { get; set; } }
+
+  ------------------------------------------------------------------------------
+  Ejemplo 10: AsNoTracking y consultas de solo lectura
+  ------------------------------------------------------------------------------
+
+  using System.Linq;
+  using System.Threading.Tasks;
+
+  public class ConsultasLectura
+  {
+      private readonly AppDbContext _ctx;
+
+      public async Task<List<Producto>> ObtenerCatalogo()
+      {
+          return await _ctx.Set<Producto>()
+              .AsNoTracking() // Sin seguimiento de cambios
+              .Where(p => p.Stock > 0)
+              .OrderBy(p => p.Nombre)
+              .ToListAsync();
+      }
+
+      public async Task<bool> ExisteProducto(int id)
+      {
+          return await _ctx.Set<Producto>()
+              .AsNoTracking()
+              .AnyAsync(p => p.Id == id);
+      }
+  }
+
+================================================================================
+  [RESUMEN DEL CAPÍTULO]
+================================================================================
+
+  En este capítulo has aprendido:
+  • La importancia de medir antes de optimizar (BenchmarkDotNet).
+  • Span<T> y Memory<T> para procesamiento eficiente sin allocations.
+  • StringBuilder para evitar la ineficiencia de strings inmutables.
+  • LINQ optimizado: Count con predicado, Any, FirstOrDefault directo.
+  • Gestión de memoria: structs, pooling, ArrayPool, ObjectPool.
+  • ValueTask para async sin allocations.
+  • Optimización de consultas a BD con EF Core: Include, AsNoTracking.
+  • Diferencia entre struct y class para colecciones grandes.
+
+  Recuerda: optimiza solo cuando los datos te indiquen que es necesario.
+  El código claro y mantenible es casi siempre más valioso que el código
+  ultra-optimizado pero ilegible.
+
+================================================================================
+  [EJERCICIOS]
+================================================================================
+
+  1. Crea un benchmark con BenchmarkDotNet que compare 3 formas de sumar
+     números pares: LINQ, bucle foreach, bucle for.
+
+  2. Escribe un método que use Span<T> para invertir un array de bytes
+     sin crear un nuevo array.
+
+  3. Compara StringBuilder vs concatenación directa con 100,000 iteraciones.
+
+  4. Optimiza una consulta LINQ que tenga N+1 usando Include.
+
+  5. Implementa un pool de conexiones usando ObjectPool para un recurso
+     hipotético "ConexionBaseDeDatos".
+
+  6. Usa AsNoTracking en una consulta de solo lectura y mide la mejora.
+
+  7. Crea un struct Point3D con x, y, z y compara su rendimiento contra
+     una clase equivalente (100,000 elementos).
+
+  8. Usa ArrayPool para procesar un archivo grande (100 MB+) sin allocations.
+
+  9. Reemplaza Task<T> por ValueTask<T> en un servicio con caché.
+
+  10. Identifica un cuello de botella en tu proyecto y documéntalo con
+      BenchmarkDotNet.
+
+================================================================================
+  [PREGUNTAS FRECUENTES — FAQ]
+================================================================================
+
+  P: ¿Debo usar Span<T> siempre?
+  R: Solo cuando necesites rendimiento máximo en procesamiento de memoria.
+     Para la mayoría del código, string y array son suficientes.
+
+  P: ¿Es malo LINQ?
+  R: No, LINQ es excelente para legibilidad. Solo evítalo en bucles
+     críticos de rendimiento (hot paths).
+
+  P: ¿Cuándo usar struct vs class?
+  R: Struct para datos pequeños (< 16-24 bytes), inmutables y con semántica
+     de valor. Class para todo lo demás.
+
+  P: ¿Cómo medir el rendimiento correctamente?
+  R: Usa BenchmarkDotNet. No uses Stopwatch manual: el JIT, el GC y otros
+     factores sesgan las mediciones.
+
+  P: ¿Qué es el "false sharing"?
+  R: Ocurre cuando dos hilos modifican variables en la misma línea de caché
+     de la CPU. Se soluciona con padding o separando datos.
+
+================================================================================
+  [DESAFÍO DEL ARQUITECTO]
+================================================================================
+
+  Crea un procesador de logs en tiempo real que lea un archivo de 1 GB+
+  y extraiga líneas que contengan "ERROR". Debe:
+
+  1. Usar Span<T> para evitar allocations.
+  2. Usar ArrayPool para buffers de lectura.
+  3. Usar BenchmarkDotNet para medir el throughput (MB/s).
+  4. Comparar con una implementación naive (File.ReadAllLines + LINQ).
+  5. Implementar paralelismo con Parallel.ForEach para archivos multi-línea.
+  6. Reportar: tiempo total, memoria asignada, throughput.
+
+  Bonus: Procesar el archivo en streaming sin cargarlo completo en memoria.
+
+================================================================================
+  [CIERRE DEL CAPÍTULO]
+================================================================================
+
+  Has aprendido a hacer que tu código vuele. La optimización es una
+  habilidad que distingue a un programador promedio de un profesional.
+  Pero recuerda siempre la regla de oro: primero que funcione, luego que
+  sea legible, y solo entonces que sea rápido.
+
+  En el próximo capítulo abordaremos un tema crítico: la seguridad. Porque
+  de nada sirve un código rápido si es vulnerable.
+
+  ¡Nos vemos en el Capítulo 76!
+
+  ------------------------------------------------------------------------------
+  © 2026 C# MASTER BOOK — Profesor Búho AI
+  "El conocimiento no pesa, ilumina."
+  ------------------------------------------------------------------------------
+  [FIN DEL CAPÍTULO 75]

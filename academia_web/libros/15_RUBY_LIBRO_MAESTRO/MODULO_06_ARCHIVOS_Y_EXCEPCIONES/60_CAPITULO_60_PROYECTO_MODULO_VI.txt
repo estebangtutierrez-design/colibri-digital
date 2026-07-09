@@ -1,0 +1,1077 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 60: PROYECTO MÓDULO VI — NOTEAPP
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al capítulo final del Módulo VI! Has recorrido un camino
+extraordinario. Aprendiste a abrir archivos, leerlos, escribirlos,
+navegar directorios, serializar datos con YAML/JSON/Marshal, y manejar
+excepciones con begin/rescue/else/ensure/raise/retry. Ahora es momento
+de unir todo ese conocimiento en un proyecto completo.
+
+En este capítulo construirás "NoteApp": una aplicación de notas con
+persistencia en archivos. NoteApp te permitirá crear, listar, leer,
+editar, buscar y eliminar notas. Usará serialización YAML para guardar
+las notas, manejará excepciones de forma elegante, y tendrá una
+arquitectura limpia y extensible.
+
+Este proyecto simula una aplicación real y te preparará para construir
+sistemas más complejos. Cada línea de código está diseñada para
+reforzar los conceptos aprendidos en los capítulos anteriores.
+
+¡Manos a la obra!
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"El verdadero aprendizaje no está en conocer las herramientas, sino
+en saber construir con ellas." — Anónimo
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Diseñar una aplicación completa con persistencia en archivos.
+2. Integrar File, Dir, Pathname, YAML, y excepciones en un proyecto.
+3. Implementar una arquitectura limpia con separación de responsabilidades.
+4. Manejar errores de forma consistente en toda la aplicación.
+5. Serializar y deserializar objetos con YAML.
+6. Implementar operaciones CRUD (Crear, Leer, Actualizar, Eliminar).
+7. Navegar y organizar archivos con Pathname.
+8. Usar excepciones personalizadas para errores del dominio.
+9. Escribir código Ruby idiomático y robusto.
+10. Probar la aplicación manual y automáticamente.
+
+================================================================================
+ESTRUCTURA DEL PROYECTO
+================================================================================
+
+note_app/
+  ├── bin/
+  │   └── note_app          # Punto de entrada ejecutable
+  ├── lib/
+  │   ├── note_app.rb       # Configuración principal
+  │   ├── note_app/
+  │   │   ├── nota.rb       # Modelo Nota
+  │   │   ├── repositorio.rb # Persistencia (YAML)
+  │   │   ├── gestor_notas.rb # Lógica de negocio
+  │   │   ├── interfaz.rb   # CLI (command-line interface)
+  │   │   └── errores.rb    # Excepciones personalizadas
+  └── data/
+      └── (directorio de datos, se crea automáticamente)
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. DISEÑO DE LA APLICACIÓN
+----------------------------------------------------------------------
+
+NoteApp es una aplicación de terminal (CLI) para gestionar notas.
+Cada nota tiene: título, contenido, tags, y fechas de creación/
+modificación.
+
+Operaciones:
+  - crear: crea una nueva nota
+  - listar: lista todas las notas (con filtros opcionales)
+  - ver: muestra una nota por ID o título
+  - editar: modifica una nota existente
+  - eliminar: elimina una nota
+  - buscar: busca notas por texto o tags
+  - exportar: exporta notas a JSON
+
+Arquitectura:
+  - Modelo (Nota): representa una nota con sus atributos.
+  - Repositorio (RepositorioNotas): maneja la persistencia en YAML.
+  - Gestor (GestorNotas): lógica de negocio y validaciones.
+  - Interfaz (Interfaz): CLI para interactuar con el usuario.
+  - Errores (Errores): excepciones personalizadas del dominio.
+
+----------------------------------------------------------------------
+2. IMPLEMENTACIÓN: ERRORES PERSONALIZADOS
+----------------------------------------------------------------------
+
+Comenzamos definiendo las excepciones específicas de la aplicación.
+
+#------ archivo: lib/note_app/errores.rb ------
+module NoteApp
+  # Error base de la aplicación
+  class Error < StandardError; end
+
+  # Errores de nota
+  class ErrorNota < Error; end
+  class NotaNoEncontrada < ErrorNota
+    attr_reader :id
+    def initialize(id)
+      @id = id
+      super("Nota no encontrada: '#{id}'")
+    end
+  end
+  class NotaDuplicada < ErrorNota
+    attr_reader :titulo
+    def initialize(titulo)
+      @titulo = titulo
+      super("Ya existe una nota con título: '#{titulo}'")
+    end
+  end
+  class TituloInvalido < ErrorNota
+    def initialize(titulo)
+      super("Título inválido: '#{titulo}'. Debe tener entre 1 y 100 caracteres.")
+    end
+  end
+
+  # Errores de repositorio
+  class ErrorRepositorio < Error; end
+  class RepositorioCorrupto < ErrorRepositorio
+    def initialize(ruta)
+      super("El archivo de datos está corrupto: #{ruta}")
+    end
+  end
+  class ErrorPersistencia < ErrorRepositorio
+    def initialize(operacion, detalles = {})
+      super("Error de persistencia en #{operacion}: #{detalles[:mensaje]}")
+    end
+  end
+
+  # Errores de interfaz
+  class ErrorInterfaz < Error; end
+  class ComandoInvalido < ErrorInterfaz
+    def initialize(comando)
+      super("Comando desconocido: '#{comando}'. Usa 'ayuda' para ver comandos.")
+    end
+  end
+end
+
+----------------------------------------------------------------------
+3. IMPLEMENTACIÓN: MODELO NOTA
+----------------------------------------------------------------------
+
+La clase Nota representa una nota con sus atributos y serialización.
+
+#------ archivo: lib/note_app/nota.rb ------
+require 'securerandom'
+
+module NoteApp
+  class Nota
+    attr_reader :id, :created_at
+    attr_accessor :titulo, :contenido, :tags, :updated_at
+
+    def initialize(atributos = {})
+      @id = atributos[:id] || SecureRandom.uuid
+      @titulo = atributos[:titulo] || ""
+      @contenido = atributos[:contenido] || ""
+      @tags = atributos[:tags] || []
+      @created_at = atributos[:created_at] || Time.now
+      @updated_at = atributos[:updated_at] || Time.now
+    end
+
+    def validar!
+      raise TituloInvalido, @titulo if @titulo.nil? || @titulo.strip.empty?
+      raise TituloInvalido, @titulo if @titulo.length > 100
+      @titulo = @titulo.strip
+      @tags = @tags.map(&:strip).reject(&:empty?).uniq
+      true
+    end
+
+    def actualizar(atributos = {})
+      @titulo = atributos[:titulo] if atributos.key?(:titulo)
+      @contenido = atributos[:contenido] if atributos.key?(:contenido)
+      @tags = atributos[:tags] if atributos.key?(:tags)
+      @updated_at = Time.now
+      validar!
+      self
+    end
+
+    def contiene?(texto)
+      @titulo.downcase.include?(texto.downcase) ||
+        @contenido.downcase.include?(texto.downcase)
+    end
+
+    def tiene_tag?(tag)
+      @tags.any? { |t| t.downcase == tag.downcase }
+    end
+
+    def to_h
+      {
+        id: @id,
+        titulo: @titulo,
+        contenido: @contenido,
+        tags: @tags,
+        created_at: @created_at,
+        updated_at: @updated_at
+      }
+    end
+
+    def to_s
+      "##{@id[0..7]} | #{@titulo} | Tags: #{@tags.join(', ')} | " \
+      "Creado: #{@created_at.strftime('%Y-%m-%d %H:%M')}"
+    end
+
+    def to_s_detalle
+      separador = "=" * 50
+      <<~TEXTO
+        #{separador}
+        TÍTULO: #{@titulo}
+        ID: #{@id}
+        TAGS: #{@tags.join(', ')}
+        CREADO: #{@created_at.strftime('%Y-%m-%d %H:%M:%S')}
+        MODIFICADO: #{@updated_at.strftime('%Y-%m-%d %H:%M:%S')}
+        #{separador}
+        #{@contenido}
+        #{separador}
+      TEXTO
+    end
+  end
+end
+
+----------------------------------------------------------------------
+4. IMPLEMENTACIÓN: REPOSITORIO (PERSISTENCIA)
+----------------------------------------------------------------------
+
+El repositorio maneja la lectura y escritura de notas en archivos YAML.
+
+#------ archivo: lib/note_app/repositorio.rb ------
+require 'yaml'
+require 'pathname'
+require 'fileutils'
+
+module NoteApp
+  class Repositorio
+    attr_reader :ruta_directorio, :ruta_archivo
+
+    def initialize(ruta_directorio = nil)
+      @ruta_directorio = Pathname.new(ruta_directorio || default_data_dir)
+      @ruta_archivo = @ruta_directorio.join("notas.yml")
+      ensure_directorio!
+    end
+
+    def cargar_notas
+      return [] unless @ruta_archivo.exist?
+
+      begin
+        datos = YAML.safe_load(
+          @ruta_archivo.read,
+          permitted_classes: [Symbol, Time],
+          symbolize_names: true
+        )
+        return [] unless datos
+        datos.map { |attrs| Nota.new(attrs) }
+      rescue Psych::SyntaxError => e
+        raise RepositorioCorrupto, @ruta_archivo
+      rescue => e
+        raise ErrorPersistencia.new(:cargar, mensaje: e.message)
+      end
+    end
+
+    def guardar_notas(notas)
+      begin
+        datos = notas.map(&:to_h)
+        backup unless @ruta_archivo.exist?
+        @ruta_archivo.write(YAML.dump(datos))
+        true
+      rescue => e
+        raise ErrorPersistencia.new(:guardar, mensaje: e.message)
+      end
+    end
+
+    def crear_backup
+      return unless @ruta_archivo.exist?
+      backup_dir = @ruta_directorio.join("backups")
+      backup_dir.mkpath unless backup_dir.exist?
+      timestamp = Time.now.strftime("%Y%m%d_%H%M%S")
+      destino = backup_dir.join("notas_#{timestamp}.yml")
+      FileUtils.cp(@ruta_archivo, destino)
+      destino
+    end
+
+    def exportar_json(ruta_destino)
+      require 'json'
+      notas = cargar_notas
+      datos = notas.map(&:to_h)
+      File.write(ruta_destino, JSON.pretty_generate(datos))
+      true
+    end
+
+    def limpiar_backups(dias = 7)
+      backup_dir = @ruta_directorio.join("backups")
+      return unless backup_dir.exist?
+      limite = Time.now - (dias * 86400)
+      backup_dir.children.each do |archivo|
+        archivo.delete if archivo.mtime < limite
+      end
+    end
+
+    private
+
+    def default_data_dir
+      Pathname.new(Dir.home).join(".note_app")
+    end
+
+    def ensure_directorio!
+      @ruta_directorio.mkpath unless @ruta_directorio.exist?
+    end
+
+    def backup
+      return unless @ruta_archivo.exist?
+      unless @ruta_directorio.join("backups").exist?
+        @ruta_directorio.join("backups").mkpath
+      end
+      timestamp = Time.now.strftime("%Y%m%d_%H%M%S")
+      backup_path = @ruta_directorio.join("backups", "notas_#{timestamp}.yml")
+      FileUtils.cp(@ruta_archivo, backup_path)
+    end
+  end
+end
+
+----------------------------------------------------------------------
+5. IMPLEMENTACIÓN: GESTOR DE NOTAS (LÓGICA DE NEGOCIO)
+----------------------------------------------------------------------
+
+El gestor implementa la lógica de negocio y validaciones.
+
+#------ archivo: lib/note_app/gestor_notas.rb ------
+module NoteApp
+  class GestorNotas
+    def initialize(repositorio = nil)
+      @repositorio = repositorio || Repositorio.new
+      @notas = []
+      cargar_notas
+    end
+
+    def crear(titulo:, contenido: "", tags: [])
+      nota = Nota.new(titulo: titulo, contenido: contenido, tags: tags)
+      nota.validar!
+
+      if buscar_por_titulo_exacto(nota.titulo)
+        raise NotaDuplicada, nota.titulo
+      end
+
+      @notas << nota
+      guardar_notas
+      nota
+    end
+
+    def listar(tag: nil, texto: nil, orden: :created_at)
+      resultado = @notas.dup
+
+      if tag
+        resultado = resultado.select { |n| n.tiene_tag?(tag) }
+      end
+
+      if texto
+        resultado = resultado.select { |n| n.contiene?(texto) }
+      end
+
+      case orden
+      when :titulo
+        resultado.sort_by! { |n| n.titulo.downcase }
+      when :updated_at
+        resultado.sort_by! { |n| n.updated_at }.reverse!
+      else
+        resultado.sort_by! { |n| n.created_at }.reverse!
+      end
+
+      resultado
+    end
+
+    def ver(id_o_titulo)
+      nota = buscar_por_id(id_o_titulo) || buscar_por_titulo_exacto(id_o_titulo)
+      raise NotaNoEncontrada, id_o_titulo unless nota
+      nota
+    end
+
+    def editar(id_o_titulo, atributos = {})
+      nota = ver(id_o_titulo)
+
+      if atributos.key?(:titulo) && atributos[:titulo] != nota.titulo
+        if buscar_por_titulo_exacto(atributos[:titulo])
+          raise NotaDuplicada, atributos[:titulo]
+        end
+      end
+
+      nota.actualizar(atributos)
+      guardar_notas
+      nota
+    end
+
+    def eliminar(id_o_titulo)
+      nota = ver(id_o_titulo)
+      @notas.delete(nota)
+      guardar_notas
+      nota
+    end
+
+    def buscar(texto = nil, tag: nil)
+      listar(texto: texto, tag: tag)
+    end
+
+    def contar
+      @notas.size
+    end
+
+    def exportar(ruta, formato: :json)
+      case formato
+      when :json
+        @repositorio.exportar_json(ruta)
+      else
+        raise Error, "Formato no soportado: #{formato}"
+      end
+    end
+
+    def crear_backup
+      @repositorio.crear_backup
+    end
+
+    def limpiar_backups(dias = 7)
+      @repositorio.limpiar_backups(dias)
+    end
+
+    def recargar
+      cargar_notas
+    end
+
+    private
+
+    def cargar_notas
+      @notas = @repositorio.cargar_notas
+    rescue Error => e
+      $stderr.puts "Error al cargar notas: #{e.message}"
+      @notas = []
+    end
+
+    def guardar_notas
+      @repositorio.guardar_notas(@notas)
+    rescue Error => e
+      $stderr.puts "Error al guardar notas: #{e.message}"
+      raise
+    end
+
+    def buscar_por_id(id)
+      @notas.find { |n| n.id == id || n.id.start_with?(id) }
+    end
+
+    def buscar_por_titulo_exacto(titulo)
+      @notas.find { |n| n.titulo.downcase == titulo.downcase }
+    end
+  end
+end
+
+----------------------------------------------------------------------
+6. IMPLEMENTACIÓN: INTERFAZ DE USUARIO (CLI)
+----------------------------------------------------------------------
+
+La interfaz de línea de comandos procesa argumentos y muestra resultados.
+
+#------ archivo: lib/note_app/interfaz.rb ------
+module NoteApp
+  class Interfaz
+    def initialize
+      @gestor = GestorNotas.new
+    end
+
+    def ejecutar(args = ARGV)
+      if args.empty?
+        mostrar_ayuda
+        return
+      end
+
+      comando = args.shift
+      case comando
+      when "crear"       then cmd_crear(args)
+      when "listar"      then cmd_listar(args)
+      when "ver"         then cmd_ver(args)
+      when "editar"      then cmd_editar(args)
+      when "eliminar"    then cmd_eliminar(args)
+      when "buscar"      then cmd_buscar(args)
+      when "exportar"    then cmd_exportar(args)
+      when "backup"      then cmd_backup
+      when "limpiar"     then cmd_limpiar(args)
+      when "ayuda", "?"  then mostrar_ayuda
+      else
+        raise ComandoInvalido, comando
+      end
+    rescue Error => e
+      $stderr.puts "Error: #{e.message}"
+      $stderr.puts "Usa 'note_app ayuda' para ver los comandos."
+      1
+    rescue => e
+      $stderr.puts "Error inesperado: #{e.class}: #{e.message}"
+      $stderr.puts e.backtrace.first(3).join("\n") if $DEBUG
+      2
+    end
+
+    private
+
+    def cmd_crear(args)
+      titulo = args.shift
+      raise ErrorInterfaz, "Uso: note_app crear <titulo> [--contenido <texto>] [--tags <tag1,tag2>]" unless titulo
+
+      contenido = extraer_opcion(args, "--contenido") || ""
+      tags = (extraer_opcion(args, "--tags") || "").split(",").map(&:strip)
+
+      nota = @gestor.crear(titulo: titulo, contenido: contenido, tags: tags)
+      puts "Nota creada: #{nota.id[0..7]}"
+      puts nota.to_s_detalle
+    end
+
+    def cmd_listar(args)
+      tag = extraer_opcion(args, "--tag")
+      texto = extraer_opcion(args, "--texto")
+      orden = (extraer_opcion(args, "--orden") || "fecha").to_sym
+
+      notas = @gestor.listar(tag: tag, texto: texto, orden: orden)
+
+      if notas.empty?
+        puts "No hay notas."
+        return
+      end
+
+      puts "Total: #{notas.size} nota(s)"
+      puts "-" * 60
+      notas.each { |n| puts n.to_s }
+    end
+
+    def cmd_ver(args)
+      id = args.shift
+      raise ErrorInterfaz, "Uso: note_app ver <id|título>" unless id
+      nota = @gestor.ver(id)
+      puts nota.to_s_detalle
+    end
+
+    def cmd_editar(args)
+      id = args.shift
+      raise ErrorInterfaz, "Uso: note_app editar <id|título> [--titulo <nuevo>] [--contenido <texto>] [--tags <tag1,tag2>]" unless id
+
+      atributos = {}
+      atributos[:titulo] = extraer_opcion(args, "--titulo") if extraer_opcion(args, "--titulo")
+      atributos[:contenido] = extraer_opcion(args, "--contenido") if extraer_opcion(args, "--contenido")
+      if args.include?("--tags")
+        tags = extraer_opcion(args, "--tags")
+        atributos[:tags] = tags.split(",").map(&:strip)
+      end
+
+      raise ErrorInterfaz, "Debes especificar al menos un atributo a editar" if atributos.empty?
+
+      nota = @gestor.editar(id, atributos)
+      puts "Nota actualizada:"
+      puts nota.to_s_detalle
+    end
+
+    def cmd_eliminar(args)
+      id = args.shift
+      raise ErrorInterfaz, "Uso: note_app eliminar <id|título>" unless id
+      nota = @gestor.eliminar(id)
+      puts "Nota eliminada: #{nota.titulo}"
+    end
+
+    def cmd_buscar(args)
+      texto = args.shift
+      tag = extraer_opcion(args, "--tag")
+
+      unless texto || tag
+        raise ErrorInterfaz, "Uso: note_app buscar <texto> [--tag <tag>]"
+      end
+
+      notas = @gestor.buscar(texto, tag: tag)
+      if notas.empty?
+        puts "No se encontraron notas."
+      else
+        puts "Resultados: #{notas.size} nota(s)"
+        puts "-" * 60
+        notas.each { |n| puts n.to_s }
+      end
+    end
+
+    def cmd_exportar(args)
+      ruta = args.shift
+      raise ErrorInterfaz, "Uso: note_app exportar <ruta>" unless ruta
+      @gestor.exportar(ruta)
+      puts "Notas exportadas a: #{ruta}"
+    end
+
+    def cmd_backup
+      ruta = @gestor.crear_backup
+      puts "Backup creado: #{ruta}"
+    end
+
+    def cmd_limpiar(args)
+      dias = (args.shift || "7").to_i
+      @gestor.limpiar_backups(dias)
+      puts "Backups anteriores a #{dias} días eliminados."
+    end
+
+    def mostrar_ayuda
+      puts <<~AYUDA
+        ===== NOTEAPP - Gestión de notas =====
+        Uso: note_app <comando> [argumentos]
+
+        COMANDOS:
+          crear <titulo>           Crear una nueva nota
+            [--contenido <texto>]  Contenido de la nota
+            [--tags <t1,t2>]       Tags separados por comas
+
+          listar                   Listar todas las notas
+            [--tag <tag>]          Filtrar por tag
+            [--texto <texto>]      Buscar en título/contenido
+            [--orden <campo>]      Orden: fecha (def), titulo, actualizado
+
+          ver <id|titulo>          Ver detalle de una nota
+
+          editar <id|titulo>       Editar una nota
+            [--titulo <nuevo>]     Nuevo título
+            [--contenido <txt>]    Nuevo contenido
+            [--tags <t1,t2>]       Nuevos tags
+
+          eliminar <id|titulo>     Eliminar una nota
+
+          buscar <texto>           Buscar notas
+            [--tag <tag>]          Filtrar por tag
+
+          exportar <ruta>          Exportar a JSON
+
+          backup                   Crear backup manual
+
+          limpiar [días]           Limpiar backups (def: 7 días)
+
+          ayuda                    Mostrar esta ayuda
+
+        EJEMPLOS:
+          note_app crear "Mi nota" --contenido "Hola mundo" --tags "personal,test"
+          note_app listar --tag "personal"
+          note_app ver "Mi nota"
+          note_app buscar "mundo"
+      AYUDA
+    end
+
+    def extraer_opcion(args, clave)
+      idx = args.index(clave)
+      return nil unless idx
+      args.delete_at(idx)
+      args.delete_at(idx)
+    end
+  end
+end
+
+----------------------------------------------------------------------
+7. IMPLEMENTACIÓN: ARCHIVO PRINCIPAL
+----------------------------------------------------------------------
+
+El archivo principal carga todos los componentes y expone la interfaz.
+
+#------ archivo: lib/note_app.rb ------
+require_relative 'note_app/errores'
+require_relative 'note_app/nota'
+require_relative 'note_app/repositorio'
+require_relative 'note_app/gestor_notas'
+require_relative 'note_app/interfaz'
+
+module NoteApp
+  VERSION = "1.0.0"
+
+  def self.ejecutar(args = ARGV)
+    Interfaz.new.ejecutar(args)
+  end
+end
+
+#------ archivo: bin/note_app ------
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../lib/note_app'
+
+exit NoteApp.ejecutar(ARGV)
+
+----------------------------------------------------------------------
+8. EJEMPLOS DE USO
+----------------------------------------------------------------------
+
+# Crear una nota
+$ note_app crear "Aprender Ruby" --contenido "Completar el Módulo VI" --tags "estudio,ruby"
+
+# Crear otra nota
+$ note_app crear "Comprar víveres" --contenido "Leche, pan, huevos" --tags "personal,compras"
+
+# Listar todas
+$ note_app listar
+
+# Listar con filtro
+$ note_app listar --tag "estudio"
+
+# Ver detalle
+$ note_app ver "Aprender Ruby"
+
+# Editar
+$ note_app editar "Aprender Ruby" --contenido "Completar todos los módulos"
+
+# Buscar
+$ note_app buscar "Ruby"
+
+# Exportar
+$ note_app exportar ~/mis_notas.json
+
+# Backup
+$ note_app backup
+
+----------------------------------------------------------------------
+9. PRUEBAS UNITARIAS
+----------------------------------------------------------------------
+
+#------ archivo: test/test_nota.rb ------
+require 'minitest/autorun'
+require_relative '../lib/note_app'
+
+class TestNota < Minitest::Test
+  def setup
+    @nota = NoteApp::Nota.new(
+      titulo: "Test",
+      contenido: "Contenido de prueba",
+      tags: ["test", "ruby"]
+    )
+  end
+
+  def test_creacion
+    assert_match(/^\w{8}-\w{4}-\w{4}-\w{4}-\w{12}$/, @nota.id)
+    assert_equal "Test", @nota.titulo
+    assert_equal ["test", "ruby"], @nota.tags
+    assert_instance_of Time, @nota.created_at
+  end
+
+  def test_validacion_titulo_vacio
+    assert_raises NoteApp::TituloInvalido do
+      NoteApp::Nota.new(titulo: "").validar!
+    end
+  end
+
+  def test_validacion_titulo_largo
+    assert_raises NoteApp::TituloInvalido do
+      NoteApp::Nota.new(titulo: "a" * 101).validar!
+    end
+  end
+
+  def test_actualizar
+    @nota.actualizar(titulo: "Nuevo título", contenido: "Nuevo contenido")
+    assert_equal "Nuevo título", @nota.titulo
+    assert_equal "Nuevo contenido", @nota.contenido
+  end
+
+  def test_contiene_texto
+    assert @nota.contiene?("prueba")
+    refute @nota.contiene?("inexistente")
+  end
+
+  def test_tiene_tag
+    assert @nota.tiene_tag?("ruby")
+    refute @nota.tiene_tag?("java")
+  end
+
+  def test_to_h
+    hash = @nota.to_h
+    assert_equal @nota.id, hash[:id]
+    assert_equal "Test", hash[:titulo]
+  end
+end
+
+#------ archivo: test/test_gestor.rb ------
+require 'minitest/autorun'
+require 'tmpdir'
+require_relative '../lib/note_app'
+
+class TestGestor < Minitest::Test
+  def setup
+    @tmpdir = Dir.mktmpdir("note_app_test")
+    @repositorio = NoteApp::Repositorio.new(@tmpdir)
+    @gestor = NoteApp::GestorNotas.new(@repositorio)
+  end
+
+  def teardown
+    FileUtils.rm_rf(@tmpdir)
+  end
+
+  def test_crear_nota
+    nota = @gestor.crear(titulo: "Nota de prueba", contenido: "Contenido")
+    assert_match(/^\w/, nota.id)
+    assert_equal "Nota de prueba", nota.titulo
+  end
+
+  def test_crear_duplicado
+    @gestor.crear(titulo: "Único", contenido: "test")
+    assert_raises NoteApp::NotaDuplicada do
+      @gestor.crear(titulo: "Único", contenido: "otro")
+    end
+  end
+
+  def test_listar_vacio
+    assert_empty @gestor.listar
+  end
+
+  def test_listar_con_notas
+    @gestor.crear(titulo: "A", contenido: "x", tags: ["personal"])
+    @gestor.crear(titulo: "B", contenido: "y", tags: ["trabajo"])
+    assert_equal 2, @gestor.listar.size
+    assert_equal 1, @gestor.listar(tag: "personal").size
+  end
+
+  def test_ver_por_id
+    nota = @gestor.crear(titulo: "Visible", contenido: "test")
+    encontrada = @gestor.ver(nota.id)
+    assert_equal nota.id, encontrada.id
+  end
+
+  def test_ver_no_encontrada
+    assert_raises NoteApp::NotaNoEncontrada do
+      @gestor.ver("id_inexistente")
+    end
+  end
+
+  def test_editar
+    nota = @gestor.crear(titulo: "Original", contenido: "Original")
+    @gestor.editar(nota.id, titulo: "Modificado", contenido: "Modificado")
+    actualizada = @gestor.ver(nota.id)
+    assert_equal "Modificado", actualizada.titulo
+    assert_equal "Modificado", actualizada.contenido
+  end
+
+  def test_eliminar
+    nota = @gestor.crear(titulo: "Eliminar", contenido: "test")
+    @gestor.eliminar(nota.id)
+    assert_raises NoteApp::NotaNoEncontrada do
+      @gestor.ver(nota.id)
+    end
+  end
+
+  def test_buscar
+    @gestor.crear(titulo: "Ruby es genial", contenido: "Me encanta")
+    @gestor.crear(titulo: "Python también", contenido: "Es útil")
+    assert_equal 1, @gestor.buscar("Ruby").size
+    assert_equal 1, @gestor.buscar("Python").size
+    assert_equal 2, @gestor.buscar("es").size
+  end
+
+  def test_persistencia
+    @gestor.crear(titulo: "Persistente", contenido: "test")
+    @gestor.crear(titulo: "Otra", contenido: "más")
+
+    # Crear nuevo gestor con el mismo repositorio (simula reinicio)
+    gestor2 = NoteApp::GestorNotas.new(@repositorio)
+    assert_equal 2, gestor2.listar.size
+  end
+end
+
+#------ archivo: test/test_repositorio.rb ------
+require 'minitest/autorun'
+require 'tmpdir'
+require_relative '../lib/note_app'
+
+class TestRepositorio < Minitest::Test
+  def setup
+    @tmpdir = Dir.mktmpdir("note_app_repo_test")
+    @repositorio = NoteApp::Repositorio.new(@tmpdir)
+  end
+
+  def teardown
+    FileUtils.rm_rf(@tmpdir)
+  end
+
+  def test_crear_directorio
+    assert Dir.exist?(@tmpdir)
+  end
+
+  def test_cargar_vacio
+    assert_empty @repositorio.cargar_notas
+  end
+
+  def test_guardar_y_cargar
+    notas = [
+      NoteApp::Nota.new(titulo: "Nota 1", contenido: "Contenido 1"),
+      NoteApp::Nota.new(titulo: "Nota 2", contenido: "Contenido 2")
+    ]
+    @repositorio.guardar_notas(notas)
+    cargadas = @repositorio.cargar_notas
+    assert_equal 2, cargadas.size
+    assert_equal "Nota 1", cargadas.first.titulo
+  end
+
+  def test_archivo_creado
+    notas = [NoteApp::Nota.new(titulo: "Test", contenido: "test")]
+    @repositorio.guardar_notas(notas)
+    assert File.exist?(@repositorio.ruta_archivo)
+  end
+
+  def test_archivo_corrupto
+    @repositorio.ruta_archivo.write(": : : corrupto")
+    assert_raises NoteApp::RepositorioCorrupto do
+      @repositorio.cargar_notas
+    end
+  end
+
+  def test_backup
+    notas = [NoteApp::Nota.new(titulo: "Test", contenido: "test")]
+    @repositorio.guardar_notas(notas)
+    backup = @repositorio.crear_backup
+    assert File.exist?(backup), "El backup debería existir"
+    assert_match(/notas_\d{8}_\d{6}\.yml$/, File.basename(backup))
+  end
+
+  def test_exportar_json
+    notas = [NoteApp::Nota.new(titulo: "JSON", contenido: "test")]
+    @repositorio.guardar_notas(notas)
+    ruta_json = File.join(@tmpdir, "export.json")
+    @repositorio.exportar_json(ruta_json)
+    assert File.exist?(ruta_json)
+    contenido = JSON.parse(File.read(ruta_json))
+    assert_equal 1, contenido.size
+    assert_equal "JSON", contenido.first["titulo"]
+  end
+end
+
+----------------------------------------------------------------------
+10. EJECUCIÓN DE PRUEBAS
+----------------------------------------------------------------------
+
+# Ejecutar todas las pruebas
+$ ruby -Ilib -e 'Dir.glob("test/**/*.rb").each { |f| require_relative f }'
+
+# O con Rake
+# Gemfile
+source "https://rubygems.org"
+gem "minitest"
+
+# Rakefile
+require "rake/testtask"
+Rake::TestTask.new do |t|
+  t.libs << "test"
+  t.test_files = FileList["test/**/*.rb"]
+end
+
+task default: :test
+
+$ rake test
+
+----------------------------------------------------------------------
+11. EXTENSIONES POSIBLES
+----------------------------------------------------------------------
+
+NoteApp puede extenderse de muchas formas:
+
+  1. Editor interactivo: usar Readline o TTY::Prompt para edición.
+  2. Búsqueda avanzada: usar SQLite en lugar de YAML para búsquedas.
+  3. Encriptación: cifrar notas con OpenSSL.
+  4. Sincronización: sincronizar con servicios cloud.
+  5. Tags jerárquicos: soportar tags con namespace (personal/finanzas).
+  6. Fechas de recordatorio: añadir alarmas a notas.
+  7. Adjuntos: soportar archivos adjuntos a notas.
+  8. Markdown: renderizar contenido markdown.
+  9. Múltiples libretas: organizar notas en cuadernos.
+  10. Interfaz web: convertir a aplicación Sinatra o Rails.
+
+================================================================================
+RESUMEN DEL MÓDULO VI
+================================================================================
+
+Hemos llegado al final del Módulo VI. Repasemos todo lo aprendido:
+
+Capítulo 51: ARCHIVOS
+  - File.open, File.new, modos (r, w, a, r+, w+, a+)
+  - Bloque automático (cierra el archivo)
+  - File.exist?, File.file?, File.directory?
+  - File.stat, File.rename, File.delete
+
+Capítulo 52: LECTURA DE ARCHIVOS
+  - File.read, File.readlines, File.foreach
+  - IO#each_line, gets, readline
+  - Lectura de archivos grandes
+  - Filtros con grep/select/map
+
+Capítulo 53: ESCRITURA DE ARCHIVOS
+  - File.write, puts, print, write, printf
+  - Modo append, buffering, sync
+  - Escritura atómica, Tempfile
+
+Capítulo 54: DIRECTORIOS
+  - Dir.glob, Dir.entries, Dir.children
+  - Dir.mkdir, Dir.delete, Dir.chdir
+  - Pathname, FileUtils
+
+Capítulo 55: SERIALIZACIÓN
+  - YAML (dump/load/safe_load)
+  - JSON (generate/parse)
+  - Marshal (dump/load)
+  - Comparativa y casos de uso
+
+Capítulo 56: EXCEPCIONES
+  - begin/rescue/end
+  - Jerarquía Exception vs StandardError
+  - rescue específico, $!, $@
+
+Capítulo 57: ENSURE Y ELSE
+  - ensure: siempre se ejecuta
+  - else: solo sin error
+  - Patrones de limpieza
+
+Capítulo 58: RETRY Y RAISE
+  - raise, fail, retry
+  - Backoff exponencial
+  - Excepciones encadenadas (cause)
+
+Capítulo 59: EXCEPCIONES PERSONALIZADAS
+  - Clases que heredan de StandardError
+  - attr_reader, atributos contextuales
+  - Jerarquías de dominio
+
+Capítulo 60: PROYECTO NOTEAPP
+  - Aplicación completa con persistencia
+  - CRUD de notas con YAML
+  - Arquitectura limpia y pruebas
+
+================================================================================
+CIERRE DEL MÓDULO VI
+================================================================================
+
+¡Felicidades! Has completado el Módulo VI de Ruby Master Book. Has
+pasado de ser un desarrollador que solo trabajaba con datos en memoria
+a uno que sabe persistir información, manejar errores con elegancia,
+y construir aplicaciones robustas.
+
+Las habilidades que has adquirido en este módulo son fundamentales:
+  - La persistencia es lo que hace que tus aplicaciones trasciendan
+    más allá de una ejecución.
+  - El manejo de excepciones es lo que hace que tu código sea
+    profesional y confiable.
+  - La serialización es el puente entre tu mundo Ruby y el resto
+    del ecosistema de software.
+
+Estos conocimientos te acompañarán en cada proyecto que emprendas.
+Ya sea que construyas una API web, un procesador de datos, o una
+herramienta de línea de comandos, los archivos y las excepciones
+estarán siempre presentes.
+
+El viaje continúa. En el próximo módulo exploraremos temas avanzados:
+metaprogramación, DSLs, concurrencia, y más. Pero antes, tómate un
+momento para celebrar lo que has logrado. Eres un desarrollador Ruby
+más completo y capaz.
+
+¡Nos vemos en el Módulo VII!
+
+================================================================================
+PRÓXIMO MÓDULO
+================================================================================
+
+Módulo VII: METAPROGRAMACIÓN Y DSLs
+  - Métodos dinámicos con define_method
+  - method_missing y respond_to_missing?
+  - DSLs (Domain Specific Languages)
+  - class_eval, instance_eval, module_eval
+  - Macros con ClassMethods
+  - Proyecto: mini-framework web
+
+================================================================================
+FIN DEL CAPÍTULO 60 — FIN DEL MÓDULO VI
+================================================================================

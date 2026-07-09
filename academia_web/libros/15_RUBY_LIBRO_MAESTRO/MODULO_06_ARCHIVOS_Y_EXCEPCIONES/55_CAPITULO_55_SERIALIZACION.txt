@@ -1,0 +1,1210 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 55: SERIALIZACIÓN (YAML, JSON, MARSHAL)
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 55! Has aprendido a leer y escribir archivos,
+y a navegar directorios. Pero hasta ahora solo hemos trabajado con
+texto plano. ¿Qué pasa cuando necesitas guardar estructuras de datos
+complejas? ¿Un Hash con arrays anidados? ¿Un objeto con estado?
+
+Para eso existe la serialización: el proceso de convertir objetos Ruby
+en un formato que pueda ser almacenado en un archivo o transmitido
+por la red, y luego reconstruido (deserializado) más tarde.
+
+Ruby ofrece tres formatos principales de serialización en su librería
+estándar:
+  - YAML: legible por humanos, ideal para configuraciones.
+  - JSON: el estándar de la web, ideal para APIs.
+  - Marshal: formato binario interno de Ruby, el más rápido pero
+    no legible ni portable.
+
+Cada formato tiene sus fortalezas y casos de uso. En este capítulo
+aprenderás a usar los tres, entenderás sus diferencias, y sabrás
+elegir el adecuado para cada situación.
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"La serialización es el arte de poner el mundo Ruby en una caja,
+guardarla en un estante, y sacarla después exactamente como era."
+— Anónimo
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Serializar objetos Ruby a YAML con YAML.dump.
+2. Deserializar YAML a objetos Ruby con YAML.load y YAML.safe_load.
+3. Serializar a JSON con JSON.generate y JSON.dump.
+4. Deserializar JSON con JSON.parse y JSON.load.
+5. Usar Marshal.dump y Marshal.load para serialización binaria.
+6. Comprender las diferencias entre los tres formatos.
+7. Elegir el formato adecuado según el caso de uso.
+8. Implementar serialización personalizada con to_yaml, to_json, etc.
+9. Aplicar medidas de seguridad al deserializar datos externos.
+10. Integrar serialización en aplicaciones del mundo real.
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. INTRODUCCIÓN A LA SERIALIZACIÓN
+----------------------------------------------------------------------
+
+Serializar es convertir un objeto Ruby (o una estructura de datos) en
+una representación que pueda ser escrita a disco o enviada por red.
+
+Deserializar es el proceso inverso: reconstruir el objeto a partir
+de esa representación.
+
+¿Por qué es importante?
+  - Persistencia de estado de objetos.
+  - Configuraciones de aplicación (YAML).
+  - APIs web (JSON).
+  - Caché en disco (Marshal).
+  - Comunicación entre procesos (JSON, YAML).
+  - Almacenamiento de sesiones.
+
+================================================================================
+EJEMPLO 1: Comparativa rápida de formatos
+================================================================================
+
+#------ archivo: ej01_comparativa.rb ------
+require 'yaml'
+require 'json'
+
+puts "=== COMPARATIVA DE FORMATOS ==="
+
+datos = {
+  nombre: "Ruby Master Book",
+  version: 3.3,
+  temas: ["Archivos", "Excepciones", "Serialización"],
+  autor: { nombre: "Lucas", edad: 30 },
+  activo: true,
+  nulo: nil
+}
+
+# Serializar a YAML
+yaml_output = YAML.dump(datos)
+puts "--- YAML ---"
+puts yaml_output
+
+# Serializar a JSON
+json_output = JSON.generate(datos)
+puts "--- JSON ---"
+puts json_output
+
+# Marshal (binario, no legible)
+marshal_output = Marshal.dump(datos)
+puts "--- MARSHAL ---"
+puts "  Formato binario: #{marshal_output.bytesize} bytes"
+puts "  Primeros 20 bytes: #{marshal_output.bytes.first(20).inspect}"
+
+# Tamaños
+puts "\n--- Comparación de tamaños ---"
+puts "  YAML:   #{yaml_output.bytesize} bytes"
+puts "  JSON:   #{json_output.bytesize} bytes"
+puts "  Marshal: #{marshal_output.bytesize} bytes"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+2. YAML — YAML Ain't Markup Language
+----------------------------------------------------------------------
+
+YAML es un formato de serialización legible por humanos. Ruby incluye
+la librería 'yaml' en su stdlib.
+
+  require 'yaml'
+  YAML.dump(objeto)          # objeto -> string YAML
+  YAML.dump(objeto, archivo) # objeto -> archivo YAML
+  YAML.load(string)          # string YAML -> objeto
+  YAML.load_file(archivo)    # archivo YAML -> objeto
+  YAML.safe_load(string)     # seguro (solo tipos básicos)
+
+YAML es ideal para:
+  - Archivos de configuración (config.yml, database.yml).
+  - Datos que necesitan ser editados por humanos.
+  - Documentación con datos incrustados.
+  - Fixtures de pruebas.
+
+================================================================================
+EJEMPLO 2: YAML básico
+================================================================================
+
+#------ archivo: ej02_yaml_basico.rb ------
+require 'yaml'
+
+puts "=== YAML BÁSICO ==="
+
+# Serializar
+config = {
+  servidor: "localhost",
+  puerto: 3000,
+  debug: true,
+  bases_datos: {
+    primaria: "db_produccion",
+    secundaria: "db_backup"
+  },
+  tiempos: [30, 60, 120]
+}
+
+yaml_str = YAML.dump(config)
+puts "YAML generado:"
+puts yaml_str
+
+# Guardar a archivo
+File.write("config.yml", yaml_str)
+puts "Guardado en config.yml"
+
+# Leer de vuelta
+cargado = YAML.load_file("config.yml")
+puts "\nCargado desde archivo:"
+puts "  Servidor: #{cargado[:servidor]}"
+puts "  Puerto: #{cargado[:puerto]}"
+puts "  Debug: #{cargado[:debug]}"
+puts "  DB Primaria: #{cargado[:bases_datos][:primaria]}"
+puts "  Tiempos: #{cargado[:tiempos].join(', ')}"
+
+# YAML.dump directo a archivo
+YAML.dump({clave: "valor", numero: 42}, File.open("directo.yml", "w"))
+puts "\nYAML.dump directo a archivo: #{File.read("directo.yml")}"
+
+File.delete("config.yml") if File.exist?("config.yml")
+File.delete("directo.yml") if File.exist?("directo.yml")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+3. YAML — TIPOS DE DATOS
+----------------------------------------------------------------------
+
+YAML soporta todos los tipos Ruby básicos:
+
+  - Escalares: strings, integers, floats, booleans, nil
+  - Secuencias: arrays (listas)
+  - Mapping: hashes (diccionarios)
+  - Fechas: Date, Time
+  - Rangos: 1..10
+  - Símbolos: :clave (con !!ruby/symbol)
+
+YAML también soporta anclas y alias (& y *) para referencias.
+
+================================================================================
+EJEMPLO 3: Tipos de datos en YAML
+================================================================================
+
+#------ archivo: ej03_yaml_tipos.rb ------
+require 'yaml'
+
+puts "=== TIPOS DE DATOS EN YAML ==="
+
+data = {
+  string: "Hola mundo",
+  entero: 42,
+  flotante: 3.14159,
+  booleano: true,
+  nulo: nil,
+  array: [1, 2, 3, [4, 5]],
+  hash: { a: 1, b: 2 },
+  simbolo: :mi_simbolo,
+  rango: 1..10,
+  tiempo: Time.now,
+  fecha: Date.today
+}
+
+yaml_str = YAML.dump(data)
+puts "YAML con tipos varios:"
+puts yaml_str
+
+# Cargar de vuelta
+cargado = YAML.load(yaml_str)
+puts "\nTipos después de cargar:"
+cargado.each do |k, v|
+  puts "  #{k}: #{v.inspect} (#{v.class})"
+end
+
+# YAML con anclas y alias
+yaml_con_ancla = <<~YAML
+  defaults: &defaults
+    adapter: postgresql
+    pool: 5
+
+  development:
+    <<: *defaults
+    database: myapp_dev
+
+  production:
+    <<: *defaults
+    database: myapp_prod
+YAML
+
+cargado_ancla = YAML.load(yaml_con_ancla)
+puts "\nYAML con anclas (herencia):"
+puts "  Development: #{cargado_ancla['development']}"
+puts "  Production: #{cargado_ancla['production']}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+4. YAML — SEGURIDAD: LOAD VS SAFE_LOAD
+----------------------------------------------------------------------
+
+YAML.load puede deserializar objetos Ruby arbitrarios, lo que es un
+riesgo de seguridad si los datos provienen de fuentes no confiables.
+
+  YAML.safe_load(string)         # solo tipos básicos
+  YAML.safe_load(string, permitted_classes: [Symbol, Date])
+  YAML.safe_load(string, permitted_symbols: [:foo, :bar])
+
+Desde Ruby 3.0+, YAML.load advierte sobre este riesgo.
+La recomendación oficial: usa YAML.safe_load para datos externos.
+
+================================================================================
+EJEMPLO 4: YAML seguro
+================================================================================
+
+#------ archivo: ej04_yaml_seguro.rb ------
+require 'yaml'
+
+puts "=== YAML SEGURO ==="
+
+# YAML.load con string malicioso
+yaml_malicioso = "--- !ruby/object:ERB { src: 'puts `rm -rf /`' }"
+
+begin
+  resultado = YAML.load(yaml_malicioso)
+  puts "YAML.load ejecutó el objeto peligroso: #{resultado.class}"
+rescue => e
+  puts "YAML.load falló: #{e.message}"
+end
+
+# YAML.safe_load rechaza objetos arbitrarios
+begin
+  resultado = YAML.safe_load(yaml_malicioso)
+rescue Psych::DisallowedClass => e
+  puts "YAML.safe_load rechazó: #{e.message}"
+end
+
+# safe_load con clases permitidas
+begin
+  yaml_con_fecha = YAML.dump(Date.today)
+  resultado = YAML.safe_load(yaml_con_fecha, permitted_classes: [Date])
+  puts "\nYAML.safe_load con Date permitido: #{resultado} (#{resultado.class})"
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+# safe_load con símbolos permitidos
+yaml_con_simbolos = YAML.dump({:foo => 1, :bar => 2})
+begin
+  resultado = YAML.safe_load(yaml_con_simbolos, permitted_symbols: [:foo, :bar])
+  puts "\nYAML.safe_load con símbolos: #{resultado.inspect}"
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+# Mejor práctica: safe_load para config
+config_yaml = <<~YAML
+  servidor: localhost
+  puerto: 3000
+YAML
+
+config = YAML.safe_load(config_yaml, symbolize_names: true)
+puts "\nConfig segura: #{config.inspect}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+5. YAML — YAML.DUMP CON FORMATO
+----------------------------------------------------------------------
+
+YAML.dump acepta opciones para controlar el formato:
+
+  YAML.dump(objeto, options)
+  YAML.dump(objeto, file, options)
+
+Opciones comunes:
+  :indentation  - espacios de indentación (default 2)
+  :line_width   - ancho máximo de línea
+  :canonical    - modo canónico (más verboso)
+
+También puedes usar Psych (el motor YAML de Ruby) directamente.
+
+================================================================================
+EJEMPLO 5: YAML.dump con formato
+================================================================================
+
+#------ archivo: ej05_yaml_formato.rb ------
+require 'yaml'
+
+puts "=== YAML.DUMP CON FORMATO ==="
+
+data = {
+  nombre: "Ruby Master Book",
+  version: 3.3,
+  modulos: {
+    uno: "Introducción",
+    dos: "Estructuras",
+    tres: "POO",
+    cuatro: "Colecciones",
+    cinco: "Módulos",
+    seis: "Archivos"
+  }
+}
+
+# Sin opciones
+puts "--- Por defecto ---"
+puts YAML.dump(data)
+
+# Con opciones
+puts "--- Indentación 4 ---"
+puts YAML.dump(data, indentation: 4)
+
+puts "--- Line width 30 ---"
+YAML.dump(data, $stdout, line_width: 30)
+
+# YAML.dump_stream (múltiples documentos)
+puts "\n--- YAML.dump_stream ---"
+stream = YAML.dump_stream(
+  {a: 1},
+  {b: 2},
+  {c: 3}
+)
+puts stream
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+6. JSON — JAVASCRIPT OBJECT NOTATION
+----------------------------------------------------------------------
+
+JSON es el formato estándar para intercambio de datos en la web.
+Ruby lo incluye en su stdlib:
+
+  require 'json'
+  JSON.generate(objeto)     # objeto -> string JSON
+  JSON.pretty_generate(objeto) # JSON formateado
+  JSON.dump(objeto, archivo)   # objeto -> archivo JSON
+  JSON.parse(string)        # string JSON -> objeto
+  JSON.load(source)         # similar a parse pero más permisivo
+  JSON.parse_file(archivo)  # archivo JSON -> objeto
+
+JSON es ideal para:
+  - APIs REST (request/response).
+  - Almacenamiento de datos multiplataforma.
+  - Intercambio con JavaScript/frontend.
+  - Archivos de configuración modernos.
+
+Limitaciones de JSON:
+  - No soporta símbolos (usa strings).
+  - No soporta Date/Time (usa strings ISO 8601).
+  - No soporta objetos personalizados sin conversión.
+  - No soporta nil keys en hashes.
+
+================================================================================
+EJEMPLO 6: JSON básico
+================================================================================
+
+#------ archivo: ej06_json_basico.rb ------
+require 'json'
+
+puts "=== JSON BÁSICO ==="
+
+# Datos con tipos que JSON soporta nativamente
+data = {
+  "nombre" => "Ruby Master Book",
+  "version" => 3.3,
+  "modulos" => ["Módulo 1", "Módulo 2", "Módulo 3"],
+  "autor" => {
+    "nombre" => "Lucas",
+    "edad" => 30
+  },
+  "activo" => true,
+  "calificacion" => nil
+}
+
+# generate
+json_str = JSON.generate(data)
+puts "JSON generado:"
+puts json_str
+
+# pretty_generate
+puts "\nJSON formateado:"
+puts JSON.pretty_generate(data)
+
+# Parsear de vuelta
+parsed = JSON.parse(json_str)
+puts "\nParseado:"
+puts "  nombre: #{parsed['nombre']}"
+puts "  version: #{parsed['version']}"
+puts "  autor: #{parsed['autor']}"
+puts "  class: #{parsed.class}"
+
+# JSON.dump a archivo
+File.open("datos.json", "w") { |f| JSON.dump(data, f) }
+puts "\nGuardado en datos.json: #{File.read("datos.json")}"
+
+# JSON.parse_file (desde archivo)
+cargado = JSON.parse(File.read("datos.json"))
+puts "Cargado: #{cargado['nombre']}"
+
+# JSON con símbolos
+data_sym = { nombre: "Test", valor: 42 }
+json_sym = JSON.generate(data_sym)
+puts "\nJSON con símbolos (convertidos a strings): #{json_sym}"
+
+File.delete("datos.json") if File.exist?("datos.json")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+7. JSON — OPCIONES AVANZADAS
+----------------------------------------------------------------------
+
+JSON.generate y JSON.parse aceptan opciones:
+
+JSON.generate(opciones):
+  :indent          - indentación (default "  ")
+  :space           - espacio después de :
+  :space_before    - espacio antes de :
+  :object_nl       - newline entre objetos
+  :array_nl        - newline entre arrays
+  :allow_nan       - permitir NaN, Infinity, -Infinity
+
+JSON.parse(opciones):
+  :symbolize_names - convertir claves string a símbolos
+  :max_nesting     - profundidad máxima (default 100)
+  :allow_nan       - permitir NaN, Infinity
+  :create_additions - permitir objetos personalizados
+
+================================================================================
+EJEMPLO 7: JSON avanzado
+================================================================================
+
+#------ archivo: ej07_json_avanzado.rb ------
+require 'json'
+
+puts "=== JSON AVANZADO ==="
+
+data = {
+  "name" => "Ruby",
+  "version" => 3.3,
+  "features" => ["blocks", "modules", "metaprog"]
+}
+
+# Opciones de formato
+puts "--- Formato personalizado ---"
+puts JSON.generate(data, {
+  indent: "    ",
+  space: " ",
+  object_nl: "\n",
+  array_nl: "\n"
+})
+
+# symbolize_names
+json_str = '{"name": "Ruby", "version": 3.3}'
+parsed = JSON.parse(json_str, symbolize_names: true)
+puts "\nsymbolize_names: #{parsed.inspect}"
+puts "  clave símbolo: #{parsed[:name]}"
+
+# parse con block (cada nivel)
+puts "\n--- parse con bloque ---"
+JSON.parse('[1, [2, [3]]]') do |obj|
+  puts "  Nivel: #{obj.inspect}"
+end
+
+# Manejo de NaN con allow_nan
+begin
+  JSON.parse('[NaN]')
+rescue JSON::ParserError => e
+  puts "\nError NaN: #{e.message}"
+end
+
+parsed_nan = JSON.parse('[NaN]', allow_nan: true)
+puts "NaN permitido: #{parsed_nan.first.inspect}"
+
+# Fast JSON (native generator)
+puts "\n--- Fast Generator ---"
+str = JSON.generate(data, fast_generate: true)
+puts "fast_generate: #{str}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+8. MARSHAL — SERIALIZACIÓN BINARIA DE RUBY
+----------------------------------------------------------------------
+
+Marshal es el serializador binario nativo de Ruby. Es el más rápido
+y compacto, pero NO es legible ni portable entre versiones de Ruby.
+
+  Marshal.dump(objeto)          # -> string binario
+  Marshal.dump(objeto, archivo) # -> archivo
+  Marshal.load(string)          # -> objeto
+  Marshal.load(archivo)         # -> objeto
+  Marshal.restore(string)       # sinónimo de load
+
+Consideraciones de seguridad:
+  - Marshal.load puede ejecutar código arbitrario (como YAML.load).
+  - Nunca deserialices datos Marshal de fuentes no confiables.
+  - Los archivos Marshal pueden no ser compatibles entre versiones.
+
+================================================================================
+EJEMPLO 8: Marshal básico
+================================================================================
+
+#------ archivo: ej08_marshal_basico.rb ------
+puts "=== MARSHAL BÁSICO ==="
+
+# Datos complejos
+data = {
+  name: "Ruby Master",
+  version: 3.3,
+  tags: ["ruby", "programming", "serialization"],
+  metadata: {
+    created: Time.now,
+    count: 42
+  },
+  active: true
+}
+
+# Serializar
+binary = Marshal.dump(data)
+puts "Marshal.dump:"
+puts "  Tamaño: #{binary.bytesize} bytes"
+puts "  Tipo: #{binary.class}"
+puts "  Primeros 10 bytes: #{binary.bytes.first(10).inspect}"
+
+# Guardar a archivo
+File.open("datos.marshal", "wb") { |f| Marshal.dump(data, f) }
+puts "\nGuardado en datos.marshal (#{File.size('datos.marshal')} bytes)"
+
+# Cargar de vuelta
+cargado = Marshal.load(File.binread("datos.marshal"))
+puts "\nCargado:"
+puts "  name: #{cargado[:name]}"
+puts "  version: #{cargado[:version]}"
+puts "  tags: #{cargado[:tags].join(', ')}"
+puts "  created: #{cargado[:metadata][:created]}"
+
+# Comparar objetos original vs cargado
+puts "\n¿Son iguales? #{data == cargado}"
+
+# Marshal con objetos Proc (no serializable)
+p = Proc.new { |x| x * 2 }
+begin
+  Marshal.dump(p)
+rescue TypeError => e
+  puts "\nError con Proc: #{e.message}"
+end
+
+# Marshal con objetos anónimos
+anon = Class.new.new
+begin
+  Marshal.dump(anon)
+rescue TypeError => e
+  puts "Error con clase anónima: #{e.message}"
+end
+
+File.delete("datos.marshal") if File.exist?("datos.marshal")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+9. MARSHAL — RESTRICCIONES Y LIMITACIONES
+----------------------------------------------------------------------
+
+No todos los objetos Ruby se pueden serializar con Marshal:
+
+  NO serializables:
+  - Binding
+  - Proc, lambda
+  - IO (File, Socket)
+  - Thread, Fiber
+  - MatchData
+  - Clases anónimas/singleton
+  - Métodos (Method, UnboundMethod)
+  - Objetos con estado interno del sistema
+
+  SÍ serializables:
+  - Todos los tipos básicos (String, Integer, etc.)
+  - Array, Hash
+  - Range, Regexp
+  - Time, Date, DateTime
+  - Struct
+  - Objetos de clases personalizadas (que no tengan restricciones)
+
+================================================================================
+EJEMPLO 9: Marshal — objetos personalizados
+================================================================================
+
+#------ archivo: ej09_marshal_objetos.rb ------
+puts "=== MARSHAL CON OBJETOS PERSONALIZADOS ==="
+
+class Punto
+  attr_accessor :x, :y
+
+  def initialize(x, y)
+    @x, @y = x, y
+  end
+
+  def to_s
+    "(#{@x}, #{@y})"
+  end
+end
+
+class Circulo
+  attr_accessor :centro, :radio
+
+  def initialize(centro, radio)
+    @centro = centro
+    @radio = radio
+  end
+
+  def to_s
+    "Centro: #{@centro}, Radio: #{@radio}"
+  end
+
+  # Hook para personalizar serialización
+  def marshal_dump
+    {centro: @centro, radio: @radio}
+  end
+
+  def marshal_load(data)
+    @centro = data[:centro]
+    @radio = data[:radio]
+  end
+end
+
+# Serializar objeto simple
+p1 = Punto.new(3, 4)
+data = Marshal.dump(p1)
+p2 = Marshal.load(data)
+puts "Punto original: #{p1}"
+puts "Punto cargado: #{p2}"
+puts "  coord: #{p2.x}, #{p2.y}"
+
+# Serializar objeto con marshal_dump/marshal_load
+c1 = Circulo.new(Punto.new(0, 0), 5)
+data_c = Marshal.dump(c1)
+c2 = Marshal.load(data_c)
+puts "\nCírculo original: #{c1}"
+puts "Círculo cargado: #{c2}"
+
+# Comparar profundamente
+puts "\n"
+puts "Punto marshal_dump definido? #{Punto.method_defined?(:marshal_dump)}"
+puts "Círculo marshal_dump definido? #{Circulo.method_defined?(:marshal_dump)}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+10. SERIALIZACIÓN PERSONALIZADA
+----------------------------------------------------------------------
+
+Puedes controlar cómo se serializan tus objetos definiendo:
+
+  Para YAML:
+    def to_yaml(opts = {})
+      # ...
+    end
+    YAML.register_tag "!ruby/object:MiClase", "!custom,tag"
+
+  Para JSON:
+    def to_json(*args)
+      {clase: self.class.name, datos: @datos}.to_json(*args)
+    end
+    def self.from_json(json_string)
+      # reconstruir desde hash
+    end
+
+  Para Marshal:
+    def marshal_dump
+      # devuelve los datos a serializar
+    end
+    def marshal_load(data)
+      # reconstruye desde data
+    end
+
+También puedes usar _dump y self._load para control de bajo nivel.
+
+================================================================================
+EJEMPLO 10: Serialización personalizada
+================================================================================
+
+#------ archivo: ej10_serializacion_personalizada.rb ------
+require 'json'
+require 'yaml'
+
+puts "=== SERIALIZACIÓN PERSONALIZADA ==="
+
+class Usuario
+  attr_reader :nombre, :email, :password_hash
+
+  def initialize(nombre, email, password)
+    @nombre = nombre
+    @email = email
+    @password_hash = password.hash  # no guardamos la contraseña
+  end
+
+  # Para YAML
+  def to_yaml(opts = {})
+    {nombre: @nombre, email: @email}.to_yaml(opts)
+  end
+
+  # Para JSON
+  def to_json(*args)
+    {nombre: @nombre, email: @email}.to_json(*args)
+  end
+
+  # Para Marshal
+  def marshal_dump
+    [@nombre, @email, @password_hash]
+  end
+
+  def marshal_load(data)
+    @nombre, @email, @password_hash = data
+  end
+end
+
+user = Usuario.new("Lucas", "lucas@email.com", "secreta123")
+
+puts "Usuario original: #{user.nombre} / #{user.email}"
+
+# YAML
+yaml_str = YAML.dump(user)
+puts "\nYAML (sin password): #{yaml_str}"
+
+# JSON
+json_str = user.to_json
+puts "JSON (sin password): #{json_str}"
+
+# Marshal
+marshal_data = Marshal.dump(user)
+user_cargado = Marshal.load(marshal_data)
+puts "Marshal password_hash: #{user_cargado.password_hash}"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+11. COMPARATIVA Y ELECCIÓN DE FORMATO
+----------------------------------------------------------------------
+
+¿Cuándo usar cada formato?
+
+  YAML:
+    - Archivos de configuración
+    - Datos que editarán humanos
+    - Fixtures de pruebas
+    - Documentación incrustada
+    - Prioridad: legibilidad
+
+  JSON:
+    - APIs web
+    - Intercambio con otras plataformas
+    - Almacenamiento en bases de datos (NoSQL)
+    - Configuración moderna
+    - Prioridad: interoperabilidad
+
+  Marshal:
+    - Caché en disco (datos temporales)
+    - Sesiones locales
+    - Comunicación entre procesos Ruby
+    - Prioridad: velocidad y tamaño
+
+================================================================================
+EJEMPLO 11: Benchmark de formatos
+================================================================================
+
+#------ archivo: ej11_benchmark.rb ------
+require 'yaml'
+require 'json'
+require 'benchmark'
+
+puts "=== BENCHMARK DE FORMATOS ==="
+
+data = {
+  nombre: "Ruby",
+  version: 3.3,
+  descripcion: "Lenguaje de programación" * 100,
+  tags: Array.new(100) { |i| "tag_#{i}" },
+  anidado: {
+    level1: {
+      level2: {
+        level3: { valor: 42 }
+      }
+    }
+  }
+}
+
+n = 1000
+
+Benchmark.bm(15) do |x|
+  # Serialización
+  x.report("YAML.dump:") { n.times { YAML.dump(data) } }
+  x.report("JSON.generate:") { n.times { JSON.generate(data) } }
+  x.report("Marshal.dump:") { n.times { Marshal.dump(data) } }
+
+  # Deserialización
+  yaml_s = YAML.dump(data)
+  json_s = JSON.generate(data)
+  marshal_b = Marshal.dump(data)
+
+  x.report("YAML.load:") { n.times { YAML.load(yaml_s) } }
+  x.report("JSON.parse:") { n.times { JSON.parse(json_s) } }
+  x.report("Marshal.load:") { n.times { Marshal.load(marshal_b) } }
+end
+
+puts "\nTamaños:"
+puts "  YAML:   #{YAML.dump(data).bytesize} bytes"
+puts "  JSON:   #{JSON.generate(data).bytesize} bytes"
+puts "  Marshal: #{Marshal.dump(data).bytesize} bytes"
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+12. CASOS DE USO REALES
+----------------------------------------------------------------------
+
+Aplicaciones prácticas de serialización en proyectos Ruby:
+
+  1. Configuración con YAML:
+     - database.yml en Rails
+     - config/deploy.yml en Capistrano
+     - circleci/config.yml
+
+  2. API con JSON:
+     - Ruby on Rails: render json: @users
+     - Sinatra: content_type :json
+     - Clientes HTTP: JSON.parse(response.body)
+
+  3. Caché con Marshal:
+     - Rails.cache (puede usar Marshal internamente)
+     - Fragment caching en vistas
+     - Cache de consultas costosas
+
+  4. Datos compuestos:
+     - Guardar preferencias de usuario
+     - Exportar/importar datos
+     - Sesiones de juego
+
+================================================================================
+EJEMPLO 12: Caso real - gestor de configuraciones
+================================================================================
+
+#------ archivo: ej12_config_manager.rb ------
+require 'yaml'
+require 'json'
+
+puts "=== GESTOR DE CONFIGURACIONES ==="
+
+class ConfigManager
+  EXTENSIONES = {
+    yml: ->(ruta) { YAML.load_file(ruta, permitted_classes: [Symbol]) },
+    yaml: ->(ruta) { YAML.load_file(ruta, permitted_classes: [Symbol]) },
+    json: ->(ruta) { JSON.parse(File.read(ruta), symbolize_names: true) }
+  }
+
+  def self.load(ruta)
+    ext = File.extname(ruta).downcase.gsub('.', '').to_sym
+    handler = EXTENSIONES[ext]
+    raise "Formato no soportado: #{ext}" unless handler
+    handler.call(ruta)
+  end
+
+  def self.save(ruta, data)
+    ext = File.extname(ruta).downcase.gsub('.', '').to_sym
+    case ext
+    when :yml, :yaml
+      YAML.dump(data, File.open(ruta, 'w'))
+    when :json
+      File.write(ruta, JSON.pretty_generate(data))
+    else
+      raise "Formato no soportado: #{ext}"
+    end
+  end
+end
+
+# Crear config en YAML
+config = {
+  app_name: "MiApp",
+  version: "1.0.0",
+  database: {
+    host: "localhost",
+    port: 5432,
+    name: "miapp_db"
+  },
+  features: ["login", "reports", "admin"]
+}
+
+ConfigManager.save("config.yml", config)
+cargada = ConfigManager.load("config.yml")
+puts "Config YAML cargada: #{cargada[:app_name]} / DB: #{cargada[:database][:host]}"
+
+# Crear config en JSON
+ConfigManager.save("config.json", config)
+cargada_json = ConfigManager.load("config.json")
+puts "Config JSON cargada: #{cargada_json[:app_name]} / DB: #{cargada_json[:database][:host]}"
+
+File.delete("config.yml") if File.exist?("config.yml")
+File.delete("config.json") if File.exist?("config.json")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+13. SERIALIZACIÓN Y CODIFICACIÓN DE CARACTERES
+----------------------------------------------------------------------
+
+La codificación es importante al serializar:
+
+  YAML: maneja UTF-8 nativamente.
+  JSON: solo UTF-8 (debes escapar caracteres especiales).
+  Marshal: binario, no le importa la codificación.
+
+================================================================================
+EJEMPLO 13: Serialización y codificación
+================================================================================
+
+#------ archivo: ej13_codificacion.rb ------
+require 'yaml'
+require 'json'
+
+puts "=== SERIALIZACIÓN Y CODIFICACIÓN ==="
+
+texto_con_acentos = "á é í ó ú ñ ü ¡ ¿"
+
+# YAML
+yaml_out = YAML.dump({texto: texto_con_acentos})
+puts "YAML: #{yaml_out}"
+
+# JSON
+json_out = JSON.generate({texto: texto_con_acentos})
+puts "JSON: #{json_out}"
+
+# Marshal
+marshal_out = Marshal.dump({texto: texto_con_acentos})
+cargado = Marshal.load(marshal_out)
+puts "Marshal: #{cargado[:texto]}"
+
+# JSON con caracteres especiales
+emoji_data = {mensaje: "Ruby es genial! 🚀 ⭐"}
+json_emoji = JSON.generate(emoji_data)
+puts "\nJSON con emojis: #{json_emoji}"
+parsed = JSON.parse(json_emoji)
+puts "Parseado: #{parsed['mensaje']}"
+
+#------ fin del ejemplo ------
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. YAML: formato legible por humanos, ideal para configuración.
+   - YAML.dump / YAML.load / YAML.load_file / YAML.safe_load
+   - Seguridad: usar safe_load con datos externos.
+
+2. JSON: formato estándar web, ideal para APIs.
+   - JSON.generate / JSON.pretty_generate / JSON.parse
+   - Tiene opciones de formato y parsing.
+   - No soporta símbolos ni Date/Time nativamente.
+
+3. Marshal: formato binario nativo, rápido y compacto.
+   - Marshal.dump / Marshal.load
+   - No portable entre versiones de Ruby.
+   - Tan inseguro como YAML.load.
+
+4. Serialización personalizada:
+   - marshal_dump / marshal_load para Marshal.
+   - to_json para JSON.
+   - to_yaml para YAML.
+
+5. Elección:
+   - ¿Legible? → YAML
+   - ¿Interoperable? → JSON
+   - ¿Rápido/compacto? → Marshal
+
+================================================================================
+EJERCICIOS
+================================================================================
+
+1. YAML BÁSICO: Crea un hash con tu información personal y serialízalo
+   a YAML. Luego léelo de vuelta y muestra los valores.
+
+2. YAML SEGURO: Crea un archivo YAML con datos de configuración y
+   cárgalo usando YAML.safe_load. Verifica que rechace objetos
+   arbitrarios.
+
+3. JSON: Serializa un array de 5 hashes (productos con nombre, precio,
+   cantidad) a JSON formateado. Luego parsea y muestra el total del
+   inventario (precio * cantidad).
+
+4. JSON AVANZADO: Usando JSON.parse con symbolize_names: true, una API
+   simulada devuelve '{"user":"ana","role":"admin","active":true}'.
+   Accede a los valores usando símbolos.
+
+5. MARSHAL: Crea un objeto simple (Punto con x, y), serialízalo con
+   Marshal, guárdalo a disco, cárgalo de vuelta y verifica igualdad.
+
+6. COMPARATIVA: Crea un hash grande (1000 entradas) y compara el tiempo
+   de serialización y deserialización entre YAML, JSON y Marshal. Usa
+   Benchmark.
+
+7. SERIALIZACIÓN PERSONALIZADA: Crea una clase CuentaBancaria con
+   titular, saldo, y numero_cuenta. Implementa marshal_dump/marshal_load
+   para que NO serialice el saldo por seguridad (lo deja en 0).
+
+8. CONFIG MANAGER: Implementa una clase que cargue configuración desde
+   YAML o JSON según la extensión del archivo.
+
+9. CACHÉ: Implementa un sistema de caché simple que use Marshal para
+   guardar en disco. Debe tener set(clave, valor, ttl) y get(clave).
+
+10. DESAFÍO: Crea un serializador universal que detecte automáticamente
+    el formato de un archivo (por extensión o contenido) y lo deserialice.
+    Soporta .yml, .yaml, .json, .marshal.
+
+================================================================================
+PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿YAML.load es inseguro?
+R: Sí, puede deserializar objetos Ruby arbitrarios. Usa YAML.safe_load
+   para datos externos o no confiables.
+
+P: ¿JSON soporta Date y Time?
+R: No nativamente. JSON.parse los devuelve como strings. Puedes
+   convertirlos después con Date.parse o Time.parse.
+
+P: ¿Por qué Marshal no es portable entre versiones de Ruby?
+R: El formato binario de Marshal está ligado a la representación interna
+   de los objetos en C. Ruby no garantiza compatibilidad entre versiones
+   mayores. Nunca uses Marshal para almacenamiento permanente.
+
+P: ¿Puedo serializar un Proc o lambda?
+R: No. Proc, Binding, IO, y Thread no se pueden serializar con Marshal
+   porque contienen estado del sistema que no se puede reconstruir.
+
+P: ¿JSON.generate vs JSON.dump?
+R: generate devuelve un string. dump puede escribir directamente a un
+   IO object (archivo). Son equivalentes en funcionalidad básica.
+
+P: ¿Cómo serializo objetos con JSON?
+R: Define un método to_json en tu clase que devuelva un hash convertido
+   a JSON. O usa JSON.generate y confía en que los atributos sean
+   serializables.
+
+P: ¿Qué formato es más rápido?
+R: Marshal es el más rápido, seguido de JSON, luego YAML. Marshal
+   también produce la salida más compacta.
+
+P: ¿Puedo mezclar formatos? ¿YAML dentro de JSON?
+R: Técnicamente sí, pero no es común. Cada formato tiene su propio
+   parser. Podrías tener un string YAML dentro de un JSON.
+
+P: ¿Qué pasa si YAML.load_file no encuentra el archivo?
+R: Lanza Errno::ENOENT. Siempre verifica File.exist? antes de cargar.
+
+P: ¿Cómo manejo errores de parsing?
+R: YAML.load lanza Psych::SyntaxError. JSON.parse lanza
+   JSON::ParserError. Marshal.load lanza TypeError si el formato
+   es inválido.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Construye una base de datos de documentos simple llamada "DocStore"
+que use serialización para persistir documentos en disco.
+
+Requisitos funcionales:
+
+1. DocStore.new(ruta_directorio)
+   - Crea o abre un almacén en el directorio especificado.
+   - Cada documento se guarda como un archivo individual.
+
+2. DocStore#insert(coleccion, documento)
+   - Inserta un documento (Hash) en una colección.
+   - Asigna automáticamente un ID (UUID o secuencial).
+   - Serializa en el formato especificado (yml, json, marshal).
+
+3. DocStore#find(coleccion, id)
+   - Busca un documento por ID.
+   - Devuelve nil si no existe.
+
+4. DocStore#where(coleccion, filtro_hash)
+   - Busca documentos que coincidan con el filtro.
+   - Devuelve array de documentos.
+
+5. DocStore#update(coleccion, id, nuevos_datos)
+   - Actualiza parcial o totalmente un documento.
+
+6. DocStore#delete(coleccion, id)
+   - Elimina un documento.
+
+7. DocStore#all(coleccion)
+   - Devuelve todos los documentos de una colección.
+
+8. DocStore#collections
+   - Lista las colecciones disponibles.
+
+9. Opciones de serialización:
+   - Por defecto: YAML.
+   - Configurable por colección: { formato: :json }.
+   - Soportar :yml, :yaml, :json, :marshal.
+
+Requisitos técnicos:
+  - Cada documento se guarda en: ruta/coleccion/id.formato
+  - Usa Pathname para rutas.
+  - Usa FileUtils.mkdir_p para crear directorios.
+  - Maneja concurrencia básica con flock.
+  - Implementa backup automático cada N escrituras.
+  - Incluye pruebas unitarias.
+
+Este desafío integra serialización, archivos, directorios, y diseño
+de API, simulando una base de datos NoSQL embebida.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+================================================================================
+
+Has dominado la serialización en Ruby. Ahora sabes cómo convertir
+objetos Ruby en YAML, JSON, y Marshal, y viceversa. Entiendes las
+fortalezas y debilidades de cada formato, y sabes elegir el adecuado.
+
+La serialización es una herramienta fundamental en el desarrollo de
+software: configuración, persistencia, APIs, caché, comunicación entre
+servicios. Con este conocimiento, estás preparado para construir
+aplicaciones que recuerden su estado y se comuniquen con el mundo.
+
+Recuerda siempre: YAML.safe_load para datos externos, JSON para APIs,
+Marshal para caché interna rápida.
+
+En el próximo capítulo comenzaremos el estudio de las excepciones:
+cómo manejar errores de forma elegante con begin/rescue.
+
+¡Nos vemos en el Capítulo 56!
+
+================================================================================
+PRÓXIMO CAPÍTULO
+================================================================================
+
+Capítulo 56: EXCEPCIONES (BEGIN/RESCUE)
+  - begin/rescue/end
+  - StandardError y la jerarquía de excepciones
+  - rescue Exception vs rescue StandardError
+  - $! y $@
+  - Múltiples rescues
+  - rescue como modificador de línea
+
+================================================================================
+FIN DEL CAPÍTULO 55
+================================================================================

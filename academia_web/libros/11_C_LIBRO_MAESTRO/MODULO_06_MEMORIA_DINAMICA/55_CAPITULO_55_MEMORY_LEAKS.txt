@@ -1,0 +1,1249 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VI
+##                       MEMORIA DINÁMICA
+##
+##                        CAPÍTULO 55
+##
+##                      MEMORY LEAKS
+##
+################################################################################
+################################################################################
+
+"La memoria perdida es como el agua que se escapa entre los dedos:
+invisible hasta que ya es demasiado tarde." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Saludos, arquitecto de software! Bienvenido al Capítulo 55.
+
+Has aprendido a liberar memoria con free(), pero el verdadero desafío
+no es liberar un bloque, sino asegurarte de que TODOS los bloques sean
+liberados. Un memory leak (fuga de memoria) ocurre cuando pierdes toda
+referencia a un bloque asignado y nunca lo liberas.
+
+Los memory leaks son asesinos silenciosos. Un programa pequeño puede
+tener fugas sin consecuencias visibles. Pero un servidor que ejecuta
+24/7 con una fuga de 10 bytes por operación terminará agotando toda
+la memoria del sistema.
+
+En este capítulo aprenderás a detectar, prevenir y corregir memory leaks.
+Usaremos herramientas profesionales como Valgrind y AddressSanitizer,
+y desarrollaremos patrones de diseño que minimicen el riesgo de fugas.
+
+¡Prepárate para convertirte en un cazador de fugas!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un programa sin memory leaks no es un accidente: es el resultado de
+la disciplina, el conocimiento y las herramientas adecuadas."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender qué es un memory leak y por qué es peligroso
+✓ Identificar referencias perdidas y su relación con las fugas
+✓ Usar Valgrind con --leak-check=yes para detectar fugas
+✓ Implementar AddressSanitizer en el flujo de desarrollo
+✓ Reconocer patrones comunes de detección de fugas
+✓ Aplicar principios RAII en C para gestión automática
+✓ Utilizar herramientas y técnicas de prevención profesional
+
+===============================================================================
+1. ¿QUÉ ES UN MEMORY LEAK?
+===============================================================================
+
+Un memory leak ocurre cuando un programa asigna memoria dinámicamente
+con malloc() (o calloc, realloc) pero pierde toda referencia a esa
+memoria sin haberla liberado con free().
+
+El bloque asignado permanece en el heap ocupando espacio, pero el
+programa ya no tiene forma de acceder a él ni de liberarlo. La memoria
+queda "fugada": no se puede usar, no se puede liberar, simplemente
+ocupa espacio hasta que el proceso termina.
+
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    // MEMORY LEAK: asignamos memoria y perdemos la referencia
+    int *p = (int *)malloc(sizeof(int));
+    if (p == NULL) return 1;
+
+    *p = 42;
+
+    // Perdemos la referencia: sobrescribimos p con otra dirección
+    p = (int *)malloc(sizeof(int));  // El primer bloque queda huérfano
+    *p = 100;
+
+    // Liberamos solo el segundo bloque
+    free(p);
+
+    // El primer bloque (con valor 42) sigue ocupando memoria
+    // pero no tenemos forma de acceder a él
+
+    return 0;
+}
+```
+
+En este ejemplo, el primer bloque asignado (con el valor 42) se pierde
+cuando reasignamos p. Nunca llamamos a free() para ese bloque. Esto es
+un memory leak: 4 bytes (más overhead del heap) perdidos para siempre.
+
+Los memory leaks son acumulativos. Si esta función se llama en un
+bucle, la memoria perdida crece sin límite:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+void funcion_con_fuga() {
+    int *p = (int *)malloc(sizeof(int));
+    if (p == NULL) return;
+    *p = 42;
+    // Olvidamos llamar a free(p)
+}
+
+int main() {
+    for (int i = 0; i < 1000000; i++) {
+        funcion_con_fuga();  // Fuga 4+ bytes por llamada
+    }
+    // El programa ha perdido ~4 MB (más overhead)
+    printf("Programa finalizado con fugas masivas.\n");
+    return 0;
+}
+```
+
+El sistema operativo recupera toda la memoria cuando el proceso termina,
+pero para procesos de larga duración (servidores, daemons, aplicaciones
+gráficas), los memory leaks son catastróficos.
+
+===============================================================================
+2. REFERENCIAS PERDIDAS (LOST REFERENCES)
+===============================================================================
+
+Una referencia perdida es la causa raíz de todo memory leak. Ocurre
+cuando el programa pierde el puntero (la dirección) que apunta a un
+bloque de memoria dinámica.
+
+Formas comunes de perder referencias:
+
+2.1. Sobrescritura del puntero
+
+```c
+int *datos = (int *)malloc(100 * sizeof(int));
+// ... uso ...
+datos = NULL;  // ¡Perdimos la referencia! El bloque de 100 ints está fugado
+```
+
+2.2. Reasignación sin liberar primero
+
+```c
+char *buffer = (char *)malloc(256);
+buffer = (char *)malloc(512);  // El bloque de 256 bytes se pierde
+free(buffer);  // Solo liberamos el de 512
+```
+
+2.3. Puntero local que se sale de ámbito
+
+```c
+void func() {
+    int *p = (int *)malloc(sizeof(int));
+    *p = 10;
+    // p se destruye al salir de la función, pero el bloque no se libera
+}
+```
+
+2.4. Pasar por alto el puntero en estructuras anidadas
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char *nombre;
+} Persona;
+
+int main() {
+    Persona *p = (Persona *)malloc(sizeof(Persona));
+    p->nombre = (char *)malloc(50);
+    strcpy(p->nombre, "Carlos");
+
+    free(p);       // Liberamos la Persona, PERO...
+    // p->nombre sigue en el heap sin liberar → MEMORY LEAK
+
+    return 0;
+}
+```
+
+2.5. Pérdida en estructuras de datos
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Nodo {
+    int dato;
+    struct Nodo *siguiente;
+} Nodo;
+
+int main() {
+    Nodo *lista = (Nodo *)malloc(sizeof(Nodo));
+    lista->dato = 1;
+    lista->siguiente = (Nodo *)malloc(sizeof(Nodo));
+    lista->siguiente->dato = 2;
+    lista->siguiente->siguiente = NULL;
+
+    // Perdemos la referencia al segundo nodo
+    lista->siguiente = NULL;  // El nodo con dato=2 está fugado
+
+    free(lista);
+    return 0;
+}
+```
+
+Para evitar referencias perdidas, debes asegurarte de que:
+
+1. Cada malloc() tenga su correspondiente free().
+2. Antes de reasignar un puntero, liberes lo que apunta.
+3. Antes de liberar una estructura, liberes sus campos dinámicos.
+4. Antes de perder un puntero (reasignación, salida de ámbito),
+   liberes el bloque al que apunta.
+
+===============================================================================
+3. VALGRIND — EL CAZADOR DE FUGAS
+===============================================================================
+
+Valgrind es una herramienta de instrumentación que ejecuta tu programa
+en una máquina virtual y detecta errores de memoria. Es el estándar
+de facto en el mundo Linux para detectar memory leaks.
+
+Uso básico:
+
+```bash
+# Compilar con información de depuración
+gcc -g programa.c -o programa
+
+# Ejecutar con Valgrind
+valgrind --leak-check=yes ./programa
+```
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+void crear_fuga() {
+    int *p = (int *)malloc(sizeof(int));
+    *p = 10;
+    // No liberamos p → memory leak
+}
+
+int main() {
+    crear_fuga();
+
+    char *buffer = (char *)malloc(100);
+    // buffer sin liberar → memory leak
+
+    return 0;
+}
+```
+
+Al ejecutar con Valgrind:
+
+```
+==12345== Memcheck, a memory error detector
+==12345== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==12345== Using Valgrind-3.22.0 and LibVEX; rerun with -h for copyright info
+==12345== Command: ./programa
+==12345==
+==12345==
+==12345== HEAP SUMMARY:
+==12345==     in use at exit: 104 bytes in 2 blocks
+==12345==   total heap usage: 2 allocs, 0 frees, 104 bytes allocated
+==12345==
+==12345== 4 bytes in 1 blocks are definitely lost in loss record 1 of 2
+==12345==    at 0x4848899: malloc (vg_replace_malloc.c:442)
+==12345==    by 0x109151: crear_fuga (programa.c:5)
+==12345==    by 0x109161: main (programa.c:11)
+==12345==
+==12345== 100 bytes in 1 blocks are definitely lost in loss record 2 of 2
+==12345==    at 0x4848899: malloc (vg_replace_malloc.c:442)
+==12345==    by 0x10916C: main (programa.c:14)
+==12345==
+==12345== LEAK SUMMARY:
+==12345==    definitely lost: 104 bytes in 2 blocks
+==12345==    indirectly lost: 0 bytes in 0 blocks
+==12345==      possibly lost: 0 bytes in 0 blocks
+==12345==    still reachable: 0 bytes in 0 blocks
+==12345==         suppressed: 0 bytes in 0 blocks
+==12345==
+==12345== For lists of detected and suppressed errors, rerun with: -s
+==12345== ERROR SUMMARY: 2 errors from 2 contexts (suppressed: 0 from 0)
+```
+
+Valgrind nos dice exactamente:
+  - Cuántos bloques están fugados (2 bloques, 104 bytes).
+  - Dónde se asignaron (archivo y línea).
+  - El tipo de fuga ("definitely lost" = fuga segura).
+
+Tipos de fuga en Valgrind:
+
+1. **definitely lost**: Fuga confirmada. Perdiste la referencia al bloque.
+2. **indirectly lost**: Fuga a través de una estructura (ej: nodos de lista
+   cuya cabeza se perdió).
+3. **possibly lost**: Valgrind no está seguro (punteros internos).
+4. **still reachable**: El bloque sigue accesible al final (no se liberó
+   pero se podría liberar). Técnicamente no es fuga, pero es descuidado.
+
+Comandos avanzados de Valgrind:
+
+```bash
+# Reporte detallado de todas las fugas
+valgrind --leak-check=full --show-leak-kinds=all ./programa
+
+# Mostrar más información de cada stack trace
+valgrind --leak-check=full --track-origins=yes ./programa
+
+# Generar archivo de log
+valgrind --leak-check=full --log-file=valgrind.log ./programa
+
+# Detectar uso de memoria no inicializada
+valgrind --leak-check=full --undef-value-errors=yes ./programa
+
+# Supresión de errores conocidos (bibliotecas)
+valgrind --leak-check=full --suppressions=supresiones.supp ./programa
+```
+
+Ejemplo de sesión completa:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int *crear_array(int n) {
+    int *arr = (int *)malloc(n * sizeof(int));
+    if (arr == NULL) return NULL;
+    for (int i = 0; i < n; i++) arr[i] = i * 2;
+    return arr;
+}
+
+int main() {
+    // Fuga 1: asignamos pero no liberamos
+    int *a = crear_array(10);
+    // No liberamos a
+
+    // Fuga 2: pérdida de referencia
+    int *b = (int *)malloc(5 * sizeof(int));
+    b = (int *)malloc(10 * sizeof(int));  // El primer bloque se pierde
+    free(b);
+
+    return 0;
+}
+```
+
+```bash
+gcc -g ejemplo.c -o ejemplo
+valgrind --leak-check=full --show-leak-kinds=all ./ejemplo
+```
+
+Valgrind te mostrará exactamente dónde están las fugas, permitiéndote
+corregirlas una por una.
+
+===============================================================================
+4. ADDRESSSANITIZER (ASAN)
+===============================================================================
+
+AddressSanitizer (ASan) es una herramienta de detección de errores de
+memoria integrada en GCC y Clang. Es más rápida que Valgrind (2-3x de
+sobrecarga vs 10-20x) y detecta más tipos de errores.
+
+Uso básico:
+
+```bash
+gcc -fsanitize=address -g programa.c -o programa
+./programa
+```
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int *datos = (int *)malloc(10 * sizeof(int));
+
+    for (int i = 0; i < 10; i++) {
+        datos[i] = i;
+    }
+
+    // Olvidamos liberar datos → ASan reporta el leak al final
+
+    return 0;
+}
+```
+
+AddressSanitizer reporta:
+
+```
+=================================================================
+==12345==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 40 byte(s) in 1 object(s) allocated from:
+    #0 0x7f1234567890 in __interceptor_malloc
+    #1 0x1091bc in main /home/user/programa.c:5
+    #2 0x7f1234567890 in __libc_start_main
+
+SUMMARY: AddressSanitizer: 40 byte(s) leaked in 1 allocation(s).
+```
+
+ASan detecta múltiples tipos de errores:
+
+1. **Memory leaks**: bloques no liberados al final del programa.
+2. **Buffer overflow**: acceso más allá del bloque asignado.
+3. **Use-after-free**: acceso a memoria ya liberada.
+4. **Double free**: liberar el mismo bloque dos veces.
+5. **Stack overflow**: desbordamiento del stack.
+
+```c
+// Compilar: gcc -fsanitize=address -g asan_ejemplo.c -o asan_ejemplo
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() {
+    // Error 1: Buffer overflow en heap
+    char *buffer = (char *)malloc(10);
+    strcpy(buffer, "Este texto es demasiado largo");  // ASan detecta
+    printf("Buffer: %s\n", buffer);
+    free(buffer);
+
+    // Error 2: Use-after-free
+    int *p = (int *)malloc(sizeof(int));
+    *p = 42;
+    free(p);
+    // printf("%d\n", *p);  // ASan detectaría use-after-free
+
+    // Error 3: Memory leak
+    int *datos = (int *)malloc(100 * sizeof(int));
+    // No liberamos datos
+
+    return 0;
+}
+```
+
+ASan se integra fácilmente en CMake:
+
+```cmake
+# En CMakeLists.txt
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+```
+
+O en Makefile:
+
+```makefile
+CFLAGS = -g -fsanitize=address -fno-omit-frame-pointer
+LDFLAGS = -fsanitize=address
+```
+
+Comparativa Valgrind vs ASan:
+
+| Característica       | Valgrind            | AddressSanitizer    |
+|----------------------|---------------------|---------------------|
+| Velocidad            | 10-20x más lento    | 2-3x más lento      |
+| Detección leaks      | Excelente           | Excelente           |
+| Buffer overflow      | Sí                  | Sí                  |
+| Use-after-free       | Sí                  | Sí                  |
+| Double free          | Sí                  | Sí                  |
+| Stack overflow       | No                  | Sí                  |
+| Sin recompilar       | Sí (binario)        | No (necesita -fsanitize) |
+| Memoria extra        | No                  | ~2x                  |
+| Portable             | Linux, macOS        | Linux, macOS, Windows |
+
+Recomendación: usa ASan durante el desarrollo (es más rápido) y Valgrind
+para depuración profunda antes de release.
+
+===============================================================================
+5. PATRONES DE DETECCIÓN DE FUGAS
+===============================================================================
+
+Además de las herramientas automáticas, existen patrones que puedes
+implementar en tu código para detectar fugas en tiempo de ejecución.
+
+5.1. Contador de asignaciones
+
+Mantén un contador global de malloc/free. Al final, si no cuadran,
+hay fugas.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+static int alloc_count = 0;
+static int free_count = 0;
+
+void *tracked_malloc(size_t size) {
+    void *ptr = malloc(size);
+    if (ptr != NULL) alloc_count++;
+    return ptr;
+}
+
+void tracked_free(void *ptr) {
+    if (ptr != NULL) {
+        free_count++;
+        free(ptr);
+    }
+}
+
+void report_memory_status() {
+    printf("Asignaciones: %d, Liberaciones: %d\n", alloc_count, free_count);
+    if (alloc_count != free_count) {
+        printf("¡ADVERTENCIA! Posible memory leak detectado.\n");
+    }
+}
+
+int main() {
+    int *a = (int *)tracked_malloc(sizeof(int));
+    int *b = (int *)tracked_malloc(sizeof(int));
+    int *c = (int *)tracked_malloc(sizeof(int));
+
+    *a = 1; *b = 2; *c = 3;
+
+    tracked_free(a);
+    tracked_free(c);
+    // Olvidamos liberar b → fuga
+
+    report_memory_status();
+
+    return 0;
+}
+```
+
+5.2. Wrap de malloc/free con guardia
+
+Podemos añadir metadatos alrededor de cada bloque para verificar
+integridad y detectar fugas.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    size_t size;
+    const char *file;
+    int line;
+    int freed;
+} AllocHeader;
+
+#define MALLOC_TRACKED(size) tracked_malloc(size, __FILE__, __LINE__)
+#define FREE_TRACKED(ptr) tracked_free(ptr, __FILE__, __LINE__)
+
+void *tracked_malloc(size_t size, const char *file, int line) {
+    AllocHeader *header = (AllocHeader *)malloc(sizeof(AllocHeader) + size);
+    if (header == NULL) return NULL;
+
+    header->size = size;
+    header->file = file;
+    header->line = line;
+    header->freed = 0;
+
+    return (void *)(header + 1);
+}
+
+void tracked_free(void *ptr, const char *file, int line) {
+    if (ptr == NULL) return;
+
+    AllocHeader *header = (AllocHeader *)ptr - 1;
+
+    if (header->freed) {
+        fprintf(stderr, "DOUBLE FREE en %s:%d (ya liberado en %s:%d)\n",
+                file, line, header->file, header->line);
+        return;
+    }
+
+    header->freed = 1;
+    free(header);
+}
+
+void report_leaks() {
+    printf("=== REPORTE DE MEMORY LEAKS ===\n");
+    // Nota: en una implementación real, mantendríamos una lista
+    // global de bloques asignados y recorreríamos los no liberados.
+    printf("Revisa con Valgrind para un análisis completo.\n");
+}
+
+int main() {
+    int *p = (int *)MALLOC_TRACKED(10 * sizeof(int));
+    int *q = (int *)MALLOC_TRACKED(sizeof(int));
+
+    FREE_TRACKED(p);
+    // Olvidamos liberar q
+
+    // Intentar double free
+    FREE_TRACKED(p);  // Detectado
+
+    report_leaks();
+
+    return 0;
+}
+```
+
+5.3. Almacenamiento de backtraces
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <execinfo.h>
+
+#define BT_SIZE 100
+
+typedef struct {
+    void *ptr;
+    size_t size;
+    void *backtrace[BT_SIZE];
+    int bt_size;
+} AllocRecord;
+
+// En una implementación real, usaríamos una lista dinámica
+#define MAX_RECORDS 10000
+AllocRecord records[MAX_RECORDS];
+int num_records = 0;
+
+void *malloc_with_bt(size_t size) {
+    void *ptr = malloc(size);
+    if (ptr == NULL) return NULL;
+
+    if (num_records < MAX_RECORDS) {
+        records[num_records].ptr = ptr;
+        records[num_records].size = size;
+        records[num_records].bt_size = backtrace(
+            records[num_records].backtrace, BT_SIZE);
+        num_records++;
+    }
+
+    return ptr;
+}
+
+void free_with_bt(void *ptr) {
+    if (ptr == NULL) return;
+
+    for (int i = 0; i < num_records; i++) {
+        if (records[i].ptr == ptr) {
+            records[i].ptr = NULL;  // Marcamos como liberado
+            break;
+        }
+    }
+
+    free(ptr);
+}
+
+void print_leaks() {
+    printf("=== BLOQUES NO LIBERADOS ===\n");
+    int leaks = 0;
+    for (int i = 0; i < num_records; i++) {
+        if (records[i].ptr != NULL) {
+            leaks++;
+            printf("Leak %d: %zu bytes en %p\n",
+                   leaks, records[i].size, records[i].ptr);
+        }
+    }
+    if (leaks == 0) {
+        printf("No se detectaron memory leaks.\n");
+    } else {
+        printf("Total: %d bloque(s) fugado(s).\n", leaks);
+    }
+}
+
+int main() {
+    int *a = (int *)malloc_with_bt(10 * sizeof(int));
+    int *b = (int *)malloc_with_bt(20 * sizeof(int));
+    int *c = (int *)malloc_with_bt(30 * sizeof(int));
+
+    free_with_bt(a);
+    free_with_bt(c);
+    // b no se libera → leak
+
+    print_leaks();
+    free_with_bt(b);  // Limpiar antes de salir
+
+    return 0;
+}
+```
+
+Estos patrones son educativos. En producción, usa Valgrind o ASan.
+
+===============================================================================
+6. PATRONES RAII EN C
+===============================================================================
+
+RAII (Resource Acquisition Is Initialization) es un patrón de C++ donde
+los recursos se liberan automáticamente cuando el objeto sale de ámbito.
+En C podemos emularlo con funciones de cleanup y macros.
+
+6.1. __attribute__((cleanup))
+
+GCC y Clang soportan el atributo cleanup, que ejecuta una función
+cuando una variable sale de ámbito.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+void cleanup_int(int **pp) {
+    if (*pp != NULL) {
+        printf("RAII: Liberando int en %p\n", (void*)*pp);
+        free(*pp);
+        *pp = NULL;
+    }
+}
+
+void cleanup_char(char **pp) {
+    if (*pp != NULL) {
+        printf("RAII: Liberando char* en %p\n", (void*)*pp);
+        free(*pp);
+        *pp = NULL;
+    }
+}
+
+#define RAII_INT __attribute__((cleanup(cleanup_int)))
+#define RAII_CHAR __attribute__((cleanup(cleanup_char)))
+
+typedef struct {
+    RAII_INT int *datos;
+    RAII_CHAR char *nombre;
+} Recursos;
+
+int main() {
+    RAII_INT int *p = (int *)malloc(sizeof(int));
+    if (p == NULL) return 1;
+    *p = 42;
+    printf("Valor: %d\n", *p);
+
+    RAII_CHAR char *buffer = (char *)malloc(100);
+    if (buffer == NULL) return 1;
+
+    printf("Buffer asignado correctamente.\n");
+
+    // Al salir del ámbito, p y buffer se liberan automáticamente
+    return 0;
+}
+```
+
+6.2. goto cleanup (patrón de único punto de salida)
+
+Este es el patrón RAII más común en C puro:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int procesar_archivo(const char *nombre) {
+    FILE *f = NULL;
+    char *buffer = NULL;
+    int *datos = NULL;
+    int resultado = -1;
+
+    // Asignaciones
+    f = fopen(nombre, "r");
+    if (f == NULL) goto cleanup;
+
+    buffer = (char *)malloc(1024);
+    if (buffer == NULL) goto cleanup;
+
+    datos = (int *)malloc(100 * sizeof(int));
+    if (datos == NULL) goto cleanup;
+
+    // Procesamiento
+    if (fgets(buffer, 1024, f) == NULL) goto cleanup;
+
+    for (int i = 0; i < 100; i++) {
+        datos[i] = i * 2;
+    }
+
+    printf("Archivo procesado: %s\n", buffer);
+    printf("Primer dato: %d\n", datos[0]);
+    resultado = 0;
+
+cleanup:
+    if (f != NULL) fclose(f);
+    free(buffer);
+    free(datos);
+
+    return resultado;
+}
+
+int main() {
+    // Crear un archivo de prueba
+    FILE *tmp = fopen("/tmp/prueba.txt", "w");
+    if (tmp) {
+        fprintf(tmp, "Datos de prueba\n");
+        fclose(tmp);
+    }
+
+    if (procesar_archivo("/tmp/prueba.txt") == 0) {
+        printf("Éxito.\n");
+    } else {
+        printf("Error en el procesamiento.\n");
+    }
+
+    return 0;
+}
+```
+
+6.3. Macros de ámbito (scope guard)
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+#define SCOPE_GUARD_CLEANUP(type) __attribute__((cleanup(type)))
+#define DEFER(func) __attribute__((cleanup(func)))
+
+void free_guard(void **pp) {
+    if (*pp != NULL) {
+        free(*pp);
+        *pp = NULL;
+    }
+}
+
+#define AUTO_FREE DEFER(free_guard)
+
+typedef struct {
+    int *edades;
+    char **nombres;
+    int count;
+} Grupo;
+
+void grupo_cleanup(Grupo **gp) {
+    if (gp == NULL || *gp == NULL) return;
+    Grupo *g = *gp;
+    for (int i = 0; i < g->count; i++) {
+        free(g->nombres[i]);
+    }
+    free(g->nombres);
+    free(g->edades);
+    free(g);
+    *gp = NULL;
+}
+
+#define AUTO_GRUPO __attribute__((cleanup(grupo_cleanup)))
+
+Grupo *grupo_crear(int count) {
+    Grupo *g = (Grupo *)malloc(sizeof(Grupo));
+    if (g == NULL) return NULL;
+
+    g->edades = (int *)malloc(count * sizeof(int));
+    g->nombres = (char **)malloc(count * sizeof(char *));
+    g->count = count;
+
+    if (g->edades == NULL || g->nombres == NULL) {
+        free(g->edades);
+        free(g->nombres);
+        free(g);
+        return NULL;
+    }
+
+    return g;
+}
+
+int main() {
+    AUTO_GRUPO Grupo *g = grupo_crear(3);
+    if (g == NULL) return 1;
+
+    g->nombres[0] = strdup("Ana");
+    g->nombres[1] = strdup("Luis");
+    g->nombres[2] = strdup("Eva");
+    g->edades[0] = 25;
+    g->edades[1] = 30;
+    g->edades[2] = 22;
+
+    for (int i = 0; i < g->count; i++) {
+        printf("%s: %d años\n", g->nombres[i], g->edades[i]);
+    }
+
+    // g se libera automáticamente al salir
+    return 0;
+}
+```
+
+Estos patrones reducen drásticamente los memory leaks al hacer que la
+liberación sea automática y no dependa de la memoria del programador.
+
+===============================================================================
+7. PREVENCIÓN DE MEMORY LEAKS EN LA PRÁCTICA
+===============================================================================
+
+7.1. Reglas de oro
+
+1. **Cada malloc() debe tener su free()**. Cuéntalos si es necesario.
+2. **Libera en orden inverso a la asignación**. Esto evita referencias
+   colgantes durante la limpieza.
+3. **Asigna NULL después de free()**. Esto previene double free y
+   dangling pointers.
+4. **Usa herramientas automáticas**. Valgrind y ASan desde el día 1.
+5. **Diseña con RAII en mente**. Aunque no tengas destructores automáticos,
+   estructura el código para que la liberación sea obvia.
+
+7.2. Checklist de código
+
+Antes de dar por terminada una función:
+
+- [ ] ¿Cada camino de ejecución que asigna memoria la libera?
+- [ ] ¿Los caminos de error liberan la memoria ya asignada?
+- [ ] ¿Las estructuras anidadas liberan sus campos dinámicos?
+- [ ] ¿Los punteros se asignan a NULL después de free()?
+- [ ] ¿Las funciones que devuelven memoria documentan quién la libera?
+
+7.3. Documentación de propiedad de memoria
+
+Es crucial documentar quién es el "dueño" de cada puntero:
+
+```c
+/**
+ * crear_usuario - Crea un nuevo usuario
+ * @nombre: nombre del usuario (no transfiere propiedad)
+ *
+ * Retorna: puntero al nuevo usuario (propiedad transferida al llamante)
+ *          El llamante debe liberar con usuario_liberar()
+ *
+ * Nota: La función copia internamente el nombre.
+ */
+```
+
+7.4. Estructuras con destructor explícito
+
+Siempre proporciona una función de destrucción/liberación para cada
+estructura que uses:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char *nombre;
+    char *email;
+    int *calificaciones;
+    int num_calificaciones;
+} Estudiante;
+
+Estudiante *estudiante_nuevo(const char *nombre, const char *email) {
+    Estudiante *e = (Estudiante *)malloc(sizeof(Estudiante));
+    if (e == NULL) return NULL;
+
+    e->nombre = (nombre) ? strdup(nombre) : NULL;
+    e->email = (email) ? strdup(email) : NULL;
+    e->calificaciones = NULL;
+    e->num_calificaciones = 0;
+
+    if ((nombre && e->nombre == NULL) || (email && e->email == NULL)) {
+        free(e->nombre);
+        free(e->email);
+        free(e);
+        return NULL;
+    }
+
+    return e;
+}
+
+void estudiante_agregar_calificacion(Estudiante *e, int calif) {
+    int *nuevas = realloc(e->calificaciones,
+                          (e->num_calificaciones + 1) * sizeof(int));
+    if (nuevas == NULL) return;
+    e->calificaciones = nuevas;
+    e->calificaciones[e->num_calificaciones++] = calif;
+}
+
+void estudiante_liberar(Estudiante *e) {
+    if (e == NULL) return;
+    free(e->calificaciones);
+    free(e->email);
+    free(e->nombre);
+    free(e);
+}
+
+int main() {
+    Estudiante *e = estudiante_nuevo("María López", "maria@email.com");
+    if (e == NULL) return 1;
+
+    estudiante_agregar_calificacion(e, 95);
+    estudiante_agregar_calificacion(e, 87);
+    estudiante_agregar_calificacion(e, 92);
+
+    printf("Estudiante: %s, Email: %s\n", e->nombre, e->email);
+    printf("Calificaciones: ");
+    for (int i = 0; i < e->num_calificaciones; i++) {
+        printf("%d ", e->calificaciones[i]);
+    }
+    printf("\n");
+
+    estudiante_liberar(e);
+    // e = NULL;  // Opcional si es la última línea
+
+    return 0;
+}
+```
+
+7.5. Integración continua
+
+Añade la detección de memory leaks a tu CI:
+
+```yaml
+# .github/workflows/ci.yml
+jobs:
+  memory-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Compilar con ASan
+        run: gcc -fsanitize=address -g programa.c -o programa
+      - name: Ejecutar pruebas
+        run: ./programa
+      - name: Valgrind check
+        run: valgrind --leak-check=full --error-exitcode=1 ./programa
+```
+
+O en un script:
+
+```bash
+#!/bin/bash
+# check_leaks.sh
+
+gcc -g programa.c -o programa
+valgrind --leak-check=full --error-exitcode=1 ./programa
+
+if [ $? -eq 1 ]; then
+    echo "ERROR: Memory leaks detectados"
+    exit 1
+fi
+echo "OK: Sin memory leaks"
+```
+
+===============================================================================
+8. CASOS DE ESTUDIO: FUGAS EN EL MUNDO REAL
+===============================================================================
+
+8.1. Fuga en servidor web
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char *url;
+    char *contenido;
+    int visits;
+} PaginaWeb;
+
+PaginaWeb *pagina_crear(const char *url) {
+    PaginaWeb *p = (PaginaWeb *)malloc(sizeof(PaginaWeb));
+    if (p == NULL) return NULL;
+    p->url = strdup(url);
+    p->contenido = NULL;
+    p->visits = 0;
+    return p;
+}
+
+void pagina_actualizar(PaginaWeb *p, const char *contenido) {
+    free(p->contenido);  // Liberar contenido anterior
+    p->contenido = strdup(contenido);
+}
+
+// ❌ MAL: No libera los campos internos
+void pagina_liberar_mal(PaginaWeb *p) {
+    free(p);  // Solo libera la estructura, no los campos
+}
+
+// ✅ BIEN: Libera todo
+void pagina_liberar_bien(PaginaWeb *p) {
+    if (p == NULL) return;
+    free(p->url);
+    free(p->contenido);
+    free(p);
+}
+
+int main() {
+    PaginaWeb *pagina = pagina_crear("https://ejemplo.com");
+    pagina_actualizar(pagina, "Bienvenido a mi sitio");
+
+    printf("URL: %s\n", pagina->url);
+    printf("Contenido: %s\n", pagina->contenido);
+
+    // Si usáramos pagina_liberar_mal, habría fuga de url y contenido
+    pagina_liberar_bien(pagina);
+
+    return 0;
+}
+```
+
+8.2. Fuga en bucle de procesamiento
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char *nombre;
+    int valor;
+} Item;
+
+Item *item_crear(const char *nombre, int valor) {
+    Item *item = (Item *)malloc(sizeof(Item));
+    if (item == NULL) return NULL;
+    item->nombre = strdup(nombre);
+    item->valor = valor;
+    return item;
+}
+
+void item_liberar(Item *item) {
+    if (item == NULL) return;
+    free(item->nombre);
+    free(item);
+}
+
+// ❌ MAL: Crea items pero no los libera
+void procesar_lote_mal(int n) {
+    for (int i = 0; i < n; i++) {
+        char nombre[32];
+        snprintf(nombre, sizeof(nombre), "Item_%d", i);
+        Item *item = item_crear(nombre, i * 10);
+        // Procesar item...
+        printf("Procesando: %s = %d\n", item->nombre, item->valor);
+        // ❌ Olvidamos liberar item → fuga
+    }
+}
+
+// ✅ BIEN: Libera cada item después de usarlo
+void procesar_lote_bien(int n) {
+    for (int i = 0; i < n; i++) {
+        char nombre[32];
+        snprintf(nombre, sizeof(nombre), "Item_%d", i);
+        Item *item = item_crear(nombre, i * 10);
+        if (item == NULL) continue;
+
+        printf("Procesando: %s = %d\n", item->nombre, item->valor);
+
+        item_liberar(item);  // Liberamos inmediatamente
+    }
+}
+
+int main() {
+    printf("Procesando lote (versión correcta):\n");
+    procesar_lote_bien(5);
+    printf("Lote completado sin fugas.\n");
+    return 0;
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Un memory leak es memoria asignada que nunca se libera porque se
+  pierde toda referencia a ella.
+- Las referencias perdidas ocurren por sobrescritura, reasignación,
+  salida de ámbito, o liberación incompleta de estructuras.
+- Valgrind con --leak-check=yes detecta fugas, muestra stack traces
+  y clasifica los leaks (definitely/indirectly/possibly lost).
+- AddressSanitizer (-fsanitize=address) es más rápido que Valgrind
+  y se integra fácilmente en GCC/Clang.
+- Los patrones de detección incluyen contadores, wrappers con metadatos
+  y almacenamiento de backtraces.
+- RAII en C se logra con __attribute__((cleanup)), goto cleanup, o
+  macros de ámbito.
+- La prevención incluye reglas de oro, documentación de propiedad,
+  destructores explícitos y verificación en CI.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Escribe un programa que cree intencionalmente 3 memory
+leaks de diferentes tipos (sobrescritura, reasignación, estructura anidada
+sin liberar campo interno). Ejecuta Valgrind para detectarlos. Luego
+corrige todos los leaks.
+
+🧩 **Ejercicio 2:** Implementa un wrapper de malloc/free con contadores
+globales. Al final del programa, si alloc_count != free_count, imprime
+un mensaje de advertencia con los detalles de los bloques no liberados.
+
+🧩 **Ejercicio 3:** Usando el patrón goto cleanup, escribe una función que
+abra un archivo, asigne un buffer, y procese su contenido. Asegúrate de
+que todos los caminos de error liberen correctamente los recursos.
+
+🧩 **Ejercicio 4:** Crea una estructura "ListaEnlazada" con nodos dinámicos.
+Proporciona funciones de inserción, eliminación y destrucción completa.
+Usa Valgrind para verificar que la destrucción no deje fugas.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Los memory leaks desaparecen cuando el programa termina?**
+Sí, el sistema operativo recupera toda la memoria del proceso al
+terminar. Pero para servidores/procesos largos, los leaks son críticos
+porque la memoria se agota progresivamente.
+
+❓ **¿Valgrind o AddressSanitizer? ¿Cuál es mejor?**
+Ambos. Usa ASan durante el desarrollo (es más rápido) y Valgrind para
+la validación final antes del release (es más completo y no requiere
+recompilación).
+
+❓ **¿Cómo manejo memory leaks en bibliotecas de terceros?**
+No puedes arreglar bibliotecas de terceros, pero puedes:
+1. Reportar el bug al mantenedor.
+2. Usar Valgrind con --suppressions para ignorarlos.
+3. Elegir alternativas sin leaks conocidos.
+
+❓ **¿strdup() necesita free()?**
+Sí. strdup() asigna memoria internamente con malloc() y debe liberarse
+con free(). Es una fuente común de memory leaks.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Asignación Trazada con Detección de Leaks**
+
+Diseña e implementa un sistema completo de trazado de memoria que:
+1. Intercepte todas las llamadas a malloc, calloc, realloc y free
+2. Registre cada asignación con: dirección, tamaño, archivo, línea,
+   timestamp y backtrace completo
+3. Proporcione una función dump_leaks() que imprima TODAS las
+   asignaciones no liberadas al final del programa
+4. Detecte y reporte double frees automáticamente
+5. Genere un archivo de log con toda la actividad de memoria
+6. Implemente un límite de memoria configurable (si se excede, abortar)
+7. Incluya una interfaz limpia vía macros (TRACE_MALLOC, TRACE_FREE)
+
+Este desafío implementa un sistema de trazado similar al de Valgrind
+pero a nivel de código fuente, ideal para sistemas embebidos o
+entornos donde Valgrind no está disponible.
+
+===============================================================================
+FIN DEL CAPÍTULO 55
+===============================================================================
+
+"No dejes que tu programa muera de sed en medio de un océano de memoria
+que no puede beber." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+56_CAPITULO_56_PUNTEROS_DOBLES.txt
+===============================================================================

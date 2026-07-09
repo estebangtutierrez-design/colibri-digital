@@ -1,0 +1,638 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 56: TASK
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 56 de C# MASTER BOOK. En el capítulo anterior viste
+async/await desde la perspectiva del lenguaje. Pero debajo del async/await
+hay una clase fundamental: System.Threading.Tasks.Task.
+
+Task representa una operación asíncrona. Puede estar en progreso,
+completada, fallida o cancelada. Con Task puedes:
+  • Esperar su finalización (Wait, Result).
+  • Encadenar continuaciones (ContinueWith).
+  • Inspeccionar su estado (TaskStatus).
+  • Controlar su creación (TaskCreationOptions).
+  • Propagar errores de manera controlada.
+
+Mientras que async/await es azúcar sintáctico sobre Task, conocer la
+clase Task a fondo te permitirá depurar problemas, optimizar rendimiento
+y escribir código asíncrono avanzado.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"Task es a la programación asíncrona lo que IEnumerable es a LINQ:
+la abstracción fundamental sobre la que todo se construye."
+— Stephen Toub
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Comprender qué es Task y su ciclo de vida.
+  • Usar Task<T> para operaciones con resultado.
+  • Esperar tareas con Wait() y WaitAll().
+  • Obtener resultados con .Result.
+  • Encadenar con ContinueWith y sus opciones.
+  • Inspeccionar TaskStatus, IsCompleted, IsFaulted, IsCanceled.
+  • Usar TaskCreationOptions y TaskContinuationOptions.
+  • Manejar excepciones con AggregateException.
+  • Diferenciar Task de ValueTask.
+  • Entender el ThreadPool y TaskScheduler.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. ¿Qué es Task?
+
+Task es una clase que representa una operación asíncrona.
+Task<T> es una subclase que produce un resultado de tipo T.
+
+  // Task sin resultado
+  Task task = Task.Run(() => Console.WriteLine("Hola"));
+
+  // Task<int> con resultado
+  Task<int> task = Task.Run(() => 42);
+
+  // Task desde factory
+  Task task2 = Task.Factory.StartNew(() => { });
+
+Estados posibles de una Task:
+  • Created → Task creada pero no iniciada.
+  • WaitingForActivation → esperando ser activada (por scheduler).
+  • WaitingToRun → esperando un hilo disponible.
+  • Running → ejecutándose.
+  • RanToCompletion → completada exitosamente.
+  • Faulted → completada con excepción.
+  • Canceled → cancelada (vía CancellationToken).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. Esperar tareas: Wait y WaitAll
+
+  Task tarea = Task.Run(() => Thread.Sleep(2000));
+
+  tarea.Wait();           // Espera hasta que termine (bloqueante)
+  tarea.Wait(1000);       // Espera máximo 1 segundo (timeout)
+  tarea.Wait(CancellationToken);  // Con cancelación
+
+  Task.WaitAll(t1, t2, t3);       // Espera todas
+  Task.WaitAny(t1, t2, t3);       // Espera la primera en completar
+
+⚠ Wait() BLOQUEA el hilo actual. En aplicaciones UI, usa await en vez.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. Result: Obtener el resultado (bloqueante)
+
+  Task<int> task = Task.Run(() =>
+  {
+      Thread.Sleep(1000);
+      return 42;
+  });
+
+  int resultado = task.Result;  // Bloquea hasta obtener el resultado
+
+⚠ Result puede causar DEADLOCKS si se usa en UI con SynchronizationContext.
+  En UI: await task en vez de task.Result.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. ContinueWith: Encadenar tareas
+
+ContinueWith ejecuta código cuando una tarea se completa:
+
+  Task.Run(() => 42)
+      .ContinueWith(t => Console.WriteLine($"Resultado: {t.Result}"));
+
+  // Con opciones:
+  Task.Run(() => 10)
+      .ContinueWith(t => t.Result * 2,
+          TaskContinuationOptions.OnlyOnRanToCompletion)
+      .ContinueWith(t => Console.WriteLine($"Doble: {t.Result}"),
+          TaskContinuationOptions.OnlyOnRanToCompletion);
+
+ContinueWith reemplazaba a await en C# < 5.0. Hoy día, await es preferible.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. TaskStatus y propiedades
+
+  Task t = Task.Run(() => Thread.Sleep(500));
+
+  Console.WriteLine(t.Status);         // Running
+  Console.WriteLine(t.IsCompleted);    // false
+  Console.WriteLine(t.IsFaulted);      // false
+  Console.WriteLine(t.IsCanceled);     // false
+
+  t.Wait();  // Esperar
+
+  Console.WriteLine(t.Status);         // RanToCompletion
+  Console.WriteLine(t.IsCompleted);    // true
+
+Para estado final:
+
+  if (t.Status == TaskStatus.RanToCompletion) { }
+  if (t.IsFaulted) { /* t.Exception contiene AggregateException */ }
+  if (t.IsCanceled) { /* OperationCanceledException */ }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. TaskCreationOptions
+
+Controlan cómo se crea y programa la tarea:
+
+  Task t1 = Task.Factory.StartNew(() => { },
+      TaskCreationOptions.None);
+
+  Task t2 = Task.Factory.StartNew(() => { },
+      TaskCreationOptions.LongRunning);   // Para tareas largas (nuevo hilo)
+
+  Task t3 = Task.Factory.StartNew(() => { },
+      TaskCreationOptions.AttachedToParent);  // Tarea hija
+
+  Task t4 = Task.Factory.StartNew(() => { },
+      TaskCreationOptions.PreferFairness);  // Cola FIFO (justa)
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. TaskContinuationOptions
+
+Controlan cuándo se ejecuta una continuación:
+
+  Task tarea = Task.Run(() => throw new Exception("Error"));
+
+  tarea.ContinueWith(t =>
+      Console.WriteLine("Siempre se ejecuta"));
+
+  tarea.ContinueWith(t =>
+      Console.WriteLine("Solo si éxito"),
+      TaskContinuationOptions.OnlyOnRanToCompletion);
+
+  tarea.ContinueWith(t =>
+      Console.WriteLine("Solo si error"),
+      TaskContinuationOptions.OnlyOnFaulted);
+
+  tarea.ContinueWith(t =>
+      Console.WriteLine("Solo si cancelada"),
+      TaskContinuationOptions.OnlyOnCanceled);
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. Excepciones en Task: AggregateException
+
+Cuando una task falla, su propiedad Exception es un AggregateException:
+
+  Task t = Task.Run(() => throw new InvalidOperationException("Error"));
+  try
+  {
+      t.Wait();  // Relanza AggregateException
+  }
+  catch (AggregateException ae)
+  {
+      foreach (var ex in ae.InnerExceptions)
+      {
+          Console.WriteLine($"  Error: {ex.Message}");
+      }
+  }
+
+  // Con await, la excepción NO se envuelve en AggregateException:
+  try { await Task.Run(() => throw new Exception("Fail")); }
+  catch (Exception ex) { Console.WriteLine(ex.Message); }  // Directo
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. Task.FromResult y Task.FromException
+
+  // Tarea ya completada con resultado
+  Task<int> t1 = Task.FromResult(42);
+
+  // Tarea ya fallida
+  Task t2 = Task.FromException(new InvalidOperationException("Error"));
+
+  // Tarea ya cancelada
+  Task t3 = Task.FromCanceled(new CancellationToken(true));
+
+Útil para implementar interfaces async en casos donde el resultado
+ya está disponible o el error es conocido.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+10. TaskScheduler y SynchronizationContext
+
+TaskScheduler controla cómo y dónde se ejecutan las tareas.
+
+  // Scheduler por defecto (ThreadPool)
+  TaskScheduler defaultScheduler = TaskScheduler.Default;
+
+  // Scheduler que ejecuta en el hilo actual (síncrono)
+  TaskScheduler current = TaskScheduler.Current;
+
+  // En UI: TaskScheduler.FromCurrentSynchronizationContext()
+
+El SynchronizationContext captura el contexto (hilo UI, ASP.NET) y
+TaskScheduler lo usa para marshalling.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Capitulo56_Task
+{
+    public class Program
+    {
+        static void Main()
+        {
+            Console.WriteLine("═══════ CAPÍTULO 56: TASK ═══════\n");
+
+            Console.WriteLine($"Hilo principal: {Thread.CurrentThread.ManagedThreadId}\n");
+
+            // ─── 1. Task.Run básico ───
+            Console.WriteLine("─── 1. Task.Run ───");
+
+            Task tareaSimple = Task.Run(() =>
+            {
+                Console.WriteLine($"  Ejecutando en hilo: {Thread.CurrentThread.ManagedThreadId}");
+                Thread.Sleep(500);
+                Console.WriteLine("  Tarea simple completada");
+            });
+
+            tareaSimple.Wait();
+            Console.WriteLine("  Wait() completado");
+
+            // ─── 2. Task<T> con Result ───
+            Console.WriteLine("\n─── 2. Task<T> con Result ───");
+
+            Task<int> tareaConResultado = Task.Run(() =>
+            {
+                Thread.Sleep(300);
+                return 42;
+            });
+
+            int resultado = tareaConResultado.Result;
+            Console.WriteLine($"  Resultado: {resultado}");
+
+            // ─── 3. TaskStatus ───
+            Console.WriteLine("\n─── 3. TaskStatus ───");
+
+            var tareaEstado = Task.Run(() =>
+            {
+                Thread.Sleep(200);
+                return "Listo";
+            });
+
+            Console.WriteLine($"  Status inicial: {tareaEstado.Status}");
+            tareaEstado.Wait();
+            Console.WriteLine($"  Status final: {tareaEstado.Status}");
+            Console.WriteLine($"  IsCompleted: {tareaEstado.IsCompleted}");
+            Console.WriteLine($"  IsFaulted: {tareaEstado.IsFaulted}");
+            Console.WriteLine($"  IsCanceled: {tareaEstado.IsCanceled}");
+
+            // ─── 4. ContinueWith básico ───
+            Console.WriteLine("\n─── 4. ContinueWith ───");
+
+            Task.Run(() =>
+            {
+                Console.WriteLine("  Tarea 1 ejecutándose");
+                return 10;
+            })
+            .ContinueWith(anterior =>
+            {
+                Console.WriteLine($"  Continuación: valor = {anterior.Result}");
+                return anterior.Result * 2;
+            })
+            .ContinueWith(anterior =>
+            {
+                Console.WriteLine($"  Segunda continuación: {anterior.Result}");
+            })
+            .Wait();
+
+            // ─── 5. ContinueWith con opciones ───
+            Console.WriteLine("\n─── 5. ContinueWith con Opciones ───");
+
+            Task tareaConExito = Task.Run(() =>
+            {
+                Console.WriteLine("  Tarea exitosa");
+                return 100;
+            });
+
+            tareaConExito.ContinueWith(t =>
+                Console.WriteLine("  ✅ Solo si éxito"),
+                TaskContinuationOptions.OnlyOnRanToCompletion);
+
+            tareaConExito.ContinueWith(t =>
+                Console.WriteLine("  ❌ Solo si error"),
+                TaskContinuationOptions.OnlyOnFaulted);
+
+            tareaConExito.ContinueWith(t =>
+                Console.WriteLine("  ⏹ Solo si cancelada"),
+                TaskContinuationOptions.OnlyOnCanceled);
+
+            tareaConExito.Wait();
+
+            // ─── 6. Manejo de excepciones ───
+            Console.WriteLine("\n─── 6. Excepciones en Task ───");
+
+            Task tareaFalla = Task.Run(() =>
+            {
+                throw new InvalidOperationException("Algo salió mal");
+            });
+
+            try
+            {
+                tareaFalla.Wait();  // Lanza AggregateException
+            }
+            catch (AggregateException ae)
+            {
+                ae.Handle(ex =>
+                {
+                    Console.WriteLine($"  Error capturado: {ex.Message}");
+                    return true;  // Maneja la excepción
+                });
+            }
+
+            Console.WriteLine($"  IsFaulted: {tareaFalla.IsFaulted}");
+            Console.WriteLine($"  Exception: {tareaFalla.Exception?.InnerException?.Message}");
+
+            // ─── 7. WaitAll y WaitAny ───
+            Console.WriteLine("\n─── 7. WaitAll / WaitAny ───");
+
+            var tareas = new List<Task>
+            {
+                Task.Run(() => { Thread.Sleep(1500); Console.WriteLine("  Tarea A"); }),
+                Task.Run(() => { Thread.Sleep(1000); Console.WriteLine("  Tarea B"); }),
+                Task.Run(() => { Thread.Sleep(2000); Console.WriteLine("  Tarea C"); }),
+            };
+
+            int indice = Task.WaitAny(tareas.ToArray());
+            Console.WriteLine($"  Primera en completar: índice {indice}");
+
+            Task.WaitAll(tareas.ToArray());
+            Console.WriteLine("  Todas completadas");
+
+            // ─── 8. TaskCreationOptions ───
+            Console.WriteLine("\n─── 8. TaskCreationOptions ───");
+
+            Task tareaLarga = Task.Factory.StartNew(() =>
+            {
+                Console.WriteLine($"  LongRunning hilo: {Thread.CurrentThread.ManagedThreadId}");
+                Console.WriteLine($"  IsThreadPoolThread: {Thread.CurrentThread.IsThreadPoolThread}");
+                Thread.Sleep(500);
+            }, TaskCreationOptions.LongRunning);
+
+            tareaLarga.Wait();
+            // LongRunning crea un hilo DEDICADO (no ThreadPool)
+
+            Task tareaNormal = Task.Factory.StartNew(() =>
+            {
+                Console.WriteLine($"  Normal hilo: {Thread.CurrentThread.ManagedThreadId}");
+                Console.WriteLine($"  IsThreadPoolThread: {Thread.CurrentThread.IsThreadPoolThread}");
+            }, TaskCreationOptions.None);
+
+            tareaNormal.Wait();
+
+            // ─── 9. FromResult ───
+            Console.WriteLine("\n─── 9. Task.FromResult ───");
+
+            Task<int> tareaCompletada = Task.FromResult(999);
+            Console.WriteLine($"  FromResult: {tareaCompletada.Result} (Status: {tareaCompletada.Status})");
+
+            // ─── 10. Task.Factory.StartNew ───
+            Console.WriteLine("\n─── 10. Task.Factory.StartNew ───");
+
+            Task<int> factoryTask = Task.Factory.StartNew(() =>
+            {
+                Thread.Sleep(200);
+                return 77;
+            }, TaskCreationOptions.None);
+
+            Console.WriteLine($"  Factory Task: {factoryTask.Result}");
+
+            // ─── 11. Encadenamiento complejo ───
+            Console.WriteLine("\n─── 11. Pipeline con ContinueWith ───");
+
+            Task.Run(() => 5)
+                .ContinueWith(t => t.Result * 2,
+                    TaskContinuationOptions.OnlyOnRanToCompletion)
+                .ContinueWith(t => t.Result + 3,
+                    TaskContinuationOptions.OnlyOnRanToCompletion)
+                .ContinueWith(t =>
+                    Console.WriteLine($"  Pipeline resultado: {t.Result}"),
+                    TaskContinuationOptions.OnlyOnRanToCompletion)
+                .Wait();
+
+            // ─── 12. Task en paralelo (múltiples) ───
+            Console.WriteLine("\n─── 12. Múltiples Tareas ───");
+
+            var calculos = new[]
+            {
+                Task.Run(() => Suma(1, 100)),
+                Task.Run(() => Suma(101, 200)),
+                Task.Run(() => Suma(201, 300)),
+            };
+
+            Task.WaitAll(calculos);
+            long total = calculos.Sum(t => t.Result);
+            Console.WriteLine($"  Total suma 1-300: {total}");
+
+            // ─── 13. AggregateException con múltiples errores ───
+            Console.WriteLine("\n─── 13. Múltiples Excepciones ───");
+
+            var tareasConError = new[]
+            {
+                Task.Run(() => throw new Exception("Error 1")),
+                Task.Run(() => throw new Exception("Error 2")),
+            };
+
+            try
+            {
+                Task.WaitAll(tareasConError);
+            }
+            catch (AggregateException ae)
+            {
+                Console.WriteLine($"  {ae.InnerExceptions.Count} errores capturados:");
+                foreach (var ex in ae.InnerExceptions)
+                    Console.WriteLine($"    - {ex.Message}");
+            }
+
+            // ─── 14. Task.IsCompleted ───
+            Console.WriteLine("\n─── 14. IsCompleted, IsFaulted, IsCanceled ───");
+
+            var tareaCheck = Task.Run(() => { Thread.Sleep(100); });
+            Thread.Sleep(50);
+            Console.WriteLine($"  Durante ejecución: Completada={tareaCheck.IsCompleted}");
+            tareaCheck.Wait();
+            Console.WriteLine($"  Después: Completada={tareaCheck.IsCompleted}");
+
+            // ─── 15. ValueTask ───
+            Console.WriteLine("\n─── 15. ValueTask ───");
+
+            int valor = ObtenerValorAsync(true).Result;
+            Console.WriteLine($"  ValueTask (síncrono): {valor}");
+
+            valor = ObtenerValorAsync(false).Result;
+            Console.WriteLine($"  ValueTask (asíncrono): {valor}");
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 56 ═══════");
+        }
+
+        static int Suma(int inicio, int fin)
+        {
+            int s = 0;
+            for (int i = inicio; i <= fin; i++) s += i;
+            return s;
+        }
+
+        static async ValueTask<int> ObtenerValorAsync(bool sincrono)
+        {
+            if (sincrono) return 42;
+            await Task.Delay(100);
+            return 100;
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Task = operación asíncrona; Task<T> = operación con resultado.
+  • Wait()/Result bloquean el hilo (cuidado con deadlocks).
+  • ContinueWith encadena tareas (preferir await en código moderno).
+  • TaskStatus refleja el ciclo de vida: Created→Running→RanToCompletion.
+  • TaskCreationOptions: LongRunning, AttachedToParent, PreferFairness.
+  • TaskContinuationOptions: OnlyOnRanToCompletion, OnlyOnFaulted, etc.
+  • AggregateException encapsula una o más excepciones en Task.
+  • Task.FromResult/FromException/FromCanceled para tareas prefabricadas.
+  • TaskScheduler controla dónde se ejecutan las tareas.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Crea 5 tareas con Task.Run que sumen rangos distintos.
+    Usa Task.WaitAll y suma los resultados.
+
+  ✦ Ejercicio 2: Implementa un pipeline de 4 etapas con ContinueWith.
+    Cada etapa transforma el resultado de la anterior.
+
+  ✦ Ejercicio 3: Crea una tarea que falle y otra que tenga éxito.
+    Usa ContinueWith con OnlyOnRanToCompletion y OnlyOnFaulted.
+
+  ✦ Ejercicio 4: Escribe un código que demuestre el deadlock típico
+    de .Result en un contexto UI (simulado). Explica por qué ocurre.
+
+  ✦ Ejercicio 5: Usa Task.Factory.StartNew con LongRunning y demuestra
+    que usa un hilo dedicado (no ThreadPool).
+
+  ✦ Ejercicio 6: Captura múltiples excepciones de varias tareas con
+    AggregateException y usa ae.Handle().
+
+  ✦ Ejercicio 7: Escribe un timeout con Task.WaitAny y CancellationToken.
+
+  ✦ Ejercicio 8: Crea un método que reciba IEnumerable<Func<Task<int>>> y
+    ejecute todas las tareas, retornando la suma de resultados.
+
+  ✦ Ejercicio 9: Compara Task.FromResult vs Task.Run: muestra que
+    FromResult no ejecuta código en otro hilo.
+
+  ✦ Ejercicio 10: Implementa un TaskScheduler personalizado que limite
+    el número de tareas concurrentes.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿Cuál es la diferencia entre Task.Run y Task.Factory.StartNew?
+  → Task.Run es una sobrecarga simplificada. Task.Factory.StartNew
+    ofrece más opciones (TaskCreationOptions, TaskScheduler).
+
+  ❓ ¿Task.Run siempre usa ThreadPool?
+  → Sí, a menos que se especifique un TaskScheduler diferente.
+
+  ❓ ¿Puedo cancelar una Task que ya se está ejecutando?
+  → Sí, mediante CancellationToken (capítulo 57). La tarea debe
+    cooperar verificando ThrowIfCancellationRequested.
+
+  ❓ ¿Qué pasa si uso .Result en una tarea no completada?
+  → El hilo se bloquea hasta que la tarea se complete. Riesgo de deadlock.
+
+  ❓ ¿ContinueWith se ejecuta en el mismo hilo que la tarea original?
+  → Depende del TaskScheduler. Por defecto, en ThreadPool.
+
+  ❓ ¿Cómo obtengo todas las excepciones de una AggregateException?
+  → ae.InnerExceptions y ae.Handle().
+
+  ❓ ¿ValueTask vs Task?
+  → ValueTask evita allocation en casos síncronos. Úsalo en APIs
+    de alto rendimiento.
+
+  ❓ ¿Qué es TaskCreationOptions.AttachedToParent?
+  → Hace que una tarea hija se complete antes que la tarea padre.
+    Las tareas creadas con Task.Run NO se adjuntan por defecto.
+
+  ❓ ¿Puedo usar Task en .NET Framework vs .NET Core?
+  → Task está disponible desde .NET Framework 4.0. La API es
+    consistente entre versiones modernas.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Implementa un TaskScheduler personalizado con las siguientes      │
+  │  características:                                                  │
+  │                                                                     │
+  │  LimitedConcurrencyTaskScheduler                                   │
+  │    • Límite de concurrencia configurable (max hilos simultáneos).  │
+  │    • Cola FIFO de tareas pendientes.                              │
+  │    • Soporta prioridades (alta, normal, baja).                    │
+  │    • Método GetStatus() que reporte: tareas en cola, ejecutándose, │
+  │      completadas, fallidas.                                        │
+  │    • Evento TareaCompletada con información de la tarea.          │
+  │    • Debe heredar de TaskScheduler.                                │
+  │    • Usar SemaphoreSlim para controlar la concurrencia.           │
+  │                                                                     │
+  │  Ejemplo de uso:                                                   │
+  │    var scheduler = new LimitedConcurrencyTaskScheduler(max: 2);   │
+  │    for (int i = 0; i < 10; i++)                                   │
+  │    {                                                               │
+  │        Task.Factory.StartNew(() => { Thread.Sleep(1000); },       │
+  │            CancellationToken.None, TaskCreationOptions.None,       │
+  │            scheduler);                                             │
+  │    }                                                               │
+  │                                                                     │
+  │  Entrega: LimitedConcurrencyTaskScheduler.cs completo con demo.    │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+La clase Task es el corazón de la programación asíncrona en .NET.
+Aunque async/await es la forma preferida de consumir tareas, entender
+Task a nivel profundo te permite debuggear problemas, optimizar
+rendimiento, y escribir código asíncrono más sofisticado.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 57: CANCELACIÓN (CANCELLATIONTOKEN)
+    Aprenderás el patrón de cancelación cooperativa en .NET:
+    CancellationTokenSource y CancellationToken.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 56 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

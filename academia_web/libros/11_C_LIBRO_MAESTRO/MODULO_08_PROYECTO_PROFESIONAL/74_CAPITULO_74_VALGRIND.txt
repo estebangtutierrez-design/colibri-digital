@@ -1,0 +1,1141 @@
+================================================================================
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 74: VALGRIND (MEMORIA)
+================================================================================
+
+________________________________________________________________________________
+  BIENVENIDA
+________________________________________________________________________________
+
+Bienvenido al Capítulo 74. En el capítulo anterior aprendimos a usar
+GDB para depurar errores lógicos y de ejecución. Pero hay una clase
+de bugs que GDB no puede detectar fácilmente: los errores de memoria.
+
+Las fugas de memoria, los accesos a memoria ya liberada, los buffer
+overflows y el uso de memoria no inicializada son problemas comunes
+en C que pueden pasar desapercibidos durante meses o años, hasta que
+causan fallos catastróficos en producción.
+
+Valgrind es la herramienta definitiva para detectar estos problemas.
+Con Valgrind, puedes ejecutar tu programa en un entorno instrumentado
+que monitorea cada acceso a memoria y reporta cualquier anomalía.
+
+En este capítulo, aprenderás a usar Valgrind como un higienista de
+memoria, asegurándote de que cada byte que asignas sea liberado
+correctamente y de que nunca accedas a memoria que no te pertenece.
+
+________________________________________________________________________________
+  FRASE DEL CAPÍTULO
+________________________________________________________________________________
+
+"La memoria es como el agua: cuando se fuga, no la ves hasta que
+todo está inundado. Valgrind es tu fontanero digital." — Lucas Ega
+
+________________________________________________________________________________
+  OBJETIVOS DEL CAPÍTULO
+________________________________________________________________________________
+
+  ✅ Comprender qué es Valgrind y cómo funciona internamente.
+  ✅ Usar la herramienta Memcheck para detectar fugas de memoria.
+  ✅ Identificar accesos a memoria no inicializada.
+  ✅ Detectar buffer overflows y underflows.
+  ✅ Interpretar y corregir los reportes de errores de Valgrind.
+
+________________________________________________________________________________
+  CONTENIDO
+________________________________________________________________________________
+
+=== 1. INTRODUCCIÓN A VALGRIND ===
+
+Valgrind es un framework de instrumentación dinámica que ejecuta tu
+programa en una CPU virtual. Esto significa que cada instrucción es
+analizada antes de ejecutarse, permitiendo detectar:
+
+  - Fugas de memoria (memory leaks)
+  - Accesos a memoria ya liberada (use-after-free)
+  - Accesos a memoria no inicializada
+  - Buffer overflows (lectura/escritura fuera de límites)
+  - Errores de paired allocation (malloc sin free)
+  - Condiciones de carrera en programas multihilo (Helgrind)
+  - Uso incorrecto de la pila (cachegrind)
+
+Instalación:
+
+```bash
+# En Debian/Ubuntu
+sudo apt-get install valgrind
+
+# En Fedora/RHEL
+sudo dnf install valgrind
+
+# En macOS con Homebrew
+brew install valgrind
+
+# Verificar instalación
+valgrind --version
+```
+
+Uso básico:
+
+```bash
+# Ejecutar un programa con Valgrind (memcheck es la herramienta por defecto)
+valgrind ./mi_programa
+
+# Con más detalle
+valgrind --leak-check=full --show-leak-kinds=all ./mi_programa
+
+# Generar reporte detallado
+valgrind --leak-check=full --track-origins=yes --verbose ./mi_programa
+```
+
+=== 2. PRIMEROS PASOS CON MEMCHECK ===
+
+Memcheck es la herramienta más usada de Valgrind. Detecta errores
+de memoria en tiempo de ejecución.
+
+```c
+// ejemplo1.c - Programa limpio (sin errores)
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int* datos = malloc(10 * sizeof(int));
+    if (!datos) return 1;
+
+    for (int i = 0; i < 10; i++) {
+        datos[i] = i * 2;
+    }
+
+    for (int i = 0; i < 10; i++) {
+        printf("datos[%d] = %d\n", i, datos[i]);
+    }
+
+    free(datos);
+    return 0;
+}
+```
+
+```bash
+$ gcc -g -o ejemplo1 ejemplo1.c
+$ valgrind ./ejemplo1
+```
+
+Salida:
+
+```
+==12345== Memcheck, a memory error detector
+==12345== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==12345== Using Valgrind-3.20.0 and LibVEX; rerun with -h for copyright info
+==12345== Command: ./ejemplo1
+==12345==
+datos[0] = 0
+datos[1] = 2
+...
+datos[9] = 18
+==12345==
+==12345== HEAP SUMMARY:
+==12345==     in use at exit: 0 bytes in 0 blocks
+==12345==     total heap usage: 2 allocs, 2 frees, 1,040 bytes allocated
+==12345==
+==12345== All heap blocks were freed -- no leaks are possible
+==12345==
+==12345== For lists of detected and suppressed errors, rerun with: -s
+==12345== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+```
+
+Un programa limpio muestra 0 errores y todos los bloques liberados.
+
+=== 3. FUGAS DE MEMORIA (MEMORY LEAKS) ===
+
+La fuga de memoria más común es olvidar llamar a free() después
+de malloc().
+
+```c
+// leaks.c - Programa con fugas de memoria
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void crear_fuga_simple(void) {
+    int* p = malloc(sizeof(int));
+    *p = 42;
+    // Falta: free(p);
+}
+
+void crear_fuga_arreglo(void) {
+    char* buffer = malloc(1024);
+    strcpy(buffer, "Hola, mundo!");
+    // Falta: free(buffer);
+}
+
+typedef struct {
+    char* nombre;
+    int   edad;
+} Persona;
+
+Persona* crear_persona(const char* nombre, int edad) {
+    Persona* p = malloc(sizeof(Persona));
+    if (!p) return NULL;
+
+    p->nombre = malloc(strlen(nombre) + 1);
+    if (!p->nombre) {
+        free(p);  // Liberamos Persona pero...
+        return NULL;
+    }
+
+    strcpy(p->nombre, nombre);
+    p->edad = edad;
+    return p;
+    // Si la función retorna con éxito, el llamador es responsable
+    // de llamar a persona_destruir()
+}
+
+void persona_destruir(Persona* p) {
+    if (!p) return;
+    free(p->nombre);
+    free(p);
+    // Correcto: libera ambos malloc's
+}
+
+int main(void) {
+    crear_fuga_simple();
+    crear_fuga_arreglo();
+
+    Persona* p = crear_persona("Juan", 30);
+    // Olvidamos llamar a persona_destruir(p) -> FUGA!
+
+    Persona* p2 = crear_persona("María", 25);
+    persona_destruir(p2);  // Esta se libera correctamente
+
+    return 0;
+}
+```
+
+```bash
+$ gcc -g -o leaks leaks.c
+$ valgrind --leak-check=full --show-leak-kinds=all ./leaks
+```
+
+Salida:
+
+```
+==12345== HEAP SUMMARY:
+==12345==     in use at exit: 1,061 bytes in 3 blocks
+==12345==
+==12345== 4 bytes in 1 blocks are definitely lost in loss record 1 of 6
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091A4: crear_fuga_simple (leaks.c:6)
+==12345==
+==12345== 1,024 bytes in 1 blocks are definitely lost in loss record 5 of 6
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091C4: crear_fuga_arreglo (leaks.c:12)
+==12345==
+==12345== 33 bytes in 1 blocks are definitely lost in loss record 6 of 6
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x10920C: crear_persona (leaks.c:25)
+==12345==
+==12345== LEAK SUMMARY:
+==12345==    definitely lost: 1,061 bytes in 3 blocks
+==12345==    indirectly lost: 0 bytes in 0 blocks
+==12345==      possibly lost: 0 bytes in 0 blocks
+==12345==    still reachable: 0 bytes in 0 blocks
+==12345==         suppressed: 0 bytes in 0 blocks
+```
+
+Valgrind nos dice exactamente:
+- Qué función creó la fuga (crear_fuga_simple, crear_fuga_arreglo)
+- En qué línea del código se asignó la memoria (leaks.c:6, :12, :25)
+- Cuántos bytes se perdieron
+- El tipo de fuga (definitely lost)
+
+=== 4. TIPOS DE FUGAS DE MEMORIA ===
+
+Valgrind clasifica las fugas en varias categorías:
+
+  1. DEFINITELY LOST: El programa perdió la referencia al bloque.
+     No hay forma de liberarlo. Es la fuga más grave.
+
+  2. INDIRECTLY LOST: El bloque está referenciado por otro bloque
+     que está definitivamente perdido. Por ejemplo, los nodos de
+     una lista enlazada cuya cabeza se perdió.
+
+  3. POSSIBLY LOST: Valgrind no puede determinar con certeza si
+     hay fuga. Ocurre típicamente cuando se almacenan direcciones
+     en ubicaciones no estándar.
+
+  4. STILL REACHABLE: El bloque sigue siendo accesible al final
+     del programa (hay punteros a él). No es una fuga, pero suele
+     ser una mala práctica si no se libera explícitamente.
+
+Ejemplo de indirectly lost:
+
+```c
+typedef struct Nodo {
+    int dato;
+    struct Nodo* siguiente;
+} Nodo;
+
+int main(void) {
+    Nodo* cabeza = malloc(sizeof(Nodo));
+    cabeza->dato = 1;
+    cabeza->siguiente = malloc(sizeof(Nodo));
+    cabeza->siguiente->dato = 2;
+    cabeza->siguiente->siguiente = NULL;
+
+    free(cabeza);  // Liberamos cabeza, pero el segundo nodo queda colgado
+    // El segundo nodo está indirectamente perdido
+    return 0;
+}
+```
+
+```
+==12345== 4 bytes in 1 blocks are indirectly lost
+==12345==    by 0x1091F0: main (indirect.c:14)
+==12345==
+==12345== 4 bytes in 1 blocks are definitely lost
+==12345==    by 0x1091C0: main (indirect.c:11)
+==12345==
+==12345== LEAK SUMMARY:
+==12345==    definitely lost: 4 bytes in 1 blocks
+==12345==    indirectly lost: 4 bytes in 1 blocks
+```
+
+=== 5. ACCESO A MEMORIA YA LIBERADA (USE-AFTER-FREE) ===
+
+Este es uno de los errores más peligrosos porque puede pasar
+desapercibido durante mucho tiempo.
+
+```c
+// use_after_free.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    char* mensaje = malloc(20);
+    strcpy(mensaje, "Hola, mundo!");
+
+    printf("Antes de free: %s\n", mensaje);
+    free(mensaje);
+
+    // ERROR: Usar memoria después de liberarla
+    printf("Después de free: %s\n", mensaje);  // Comportamiento indefinido
+
+    // ERROR: Escribir en memoria liberada
+    strcpy(mensaje, "Nuevo texto");  // Comportamiento indefinido
+
+    // ERROR: Doble free
+    free(mensaje);  // Comportamiento indefinido
+
+    return 0;
+}
+```
+
+```bash
+$ valgrind ./use_after_free
+```
+
+```
+==12345== Invalid read of size 1
+==12345==    at 0x484C000: strlen (in /usr/lib/valgrind/...)
+==12345==    by 0x48A20C0: puts (in /usr/lib/valgrind/...)
+==12345==    by 0x1091F6: main (use_after_free.c:12)
+==12345==  Address 0x4a1a0a0 is 0 bytes inside a block of size 20 free'd
+==12345==    at 0x4846213: free (in /usr/lib/valgrind/...)
+==12345==    by 0x1091E0: main (use_after_free.c:10)
+==12345==  Block was alloc'd at
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091B4: main (use_after_free.c:6)
+==12345==
+==12345== Invalid write of size 1
+==12345==    at 0x109215: main (use_after_free.c:15)
+==12345==  Address 0x4a1a0a0 is 0 bytes inside a block of size 20 free'd
+==12345==    at 0x4846213: free (in /usr/lib/valgrind/...)
+==12345==    by 0x1091E0: main (use_after_free.c:10)
+==12345==
+==12345== Invalid free() / delete / delete[] / realloc()
+==12345==    at 0x4846213: free (in /usr/lib/valgrind/...)
+==12345==    by 0x109226: main (use_after_free.c:18)
+==12345==  Address 0x4a1a0a0 is 0 bytes inside a block of size 20 free'd
+==12345==    at 0x4846213: free (in /usr/lib/valgrind/...)
+==12345==    by 0x1091E0: main (use_after_free.c:10)
+```
+
+Valgrind detecta:
+- Lectura inválida (invalid read) después de free
+- Escritura inválida (invalid write) después de free
+- Doble free (invalid free)
+
+=== 6. MEMORIA NO INICIALIZADA ===
+
+Usar variables sin inicializar produce resultados impredecibles.
+
+```c
+// uninit.c
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+    int x;
+    int y;
+} Punto;
+
+int main(void) {
+    int valores[10];
+    // No inicializamos el arreglo
+
+    for (int i = 0; i < 10; i++) {
+        if (valores[i] > 0) {  // Uso de valor no inicializado
+            printf("Positivo: %d\n", valores[i]);
+        }
+    }
+
+    Punto* p = malloc(sizeof(Punto));
+    // No inicializamos los campos
+
+    if (p->x > 0 && p->y > 0) {  // Uso de campos no inicializados
+        printf("Punto en (%d, %d)\n", p->x, p->y);
+    }
+
+    free(p);
+    return 0;
+}
+```
+
+```bash
+$ valgrind --track-origins=yes ./uninit
+```
+
+```
+==12345== Conditional jump or move depends on uninitialised value(s)
+==12345==    at 0x1091BB: main (uninit.c:12)
+==12345==
+==12345== Conditional jump or move depends on uninitialised value(s)
+==12345==    at 0x1091DB: main (uninit.c:13)
+==12345==  Uninitialised value was created by a stack allocation
+==12345==    at 0x109196: main (uninit.c:9)
+==12345==
+==12345== Conditional jump or move depends on uninitialised value(s)
+==12345==    at 0x109222: main (uninit.c:20)
+==12345==  Uninitialised value was created by a heap allocation
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x10920A: main (uninit.c:18)
+```
+
+La opción `--track-origins=yes` muestra dónde se creó el valor
+no inicializado, lo que facilita enormemente la corrección.
+
+=== 7. BUFFER OVERFLOW (DESBORDAMIENTO DE BUFFER) ===
+
+Escribir más allá de los límites de un buffer es una de las
+vulnerabilidades de seguridad más comunes en C.
+
+```c
+// overflow.c
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    char buffer[16];
+    int  secreto = 12345;
+
+    printf("Antes del overflow:\n");
+    printf("  buffer en: %p\n", buffer);
+    printf("  secreto en: %p\n", &secreto);
+    printf("  secreto = %d\n", secreto);
+
+    // Overflow: escribimos más de 16 bytes en un buffer de 16
+    strcpy(buffer, "ESTE STRING ES DEMASIADO LARGO!!");
+
+    printf("\nDespués del overflow:\n");
+    printf("  buffer: %s\n", buffer);
+    printf("  secreto = %d\n", secreto);
+
+    return 0;
+}
+```
+
+```bash
+$ valgrind ./overflow
+```
+
+```
+==12345== Invalid write of size 1
+==12345==    at 0x484B000: __strcpy_sse2 (in /usr/lib/valgrind/...)
+==12345==    by 0x1091F9: main (overflow.c:14)
+==12345==  Address 0x1fff0001ac is on thread 1's stack
+==12345==  in frame #1, created by main (overflow.c:4)
+==12345==
+==12345== Invalid read of size 1
+==12345==    at 0x484B000: __strcpy_sse2 (in /usr/lib/valgrind/...)
+==12345==    by 0x1091F9: main (overflow.c:14)
+```
+
+Para detectar overflows en el heap:
+
+```c
+int main(void) {
+    int* arr = malloc(5 * sizeof(int));
+
+    for (int i = 0; i <= 5; i++) {  // Error: debería ser i < 5
+        arr[i] = i * 10;  // Escribe fuera del límite cuando i = 5
+    }
+
+    free(arr);
+    return 0;
+}
+```
+
+```
+==12345== Invalid write of size 4
+==12345==    at 0x1091DA: main (heap_overflow.c:8)
+==12345==  Address 0x4a1a0d4 is 0 bytes after a block of size 20 alloc'd
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091B4: main (heap_overflow.c:5)
+```
+
+=== 8. DESBORDAMIENTO DE PILA (STACK OVERFLOW) ===
+
+Valgrind también puede ayudar a detectar desbordamientos de pila
+en llamadas recursivas muy profundas.
+
+```c
+// stack_overflow.c
+#include <stdio.h>
+
+void recursivo(int nivel) {
+    char buffer[1024];  // 1KB en cada llamada
+    printf("Nivel: %d\n", nivel);
+    recursivo(nivel + 1);
+}
+
+int main(void) {
+    recursivo(0);
+    return 0;
+}
+```
+
+```bash
+$ valgrind ./stack_overflow
+```
+
+Valgrind reportará el error como un stack overflow y mostrará
+la traza de llamadas recursivas.
+
+=== 9. USO INCORRECTO DE REALLOC ===
+
+realloc() puede ser tricky cuando falla:
+
+```c
+// realloc_bug.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    char* buffer = malloc(16);
+    strcpy(buffer, "Hola, mundo!");
+
+    // ERROR: Si realloc falla, devuelve NULL y perdemos la referencia
+    // al bloque original
+    buffer = realloc(buffer, 1000000000);  // Tamaño enorme, probable fallo
+
+    if (buffer) {
+        strcat(buffer, " Más texto...");
+        printf("%s\n", buffer);
+        free(buffer);
+    }
+
+    return 0;
+}
+```
+
+Valgrind detectará la fuga si realloc falla:
+
+```
+==12345== 16 bytes in 1 blocks are definitely lost in loss record 1 of 1
+==12345==    at 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091B4: main (realloc_bug.c:6)
+```
+
+La forma correcta es:
+
+```c
+char* nuevo = realloc(buffer, nuevo_tamano);
+if (nuevo) {
+    buffer = nuevo;
+} else {
+    // buffer sigue siendo válido, podemos manejarlo
+    free(buffer);  // O continuar usando el buffer original
+    buffer = NULL;
+}
+```
+
+=== 10. PÉRDIDA DE MEMORIA EN ESTRUCTURAS COMPLEJAS ===
+
+Las estructuras anidadas requieren una liberación cuidadosa:
+
+```c
+// complex_leak.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char** items;
+    size_t count;
+    size_t capacidad;
+} ListaStrings;
+
+ListaStrings* lista_crear(size_t cap) {
+    ListaStrings* l = malloc(sizeof(ListaStrings));
+    if (!l) return NULL;
+    l->items = calloc(cap, sizeof(char*));
+    if (!l->items) { free(l); return NULL; }
+    l->count = 0;
+    l->capacidad = cap;
+    return l;
+}
+
+bool lista_agregar(ListaStrings* l, const char* str) {
+    if (!l || l->count >= l->capacidad) return false;
+    l->items[l->count] = strdup(str);
+    if (!l->items[l->count]) return false;
+    l->count++;
+    return true;
+}
+
+void lista_destruir_correcto(ListaStrings* l) {
+    if (!l) return;
+    for (size_t i = 0; i < l->count; i++) {
+        free(l->items[i]);  // Liberar cada string duplicado
+    }
+    free(l->items);
+    free(l);
+}
+
+void lista_destruir_incorrecto(ListaStrings* l) {
+    if (!l) return;
+    free(l->items);  // Olvidamos liberar cada string
+    free(l);
+}
+
+int main(void) {
+    ListaStrings* lista = lista_crear(10);
+    lista_agregar(lista, "Uno");
+    lista_agregar(lista, "Dos");
+    lista_agregar(lista, "Tres");
+
+    // Usar la versión incorrecta -> fugas!
+    lista_destruir_incorrecto(lista);
+
+    return 0;
+}
+```
+
+```
+==12345== 4 bytes in 1 blocks are definitely lost
+==12345==    by 0x484D000: strdup (in /usr/lib/valgrind/...)
+==12345==    by 0x109242: lista_agregar (complex_leak.c:18)
+==12345==
+==12345== 4 bytes in 1 blocks are definitely lost
+==12345==    by 0x484D000: strdup (in /usr/lib/valgrind/...)
+==12345==    by 0x109242: lista_agregar (complex_leak.c:18)
+==12345==
+==12345== 4 bytes in 1 blocks are definitely lost
+==12345==    by 0x484D000: strdup (in /usr/lib/valgrind/...)
+==12345==    by 0x109242: lista_agregar (complex_leak.c:18)
+```
+
+=== 11. SUPRESIONES DE VALGRIND ===
+
+Algunas bibliotecas tienen fugas conocidas que no podemos corregir.
+Podemos usar supresiones para ocultarlas:
+
+```bash
+# Generar un archivo de supresiones
+valgrind --gen-suppressions=all ./programa 2>&1 | tee supresiones.txt
+
+# Usar supresiones
+valgrind --suppressions=supresiones.txt ./programa
+```
+
+Contenido típico de un archivo de supresiones:
+
+```
+{
+   <nombre_supresion>
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   ...
+   fun:biblioteca_conocida
+}
+```
+
+=== 12. VALGRIND Y PROGRAMAS MULTIHILO ===
+
+Valgrind incluye Helgrind y DRD para detectar condiciones de
+carrera y problemas de sincronización.
+
+```c
+// race_valgrind.c
+#include <stdio.h>
+#include <pthread.h>
+
+int contador = 0;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void* incrementar_sin_mutex(void* arg) {
+    for (int i = 0; i < 100000; i++) {
+        contador++;  // Race condition
+    }
+    return NULL;
+}
+
+void* incrementar_con_mutex(void* arg) {
+    for (int i = 0; i < 100000; i++) {
+        pthread_mutex_lock(&mutex);
+        contador++;
+        pthread_mutex_unlock(&mutex);
+    }
+    return NULL;
+}
+
+int main(void) {
+    pthread_t t1, t2;
+
+    // Primero, versión con race condition
+    pthread_create(&t1, NULL, incrementar_sin_mutex, NULL);
+    pthread_create(&t2, NULL, incrementar_sin_mutex, NULL);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Sin mutex: %d\n", contador);
+
+    // Reiniciar y probar con mutex
+    contador = 0;
+    pthread_create(&t1, NULL, incrementar_con_mutex, NULL);
+    pthread_create(&t2, NULL, incrementar_con_mutex, NULL);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Con mutex: %d\n", contador);
+
+    return 0;
+}
+```
+
+```bash
+$ gcc -g -pthread -o race_valgrind race_valgrind.c
+$ valgrind --tool=helgrind ./race_valgrind
+```
+
+Helgrind reportará:
+
+```
+==12345== Possible data race during write of size 4 at 0x10C000
+==12345==    at 0x1091C0: incrementar_sin_mutex (race_valgrind.c:8)
+==12345==  This conflicts with a previous write of size 4
+==12345==    at 0x1091C0: incrementar_sin_mutex (race_valgrind.c:8)
+==12345==  Location 0x10C000 is 0 bytes inside contador
+```
+
+=== 13. OTRAS HERRAMIENTAS DE VALGRIND ===
+
+Valgrind no es solo Memcheck. Incluye varias herramientas:
+
+  1. CACHEGRIND: Analiza el uso de la caché del procesador.
+  2. CALLGRIND: Genera perfiles de ejecución (profilling).
+  3. HELGRIND: Detecta condiciones de carrera en hilos.
+  4. DRD: Similar a Helgrind pero con diferente enfoque.
+  5. MASSIF: Analiza el uso de memoria heap.
+  6. BBV: Genera trazas de bloques básicos.
+
+```bash
+# Cachegrind: análisis de caché
+valgrind --tool=cachegrind ./programa
+
+# Massif: análisis detallado de memoria heap
+valgrind --tool=massif ./programa
+ms_print massif.out.*
+
+# Callgrind: profiling con call graph
+valgrind --tool=callgrind ./programa
+callgrind_annotate callgrind.out.*
+```
+
+Ejemplo con Massif:
+
+```c
+// massif_example.c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    // Asignaciones en diferentes momentos
+    int* a = malloc(1000);
+    int* b = malloc(2000);
+    free(a);
+    int* c = malloc(3000);
+    free(b);
+    int* d = malloc(4000);
+    free(c);
+    free(d);
+    return 0;
+}
+```
+
+```bash
+$ valgrind --tool=massif ./massif_example
+$ ms_print massif.out.12345
+```
+
+Massif muestra un gráfico ASCII del uso de memoria a lo largo
+del tiempo, útil para identificar picos de memoria.
+
+=== 14. CASO PRÁCTICO: DEPURACIÓN COMPLETA CON VALGRIND ===
+
+```c
+// editor_texto.c - Mini editor con múltiples errores
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char** lineas;
+    size_t count;
+    size_t capacidad;
+    char   nombre_archivo[256];
+} Documento;
+
+Documento* doc_crear(const char* nombre) {
+    Documento* doc = malloc(sizeof(Documento));
+    if (!doc) return NULL;
+
+    doc->lineas = malloc(100 * sizeof(char*));
+    if (!doc->lineas) {
+        free(doc);
+        return NULL;
+    }
+
+    strcpy(doc->nombre_archivo, nombre);
+    doc->count = 0;
+    doc->capacidad = 100;
+    return doc;
+}
+
+bool doc_insertar_linea(Documento* doc, size_t pos, const char* texto) {
+    if (!doc || pos > doc->count) return false;
+
+    if (doc->count >= doc->capacidad) {
+        size_t nueva_cap = doc->capacidad * 2;
+        char** nuevas = realloc(doc->lineas, nueva_cap * sizeof(char*));
+        if (!nuevas) return false;
+        doc->lineas = nuevas;
+        doc->capacidad = nueva_cap;
+    }
+
+    // Desplazar líneas existentes
+    for (size_t i = doc->count; i > pos; i--) {
+        doc->lineas[i] = doc->lineas[i - 1];
+    }
+
+    doc->lineas[pos] = strdup(texto);
+    if (!doc->lineas[pos]) return false;
+    doc->count++;
+    return true;
+}
+
+void doc_imprimir(const Documento* doc) {
+    if (!doc) return;
+
+    for (size_t i = 0; i < doc->count; i++) {
+        printf("%zu: %s\n", i + 1, doc->lineas[i]);
+    }
+}
+
+// Bug: no libera las líneas individuales
+void doc_destruir_bug(Documento* doc) {
+    if (!doc) return;
+    free(doc->lineas);
+    free(doc);
+}
+
+// Versión correcta
+void doc_destruir(Documento* doc) {
+    if (!doc) return;
+    for (size_t i = 0; i < doc->count; i++) {
+        free(doc->lineas[i]);
+    }
+    free(doc->lineas);
+    free(doc);
+}
+
+int main(void) {
+    Documento* doc = doc_crear("mi_documento.txt");
+
+    doc_insertar_linea(doc, 0, "Línea 1");
+    doc_insertar_linea(doc, 1, "Línea 2");
+    doc_insertar_linea(doc, 2, "Línea 3");
+    doc_insertar_linea(doc, 1, "Línea insertada");
+
+    doc_imprimir(doc);
+
+    // Usamos la versión con bug!
+    doc_destruir_bug(doc);
+
+    return 0;
+}
+```
+
+```bash
+$ gcc -g -o editor editor_texto.c
+$ valgrind --leak-check=full --track-origins=yes ./editor
+```
+
+Valgrind reportará:
+
+```
+==12345== 24 bytes in 4 blocks are definitely lost in loss record 1 of 4
+==12345==    by 0x484D000: strdup (in /usr/lib/valgrind/...)
+==12345==    by 0x109279: doc_insertar_linea (editor_texto.c:39)
+==12345==
+==12345== 1,600 bytes in 1 blocks are definitely lost in loss record 3 of 4
+==12345==    by 0x4845899: malloc (in /usr/lib/valgrind/...)
+==12345==    by 0x1091C0: doc_crear (editor_texto.c:12)
+```
+
+=== 15. INTEGRACIÓN CON CI/CD ===
+
+Valgrind puede integrarse en pipelines de integración continua:
+
+```bash
+#!/bin/bash
+# test_memoria.sh - Script para CI
+
+gcc -g -o programa programa.c test_programa.c
+
+# Ejecutar Valgrind y capturar salida
+valgrind --leak-check=full \
+         --error-exitcode=1 \
+         --errors-for-leak-kinds=definite \
+         ./programa 2>&1 | tee valgrind_output.txt
+
+# Verificar si hay errores
+if grep -q "ERROR SUMMARY: [^0]" valgrind_output.txt; then
+    echo "ERRORES DE MEMORIA DETECTADOS"
+    exit 1
+else
+    echo "MEMORIA LIMPIA"
+    exit 0
+fi
+```
+
+Makefile con target de memoria:
+
+```makefile
+.PHONY: memcheck
+memcheck: programa
+	valgrind --leak-check=full \
+	         --show-leak-kinds=all \
+	         --track-origins=yes \
+	         --verbose \
+	         ./programa 2>&1 | tee memcheck.log
+
+.PHONY: massif
+massif: programa
+	valgrind --tool=massif --time-unit=B ./programa
+	ms_print massif.out.* > massif_report.txt
+```
+
+=== 16. CONSEJOS AVANZADOS ===
+
+1. SIEMPRE COMPILAR CON -g: Valgrind necesita información de
+   depuración para mostrar líneas de código exactas.
+
+2. REDUCIR EL RUIDO: Usa `--show-reachable=no` y `--leak-check=full`
+   para enfocarte en fugas definitivas.
+
+3. SUPRESIONES: Crea un archivo de supresiones para bibliotecas
+   externas con fugas conocidas.
+
+4. VALGRIND Y OPTIMIZACIÓN: Valgrind funciona mejor con -O1 que
+   con -O0. -O0 puede generar código muy lento; -O2 puede confundir
+   a Valgrind.
+
+5. LIMITACIONES: Valgrind ralentiza la ejecución 10-20x. No es
+   para pruebas de rendimiento, sino para depuración.
+
+6. MEMPOOL: Si usas memory pools personalizados, Valgrind puede
+   no detectar fugas internas. Usa `--show-mempools=yes`.
+
+7. CLIENT REQUESTS: Puedes agregar peticiones especiales en tu
+   código para ayudar a Valgrind:
+
+```c
+#include <valgrind/memcheck.h>
+
+// Marcar memoria como no definida (útil para piscinas de memoria)
+VALGRIND_MAKE_MEM_UNDEFINED(pool, size);
+
+// Marcar memoria como definida
+VALGRIND_MAKE_MEM_DEFINED(pool, size);
+
+// Forzar una verificación de fugas
+VALGRIND_DO_LEAK_CHECK;
+```
+
+________________________________________________________________________________
+  RESUMEN
+________________________________________________________________________________
+
+En este capítulo hemos aprendido:
+
+  ✅ Valgrind ejecuta el programa en una CPU virtual instrumentada.
+  ✅ Memcheck detecta fugas de memoria, uso after-free, buffer
+     overflow y memoria no inicializada.
+  ✅ Las fugas se clasifican en definite, indirect, possible y
+     still reachable.
+  ✅ --track-origins=yes muestra dónde se creó la memoria no init.
+  ✅ Helgrind detecta condiciones de carrera en programas multihilo.
+  ✅ Massif analiza el uso de memoria heap a lo largo del tiempo.
+  ✅ Valgrind puede integrarse en CI/CD para garantizar calidad.
+
+Usar Valgrind regularmente es el sello de un programador profesional
+de C. Si no ejecutas Valgrind en tu código, estás ignorando una
+clase entera de bugs potenciales.
+
+________________________________________________________________________________
+  EJERCICIOS
+________________________________________________________________________________
+
+1. EJERCICIO BÁSICO: Escribe un programa que tenga al menos 3
+   fugas de memoria diferentes. Usa Valgrind para identificarlas
+   y corregirlas una por una.
+
+2. EJERCICIO PRÁCTICO: Implementa una lista enlazada doble con
+   funciones de inserción, eliminación y destrucción. Introduce
+   intencionalmente un error de liberación y usa Valgrind para
+   depurarlo.
+
+3. EJERCICIO AVANZADO: Crea un programa multihilo con una
+   condición de carrera sutil. Usa Helgrind para detectarla y
+   corregirla. Documenta el proceso.
+
+4. EJERCICIO DE ANÁLISIS: Dado el siguiente código, ejecuta
+   Valgrind y corrige todos los errores de memoria:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int* crear_arreglo(int n) {
+    int* arr = malloc(n * sizeof(int));
+    for (int i = 0; i <= n; i++) arr[i] = i;
+    return arr;
+}
+
+char* duplicar(const char* s) {
+    char* d = malloc(strlen(s));
+    strcpy(d, s);
+    return d;
+}
+
+int main() {
+    int* datos = crear_arreglo(10);
+    printf("%d\n", datos[5]);
+    free(datos);
+
+    char* msg = duplicar("Hola");
+    printf("%s\n", msg);
+    // Falta free(msg)
+
+    int* fuga = malloc(1000);
+    return 0;
+}
+```
+
+5. EJERCICIO CREATIVO: Implementa un pequeño administrador de
+   memoria con pool fijo. Luego, usa las Valgrind Client Requests
+   para ayudar a Valgrind a rastrear correctamente la memoria
+   asignada en tu pool. Verifica que Valgrind pueda detectar
+   fugas dentro del pool.
+
+________________________________________________________________________________
+  PREGUNTAS FRECUENTES
+________________________________________________________________________________
+
+P: Valgrind hace mi programa 20x más lento. ¿Es normal?
+R: Sí, completamente normal. Valgrind instrumenta cada instrucción,
+lo que ralentiza la ejecución. Úsalo para depuración, no para
+producción. Para pruebas rápidas, prueba con datasets pequeños.
+
+P: Valgrind reporta errores en bibliotecas del sistema. ¿Debo
+preocuparme?
+R: Generalmente no. Las bibliotecas del sistema pueden tener fugas
+conocidas. Puedes crear un archivo de supresiones para ignorarlas.
+Enfócate en errores en TU código.
+
+P: ¿Valgrind funciona con programas en C++?
+R: Sí, Valgrind funciona con C++, aunque algunos errores (como
+usar delete en lugar de delete[]) pueden ser más difíciles de
+detectar. Usa `--tool=memcheck` como siempre.
+
+P: ¿Qué significa "still reachable"?
+R: Significa que el bloque sigue siendo accesible (hay punteros
+a él) al final del programa. No es una fuga, pero es una mala
+práctica. Deberías liberar toda la memoria antes de salir.
+
+P: ¿Valgrind puede detectar buffer overflow en el stack?
+R: Sí, puede detectar overflows en el stack, pero no en variables
+locales simples. Para mejor detección de stack overflow, usa
+-fstack-protector-all en el compilador.
+
+________________________________________________________________________________
+  DESAFÍO DEL ARQUITECTO
+________________________________________________________________________________
+
+Crea un programa que procese un archivo JSON de gran tamaño
+(>100MB) y extraiga información específica. El programa debe:
+
+  - Leer el archivo en memoria en fragmentos.
+  - Parsear el JSON y construir un árbol de objetos.
+  - Permitir consultas por ruta (ej: "usuarios[0].nombre").
+  - Generar un reporte con la información extraída.
+
+Luego, introduce intencionalmente 5 errores de memoria diferentes:
+  - Una fuga de memoria definitiva.
+  - Un use-after-free.
+  - Un buffer overflow (heap).
+  - Una memoria no inicializada.
+  - Un double free.
+
+Documenta cómo cada error se manifiesta en Valgrind y cómo
+corregirlo. Este desafío integra todos los tipos de errores de
+memoria que Valgrind puede detectar.
+
+________________________________________________________________________________
+  CIERRE DEL CAPÍTULO
+________________________________________________________________________________
+
+Valgrind es una herramienta indispensable para cualquier programador
+de C que se tome en serio la calidad del software. La memoria es
+un recurso que debemos gestionar con disciplina y respeto, y Valgrind
+es el guardián que nos asegura que lo estamos haciendo bien.
+
+Integrar Valgrind en tu flujo de trabajo diario te ahorrará horas
+de depuración y te dará la confianza de que tu código no tiene
+errores de memoria ocultos.
+
+En el próximo capítulo, exploraremos la optimización de código en
+C. Aprenderemos cómo hacer que nuestros programas sean más rápidos
+sin sacrificar legibilidad ni seguridad.
+
+¡Nos vemos en el Capítulo 75, donde exprimiremos cada ciclo de
+CPU al máximo!
+
+================================================================================
+  FIN DEL CAPÍTULO 74
+================================================================================

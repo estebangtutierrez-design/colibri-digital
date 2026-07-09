@@ -1,0 +1,1320 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 45: SELECT
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A SELECT
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la multiplexación concurrente. Has llegado a uno
+de los puntos más elegantes y poderosos de Go: la sentencia select.
+
+Hasta ahora, cada vez que querías recibir de un channel, te bloqueabas en
+esa única fuente. Pero ¿qué pasa si necesitas escuchar múltiples canales a
+la vez? ¿O si quieres implementar un timeout? ¿O si deseas enviar o recibir
+sin bloquearte? Para eso existe select.
+
+Select es como un switch para channels. Te permite esperar simultáneamente
+en múltiples operaciones de envío y recepción, ejecutando el primer caso
+que esté listo. Es la herramienta fundamental para la composición de canales,
+la implementación de timeouts, la comunicación no bloqueante, y los patrones
+avanzados de concurrencia.
+
+Con select, puedes:
+  • Multiplexar múltiples fuentes de datos.
+  • Implementar timeouts en operaciones de channel.
+  • Realizar envíos y recepciones no bloqueantes.
+  • Crear bucles de eventos concurrentes.
+  • Implementar cancelaciones y terminaciones ordenadas.
+  • Construir patrones avanzados como fan-in y or-channel.
+
+Prepárate para dominar una de las construcciones más bellas de Go.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"El select es la navaja suiza de la concurrencia en Go. Con ella puedes
+escuchar, hablar, esperar y decidir." — Rob Pike
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender la sintaxis y semántica de select.
+  • Multiplexar múltiples canales de recepción.
+  • Implementar timeouts con time.After.
+  • Realizar operaciones no bloqueantes con default.
+  • Combinar select con bucles infinitos.
+  • Implementar el patrón de terminación con select.
+  • Usar select para envío condicional.
+  • Conocer el comportamiento aleatorio de select.
+  • Implementar fan-in (múltiples canales a uno).
+  • Usar select en casos de la vida real.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — SELECT
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. SINTAXIS DE SELECT
+----------------------------------------------------------------------
+
+select {
+case v := <-ch1:
+    // ch1 está listo para recibir
+case v := <-ch2:
+    // ch2 está listo para recibir
+case ch3 <- valor:
+    // ch3 está listo para enviar
+default:
+    // Ningún canal está listo
+}
+
+  • Select espera hasta que uno de los casos pueda ejecutarse.
+  • Si múltiples casos están listos, el runtime elige uno aleatoriamente.
+  • Si hay default, se ejecuta inmediatamente si ningún caso está listo.
+  • Si no hay default, select bloquea hasta que un caso esté listo.
+
+----------------------------------------------------------------------
+  2. COMPORTAMIENTO ALEATORIO
+----------------------------------------------------------------------
+
+Cuando múltiples casos están listos simultáneamente, Go elige uno al azar.
+Esto evita inanición (starvation) de algún canal:
+
+    select {
+    case <-ch1:
+        // Puede ejecutarse
+    case <-ch2:
+        // O este, aleatoriamente
+    }
+
+Esta aleatoriedad es intencional y fundamental para la equidad.
+
+----------------------------------------------------------------------
+  3. TIMEOUT CON TIME.AFTER
+----------------------------------------------------------------------
+
+time.After(d) devuelve un channel que recibe un valor después de la duración d.
+Es la forma más común de implementar timeouts en select:
+
+    select {
+    case v := <-ch:
+        fmt.Println("Recibido:", v)
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout")
+    }
+
+----------------------------------------------------------------------
+  4. OPERACIONES NO BLOQUEANTES
+----------------------------------------------------------------------
+
+Con el caso default, select nunca bloquea:
+
+    select {
+    case v := <-ch:
+        fmt.Println("Dato disponible:", v)
+    default:
+        fmt.Println("No hay datos, sigo adelante")
+    }
+
+Ideal para sondeos periódicos o para evitar bloqueos.
+
+----------------------------------------------------------------------
+  5. SELECT EN BUCLE INFINITO
+----------------------------------------------------------------------
+
+El patrón más común es select dentro de un for infinito, típicamente en una
+gorutina que actúa como multiplexor o despachador:
+
+    for {
+        select {
+        case v := <-ch1:
+            // Procesar de ch1
+        case v := <-ch2:
+            // Procesar de ch2
+        case <-done:
+            return
+        }
+    }
+
+----------------------------------------------------------------------
+  6. SELECT VACÍO
+----------------------------------------------------------------------
+
+select {} sin casos bloquea para siempre. Es equivalente a un channel nil.
+Ocasionalmente usado para bloquear la gorutina main en programas que solo
+ejecutan gorutinas.
+
+----------------------------------------------------------------------
+  7. SELECT CON ENVÍO
+----------------------------------------------------------------------
+
+select también funciona para envíos:
+
+    select {
+    case ch <- valor:
+        // Envío exitoso
+    case <-done:
+        // Cancelado
+    default:
+        // No se pudo enviar (buffer lleno o sin receptor)
+    }
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: SELECT BÁSICO — DOS CANALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch1 := make(chan string)
+    ch2 := make(chan string)
+
+    go func() {
+        time.Sleep(100 * time.Millisecond)
+        ch1 <- "mensaje del canal 1"
+    }()
+
+    go func() {
+        time.Sleep(200 * time.Millisecond)
+        ch2 <- "mensaje del canal 2"
+    }()
+
+    // Esperamos el primero que llegue
+    select {
+    case msg1 := <-ch1:
+        fmt.Println("Recibido de ch1:", msg1)
+    case msg2 := <-ch2:
+        fmt.Println("Recibido de ch2:", msg2)
+    }
+
+    fmt.Println("Select completado")
+}
+```
+
+El select ejecutará el caso de ch1 porque llega primero (100ms vs 200ms).
+
+----------------------------------------------------------------------
+  EJEMPLO 2: SELECT ALEATORIO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch1 := make(chan string, 1)
+    ch2 := make(chan string, 1)
+
+    ch1 <- "dato del canal 1"
+    ch2 <- "dato del canal 2"
+
+    // Ambos canales tienen datos, Go elige aleatoriamente
+    for i := 0; i < 10; i++ {
+        select {
+        case msg := <-ch1:
+            fmt.Println("Ejecución", i, ":", msg)
+        case msg := <-ch2:
+            fmt.Println("Ejecución", i, ":", msg)
+        }
+    }
+}
+```
+
+Ejecuta varias veces para ver la aleatoriedad. Cada caso tiene ~50% de
+probabilidad en cada iteración.
+
+----------------------------------------------------------------------
+  EJEMPLO 3: TIMEOUT CON TIME.AFTER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func operacionLenta(ch chan string) {
+    time.Sleep(2 * time.Second)
+    ch <- "resultado"
+}
+
+func main() {
+    ch := make(chan string)
+
+    go operacionLenta(ch)
+
+    fmt.Println("Esperando resultado (timeout 1s)...")
+
+    select {
+    case resultado := <-ch:
+        fmt.Println("Resultado:", resultado)
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: la operación tardó demasiado")
+    }
+
+    fmt.Println("Programa continúa...")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: OPERACIÓN NO BLOQUEANTE CON DEFAULT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    // Intento de recepción no bloqueante
+    select {
+    case v := <-ch:
+        fmt.Println("Dato recibido:", v)
+    default:
+        fmt.Println("No hay datos disponibles (no bloqueante)")
+    }
+
+    // Envío no bloqueante
+    select {
+    case ch <- 42:
+        fmt.Println("Dato enviado")
+    default:
+        fmt.Println("No se pudo enviar (sin receptor, no bloqueante)")
+    }
+
+    // Verificación con gorutina
+    go func() {
+        time.Sleep(50 * time.Millisecond)
+        ch <- 100
+    }()
+
+    time.Sleep(100 * time.Millisecond)
+
+    select {
+    case v := <-ch:
+        fmt.Println("Ahora sí hay dato:", v)
+    default:
+        fmt.Println("Todavía no hay dato")
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: SELECT CON TERMINACIÓN (DONE CHANNEL)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+    done := make(chan struct{})
+
+    // Gorutina que produce datos hasta que recibe señal de terminación
+    go func() {
+        for {
+            select {
+            case ch <- time.Now().UnixMilli():
+                time.Sleep(200 * time.Millisecond)
+            case <-done:
+                fmt.Println("Productor: señal de terminación recibida")
+                return
+            }
+        }
+    }()
+
+    // Consumimos 5 datos y luego terminamos
+    for i := 0; i < 5; i++ {
+        fmt.Printf("Dato recibido: %d\n", <-ch)
+    }
+
+    fmt.Println("Main: enviando señal de terminación...")
+    close(done)
+
+    time.Sleep(300 * time.Millisecond)
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 6: FAN-IN CON SELECT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func productor(id int, ch chan<- int) {
+    for i := 0; i < 5; i++ {
+        ch <- id*10 + i
+        time.Sleep(time.Duration(50+id*20) * time.Millisecond)
+    }
+}
+
+func fanIn(ch1, ch2 <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        for {
+            select {
+            case v := <-ch1:
+                out <- v
+            case v := <-ch2:
+                out <- v
+            }
+        }
+    }()
+    return out
+}
+
+func main() {
+    ch1 := make(chan int)
+    ch2 := make(chan int)
+
+    go productor(1, ch1)
+    go productor(2, ch2)
+
+    multiplexado := fanIn(ch1, ch2)
+
+    // Recibimos 10 resultados (5 de cada productor)
+    for i := 0; i < 10; i++ {
+        fmt.Printf("Multiplexado: %d\n", <-multiplexado)
+    }
+
+    fmt.Println("Fan-in completado")
+}
+```
+
+El fan-in combina múltiples canales en uno solo. Select permite escuchar
+todos simultáneamente y reenviar el primero que llegue.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: FAN-IN CON CIERRE AUTOMÁTICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(id int, ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 3; i++ {
+        ch <- id*10 + i
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+
+func fanInConCierre(canales ...<-chan int) <-chan int {
+    out := make(chan int)
+    var wg sync.WaitGroup
+
+    multiplexor := func(ch <-chan int) {
+        defer wg.Done()
+        for v := range ch {
+            out <- v
+        }
+    }
+
+    wg.Add(len(canales))
+    for _, ch := range canales {
+        go multiplexor(ch)
+    }
+
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+
+    return out
+}
+
+func main() {
+    ch1 := make(chan int)
+    ch2 := make(chan int)
+    ch3 := make(chan int)
+
+    var wg sync.WaitGroup
+    wg.Add(3)
+    go productor(1, ch1, &wg)
+    go productor(2, ch2, &wg)
+    go productor(3, ch3, &wg)
+
+    go func() {
+        wg.Wait()
+        close(ch1)
+        close(ch2)
+        close(ch3)
+    }()
+
+    multiplexado := fanInConCierre(ch1, ch2, ch3)
+
+    for v := range multiplexado {
+        fmt.Printf("Recibido: %d\n", v)
+    }
+
+    fmt.Println("Fan-in avanzado completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 8: TIMEOUT GLOBAL EN BUCLE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    go func() {
+        for i := 0; i < 5; i++ {
+            ch <- i
+            time.Sleep(300 * time.Millisecond)
+        }
+    }()
+
+    timeout := time.After(2 * time.Second)
+
+    for {
+        select {
+        case v := <-ch:
+            fmt.Printf("Recibido: %d\n", v)
+        case <-timeout:
+            fmt.Println("Tiempo global agotado, terminando")
+            return
+        }
+    }
+}
+```
+
+Este patrón permite establecer un timeout global para todo el procesamiento,
+no por operación individual.
+
+----------------------------------------------------------------------
+  EJEMPLO 9: SELECT CON ENVÍO CONDICIONAL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int, 3)
+
+    for i := 0; i < 10; i++ {
+        select {
+        case ch <- i:
+            fmt.Printf("Enviado %d al buffer\n", i)
+        default:
+            fmt.Printf("Buffer lleno, descartando %d\n", i)
+        }
+        time.Sleep(50 * time.Millisecond)
+    }
+
+    close(ch)
+
+    fmt.Println("\nContenido del buffer:")
+    for v := range ch {
+        fmt.Printf("  %d\n", v)
+    }
+}
+```
+
+Envío condicional: si el buffer está lleno, descartamos en lugar de bloquear.
+
+----------------------------------------------------------------------
+  EJEMPLO 10: SELECT PARA EVITAR DEADLOCK EN ENVÍO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    // Envío con timeout para evitar deadlock
+    select {
+    case ch <- 42:
+        fmt.Println("Enviado con éxito")
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: no hay receptor, evitamos deadlock")
+    }
+
+    fmt.Println("Programa continúa sin deadlock")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: SELECT CON 3 CANALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+    "math/rand"
+)
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    ch1 := make(chan string)
+    ch2 := make(chan string)
+    ch3 := make(chan string)
+
+    // Canales con tiempos aleatorios
+    go func() {
+        time.Sleep(time.Duration(rand.Intn(300)) * time.Millisecond)
+        ch1 <- "canal 1"
+    }()
+    go func() {
+        time.Sleep(time.Duration(rand.Intn(300)) * time.Millisecond)
+        ch2 <- "canal 2"
+    }()
+    go func() {
+        time.Sleep(time.Duration(rand.Intn(300)) * time.Millisecond)
+        ch3 <- "canal 3"
+    }()
+
+    // Esperamos los 3, en cualquier orden
+    for i := 0; i < 3; i++ {
+        select {
+        case msg := <-ch1:
+            fmt.Println("Llegó:", msg)
+            ch1 = nil // Deshabilitamos este caso
+        case msg := <-ch2:
+            fmt.Println("Llegó:", msg)
+            ch2 = nil
+        case msg := <-ch3:
+            fmt.Println("Llegó:", msg)
+            ch3 = nil
+        }
+    }
+
+    fmt.Println("Todos los canales recibidos")
+}
+```
+
+Asignar nil a un channel deshabilita ese caso en futuras iteraciones del select.
+
+----------------------------------------------------------------------
+  EJEMPLO 12: TICKER CON SELECT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ticker := time.NewTicker(500 * time.Millisecond)
+    timeout := time.After(3 * time.Second)
+    contador := 0
+
+    for {
+        select {
+        case t := <-ticker.C:
+            contador++
+            fmt.Printf("Tick %d a las %s\n", contador, t.Format("15:04:05.000"))
+        case <-timeout:
+            fmt.Println("Tiempo cumplido")
+            ticker.Stop()
+            return
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: TERMINACIÓN CON DOS SEÑALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+    done := make(chan struct{})
+    timeout := time.After(2 * time.Second)
+
+    go func() {
+        for i := 0; ; i++ {
+            select {
+            case ch <- i:
+                time.Sleep(100 * time.Millisecond)
+            case <-done:
+                fmt.Println("Gorutina: terminando por señal done")
+                return
+            }
+        }
+    }()
+
+    for {
+        select {
+        case v := <-ch:
+            fmt.Printf("Recibido: %d\n", v)
+        case <-timeout:
+            fmt.Println("Main: timeout, cerrando...")
+            close(done)
+            time.Sleep(50 * time.Millisecond)
+            return
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: SELECT DENTRO DE UN BUCLE INFINITO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Comando int
+
+const (
+    Sumar Comando = iota
+    Restar
+    Salir
+)
+
+func procesadorComandos(comandos <-chan Comando, datos <-chan int, resultados chan<- int) {
+    var acumulado int
+
+    for {
+        select {
+        case cmd := <-comandos:
+            switch cmd {
+            case Sumar:
+                fmt.Println("Modo: Sumar")
+                v := <-datos
+                acumulado += v
+                fmt.Printf("Sumado %d, acumulado = %d\n", v, acumulado)
+            case Restar:
+                fmt.Println("Modo: Restar")
+                v := <-datos
+                acumulado -= v
+                fmt.Printf("Restado %d, acumulado = %d\n", v, acumulado)
+            case Salir:
+                fmt.Println("Comando Salir recibido")
+                resultados <- acumulado
+                return
+            }
+        case <-time.After(2 * time.Second):
+            fmt.Println("Timeout: sin comandos, cerrando")
+            resultados <- acumulado
+            return
+        }
+    }
+}
+
+func main() {
+    comandos := make(chan Comando)
+    datos := make(chan int)
+    resultados := make(chan int)
+
+    go procesadorComandos(comandos, datos, resultados)
+
+    // Enviamos comandos
+    comandos <- Sumar
+    datos <- 10
+    comandos <- Sumar
+    datos <- 25
+    comandos <- Restar
+    datos <- 5
+    comandos <- Sumar
+    datos <- 100
+
+    // Cerramos con Salir
+    comandos <- Salir
+
+    fmt.Printf("Resultado final: %d\n", <-resultados)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: OR-CHANNEL CON SELECT (PATRÓN AVANZADO)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func orChannel(canales ...<-chan struct{}) <-chan struct{} {
+    switch len(canales) {
+    case 0:
+        return nil
+    case 1:
+        return canales[0]
+    }
+
+    orDone := make(chan struct{})
+    go func() {
+        defer close(orDone)
+
+        select {
+        case <-canales[0]:
+        case <-canales[1]:
+        case <-orChannel(canales[2:]...):
+        }
+    }()
+    return orDone
+}
+
+func main() {
+    sig := func(after time.Duration) <-chan struct{} {
+        c := make(chan struct{})
+        go func() {
+            defer close(c)
+            time.Sleep(after)
+        }()
+        return c
+    }
+
+    fmt.Println("Esperando a que cualquiera de los canales termine...")
+
+    inicio := time.Now()
+    <-orChannel(
+        sig(2*time.Second),
+        sig(1*time.Second),
+        sig(3*time.Second),
+    )
+
+    fmt.Printf("Hecho después de %v\n", time.Since(inicio))
+}
+```
+
+El or-channel combina múltiples canales de terminación en uno solo que se
+cierra cuando cualquiera de ellos se cierra. Útil para jerarquías de
+cancelación.
+
+----------------------------------------------------------------------
+  EJEMPLO 16: SELECT CON FUNCIÓN DE SERVICIO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Servicio struct {
+    solicitudes chan string
+    respuestas  chan string
+    done        chan struct{}
+}
+
+func NuevoServicio() *Servicio {
+    s := &Servicio{
+        solicitudes: make(chan string),
+        respuestas:  make(chan string),
+        done:        make(chan struct{}),
+    }
+    go s.ejecutar()
+    return s
+}
+
+func (s *Servicio) ejecutar() {
+    for {
+        select {
+        case req := <-s.solicitudes:
+            fmt.Printf("Servicio procesa: %s\n", req)
+            time.Sleep(100 * time.Millisecond)
+            s.respuestas <- fmt.Sprintf("Respuesta para: %s", req)
+        case <-s.done:
+            fmt.Println("Servicio: terminando")
+            return
+        }
+    }
+}
+
+func (s *Servicio) Solicitar(req string) string {
+    s.solicitudes <- req
+    return <-s.respuestas
+}
+
+func (s *Servicio) Detener() {
+    close(s.done)
+}
+
+func main() {
+    svc := NuevoServicio()
+
+    for i := 0; i < 5; i++ {
+        resp := svc.Solicitar(fmt.Sprintf("petición %d", i))
+        fmt.Println("  Cliente recibe:", resp)
+    }
+
+    svc.Detener()
+    time.Sleep(50 * time.Millisecond)
+    fmt.Println("Cliente: servicio detenido")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: ENVÍO CON PRIORIDAD USANDO SELECT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    alta := make(chan string, 3)
+    baja := make(chan string, 10)
+
+    go func() {
+        for i := 0; i < 5; i++ {
+            baja <- fmt.Sprintf("baja prioridad %d", i)
+        }
+        alta <- "urgente"
+        baja <- "baja prioridad extra"
+    }()
+
+    time.Sleep(50 * time.Millisecond)
+
+    // Procesamos: siempre damos prioridad a 'alta'
+    for i := 0; i < 7; i++ {
+        select {
+        case msg := <-alta:
+            fmt.Println(">>> PROCESADO (alta):", msg)
+        case msg := <-baja:
+            fmt.Println("    procesado (baja):", msg)
+        }
+    }
+}
+```
+
+Select sin default siempre elige un caso listo al azar. Pero aquí, si
+'alta' tiene datos, tiene la misma probabilidad que 'baja'. Para prioridad
+estricta, necesitarías dos selects anidados.
+
+----------------------------------------------------------------------
+  EJEMPLO 18: SELECT CON DEFAULT PARA MEDIR LATENCIA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    go func() {
+        time.Sleep(50 * time.Millisecond)
+        ch <- 1
+        time.Sleep(100 * time.Millisecond)
+        ch <- 2
+        time.Sleep(200 * time.Millisecond)
+        ch <- 3
+    }()
+
+    for i := 0; i < 10; i++ {
+        inicio := time.Now()
+        select {
+        case v := <-ch:
+            fmt.Printf("Recibido %d después de %v\n", v, time.Since(inicio))
+        default:
+            fmt.Printf("Sin datos (latencia: %v)\n", time.Since(inicio))
+        }
+        time.Sleep(80 * time.Millisecond)
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: SELECT CON CANAL DE CANALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    canalDeCanales := make(chan chan int, 5)
+
+    // Creamos canales y los enviamos
+    for i := 0; i < 5; i++ {
+        ch := make(chan int)
+        canalDeCanales <- ch
+
+        go func(c chan int, id int) {
+            time.Sleep(time.Duration(id*50) * time.Millisecond)
+            c <- id * 100
+        }(ch, i)
+    }
+
+    close(canalDeCanales)
+
+    // Procesamos los canales a medida que llegan
+    for ch := range canalDeCanales {
+        select {
+        case v := <-ch:
+            fmt.Printf("Recibido de canal dinámico: %d\n", v)
+        case <-time.After(200 * time.Millisecond):
+            fmt.Println("Timeout esperando canal dinámico")
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SERVIDOR DE EVENTOS CON SELECT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync/atomic"
+    "time"
+)
+
+type EventoServer struct {
+    eventos     chan string
+    suscriptores []chan string
+    done        chan struct{}
+    contador    atomic.Int64
+}
+
+func NuevoServer() *EventoServer {
+    s := &EventoServer{
+        eventos: make(chan string, 10),
+        done:    make(chan struct{}),
+    }
+    go s.bucleEventos()
+    return s
+}
+
+func (s *EventoServer) Suscribir() <-chan string {
+    ch := make(chan string, 5)
+    s.suscriptores = append(s.suscriptores, ch)
+    return ch
+}
+
+func (s *EventoServer) Publicar(evento string) {
+    s.eventos <- evento
+}
+
+func (s *EventoServer) bucleEventos() {
+    for {
+        select {
+        case evento := <-s.eventos:
+            s.contador.Add(1)
+            fmt.Printf("[SERVER] Publicando: %s\n", evento)
+            for _, sub := range s.suscriptores {
+                select {
+                case sub <- evento:
+                default:
+                    fmt.Println("[SERVER] Suscriptor lento, descartando")
+                }
+            }
+        case <-s.done:
+            fmt.Println("[SERVER] Cerrando...")
+            for _, sub := range s.suscriptores {
+                close(sub)
+            }
+            return
+        }
+    }
+}
+
+func (s *EventoServer) Detener() {
+    close(s.done)
+}
+
+func (s *EventoServer) EventosPublicados() int64 {
+    return s.contador.Load()
+}
+
+func main() {
+    server := NuevoServer()
+
+    // Creamos suscriptores
+    sub1 := server.Suscribir()
+    sub2 := server.Suscribir()
+    sub3 := server.Suscribir()
+
+    // Consumidores de eventos
+    consumir := func(id int, sub <-chan string) {
+        for evento := range sub {
+            fmt.Printf("  [Sub %d] Recibió: %s\n", id, evento)
+            time.Sleep(100 * time.Millisecond)
+        }
+        fmt.Printf("  [Sub %d] Canal cerrado\n", id)
+    }
+
+    go consumir(1, sub1)
+    go consumir(2, sub2)
+    go consumir(3, sub3)
+
+    // Publicamos eventos
+    for i := 0; i < 5; i++ {
+        server.Publicar(fmt.Sprintf("evento-%d", i))
+        time.Sleep(50 * time.Millisecond)
+    }
+
+    time.Sleep(200 * time.Millisecond)
+    fmt.Printf("Total eventos publicados: %d\n", server.EventosPublicados())
+
+    server.Detener()
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println("Sistema de eventos finalizado")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • select multiplexa operaciones de envío y recepción en canales.
+  • Si múltiples casos están listos, Go elige uno aleatoriamente.
+  • time.After proporciona un canal para implementar timeouts.
+  • El caso default hace que select sea no bloqueante.
+  • select dentro de un for es el patrón principal para bucles de eventos.
+  • Asignar nil a un canal deshabilita ese caso en select.
+  • select {} bloquea para siempre.
+  • Fan-in combina múltiples canales en uno usando select.
+  • select puede usarse para envío condicional no bloqueante.
+  • El or-channel es un patrón avanzado que usa select recursivo.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Escribe un select que escuche 3 canales y muestre cuál recibe
+   primero. Usa time.Sleep para controlar los tiempos.
+
+2. INTERMEDIO — Implementa una función fanIn que combine N canales en uno
+   usando select y termine correctamente cuando todos se cierren.
+
+3. AVANZADO — Crea un servidor TCP simulado (con canales) que atienda
+   peticiones de múltiples clientes usando select. Los clientes envían
+   peticiones y el servidor responde.
+
+4. BÁSICO — Demuestra el comportamiento no bloqueante de select con default
+   en un channel sin buffer y sin receptor.
+
+5. INTERMEDIO — Implementa un timeout por operación y un timeout global
+   en el mismo programa usando time.After.
+
+6. AVANZADO — Crea un patrón de prioridad: dos canales, uno de alta
+   prioridad y otro de baja. El select siempre procesa el de alta
+   primero si tiene datos.
+
+7. INTERMEDIO — Implementa un ticker que ejecute una acción cada 500ms,
+   pero que pueda ser detenido externamente mediante un channel done.
+
+8. AVANZADO — Implementa el patrón or-channel con N canales. Cuando
+   cualquier canal se cierra, el or-channel también se cierra.
+
+9. BÁSICO — ¿Qué hace select {}? Demuéstralo (con una gorutina separada
+   para que no bloquee todo el programa).
+
+10. INTERMEDIO — Crea un pipeline con 3 etapas donde la tercera etapa
+    usa select para recibir de las dos anteriores (fan-in).
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Qué pasa si ningún caso está listo y no hay default?
+R: Select bloquea hasta que algún caso esté listo. Es el comportamiento
+principal de select.
+
+❓ ¿Select elige el caso en orden?
+R: No. Si múltiples casos están listos, Go elige uno aleatoriamente con
+igual probabilidad. Esto asegura equidad.
+
+❓ ¿Puedo tener un select dentro de otro select?
+R: No anidado directamente, pero puedes tener un select dentro de un case
+de otro select (a través de una función).
+
+❓ ¿Cuántos casos puede tener un select?
+R: Teóricamente ilimitado, pero práctico hasta ~10-20 casos. Más allá, el
+rendimiento puede degradarse.
+
+❓ ¿Qué es más rápido, select con 2 casos o con 10?
+R: Select tiene overhead O(n). Con pocos casos es muy rápido. Con muchos,
+considera rediseñar.
+
+❓ ¿Puedo usar select con channels nil?
+R: Sí, un channel nil nunca está listo, por lo que ese caso nunca se
+ejecuta. Es útil para deshabilitar casos dinámicamente.
+
+❓ ¿Puedo usar select para enviar y recibir en el mismo select?
+R: Sí. Puedes mezclar casos de envío y recepción libremente.
+
+❓ ¿Cómo implemento un timeout que se resetee?
+R: time.After crea un canal nuevo cada vez. Para resetear, usa
+time.NewTimer y su método Reset().
+
+❓ ¿Qué diferencia hay entre time.After y time.NewTimer?
+R: time.After es azúcar sintáctico para time.NewTimer. After no puede
+detenerse; NewTimer sí (útil en bucles).
+
+❓ ¿select con un solo caso tiene sentido?
+R: Sí, especialmente combinado con default para hacer no bloqueante un
+envío o recepción que normalmente bloquearía.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: DISEÑAR UN BALANCEADOR DE CARGA CON SELECT                    │
+│                                                                          │
+│  Diseña un balanceador de carga (load balancer) que distribuya          │
+│  peticiones entre N workers usando select como mecanismo de             │
+│  envío condicional.                                                      │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│  • GENERADOR DE PETICIONES: Produce 100 peticiones, cada una con        │
+│    un ID y una carga de trabajo simulada (duración variable).           │
+│    Las peticiones llegan en ráfagas de 5 cada 100ms.                   │
+│                                                                          │
+│  • BALANCEADOR: Recibe peticiones y las distribuye entre los workers    │
+│    usando select con envío no bloqueante.                               │
+│    - Si todos los workers están ocupados, la petición se encola en      │
+│      un buffer interno. Si el buffer se llena, se descarta.             │
+│    - Estrategia: intenta enviar a cada worker con select; el primero    │
+│      que acepte recibe la petición.                                     │
+│                                                                          │
+│  • WORKERS: 4 workers que procesan peticiones. Cada worker:             │
+│    - Tiene su propio channel de entrada con buffer pequeño (3)         │
+│    - Procesa cada petición en un tiempo variable (100-500ms)           │
+│    - Reporta estadísticas: peticiones procesadas, tiempo total         │
+│                                                                          │
+│  • RECOLECTOR: Recibe los resultados de los workers y muestra:          │
+│    - Total peticiones recibidas, procesadas, descartadas               │
+│    - Carga por worker (cuántas procesó cada uno)                       │
+│    - Tiempo total de procesamiento                                     │
+│                                                                          │
+│  REQUISITOS TÉCNICOS:                                                    │
+│  • Usa select para el envío a workers (no uses round-robin manual)     │
+│  • El buffer interno del balanceador debe ser de tamaño 10             │
+│  • Usa time.After para detectar workers lentos                         │
+│  • Implementa un shutdown graceful cuando todas las peticiones         │
+│    se hayan procesado                                                  │
+│  • El recolector debe usar fan-in con select para recibir de todos     │
+│    los workers                                                          │
+│  • Documenta tu diseño: estrategia de balanceo, tamaño de buffers,     │
+│    decisiones de diseño                                                │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra todos los conceptos de select: multiplexación, envío
+condicional, timeouts, fan-in, y terminación. Es un diseño real de un
+componente crítico en sistemas distribuidos.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Select es una de las construcciones más elegantes de Go. Con ella puedes
+coordinar múltiples canales, implementar timeouts, crear bucles de eventos,
+y construir patrones avanzados de concurrencia como fan-in y or-channel.
+
+Has visto cómo select te da control fino sobre la comunicación entre
+gorutinas: puedes esperar, puedes saltar, puedes temporizar, puedes elegir.
+Esta flexibilidad es lo que hace de Go un lenguaje excepcional para la
+programación concurrente.
+
+En el próximo capítulo exploraremos WaitGroup, una herramienta fundamental
+del paquete sync para esperar a que un conjunto de gorutinas terminen su
+trabajo. A veces, no necesitas comunicar datos, solo coordinar finalización.
+
+"Select no es solo una sentencia; es una forma de pensar en concurrencia."
+— Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 46: WAITGROUP → Esperando a que las gorutinas terminen
+
+══════════════════════════════════════════════════════════════════════════════

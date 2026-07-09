@@ -1,0 +1,1095 @@
+================================================================================
+  MÓDULO V: ARCHIVOS Y SERIALIZACIÓN
+  CAPÍTULO 50: PROYECTO DEL MÓDULO V
+  "C# MASTER BOOK"
+================================================================================
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 50, el proyecto integrador del Módulo V! Has recorrido
+un largo camino desde FileStream hasta la serialización JSON, pasando por
+StreamReader, BinaryWriter, FileInfo, Path y mucho más. Ahora es el momento
+de unir todas estas habilidades en un proyecto completo y funcional.
+
+Construiremos un "Gestor de Archivos y Configuración" (FileConfig Manager),
+una aplicación de consola que permite explorar directorios, visualizar
+archivos en diferentes formatos, editar configuraciones, y realizar
+operaciones de serialización/deserialización tanto en JSON como XML.
+
+Este proyecto está diseñado para ser práctico, extensible y demostrar
+las capacidades de System.IO en un escenario del mundo real.
+
+================================================================================
+  FRASE DEL DÍA
+================================================================================
+
+"La teoría sin práctica es como un archivo sin datos: existe pero no sirve.
+Este proyecto es donde la teoría cobra vida."
+
+--- Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  - Integrar todos los conceptos del Módulo V en un proyecto real.
+  - Implementar FileStream, StreamReader/Writer, BinaryReader/Writer.
+  - Aplicar serialización JSON y XML con System.Text.Json y XmlSerializer.
+  - Utilizar File, FileInfo, Directory, DirectoryInfo y Path.
+  - Construir una interfaz de consola interactiva y robusta.
+  - Practicar manejo de excepciones y buenas prácticas.
+  - Producir código mantenible y extensible.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+1. Descripción del proyecto
+2. Arquitectura de la aplicación
+3. Módulo de exploración de directorios
+4. Módulo de visualización de archivos
+5. Módulo de configuración (JSON/XML)
+6. Módulo de serialización binaria
+7. Módulo de operaciones de archivo
+8. Interfaz de consola (menú principal)
+9. Manejo de errores y logging
+10. Código completo del proyecto
+11. Extensiones y mejoras sugeridas
+
+----------------------------------------------------------------------
+1. DESCRIPCIÓN DEL PROYECTO
+----------------------------------------------------------------------
+
+"FileConfig Manager" es una aplicación de consola interactiva que permite:
+
+  a) Explorar el sistema de archivos: navegar por directorios, listar
+     archivos con metadatos (tamaño, fecha, atributos).
+
+  b) Visualizar archivos en diferentes formatos:
+     - Texto plano (StreamReader)
+     - Binario (FileStream + hex dump)
+     - JSON formateado
+     - XML formateado
+
+  c) Gestionar configuraciones:
+     - Crear/editar configuraciones en JSON.
+     - Crear/editar configuraciones en XML.
+     - Convertir entre JSON y XML.
+
+  d) Serializar/deserializar datos:
+     - Guardar objetos en binario (BinaryWriter).
+     - Cargar objetos desde binario (BinaryReader).
+
+  e) Operaciones de archivo:
+     - Copiar, mover, renombrar, eliminar.
+     - Crear directorios.
+     - Ver propiedades detalladas.
+
+----------------------------------------------------------------------
+2. ARQUITECTURA DE LA APLICACIÓN
+----------------------------------------------------------------------
+
+Estructura de clases:
+
+  FileConfigManager/
+  ├── Program.cs                   // Punto de entrada y menú principal
+  ├── Services/
+  │   ├── FileExplorerService.cs   // Navegación y listado
+  │   ├── FileViewerService.cs     // Visualización de archivos
+  │   ├── ConfigService.cs         // Configuración JSON/XML
+  │   ├── BinaryService.cs         // Serialización binaria
+  │   └── FileOperationService.cs  // Copiar, mover, eliminar
+  ├── Models/
+  │   ├── AppConfig.cs             // Modelo de configuración
+  │   ├── FileEntry.cs             // Entrada de archivo
+  │   └── Persona.cs               // Modelo para serialización
+  └── Utils/
+      ├── ConsoleHelper.cs         // Ayudas de consola
+      └── ExceptionHandler.cs      // Manejo centralizado
+
+----------------------------------------------------------------------
+3. MÓDULO DE EXPLORACIÓN DE DIRECTORIOS
+----------------------------------------------------------------------
+
+Navega por el sistema de archivos mostrando archivos y directorios con
+metadatos. Usa Directory.EnumerateFiles, FileInfo, DirectoryInfo, Path.
+
+  ```csharp
+  public class FileExplorerService
+  {
+      private string _currentDir;
+
+      public FileExplorerService(string startDir)
+      {
+          _currentDir = Path.GetFullPath(startDir);
+      }
+
+      public void ListCurrentDirectory()
+      {
+          Console.WriteLine($"\n📁 Directorio: {_currentDir}");
+          Console.WriteLine(new string('─', 80));
+          Console.WriteLine($"{"Nombre",-40} {"Tipo",-10} {"Tamaño",-10} {"Modificado",-20}");
+          Console.WriteLine(new string('─', 80));
+
+          // Directorio padre
+          var parent = Directory.GetParent(_currentDir);
+          if (parent != null)
+              Console.WriteLine($"{"[..] (Directorio padre)",-50} {"<DIR>",-10} {"",-10} {parent.LastWriteTime,-20}");
+
+          // Subdirectorios
+          foreach (var dir in Directory.EnumerateDirectories(_currentDir))
+          {
+              var di = new DirectoryInfo(dir);
+              Console.WriteLine($"{Path.GetFileName(dir),-50} {"<DIR>",-10} {"",-10} {di.LastWriteTime,-20}");
+          }
+
+          // Archivos
+          foreach (var file in Directory.EnumerateFiles(_currentDir))
+          {
+              var fi = new FileInfo(file);
+              string size = FormatearTamano(fi.Length);
+              Console.WriteLine($"{fi.Name,-50} {"<FILE>",-10} {size,-10} {fi.LastWriteTime,-20}");
+          }
+      }
+
+      public bool ChangeDirectory(string dirName)
+      {
+          string newPath;
+          if (dirName == "..")
+              newPath = Directory.GetParent(_currentDir)?.FullName ?? _currentDir;
+          else
+              newPath = Path.Combine(_currentDir, dirName);
+
+          if (Directory.Exists(newPath))
+          {
+              _currentDir = newPath;
+              return true;
+          }
+          return false;
+      }
+
+      public string GetCurrentPath() => _currentDir;
+
+      public string[] GetFileEntries(string pattern = "*.*")
+      {
+          return Directory.GetFiles(_currentDir, pattern);
+      }
+
+      private static string FormatearTamano(long bytes)
+      {
+          return bytes switch
+          {
+              < 1024 => $"{bytes} B",
+              < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+              < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+              _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+          };
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+4. MÓDULO DE VISUALIZACIÓN DE ARCHIVOS
+----------------------------------------------------------------------
+
+Muestra archivos en diferentes formatos según su tipo.
+
+  ```csharp
+  public class FileViewerService
+  {
+      public void ViewTextFile(string path)
+      {
+          if (!File.Exists(path))
+              throw new FileNotFoundException("Archivo no encontrado", path);
+
+          Console.WriteLine($"\n📄 Contenido de: {Path.GetFileName(path)}");
+          Console.WriteLine(new string('─', 80));
+
+          using StreamReader sr = new StreamReader(path);
+          string line;
+          int lineNum = 1;
+          while ((line = sr.ReadLine()) != null)
+          {
+              Console.WriteLine($"{lineNum,4}: {line}");
+              lineNum++;
+          }
+      }
+
+      public void ViewBinaryHex(string path, int bytesPerLine = 16)
+      {
+          if (!File.Exists(path))
+              throw new FileNotFoundException("Archivo no encontrado", path);
+
+          Console.WriteLine($"\n🔢 Hex dump de: {Path.GetFileName(path)}");
+          Console.WriteLine(new string('─', 80));
+
+          using FileStream fs = new FileStream(path, FileMode.Open,
+              FileAccess.Read, FileShare.Read);
+          byte[] buffer = new byte[bytesPerLine];
+          long offset = 0;
+          int bytesRead;
+
+          while ((bytesRead = fs.Read(buffer, 0, buffer.Length)) > 0)
+          {
+              // Offset
+              Console.Write($"{offset:X8}  ");
+
+              // Hex
+              for (int i = 0; i < bytesPerLine; i++)
+              {
+                  if (i < bytesRead)
+                      Console.Write($"{buffer[i]:X2} ");
+                  else
+                      Console.Write("   ");
+
+                  if (i == 7) Console.Write(" ");
+              }
+
+              Console.Write(" ");
+
+              // ASCII
+              for (int i = 0; i < bytesRead; i++)
+              {
+                  char c = (char)buffer[i];
+                  Console.Write(char.IsControl(c) ? '.' : c);
+              }
+
+              Console.WriteLine();
+              offset += bytesRead;
+          }
+      }
+
+      public void ViewJsonFile(string path)
+      {
+          string json = File.ReadAllText(path);
+          var options = new JsonSerializerOptions { WriteIndented = true };
+
+          try
+          {
+              var doc = JsonDocument.Parse(json);
+              string formatted = JsonSerializer.Serialize(doc.RootElement, options);
+              Console.WriteLine(formatted);
+          }
+          catch (JsonException ex)
+          {
+              Console.WriteLine($"JSON inválido: {ex.Message}");
+          }
+      }
+
+      public void ViewXmlFile(string path)
+      {
+          var doc = XDocument.Load(path);
+          Console.WriteLine(doc.ToString());
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+5. MÓDULO DE CONFIGURACIÓN (JSON/XML)
+----------------------------------------------------------------------
+
+Permite crear y editar configuraciones en ambos formatos con conversión.
+
+  ```csharp
+  [DataContract]
+  public class AppConfig
+  {
+      [DataMember]
+      public string AppName { get; set; } = "FileConfig Manager";
+
+      [DataMember]
+      public string Version { get; set; } = "1.0.0";
+
+      [DataMember]
+      public bool AutoSave { get; set; } = true;
+
+      [DataMember]
+      public int MaxLogSizeMB { get; set; } = 10;
+
+      [DataMember]
+      public List<string> RecentFiles { get; set; } = new();
+
+      [DataMember]
+      public ThemeSettings Theme { get; set; } = new();
+  }
+
+  [DataContract]
+  public class ThemeSettings
+  {
+      [DataMember]
+      public string BackgroundColor { get; set; } = "DarkBlue";
+
+      [DataMember]
+      public string ForegroundColor { get; set; } = "White";
+
+      [DataMember]
+      public bool UseUnicode { get; set; } = true;
+  }
+
+  public class ConfigService
+  {
+      private readonly string _jsonPath;
+      private readonly string _xmlPath;
+
+      public ConfigService(string baseDir)
+      {
+          _jsonPath = Path.Combine(baseDir, "config.json");
+          _xmlPath = Path.Combine(baseDir, "config.xml");
+      }
+
+      public AppConfig LoadFromJson()
+      {
+          if (!File.Exists(_jsonPath))
+              return new AppConfig();
+
+          string json = File.ReadAllText(_jsonPath);
+          return JsonSerializer.Deserialize<AppConfig>(json)
+              ?? new AppConfig();
+      }
+
+      public void SaveToJson(AppConfig config)
+      {
+          var options = new JsonSerializerOptions
+          {
+              WriteIndented = true,
+              PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+          };
+          string json = JsonSerializer.Serialize(config, options);
+          File.WriteAllText(_jsonPath, json);
+          Console.WriteLine($"Configuración JSON guardada en: {_jsonPath}");
+      }
+
+      public AppConfig LoadFromXml()
+      {
+          if (!File.Exists(_xmlPath))
+              return new AppConfig();
+
+          var serializer = new DataContractSerializer(typeof(AppConfig));
+          using FileStream fs = File.OpenRead(_xmlPath);
+          return (AppConfig?)serializer.ReadObject(fs) ?? new AppConfig();
+      }
+
+      public void SaveToXml(AppConfig config)
+      {
+          var serializer = new DataContractSerializer(typeof(AppConfig));
+          var settings = new XmlWriterSettings
+          {
+              Indent = true,
+              Encoding = Encoding.UTF8
+          };
+          using var writer = XmlWriter.Create(_xmlPath, settings);
+          serializer.WriteObject(writer, config);
+          Console.WriteLine($"Configuración XML guardada en: {_xmlPath}");
+      }
+
+      public void ConvertJsonToXml()
+      {
+          var config = LoadFromJson();
+          SaveToXml(config);
+          Console.WriteLine("Convertido: JSON → XML");
+      }
+
+      public void ConvertXmlToJson()
+      {
+          var config = LoadFromXml();
+          SaveToJson(config);
+          Console.WriteLine("Convertido: XML → JSON");
+      }
+
+      public void EditConfig(Action<AppConfig> editAction)
+      {
+          var config = LoadFromJson();
+          editAction(config);
+          SaveToJson(config);
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+6. MÓDULO DE SERIALIZACIÓN BINARIA
+----------------------------------------------------------------------
+
+Serializa y deserializa objetos en formato binario usando BinaryReader/Writer.
+
+  ```csharp
+  public class BinaryService
+  {
+      private readonly string _dataDir;
+
+      public BinaryService(string dataDir)
+      {
+          _dataDir = dataDir;
+          Directory.CreateDirectory(_dataDir);
+      }
+
+      public void SavePersonas(string filename, List<Persona> personas)
+      {
+          string path = Path.Combine(_dataDir, filename);
+          using FileStream fs = new FileStream(path, FileMode.Create);
+          using BinaryWriter bw = new BinaryWriter(fs);
+
+          bw.Write(personas.Count);
+          foreach (var p in personas)
+          {
+              bw.Write(p.Id);
+              bw.Write(p.Nombre);
+              bw.Write(p.Edad);
+              bw.Write(p.Salario);
+              bw.Write(p.Activo);
+              bw.Write(p.FechaRegistro.Ticks);
+          }
+          Console.WriteLine($"Guardadas {personas.Count} personas en binario: {path}");
+      }
+
+      public List<Persona> LoadPersonas(string filename)
+      {
+          string path = Path.Combine(_dataDir, filename);
+          if (!File.Exists(path))
+          {
+              Console.WriteLine($"Archivo no encontrado: {path}");
+              return new List<Persona>();
+          }
+
+          var personas = new List<Persona>();
+          using FileStream fs = new FileStream(path, FileMode.Open,
+              FileAccess.Read, FileShare.Read);
+          using BinaryReader br = new BinaryReader(fs);
+
+          int count = br.ReadInt32();
+          for (int i = 0; i < count; i++)
+          {
+              personas.Add(new Persona
+              {
+                  Id = br.ReadInt32(),
+                  Nombre = br.ReadString(),
+                  Edad = br.ReadInt32(),
+                  Salario = br.ReadDouble(),
+                  Activo = br.ReadBoolean(),
+                  FechaRegistro = new DateTime(br.ReadInt64())
+              });
+          }
+          Console.WriteLine($"Cargadas {personas.Count} personas desde binario.");
+          return personas;
+      }
+
+      public void CreateSampleData()
+      {
+          var personas = new List<Persona>
+          {
+              new() { Id = 1, Nombre = "Ana García", Edad = 28, Salario = 45000.50, Activo = true, FechaRegistro = DateTime.Now.AddDays(-100) },
+              new() { Id = 2, Nombre = "Luis Pérez", Edad = 35, Salario = 62000.75, Activo = true, FechaRegistro = DateTime.Now.AddDays(-50) },
+              new() { Id = 3, Nombre = "Carla López", Edad = 22, Salario = 32000.00, Activo = false, FechaRegistro = DateTime.Now.AddDays(-30) },
+              new() { Id = 4, Nombre = "Miguel Ruiz", Edad = 45, Salario = 78000.00, Activo = true, FechaRegistro = DateTime.Now.AddDays(-10) },
+              new() { Id = 5, Nombre = "Sofía Torres", Edad = 31, Salario = 51000.25, Activo = true, FechaRegistro = DateTime.Now.AddDays(-5) }
+          };
+          SavePersonas("personas.dat", personas);
+      }
+  }
+
+  [DataContract]
+  public class Persona
+  {
+      [DataMember]
+      public int Id { get; set; }
+      [DataMember]
+      public string Nombre { get; set; }
+      [DataMember]
+      public int Edad { get; set; }
+      [DataMember]
+      public double Salario { get; set; }
+      [DataMember]
+      public bool Activo { get; set; }
+      [DataMember]
+      public DateTime FechaRegistro { get; set; }
+
+      public override string ToString()
+          => $"{Id,-3} {Nombre,-20} {Edad,3} {Salario,10:F2} {(Activo ? "Sí" : "No"),3} {FechaRegistro:yyyy-MM-dd}";
+  }
+  ```
+
+----------------------------------------------------------------------
+7. MÓDULO DE OPERACIONES DE ARCHIVO
+----------------------------------------------------------------------
+
+Operaciones básicas de gestión de archivos y directorios.
+
+  ```csharp
+  public class FileOperationService
+  {
+      public bool CopyFile(string source, string dest, bool overwrite = true)
+      {
+          try
+          {
+              if (!File.Exists(source))
+              {
+                  Console.WriteLine($"Origen no encontrado: {source}");
+                  return false;
+              }
+
+              string? destDir = Path.GetDirectoryName(dest);
+              if (destDir != null) Directory.CreateDirectory(destDir);
+
+              File.Copy(source, dest, overwrite);
+              Console.WriteLine($"Copiado: {source} → {dest}");
+              return true;
+          }
+          catch (Exception ex)
+          {
+              Console.WriteLine($"Error al copiar: {ex.Message}");
+              return false;
+          }
+      }
+
+      public bool MoveFile(string source, string dest)
+      {
+          try
+          {
+              if (!File.Exists(source))
+              {
+                  Console.WriteLine($"Origen no encontrado: {source}");
+                  return false;
+              }
+
+              string? destDir = Path.GetDirectoryName(dest);
+              if (destDir != null) Directory.CreateDirectory(destDir);
+
+              File.Move(source, dest);
+              Console.WriteLine($"Movido: {source} → {dest}");
+              return true;
+          }
+          catch (Exception ex)
+          {
+              Console.WriteLine($"Error al mover: {ex.Message}");
+              return false;
+          }
+      }
+
+      public bool DeleteFile(string path)
+      {
+          try
+          {
+              if (!File.Exists(path))
+              {
+                  Console.WriteLine($"Archivo no encontrado: {path}");
+                  return false;
+              }
+
+              Console.Write($"¿Eliminar '{Path.GetFileName(path)}'? (s/n): ");
+              if (Console.ReadLine()?.ToLower() == "s")
+              {
+                  File.Delete(path);
+                  Console.WriteLine("Archivo eliminado.");
+                  return true;
+              }
+              Console.WriteLine("Operación cancelada.");
+              return false;
+          }
+          catch (Exception ex)
+          {
+              Console.WriteLine($"Error al eliminar: {ex.Message}");
+              return false;
+          }
+      }
+
+      public void ShowFileProperties(string path)
+      {
+          if (!File.Exists(path))
+          {
+              Console.WriteLine("Archivo no encontrado.");
+              return;
+          }
+
+          FileInfo fi = new FileInfo(path);
+          Console.WriteLine($"\n📋 Propiedades de: {fi.Name}");
+          Console.WriteLine(new string('─', 60));
+          Console.WriteLine($"Ruta completa: {fi.FullName}");
+          Console.WriteLine($"Directorio: {fi.DirectoryName}");
+          Console.WriteLine($"Tamaño: {fi.Length:N0} bytes ({fi.Length / 1024.0:N1} KB)");
+          Console.WriteLine($"Creado: {fi.CreationTime:yyyy-MM-dd HH:mm:ss}");
+          Console.WriteLine($"Modificado: {fi.LastWriteTime:yyyy-MM-dd HH:mm:ss}");
+          Console.WriteLine($"Último acceso: {fi.LastAccessTime:yyyy-MM-dd HH:mm:ss}");
+          Console.WriteLine($"Atributos: {fi.Attributes}");
+          Console.WriteLine($"Solo lectura: {fi.IsReadOnly}");
+          Console.WriteLine($"Extensión: {fi.Extension}");
+      }
+
+      public void CreateDirectory(string path)
+      {
+          try
+          {
+              Directory.CreateDirectory(path);
+              Console.WriteLine($"Directorio creado: {path}");
+          }
+          catch (Exception ex)
+          {
+              Console.WriteLine($"Error al crear directorio: {ex.Message}");
+          }
+      }
+
+      public void SearchFiles(string rootDir, string pattern)
+      {
+          Console.WriteLine($"\n🔍 Buscando '{pattern}' en {rootDir} ...");
+          int count = 0;
+
+          try
+          {
+              foreach (string file in Directory.EnumerateFiles(
+                  rootDir, pattern, SearchOption.AllDirectories))
+              {
+                  Console.WriteLine($"  {file}");
+                  count++;
+              }
+              Console.WriteLine($"\nTotal: {count} archivos encontrados.");
+          }
+          catch (UnauthorizedAccessException)
+          {
+              Console.WriteLine("Acceso denegado a algunos directorios.");
+          }
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+8. INTERFAZ DE CONSOLA (MENÚ PRINCIPAL)
+----------------------------------------------------------------------
+
+Menú interactivo que conecta todos los módulos.
+
+  ```csharp
+  class Program
+  {
+      static void Main(string[] args)
+      {
+          Console.OutputEncoding = Encoding.UTF8;
+          string baseDir = Path.Combine(AppContext.BaseDirectory, "FileConfigData");
+          Directory.CreateDirectory(baseDir);
+
+          var explorer = new FileExplorerService(baseDir);
+          var viewer = new FileViewerService();
+          var configService = new ConfigService(baseDir);
+          var binaryService = new BinaryService(baseDir);
+          var fileOps = new FileOperationService();
+
+          Console.WriteLine($"╔══════════════════════════════════════════════╗");
+          Console.WriteLine($"║       FILECONFIG MANAGER v1.0               ║");
+          Console.WriteLine($"║   Gestor de Archivos y Configuración        ║");
+          Console.WriteLine($"╚══════════════════════════════════════════════╝");
+          Console.WriteLine($"Directorio base: {baseDir}\n");
+
+          bool running = true;
+          while (running)
+          {
+              try
+              {
+                  Console.WriteLine($"\n📍 {explorer.GetCurrentPath()}");
+                  Console.WriteLine(new string('─', 60));
+                  Console.WriteLine(" MENÚ PRINCIPAL:");
+                  Console.WriteLine("  1. Explorar directorios");
+                  Console.WriteLine("  2. Ver archivo (texto)");
+                  Console.WriteLine("  3. Ver archivo (hex dump)");
+                  Console.WriteLine("  4. Ver archivo (JSON)");
+                  Console.WriteLine("  5. Ver archivo (XML)");
+                  Console.WriteLine("  6. Gestión de configuración");
+                  Console.WriteLine("  7. Serialización binaria");
+                  Console.WriteLine("  8. Operaciones de archivo");
+                  Console.WriteLine("  9. Buscar archivos");
+                  Console.WriteLine("  0. Salir");
+                  Console.Write(" Seleccione: ");
+
+                  string option = Console.ReadLine()?.Trim() ?? "";
+                  Console.WriteLine();
+
+                  switch (option)
+                  {
+                      case "1":
+                          explorer.ListCurrentDirectory();
+                          Console.Write("\nCambiar a directorio (o Enter para continuar): ");
+                          string dir = Console.ReadLine()?.Trim();
+                          if (!string.IsNullOrEmpty(dir))
+                          {
+                              if (!explorer.ChangeDirectory(dir))
+                                  Console.WriteLine("Directorio no encontrado.");
+                          }
+                          break;
+
+                      case "2":
+                          Console.Write("Ruta del archivo de texto: ");
+                          string? textPath = Console.ReadLine()?.Trim();
+                          if (!string.IsNullOrEmpty(textPath) && File.Exists(textPath))
+                              viewer.ViewTextFile(textPath);
+                          else
+                              Console.WriteLine("Archivo no válido.");
+                          break;
+
+                      case "3":
+                          Console.Write("Ruta del archivo (hex dump): ");
+                          string? hexPath = Console.ReadLine()?.Trim();
+                          if (!string.IsNullOrEmpty(hexPath) && File.Exists(hexPath))
+                              viewer.ViewBinaryHex(hexPath);
+                          else
+                              Console.WriteLine("Archivo no válido.");
+                          break;
+
+                      case "4":
+                          Console.Write("Ruta del archivo JSON: ");
+                          string? jsonPath = Console.ReadLine()?.Trim();
+                          if (!string.IsNullOrEmpty(jsonPath) && File.Exists(jsonPath))
+                              viewer.ViewJsonFile(jsonPath);
+                          else
+                              Console.WriteLine("Archivo no válido.");
+                          break;
+
+                      case "5":
+                          Console.Write("Ruta del archivo XML: ");
+                          string? xmlPath = Console.ReadLine()?.Trim();
+                          if (!string.IsNullOrEmpty(xmlPath) && File.Exists(xmlPath))
+                              viewer.ViewXmlFile(xmlPath);
+                          else
+                              Console.WriteLine("Archivo no válido.");
+                          break;
+
+                      case "6":
+                          MenuConfiguracion(configService);
+                          break;
+
+                      case "7":
+                          MenuBinario(binaryService);
+                          break;
+
+                      case "8":
+                          MenuOperaciones(fileOps, explorer);
+                          break;
+
+                      case "9":
+                          Console.Write("Patrón de búsqueda (ej. *.txt): ");
+                          string? pattern = Console.ReadLine()?.Trim() ?? "*.*";
+                          fileOps.SearchFiles(explorer.GetCurrentPath(), pattern);
+                          break;
+
+                      case "0":
+                          running = false;
+                          Console.WriteLine("¡Hasta luego!");
+                          break;
+
+                      default:
+                          Console.WriteLine("Opción no válida.");
+                          break;
+                  }
+              }
+              catch (Exception ex)
+              {
+                  Console.WriteLine($"Error: {ex.Message}");
+              }
+          }
+      }
+
+      static void MenuConfiguracion(ConfigService configService)
+      {
+          Console.WriteLine(" CONFIGURACIÓN:");
+          Console.WriteLine("  1. Mostrar configuración (JSON)");
+          Console.WriteLine("  2. Mostrar configuración (XML)");
+          Console.WriteLine("  3. Editar configuración");
+          Console.WriteLine("  4. Convertir JSON → XML");
+          Console.WriteLine("  5. Convertir XML → JSON");
+          Console.WriteLine("  6. Volver");
+          Console.Write(" Seleccione: ");
+
+          switch (Console.ReadLine()?.Trim())
+          {
+              case "1":
+                  var config = configService.LoadFromJson();
+                  Console.WriteLine(JsonSerializer.Serialize(config,
+                      new JsonSerializerOptions { WriteIndented = true }));
+                  break;
+              case "2":
+                  var configXml = configService.LoadFromXml();
+                  var ser = new DataContractSerializer(typeof(AppConfig));
+                  using (var sw = new StringWriter())
+                  using (var xw = XmlWriter.Create(sw, new XmlWriterSettings { Indent = true }))
+                  {
+                      ser.WriteObject(xw, configXml);
+                      xw.Flush();
+                      Console.WriteLine(sw.ToString());
+                  }
+                  break;
+              case "3":
+                  configService.EditConfig(c =>
+                  {
+                      Console.Write($"AppName ({c.AppName}): ");
+                      string? name = Console.ReadLine();
+                      if (!string.IsNullOrEmpty(name)) c.AppName = name;
+
+                      Console.Write($"AutoSave ({c.AutoSave}): ");
+                      string? auto = Console.ReadLine();
+                      if (bool.TryParse(auto, out bool a)) c.AutoSave = a;
+
+                      Console.Write($"MaxLogSizeMB ({c.MaxLogSizeMB}): ");
+                      string? max = Console.ReadLine();
+                      if (int.TryParse(max, out int m)) c.MaxLogSizeMB = m;
+                  });
+                  break;
+              case "4":
+                  configService.ConvertJsonToXml();
+                  break;
+              case "5":
+                  configService.ConvertXmlToJson();
+                  break;
+          }
+      }
+
+      static void MenuBinario(BinaryService binaryService)
+      {
+          Console.WriteLine(" SERIALIZACIÓN BINARIA:");
+          Console.WriteLine("  1. Crear datos de ejemplo");
+          Console.WriteLine("  2. Mostrar personas");
+          Console.WriteLine("  3. Volver");
+          Console.Write(" Seleccione: ");
+
+          switch (Console.ReadLine()?.Trim())
+          {
+              case "1":
+                  binaryService.CreateSampleData();
+                  break;
+              case "2":
+                  var personas = binaryService.LoadPersonas("personas.dat");
+                  Console.WriteLine($"\n{"Id",-3} {"Nombre",-20} {"Edad",3} {"Salario",10} {"Act",3} {"Registro",-12}");
+                  Console.WriteLine(new string('─', 55));
+                  foreach (var p in personas)
+                      Console.WriteLine(p);
+                  break;
+          }
+      }
+
+      static void MenuOperaciones(FileOperationService fileOps,
+          FileExplorerService explorer)
+      {
+          Console.WriteLine(" OPERACIONES DE ARCHIVO:");
+          Console.WriteLine("  1. Copiar archivo");
+          Console.WriteLine("  2. Mover/Renombrar archivo");
+          Console.WriteLine("  3. Eliminar archivo");
+          Console.WriteLine("  4. Propiedades de archivo");
+          Console.WriteLine("  5. Crear directorio");
+          Console.WriteLine("  6. Volver");
+          Console.Write(" Seleccione: ");
+
+          string? src, dst;
+          switch (Console.ReadLine()?.Trim())
+          {
+              case "1":
+                  Console.Write("Origen: ");
+                  src = Console.ReadLine()?.Trim();
+                  Console.Write("Destino: ");
+                  dst = Console.ReadLine()?.Trim();
+                  if (!string.IsNullOrEmpty(src) && !string.IsNullOrEmpty(dst))
+                      fileOps.CopyFile(src, dst);
+                  break;
+              case "2":
+                  Console.Write("Origen: ");
+                  src = Console.ReadLine()?.Trim();
+                  Console.Write("Destino: ");
+                  dst = Console.ReadLine()?.Trim();
+                  if (!string.IsNullOrEmpty(src) && !string.IsNullOrEmpty(dst))
+                      fileOps.MoveFile(src, dst);
+                  break;
+              case "3":
+                  Console.Write("Archivo a eliminar: ");
+                  src = Console.ReadLine()?.Trim();
+                  if (!string.IsNullOrEmpty(src))
+                      fileOps.DeleteFile(src);
+                  break;
+              case "4":
+                  Console.Write("Archivo: ");
+                  src = Console.ReadLine()?.Trim();
+                  if (!string.IsNullOrEmpty(src))
+                      fileOps.ShowFileProperties(src);
+                  break;
+              case "5":
+                  Console.Write("Nombre del directorio: ");
+                  src = Console.ReadLine()?.Trim();
+                  if (!string.IsNullOrEmpty(src))
+                      fileOps.CreateDirectory(
+                          Path.Combine(explorer.GetCurrentPath(), src));
+                  break;
+          }
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+9. MANEJO DE ERRORES Y LOGGING
+----------------------------------------------------------------------
+
+Clase utilitaria para manejo centralizado de errores y logging.
+
+  ```csharp
+  public static class ExceptionHandler
+  {
+      public static void SafeExecute(Action action, string context = "")
+      {
+          try
+          {
+              action();
+          }
+          catch (FileNotFoundException ex)
+          {
+              Console.WriteLine($"⚠ Archivo no encontrado: {ex.FileName}");
+              LogError($"FileNotFoundException en {context}: {ex.Message}");
+          }
+          catch (DirectoryNotFoundException ex)
+          {
+              Console.WriteLine($"⚠ Directorio no encontrado: {ex.Message}");
+              LogError($"DirectoryNotFoundException en {context}: {ex.Message}");
+          }
+          catch (UnauthorizedAccessException ex)
+          {
+              Console.WriteLine($"⚠ Sin permisos: {ex.Message}");
+              LogError($"UnauthorizedAccessException en {context}: {ex.Message}");
+          }
+          catch (IOException ex)
+          {
+              Console.WriteLine($"⚠ Error de E/S: {ex.Message}");
+              LogError($"IOException en {context}: {ex.Message}");
+          }
+          catch (JsonException ex)
+          {
+              Console.WriteLine($"⚠ Error en JSON: {ex.Message}");
+              LogError($"JsonException en {context}: {ex.Message}");
+          }
+          catch (InvalidOperationException ex)
+          {
+              Console.WriteLine($"⚠ Error de operación: {ex.Message}");
+              LogError($"InvalidOperationException en {context}: {ex.Message}");
+          }
+          catch (Exception ex)
+          {
+              Console.WriteLine($"⚠ Error inesperado: {ex.Message}");
+              LogError($"Exception en {context}: {ex}");
+          }
+      }
+
+      private static void LogError(string message)
+      {
+          string logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+          Directory.CreateDirectory(logDir);
+          string logFile = Path.Combine(logDir,
+              $"error_{DateTime.Now:yyyyMMdd}.log");
+          File.AppendAllText(logFile,
+              $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+10. CÓDIGO COMPLETO DEL PROYECTO (PROGRAM.CS)
+----------------------------------------------------------------------
+
+El Program.cs completo integrando todos los módulos en un solo archivo
+organizado (para referencia rápida).
+
+El código completo se muestra arriba en las secciones 8 y 9. En un proyecto
+real, cada clase iría en su propio archivo dentro de las carpetas Services/,
+Models/ y Utils/.
+
+Para ejecutar:
+  ```
+  dotnet new console -n FileConfigManager
+  cd FileConfigManager
+  dotnet add package System.Text.Json
+  # Copiar el código en Program.cs y crear las carpetas/clases
+  dotnet run
+  ```
+
+----------------------------------------------------------------------
+11. EXTENSIONES Y MEJORAS SUGERIDAS
+----------------------------------------------------------------------
+
+El proyecto es una base sólida que puedes extender con:
+
+a) Persistencia de configuración en ambos formatos sincronizados.
+
+b) Vista previa de imágenes usando FileStream y metadatos EXIF.
+
+c) Compresión GZip/Zip de archivos seleccionados.
+
+d) Historial de navegación con retroceso (como cd - en bash).
+
+e) Búsqueda por contenido de texto usando StreamReader línea a línea.
+
+f) Edición de archivos de texto directamente desde la consola.
+
+g) Soporte para arrastrar y soltar rutas en la consola.
+
+h) Configuración de color y tema persistente en JSON.
+
+i) Exportación de listados a CSV o JSON.
+
+j) Interfaz con códigos de colores ANSI para mejor legibilidad.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+En este proyecto integrador hemos aplicado:
+
+  - FileExplorerService: navegación con Directory.EnumerateFiles, FileInfo.
+  - FileViewerService: visualización con StreamReader, FileStream, hex dump.
+  - ConfigService: serialización JSON/XML con JsonSerializer y
+    DataContractSerializer.
+  - BinaryService: serialización binaria con BinaryReader/Writer.
+  - FileOperationService: Copy, Move, Delete con File estático.
+  - ConsoleHelper: menú interactivo con todas las opciones.
+  - ExceptionHandler: manejo centralizado de excepciones de I/O.
+  - Models: AppConfig, Persona, FileEntry con atributos de serialización.
+  - Path y directorios: construcción segura de rutas con Path.Combine.
+
+Este proyecto demuestra el dominio completo de System.IO y la serialización
+en C#, desde el byte más básico hasta la configuración estructurada en JSON.
+
+================================================================================
+  CIERRE DEL MÓDULO V
+================================================================================
+
+¡Felicidades, Master! Has completado el Módulo V: Archivos y Serialización.
+
+Has recorrido un camino impresionante:
+  - Capítulo 41: FileStream, FileMode, FileAccess, FileShare, IDisposable.
+  - Capítulo 42: Lectura de archivos con File.ReadAllText, ReadLines.
+  - Capítulo 43: Escritura de archivos con File.WriteAllText, AppendAllText.
+  - Capítulo 44: StreamReader y StreamWriter en profundidad.
+  - Capítulo 45: BinaryReader y BinaryWriter para datos binarios.
+  - Capítulo 46: File, FileInfo, Directory, DirectoryInfo.
+  - Capítulo 47: Serialización JSON con System.Text.Json.
+  - Capítulo 48: Serialización XML con XmlSerializer y DataContractSerializer.
+  - Capítulo 49: Path y directorios, enumeración eficiente.
+  - Capítulo 50: Proyecto integrador FileConfig Manager.
+
+Ahora eres capaz de:
+  - Leer y escribir archivos de cualquier tipo y tamaño.
+  - Serializar objetos a JSON, XML y binario.
+  - Navegar y manipular el sistema de archivos.
+  - Construir aplicaciones robustas con manejo de errores de I/O.
+  - Elegir el formato y la técnica adecuada para cada escenario.
+
+Estás listo para el siguiente módulo, donde exploraremos bases de datos,
+Entity Framework Core y acceso a datos relacionales.
+
+¡El camino hacia la maestría continúa!
+
+================================================================================
+  PREPARACIÓN PARA EL PRÓXIMO MÓDULO
+================================================================================
+
+En el Módulo VI exploraremos:
+  - ADO.NET y conexiones a bases de datos
+  - Entity Framework Core (ORM)
+  - LINQ to Entities
+  - Migraciones y scaffolding
+  - Buenas prácticas de acceso a datos
+
+¡Te esperamos en el Módulo VI!
+
+================================================================================
+  FIN DEL CAPÍTULO 50 Y DEL MÓDULO V
+================================================================================

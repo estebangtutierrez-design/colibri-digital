@@ -1,0 +1,694 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 59: TPL (TASK PARALLEL LIBRARY)
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 59 de C# MASTER BOOK. La Task Parallel Library (TPL)
+es el conjunto de APIs que comenzamos a explorar en los capítulos 55-58.
+En este capítulo unificaremos y profundizaremos en los aspectos más
+avanzados de TPL.
+
+TPL incluye:
+  • Task y Task<T> (capítulo 56)
+  • Task.Factory y sus métodos
+  • TaskScheduler (planificador de tareas)
+  • Child tasks (tareas hijas)
+  • Continuaciones avanzadas
+  • TaskCompletionSource (fuente de tareas)
+  • Dataflow (System.Threading.Tasks.Dataflow)
+  • Patrones de diseño avanzados con TPL
+
+TPL es la base sobre la que se construyen los patrones de paralelismo
+y concurrencia en .NET. Dominarlo te permitirá diseñar sistemas
+altamente concurrentes y escalables.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"TPL no es solo sobre paralelismo: es sobre componer unidades de trabajo
+asíncrono de manera predecible y eficiente."
+— Microsoft Parallel Programming Team
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Usar Task.Factory para crear y configurar tareas.
+  • Entender y personalizar TaskScheduler.
+  • Crear child tasks (AttachedToParent).
+  • Usar TaskCompletionSource para crear Tasks desde eventos.
+  • Implementar continuaciones encadenadas y condicionales.
+  • Usar el patrón productor/consumidor con TPL.
+  • Introducir Dataflow (BufferBlock, ActionBlock, TransformBlock).
+  • Combinar TPL con async/await.
+  • Implementar el patrón MapReduce con TPL.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. Task.Factory
+
+Task.Factory es una instancia de TaskFactory que proporciona métodos
+para crear y configurar tareas.
+
+  Task t1 = Task.Factory.StartNew(() =>
+  {
+      Console.WriteLine("Tarea desde Factory");
+  });
+
+  Task<int> t2 = Task.Factory.StartNew(() =>
+  {
+      return 42;
+  }, CancellationToken.None, TaskCreationOptions.None, TaskScheduler.Default);
+
+Task.Factory.StartNew reemplaza a Task.Run pero ofrece más control.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. TaskScheduler
+
+TaskScheduler es el planificador: decide dónde y cuándo se ejecutan
+las tareas.
+
+  // Default: ThreadPool
+  TaskScheduler defaultSched = TaskScheduler.Default;
+
+  // Current: scheduler del contexto actual
+  TaskScheduler currentSched = TaskScheduler.Current;
+
+  // FromCurrentSynchronizationContext (UI)
+  TaskScheduler uiSched = TaskScheduler.FromCurrentSynchronizationContext();
+
+Puedes crear un TaskScheduler personalizado (ver desafío capítulo 56).
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. Child Tasks (AttachedToParent)
+
+Una tarea hija adjunta se completa antes que la tarea padre:
+
+  Task padre = Task.Factory.StartNew(() =>
+  {
+      Console.WriteLine("Padre iniciado");
+
+      Task hija = Task.Factory.StartNew(() =>
+      {
+          Thread.Sleep(2000);
+          Console.WriteLine("Hija completada");
+      }, TaskCreationOptions.AttachedToParent);
+
+      Console.WriteLine("Padre sigue ejecutándose");
+  });
+
+  padre.Wait();  // Espera a que PADRE E HIJAS terminen
+  Console.WriteLine("Padre e hijas completadas");
+
+Sin AttachedToParent, el padre se completa inmediatamente.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. TaskCompletionSource<T>
+
+TaskCompletionSource crea una Task que puedes completar manualmente:
+
+  public Task<string> DescargarConEventoAsync(string url)
+  {
+      var tcs = new TaskCompletionSource<string>();
+
+      // Simula evento asíncrono
+      var cliente = new WebClient();
+      cliente.DownloadStringCompleted += (s, e) =>
+      {
+          if (e.Error != null)
+              tcs.SetException(e.Error);
+          else if (e.Cancelled)
+              tcs.SetCanceled();
+          else
+              tcs.SetResult(e.Result);
+      };
+
+      cliente.DownloadStringAsync(new Uri(url));
+      return tcs.Task;
+  }
+
+Es útil para adaptar APIs basadas en eventos (EAP) a Tasks.
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. Continuaciones encadenadas (pipeline)
+
+Puedes crear pipelines complejos de tareas:
+
+  Task<int> pipeline = Task.Run(() => 10)
+      .ContinueWith(t => t.Result * 2)
+      .ContinueWith(t => t.Result + 5)
+      .ContinueWith(t => t.Result / 3);
+
+  Console.WriteLine(pipeline.Result);  // 8
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Dataflow (System.Threading.Tasks.Dataflow)
+
+Dataflow es un conjunto de bloques para construir pipelines de
+procesamiento con buffer y paralelismo.
+
+Requiere: Install-Package System.Threading.Tasks.Dataflow
+
+  // BufferBlock: almacena mensajes
+  var buffer = new BufferBlock<int>();
+
+  // ActionBlock: ejecuta acción por cada mensaje
+  var action = new ActionBlock<int>(n =>
+  {
+      Console.WriteLine($"Procesando: {n}");
+  });
+
+  // TransformBlock: transforma entrada en salida
+  var transform = new TransformBlock<int, string>(n =>
+  {
+      return $"Número: {n}";
+  });
+
+  // Link: conectar bloques
+  transform.LinkTo(action);
+
+  // Post: enviar datos
+  for (int i = 0; i < 10; i++)
+      transform.Post(i);
+
+  // Esperar
+  transform.Complete();
+  await transform.Completion;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. Dataflow: bloques principales
+
+  BatchBlock<T>         → Agrupa N items en lote.
+  JoinBlock<T1,T2>      → Junta dos tipos en una tupla.
+  BatchedJoinBlock      → Lote con múltiples fuentes.
+  WriteOnceBlock<T>     → Almacena un solo valor (inmutable).
+  BroadcastBlock<T>     → Envía a todos los targets linkeados.
+
+Ejemplo con BatchBlock:
+
+  var batch = new BatchBlock<int>(3);
+  var print = new ActionBlock<int[]>(batch =>
+  {
+      Console.WriteLine($"Lote: {string.Join(", ", batch)}");
+  });
+
+  batch.LinkTo(print);
+  for (int i = 0; i < 9; i++)
+      batch.Post(i);
+  batch.Complete();
+  await batch.Completion;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. Dataflow: opciones de paralelismo
+
+  var options = new ExecutionDataflowBlockOptions
+  {
+      MaxDegreeOfParallelism = 4,
+      BoundedCapacity = 100,
+      CancellationToken = cts.Token
+  };
+
+  var block = new ActionBlock<int>(async n =>
+  {
+      await Task.Delay(100);
+      Console.WriteLine($"Procesado: {n}");
+  }, options);
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. MapReduce con TPL
+
+Implementación simple del patrón MapReduce:
+
+  var data = Enumerable.Range(1, 1000).ToArray();
+
+  // MAP
+  var mapped = data.AsParallel()
+      .SelectMany(n =>
+      {
+          var factores = new List<int>();
+          for (int i = 1; i <= Math.Sqrt(n); i++)
+              if (n % i == 0)
+              {
+                  factores.Add(i);
+                  if (i != n / i) factores.Add(n / i);
+              }
+          return factores.Select(f => (Numero: n, Factor: f));
+      });
+
+  // REDUCE
+  var grouped = mapped
+      .GroupBy(x => x.Factor)
+      .Select(g => new { Factor = g.Key, Count = g.Count() })
+      .OrderByDescending(x => x.Count)
+      .Take(10);
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
+
+namespace Capitulo59_TPL_Avanzado
+{
+    public class Program
+    {
+        static async Task Main()
+        {
+            Console.WriteLine("═══════ CAPÍTULO 59: TPL (TASK PARALLEL LIBRARY) ═══════\n");
+
+            // ─── 1. Task.Factory ───
+            Console.WriteLine("─── 1. Task.Factory ───");
+
+            Task t1 = Task.Factory.StartNew(() =>
+                Console.WriteLine($"  Factory task en hilo: {Thread.CurrentThread.ManagedThreadId}"));
+
+            Task<int> t2 = Task.Factory.StartNew(() =>
+            {
+                Thread.Sleep(200);
+                return 42;
+            }, TaskCreationOptions.PreferFairness);
+
+            await Task.WhenAll(t1, t2);
+            Console.WriteLine($"  Resultado t2: {t2.Result}\n");
+
+            // ─── 2. TaskScheduler ───
+            Console.WriteLine("─── 2. TaskScheduler ───");
+
+            var sched = TaskScheduler.Default;
+            var tareaSched = Task.Factory.StartNew(() =>
+            {
+                Console.WriteLine($"  Scheduler actual: {TaskScheduler.Current}");
+                Console.WriteLine($"  Es default: {TaskScheduler.Current == TaskScheduler.Default}");
+            }, CancellationToken.None, TaskCreationOptions.None, sched);
+
+            await tareaSched;
+            Console.WriteLine();
+
+            // ─── 3. Child Tasks (AttachedToParent) ───
+            Console.WriteLine("─── 3. Child Tasks (AttachedToParent) ───");
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            Task padre = Task.Factory.StartNew(() =>
+            {
+                Console.WriteLine("  [Padre] Iniciando...");
+
+                Task hija1 = Task.Factory.StartNew(() =>
+                {
+                    Thread.Sleep(500);
+                    Console.WriteLine("  [Hija 1] Completada");
+                }, TaskCreationOptions.AttachedToParent);
+
+                Task hija2 = Task.Factory.StartNew(() =>
+                {
+                    Thread.Sleep(300);
+                    Console.WriteLine("  [Hija 2] Completada");
+                }, TaskCreationOptions.AttachedToParent);
+
+                Console.WriteLine("  [Padre] Finalizando (espera hijas)");
+            });
+
+            await padre;
+            sw.Stop();
+            Console.WriteLine($"  Padre e hijas completadas en {sw.ElapsedMilliseconds}ms\n");
+
+            // ─── 4. Child Tasks sin Attach (default) ───
+            Console.WriteLine("─── 4. Child Tasks sin Attach ───");
+
+            sw.Restart();
+            Task padre2 = Task.Factory.StartNew(() =>
+            {
+                Task hija = Task.Run(() =>
+                {
+                    Thread.Sleep(500);
+                    Console.WriteLine("  [Hija sin attach] Completada");
+                });
+                Console.WriteLine("  [Padre sin attach] Finaliza inmediatamente");
+            });
+
+            await padre2;
+            sw.Stop();
+            Console.WriteLine($"  Padre completado en {sw.ElapsedMilliseconds}ms (hija puede seguir)\n");
+
+            await Task.Delay(600);
+
+            // ─── 5. TaskCompletionSource ───
+            Console.WriteLine("─── 5. TaskCompletionSource ───");
+
+            string resultado = await TareaConTcsAsync();
+            Console.WriteLine($"  TCS result: {resultado}\n");
+
+            // ─── 6. Pipeline con continuaciones ───
+            Console.WriteLine("─── 6. Pipeline con ContinueWith ───");
+
+            int resultadoPipeline = await Task.Run(() => 5)
+                .ContinueWith(t => t.Result * 3)
+                .ContinueWith(t => t.Result + 2)
+                .ContinueWith(t => t.Result / 1);
+
+            Console.WriteLine($"  Pipeline result: {resultadoPipeline}\n");
+
+            // ─── 7. Dataflow: ActionBlock ───
+            Console.WriteLine("─── 7. Dataflow: ActionBlock ───");
+
+            var actionBlock = new ActionBlock<int>(n =>
+            {
+                Console.WriteLine($"  [{Thread.CurrentThread.ManagedThreadId}] Procesando: {n}");
+                Thread.Sleep(100);
+            }, new ExecutionDataflowBlockOptions
+            {
+                MaxDegreeOfParallelism = 3
+            });
+
+            for (int i = 1; i <= 6; i++)
+                await actionBlock.SendAsync(i);
+
+            actionBlock.Complete();
+            await actionBlock.Completion;
+            Console.WriteLine("  ActionBlock completado\n");
+
+            // ─── 8. Dataflow: TransformBlock + ActionBlock ───
+            Console.WriteLine("─── 8. Dataflow: Pipeline de bloques ───");
+
+            var transformBlock = new TransformBlock<int, string>(n =>
+            {
+                Console.WriteLine($"  Transformando: {n}");
+                Thread.Sleep(100);
+                return $"Valor: {n}";
+            });
+
+            var outputBlock = new ActionBlock<string>(s =>
+            {
+                Console.WriteLine($"  Output: {s}");
+            });
+
+            transformBlock.LinkTo(outputBlock,
+                new DataflowLinkOptions { PropagateCompletion = true });
+
+            for (int i = 1; i <= 5; i++)
+                await transformBlock.SendAsync(i);
+
+            transformBlock.Complete();
+            await outputBlock.Completion;
+            Console.WriteLine();
+
+            // ─── 9. Dataflow: BatchBlock ───
+            Console.WriteLine("─── 9. Dataflow: BatchBlock ───");
+
+            var batchBlock = new BatchBlock<int>(3);
+            var batchOutput = new ActionBlock<int[]>(batch =>
+            {
+                Console.WriteLine($"  Lote: [{string.Join(", ", batch)}]");
+            });
+
+            batchBlock.LinkTo(batchOutput,
+                new DataflowLinkOptions { PropagateCompletion = true });
+
+            for (int i = 1; i <= 9; i++)
+                await batchBlock.SendAsync(i);
+
+            batchBlock.Complete();
+            await batchOutput.Completion;
+            Console.WriteLine();
+
+            // ─── 10. Dataflow: BroadcastBlock ───
+            Console.WriteLine("─── 10. Dataflow: BroadcastBlock ───");
+
+            var broadcast = new BroadcastBlock<int>(n => n);
+
+            var cons1 = new ActionBlock<int>(n =>
+                Console.WriteLine($"  Consumidor 1: {n}"));
+            var cons2 = new ActionBlock<int>(n =>
+                Console.WriteLine($"  Consumidor 2: {n}"));
+
+            broadcast.LinkTo(cons1,
+                new DataflowLinkOptions { PropagateCompletion = true });
+            broadcast.LinkTo(cons2,
+                new DataflowLinkOptions { PropagateCompletion = true });
+
+            broadcast.Post(10);
+            broadcast.Post(20);
+            broadcast.Post(30);
+
+            broadcast.Complete();
+            await Task.WhenAll(cons1.Completion, cons2.Completion);
+            Console.WriteLine();
+
+            // ─── 11. Dataflow: JoinBlock ───
+            Console.WriteLine("─── 11. Dataflow: JoinBlock ───");
+
+            var joinBlock = new JoinBlock<int, string>();
+
+            var joinOutput = new ActionBlock<Tuple<int, string>>(t =>
+            {
+                Console.WriteLine($"  Join: {t.Item1} + {t.Item2}");
+            });
+
+            joinBlock.LinkTo(joinOutput,
+                new DataflowLinkOptions { PropagateCompletion = true });
+
+            joinBlock.Target1.Post(1);
+            joinBlock.Target2.Post("uno");
+            joinBlock.Target1.Post(2);
+            joinBlock.Target2.Post("dos");
+
+            joinBlock.Target1.Complete();
+            joinBlock.Target2.Complete();
+            await joinOutput.Completion;
+            Console.WriteLine();
+
+            // ─── 12. MapReduce simple ───
+            Console.WriteLine("─── 12. MapReduce con PLINQ ───");
+
+            var textos = new[]
+            {
+                "hola mundo adios mundo",
+                "hola mundo cruel",
+                "adios cruel mundo hola",
+            };
+
+            var wordCount = textos
+                .AsParallel()
+                .SelectMany(texto => texto.Split(' '))
+                .GroupBy(palabra => palabra)
+                .Select(g => new { Palabra = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count)
+                .ToList();
+
+            foreach (var wc in wordCount)
+                Console.WriteLine($"  {wc.Palabra}: {wc.Count}");
+
+            Console.WriteLine();
+
+            // ─── 13. TaskScheduler personalizado (síncrono) ───
+            Console.WriteLine("─── 13. TaskScheduler.Current ───");
+
+            Console.WriteLine($"  Fuera: Scheduler={TaskScheduler.Current}");
+
+            await Task.Factory.StartNew(async () =>
+            {
+                Console.WriteLine($"  Dentro: Scheduler={TaskScheduler.Current}");
+                await Task.Yield();
+                Console.WriteLine($"  Después yield: Scheduler={TaskScheduler.Current}");
+            }).Unwrap();
+            Console.WriteLine();
+
+            // ─── 14. TPL + async/await ───
+            Console.WriteLine("─── 14. TPL + async/await ───");
+
+            var tasks = Enumerable.Range(1, 5)
+                .Select(i => Task.Run(async () =>
+                {
+                    await Task.Delay(i * 200);
+                    return i * 10;
+                }))
+                .ToArray();
+
+            var results = await Task.WhenAll(tasks);
+            Console.WriteLine($"  Resultados: {string.Join(", ", results)}\n");
+
+            // ─── 15. Unwrap (Task<Task<T>>) ───
+            Console.WriteLine("─── 15. Unwrap ───");
+
+            Task<Task<int>> tareaAnidada = Task.Factory.StartNew(async () =>
+            {
+                await Task.Delay(300);
+                return 100;
+            });
+
+            int valorDesenvuelto = await tareaAnidada.Unwrap();
+            Console.WriteLine($"  Unwrapped: {valorDesenvuelto}\n");
+
+            Console.WriteLine("═══════ FIN CAPÍTULO 59 ═══════");
+        }
+
+        static Task<string> TareaConTcsAsync()
+        {
+            var tcs = new TaskCompletionSource<string>();
+
+            // Simular operación basada en evento
+            Task.Run(() =>
+            {
+                Thread.Sleep(300);
+                tcs.TrySetResult("Completado via TCS");
+            });
+
+            return tcs.Task;
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Task.Factory.StartNew ofrece más control que Task.Run.
+  • TaskScheduler decide dónde/cuándo se ejecutan las tareas.
+  • Child tasks con AttachedToParent esperan hijas antes de completar.
+  • TaskCompletionSource<T> crea Tasks desde APIs basadas en eventos.
+  • ContinueWith permite pipelines de transformación.
+  • Dataflow: BufferBlock, ActionBlock, TransformBlock, BatchBlock, etc.
+  • Dataflow soporta paralelismo y cancelación nativa.
+  • MapReduce se implementa fácilmente con PLINQ.
+  • Unwrap resuelve Task<Task<T>>.
+  • TPL + async/await se complementan perfectamente.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Crea un pipeline Dataflow de 3 etapas:
+    TransformBlock<int, string> → TransformBlock<string, int> → ActionBlock<int>.
+
+  ✦ Ejercicio 2: Usa TaskCompletionSource para crear una Task que
+    se complete cuando se presione una tecla.
+
+  ✦ Ejercicio 3: Implementa un BufferBlock con capacidad limitada y
+    demuestra el backpressure.
+
+  ✦ Ejercicio 4: Crea child tasks con AttachedToParent y demuestra
+    que el padre espera a las hijas.
+
+  ✦ Ejercicio 5: Implementa un pipeline Dataflow que procese archivos
+    simulados con BatchBlock y ActionBlock.
+
+  ✦ Ejercicio 6: Crea un BroadcastBlock con 3 consumidores y demuestra
+    que todos reciben cada mensaje.
+
+  ✦ Ejercicio 7: Usa JoinBlock para combinar datos de dos fuentes.
+
+  ✦ Ejercicio 8: Implementa una cola de procesamiento con Dataflow
+    que limite la concurrencia a 2.
+
+  ✦ Ejercicio 9: Crea un MapReduce que analice un libro (string grande)
+    y cuente palabras usando PLINQ.
+
+  ✦ Ejercicio 10: Combina TaskCompletionSource con un temporizador
+    para crear una Task que se complete después de N segundos.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿Task.Factory.StartNew vs Task.Run?
+  → Task.Run es una sobrecarga simplificada de StartNew.
+    StartNew ofrece más opciones (TaskCreationOptions, TaskScheduler).
+
+  ❓ ¿Qué es Unwrap y cuándo se usa?
+  → Unwrap convierte Task<Task<T>> en Task<T>². Útil con
+    StartNew que ejecuta lambdas async.
+
+  ❓ ¿Dataflow es parte de .NET?
+  → Sí, System.Threading.Tasks.Dataflow está incluido en .NET Core/.NET 5+.
+    En .NET Framework requiere NuGet.
+
+  ❓ ¿Cuándo usar Dataflow vs Parallel?
+  → Dataflow para pipelines con buffer y backpressure.
+    Parallel para paralelismo simple CPU-bound.
+
+  ❓ ¿Qué es Backpressure en Dataflow?
+  → Cuando un bloque no puede procesar mensajes tan rápido como llegan,
+    el buffer se llena y el bloque emisor se ralentiza (BoundedCapacity).
+
+  ❓ ¿TaskScheduler.FromCurrentSynchronizationContext para qué sirve?
+  → Para marshalling al hilo de UI (WPF/WinForms).
+
+  ❓ ¿Qué pasa si una child task lanza excepción?
+  → La excepción se propaga al padre si está adjunta (AttachedToParent).
+
+  ❓ ¿Puedo cancelar un pipeline Dataflow?
+  → Sí, pasando CancellationToken en ExecutionDataflowBlockOptions.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Construye un motor de procesamiento de datos batch usando         │
+  │  Dataflow TPL que simule un pipeline ETL (Extract, Transform, Load).│
+  │                                                                     │
+  │  DataflowBatchProcessor                                            │
+  │    • Fuente: BufferBlock<string> (recibe rutas de archivos).       │
+  │    • Extract: TransformBlock que lee archivos (simulado).          │
+  │    • Transform: TransformBlock que procesa datos (con límite de   │
+  │      concurrencia).                                                │
+  │    • Batch: BatchBlock que agrupa cada 10 registros.              │
+  │    • Load: ActionBlock que "guarda" los lotes.                    │
+  │    • Report: ActionBlock separado que muestra estadísticas.       │
+  │    • Soporta cancelación y reporte de progreso.                   │
+  │    • Manejo de errores: si falla un item, lo envía a un bloque    │
+  │      de errores separado.                                         │
+  │    • Backpressure: limita el buffer intermedio.                   │
+  │                                                                     │
+  │  Esquema:                                                          │
+  │    Input → Extract → Transform → Batch → Load                      │
+  │                    ↓                              ↓                │
+  │               ErrorBlock                     ReportBlock           │
+  │                                                                     │
+  │  Entrega: ETLDataflowProcessor.cs completo con demo.              │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+La Task Parallel Library es un ecosistema completo para programación
+concurrente y asíncrona en .NET. Desde la simple Task hasta los
+complejos pipelines de Dataflow, TPL te ofrece las herramientas
+para abordar cualquier escenario de paralelismo.
+
+Dataflow merece mención especial: es la evolución natural de TPL
+para construir sistemas de procesamiento con flujo de datos,
+backpressure, y paralelismo controlado.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 60: PROYECTO MÓDULO VI
+    Proyecto final integrador: Descargador Asíncrono de Archivos con
+    reportes paralelos, cancelación y progreso.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 59 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,1306 @@
+================================================================================
+  CAPÍTULO 70: PROYECTO DEL MÓDULO VII
+  MÓDULO VII: C++ MODERNO
+  C++ MASTER BOOK
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al proyecto final del Módulo VII. En este capítulo
+integraremos todas las características de C++ moderno aprendidas
+a lo largo del módulo: auto, decltype, lambdas, move semantics,
+rvalue references, variadic templates, C++14/17/20, y concurrencia.
+
+El proyecto consiste en un "Sistema de Procesamiento de Datos
+Distribuido" que demuestra el uso combinado de estas tecnologías.
+
+FRASE DEL CAPÍTULO
+------------------
+"El verdadero dominio de C++ moderno no está en conocer cada
+característica, sino en saber combinarlas para crear soluciones
+elegantes y eficientes." — Bjarne Stroustrup
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Integrar todas las características de C++ moderno en un proyecto.
+2. Aplicar patrones de diseño modernos con lambdas y variadic templates.
+3. Implementar concurrencia segura con threads y futures.
+4. Usar la STL moderna (optional, variant, filesystem, format).
+5. Escribir código genérico con concepts y ranges.
+6. Optimizar con move semantics y forwarding.
+7. Producir una aplicación completa y funcional.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--- DESCRIPCIÓN DEL PROYECTO ---
+
+Sistema de Procesamiento de Datos Distribuido (SPDD) que:
+
+1. Lee archivos de configuración y datos desde el filesystem.
+2. Procesa datos con un pipeline de transformaciones configurable.
+3. Usa un thread pool para procesamiento concurrente.
+4. Almacena resultados en diferentes formatos.
+5. Provee una interfaz de logging y monitoreo.
+
+--- ESTRUCTURA DEL PROYECTO ---
+
+```
+proyecto/
+├── main.cpp
+├── config.h
+├── config.cpp
+├── pipeline.h
+├── pipeline.cpp
+├── thread_pool.h
+├── processor.h
+├── processor.cpp
+├── logger.h
+├── serializer.h
+├── types.h
+└── Makefile
+```
+
+--- ARCHIVO: types.h ---
+
+```cpp
+#pragma once
+
+#include <string>
+#include <variant>
+#include <optional>
+#include <chrono>
+#include <compare>
+#include <concepts>
+#include <ranges>
+#include <span>
+
+namespace spdd {
+
+// Conceptos del dominio
+template<typename T>
+concept Procesable = std::is_arithmetic_v<T> || requires(T t) {
+    { t.serialize() } -> std::same_as<std::string>;
+    { t.size() } -> std::convertible_to<size_t>;
+};
+
+template<typename T>
+concept Serializable = requires(T t, std::ostream& os) {
+    { os << t } -> std::same_as<std::ostream&>;
+};
+
+// Tipos de datos soportados
+using Dato = std::variant<int, double, std::string, bool>;
+
+// Metadatos de un dato procesado
+struct Metadato {
+    std::string fuente;
+    std::chrono::system_clock::time_point timestamp;
+    int version{1};
+
+    auto operator<=>(const Metadato&) const = default;
+};
+
+// Resultado del procesamiento
+template<Procesable T>
+struct Resultado {
+    T valor;
+    Metadato meta;
+    bool exitoso{true};
+    std::optional<std::string> error;
+
+    std::string serialize() const {
+        if (!exitoso) return "ERROR: " + error.value_or("desconocido");
+        return "OK";
+    }
+};
+
+// Estadísticas de procesamiento
+struct Estadisticas {
+    size_t procesados{0};
+    size_t exitosos{0};
+    size_t fallidos{0};
+    double tiempo_total_ms{0.0};
+
+    Estadisticas& operator+=(const Estadisticas& other) {
+        procesados += other.procesados;
+        exitosos += other.exitosos;
+        fallidos += other.fallidos;
+        tiempo_total_ms += other.tiempo_total_ms;
+        return *this;
+    }
+};
+
+// Tipo para datos en lote
+template<typename T>
+using Lote = std::vector<T>;
+
+} // namespace spdd
+```
+
+--- ARCHIVO: logger.h ---
+
+```cpp
+#pragma once
+
+#include <iostream>
+#include <string>
+#include <mutex>
+#include <sstream>
+#include <format>
+#include <source_location>
+#include <chrono>
+#include <fstream>
+#include <filesystem>
+
+namespace spdd {
+
+enum class LogLevel { DEBUG, INFO, WARN, ERROR };
+
+class Logger {
+    std::string nombre;
+    LogLevel nivel_minimo;
+    std::mutex mtx;
+    std::ofstream archivo;
+    bool usar_archivo;
+
+public:
+    explicit Logger(std::string nom,
+                    LogLevel nivel = LogLevel::INFO,
+                    bool a_archivo = false)
+        : nombre(std::move(nom))
+        , nivel_minimo(nivel)
+        , usar_archivo(a_archivo) {
+        if (usar_archivo) {
+            std::filesystem::create_directories("logs");
+            archivo.open(std::format("logs/{}.log", nombre),
+                         std::ios::app);
+        }
+    }
+
+    template<typename... Args>
+    void debug(Args&&... args,
+               std::source_location loc =
+                   std::source_location::current()) {
+        log(LogLevel::DEBUG, loc, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void info(Args&&... args,
+              std::source_location loc =
+                  std::source_location::current()) {
+        log(LogLevel::INFO, loc, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void warn(Args&&... args,
+              std::source_location loc =
+                  std::source_location::current()) {
+        log(LogLevel::WARN, loc, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void error(Args&&... args,
+               std::source_location loc =
+                   std::source_location::current()) {
+        log(LogLevel::ERROR, loc, std::forward<Args>(args)...);
+    }
+
+private:
+    template<typename... Args>
+    void log(LogLevel nivel,
+             const std::source_location& loc,
+             Args&&... args) {
+        if (nivel < nivel_minimo) return;
+
+        std::lock_guard<std::mutex> lock(mtx);
+
+        auto ahora = std::chrono::system_clock::now();
+        auto tiempo = std::chrono::system_clock::to_time_t(ahora);
+
+        std::string nivel_str;
+        switch (nivel) {
+            case LogLevel::DEBUG: nivel_str = "DEBUG"; break;
+            case LogLevel::INFO:  nivel_str = "INFO";  break;
+            case LogLevel::WARN:  nivel_str = "WARN";  break;
+            case LogLevel::ERROR: nivel_str = "ERROR"; break;
+        }
+
+        std::ostringstream oss;
+        oss << "[" << nivel_str << "] "
+            << loc.file_name() << ":" << loc.line() << " "
+            << nombre << ": ";
+        ((oss << std::forward<Args>(args) << " "), ...);
+        oss << "\n";
+
+        std::string mensaje = oss.str();
+
+        if (usar_archivo && archivo.is_open()) {
+            archivo << mensaje;
+            archivo.flush();
+        } else {
+            if (nivel == LogLevel::ERROR) {
+                std::cerr << mensaje;
+            } else {
+                std::cout << mensaje;
+            }
+            std::flush(nivel == LogLevel::ERROR ? std::cerr
+                                                : std::cout);
+        }
+    }
+};
+
+} // namespace spdd
+```
+
+--- ARCHIVO: config.h ---
+
+```cpp
+#pragma once
+
+#include <string>
+#include <map>
+#include <optional>
+#include <variant>
+#include <fstream>
+#include <filesystem>
+#include <format>
+#include <ranges>
+
+namespace spdd {
+
+using ValorConfig = std::variant<int, double, std::string, bool>;
+
+class Configuracion {
+    std::map<std::string, ValorConfig, std::less<>> valores;
+
+public:
+    static std::optional<Configuracion>
+    cargar(const std::filesystem::path& ruta) {
+        if (!std::filesystem::exists(ruta)) {
+            return std::nullopt;
+        }
+
+        std::ifstream archivo(ruta);
+        if (!archivo.is_open()) return std::nullopt;
+
+        Configuracion config;
+
+        for (std::string linea; std::getline(archivo, linea); ) {
+            if (linea.empty() || linea[0] == '#') continue;
+
+            auto sep = linea.find('=');
+            if (sep == std::string::npos) continue;
+
+            std::string clave = linea.substr(0, sep);
+            std::string valor = linea.substr(sep + 1);
+
+            // Trim
+            auto trim = [](std::string_view sv) {
+                sv.remove_prefix(
+                    std::min(sv.find_first_not_of(" \t\r"),
+                             sv.size()));
+                auto end = sv.find_last_not_of(" \t\r");
+                if (end != std::string_view::npos)
+                    sv = sv.substr(0, end + 1);
+                return std::string(sv);
+            };
+
+            clave = trim(clave);
+            valor = trim(valor);
+
+            if (valor == "true" || valor == "false") {
+                config.valores[clave] = (valor == "true");
+            } else if (valor.find('.') != std::string::npos) {
+                try {
+                    config.valores[clave] = std::stod(valor);
+                } catch (...) {
+                    config.valores[clave] = valor;
+                }
+            } else {
+                try {
+                    config.valores[clave] = std::stoi(valor);
+                } catch (...) {
+                    config.valores[clave] = valor;
+                }
+            }
+        }
+
+        return config;
+    }
+
+    template<typename T>
+    std::optional<T> obtener(std::string_view clave) const {
+        auto it = valores.find(clave);
+        if (it == valores.end()) return std::nullopt;
+        if (auto* v = std::get_if<T>(&it->second)) {
+            return *v;
+        }
+        return std::nullopt;
+    }
+
+    template<typename T>
+    T obtener_o(std::string_view clave, T por_defecto) const {
+        return obtener<T>(clave).value_or(por_defecto);
+    }
+
+    void mostrar() const {
+        for (const auto& [clave, valor] : valores) {
+            std::visit([&](const auto& v) {
+                std::cout << std::format("  {} = {}\n", clave, v);
+            }, valor);
+        }
+    }
+};
+
+} // namespace spdd
+```
+
+--- ARCHIVO: thread_pool.h ---
+
+```cpp
+#pragma once
+
+#include <vector>
+#include <queue>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <functional>
+#include <atomic>
+#include <stop_token>
+
+namespace spdd {
+
+class ThreadPool {
+    std::vector<std::jthread> workers;
+    std::queue<std::function<void()>> tareas;
+    std::mutex mtx;
+    std::condition_variable_any cv;
+    std::atomic<size_t> tareas_pendientes{0};
+    std::atomic<bool> pausado{false};
+
+public:
+    explicit ThreadPool(size_t num_hilos =
+        std::thread::hardware_concurrency()) {
+
+        for (size_t i = 0; i < num_hilos; ++i) {
+            workers.emplace_back([this](std::stop_token st) {
+                while (!st.stop_requested()) {
+                    std::function<void()> tarea;
+                    {
+                        std::unique_lock<std::mutex> lock(mtx);
+                        cv.wait(lock, st, [this]() {
+                            return !tareas.empty() ||
+                                   st.stop_requested();
+                        });
+                        if (st.stop_requested()) break;
+                        if (pausado) continue;
+                        tarea = std::move(tareas.front());
+                        tareas.pop();
+                    }
+                    tarea();
+                    tareas_pendientes.fetch_sub(1);
+                }
+            });
+        }
+    }
+
+    template<typename F, typename... Args>
+    auto enqueue(F&& f, Args&&... args)
+        -> std::future<
+            std::invoke_result_t<std::decay_t<F>,
+                                 std::decay_t<Args>...>> {
+
+        using return_type =
+            std::invoke_result_t<std::decay_t<F>,
+                                  std::decay_t<Args>...>;
+
+        auto task = std::make_shared<
+            std::packaged_task<return_type()>>(
+            std::bind(std::forward<F>(f),
+                      std::forward<Args>(args)...)
+        );
+
+        std::future<return_type> result = task->get_future();
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            if (workers.empty())
+                throw std::runtime_error(
+                    "ThreadPool detenido");
+            tareas.emplace([task]() { (*task)(); });
+            tareas_pendientes.fetch_add(1);
+        }
+
+        cv.notify_one();
+        return result;
+    }
+
+    void pausar() { pausado = true; }
+    void reanudar() {
+        pausado = false;
+        cv.notify_all();
+    }
+
+    void esperar() {
+        while (tareas_pendientes > 0) {
+            std::this_thread::yield();
+        }
+    }
+
+    size_t pendientes() const {
+        return tareas_pendientes.load();
+    }
+
+    ~ThreadPool() {
+        for (auto& w : workers) {
+            w.request_stop();
+        }
+        cv.notify_all();
+    }
+};
+
+} // namespace spdd
+```
+
+--- ARCHIVO: pipeline.h ---
+
+```cpp
+#pragma once
+
+#include <vector>
+#include <functional>
+#include <ranges>
+#include <concepts>
+#include <optional>
+#include <future>
+
+namespace spdd {
+
+template<typename T, typename R = T>
+concept Transformador = std::invocable<T> &&
+    std::same_as<std::invoke_result_t<T>, R>;
+
+template<typename T>
+class Pipeline {
+    std::vector<T> datos;
+    std::optional<std::string> nombre;
+
+public:
+    explicit Pipeline(std::vector<T> d,
+                      std::string nom = {})
+        : datos(std::move(d))
+        , nombre(std::move(nom)) {}
+
+    // Transformación simple
+    template<typename Func>
+    auto transformar(Func&& f) & -> Pipeline<
+        std::decay_t<std::invoke_result_t<Func, T>>> {
+
+        std::vector<std::decay_t<
+            std::invoke_result_t<Func, T>>> resultado;
+        resultado.reserve(datos.size());
+
+        std::ranges::transform(datos,
+            std::back_inserter(resultado),
+            std::forward<Func>(f));
+
+        return Pipeline<std::decay_t<
+            std::invoke_result_t<Func, T>>>(
+            std::move(resultado),
+            nombre.value_or("transformado"));
+    }
+
+    // Versión && (rvalue) para optimización
+    template<typename Func>
+    auto transformar(Func&& f) && -> Pipeline<
+        std::decay_t<std::invoke_result_t<Func, T>>> {
+
+        return std::move(*this).transformar(
+            std::forward<Func>(f));
+    }
+
+    // Filtro
+    Pipeline& filtrar(std::predicate<const T&> auto pred) {
+        std::vector<T> filtrados;
+        std::ranges::copy_if(datos,
+            std::back_inserter(filtrados),
+            std::ref(pred));
+        datos = std::move(filtrados);
+        return *this;
+    }
+
+    // Reducción
+    template<typename Func, typename Init>
+    auto reducir(Func&& f, Init&& inicial) const {
+        auto acc = std::forward<Init>(inicial);
+        for (const auto& d : datos) {
+            acc = f(std::move(acc), d);
+        }
+        return acc;
+    }
+
+    // ForEach
+    void paraCada(std::invocable<const T&> auto f) const {
+        std::ranges::for_each(datos, f);
+    }
+
+    // Obtener datos (por copia o movimiento)
+    const std::vector<T>& obtener() const& { return datos; }
+    std::vector<T> obtener() && { return std::move(datos); }
+
+    // Tamaño
+    size_t size() const { return datos.size(); }
+    bool empty() const { return datos.empty(); }
+
+    // View (ranges)
+    auto view() { return datos | std::views::all; }
+
+    // Iteradores
+    auto begin() { return datos.begin(); }
+    auto end() { return datos.end(); }
+    auto begin() const { return datos.begin(); }
+    auto end() const { return datos.end(); }
+
+    // Mostrar (si es imprimible)
+    void mostrar(std::string_view titulo = "Pipeline") const {
+        if (nombre) {
+            std::cout << std::format("=== {} ({}) ===\n",
+                                      *nombre, titulo);
+        }
+        for (const auto& d : datos) {
+            if constexpr (requires { std::cout << d; }) {
+                std::cout << d << " ";
+            }
+        }
+        std::cout << "\n";
+    }
+};
+
+// Función helper para crear pipeline
+template<typename... Args>
+auto crearPipeline(Args&&... args) {
+    return Pipeline<std::common_type_t<Args...>>(
+        {std::forward<Args>(args)...});
+}
+
+} // namespace spdd
+```
+
+--- ARCHIVO: serializer.h ---
+
+```cpp
+#pragma once
+
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <filesystem>
+#include <format>
+#include <ranges>
+
+namespace spdd {
+
+class Serializer {
+public:
+    // Serializar múltiples valores a formato CSV
+    template<typename... Args>
+    static std::string toCSV(Args&&... args) {
+        std::ostringstream oss;
+        bool primero = true;
+
+        auto escribir = [&](const auto& v) {
+            if (!primero) oss << ",";
+            primero = false;
+            if constexpr (std::is_same_v<
+                std::decay_t<decltype(v)>, std::string>) {
+                oss << "\"" << v << "\"";
+            } else {
+                oss << v;
+            }
+        };
+
+        (escribir(std::forward<Args>(args)), ...);
+        oss << "\n";
+        return oss.str();
+    }
+
+    // Serializar vector a líneas CSV
+    template<typename T>
+    static bool toCSVFile(
+        const std::filesystem::path& ruta,
+        const std::vector<T>& datos,
+        std::string_view header = {}) {
+
+        auto dir = ruta.parent_path();
+        if (!dir.empty()) {
+            std::filesystem::create_directories(dir);
+        }
+
+        std::ofstream archivo(ruta);
+        if (!archivo.is_open()) return false;
+
+        if (!header.empty()) {
+            archivo << header << "\n";
+        }
+
+        for (const auto& d : datos) {
+            if constexpr (requires { archivo << d; }) {
+                archivo << d << "\n";
+            } else if constexpr (requires { d.serialize(); }) {
+                archivo << d.serialize() << "\n";
+            }
+        }
+
+        return true;
+    }
+
+    // Serializar a JSON simple
+    template<typename... Args>
+    static std::string toJSON(Args&&... args) {
+        std::ostringstream oss;
+        oss << "{";
+
+        auto escribir = [&](std::string_view clave,
+                            const auto& valor) {
+            oss << std::format("\"{}\": ", clave);
+            if constexpr (std::is_same_v<
+                std::decay_t<decltype(valor)>, std::string>) {
+                oss << "\"" << valor << "\"";
+            } else {
+                oss << valor;
+            }
+        };
+
+        bool primero = true;
+        auto escribir_par = [&](const auto& kv) {
+            if (!primero) oss << ", ";
+            primero = false;
+            escribir(kv.first, kv.second);
+        };
+
+        (escribir_par(std::forward<Args>(args)), ...);
+        oss << "}";
+        return oss.str();
+    }
+
+    // Serializar contenedor a JSON array
+    template<std::ranges::range R>
+    static std::string toJSONArray(const R& range) {
+        std::ostringstream oss;
+        oss << "[";
+
+        bool primero = true;
+        for (const auto& item : range) {
+            if (!primero) oss << ", ";
+            primero = false;
+            if constexpr (requires { item.serialize(); }) {
+                oss << item.serialize();
+            } else if constexpr (
+                requires { std::cout << item; }) {
+                oss << item;
+            }
+        }
+
+        oss << "]";
+        return oss.str();
+    }
+};
+
+} // namespace spdd
+```
+
+--- ARCHIVO: processor.h ---
+
+```cpp
+#pragma once
+
+#include "types.h"
+#include "pipeline.h"
+#include "thread_pool.h"
+#include "logger.h"
+#include <random>
+#include <numbers>
+#include <cmath>
+#include <span>
+
+namespace spdd {
+
+class DataProcessor {
+    Logger log;
+    ThreadPool pool;
+    Estadisticas stats;
+
+public:
+    explicit DataProcessor(size_t hilos = 4)
+        : log("DataProcessor")
+        , pool(hilos) {}
+
+    // Procesar un lote de enteros
+    Pipeline<int> procesarEnteros(std::span<const int> datos) {
+        log.info("Procesando ", datos.size(), " enteros");
+
+        Pipeline<int> pipe(
+            std::vector<int>(datos.begin(), datos.end()),
+            "enteros");
+
+        return std::move(pipe)
+            .transformar([](int x) { return x * 2; })
+            .transformar([](int x) { return x + 1; });
+    }
+
+    // Procesar un lote de doubles
+    Pipeline<double> procesarDoubles(
+        std::span<const double> datos) {
+
+        log.info("Procesando ", datos.size(), " doubles");
+
+        Pipeline<double> pipe(
+            std::vector<double>(datos.begin(), datos.end()),
+            "doubles");
+
+        return std::move(pipe)
+            .transformar([](double x) {
+                return std::sin(x) * std::numbers::pi;
+            });
+    }
+
+    // Procesamiento concurrente con thread pool
+    std::future<Estadisticas> procesarConcurrente(
+        std::vector<int> datos) {
+
+        return pool.enqueue([this, datos = std::move(datos)]() {
+            Estadisticas locales;
+            locales.procesados = datos.size();
+
+            for (int& d : datos) {
+                try {
+                    d = d * d + 1;
+                    locales.exitosos++;
+                } catch (...) {
+                    locales.fallidos++;
+                }
+            }
+
+            log.info("Concurrente: ", locales.exitosos,
+                      " exitosos, ", locales.fallidos,
+                      " fallidos");
+
+            return locales;
+        });
+    }
+
+    // Procesamiento con pipeline complejo
+    template<std::ranges::range R>
+    auto pipelineComplejo(R&& datos) {
+        auto pipe = crearPipeline(1, 2, 3, 4, 5)
+            .transformar([](int x) { return x * 2.0; })
+            .transformar([](double x) {
+                return std::format("{:.2f}", x);
+            });
+
+        return pipe;
+    }
+
+    // Obtener estadísticas
+    const Estadisticas& obtenerStats() const { return stats; }
+
+    // Combinar estadísticas
+    void combinarStats(const Estadisticas& otras) {
+        stats += otras;
+    }
+};
+
+} // namespace spdd
+```
+
+--- ARCHIVO: main.cpp ---
+
+```cpp
+#include "config.h"
+#include "logger.h"
+#include "pipeline.h"
+#include "thread_pool.h"
+#include "processor.h"
+#include "serializer.h"
+#include "types.h"
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <format>
+#include <ranges>
+#include <random>
+#include <chrono>
+#include <filesystem>
+#include <algorithm>
+#include <numeric>
+#include <numbers>
+
+namespace spdd {
+
+class Aplicacion {
+    Logger log;
+    Configuracion config;
+    DataProcessor processor;
+    ThreadPool pool;
+
+public:
+    Aplicacion() : log("SPDD", LogLevel::DEBUG) {
+        log.info("Inicializando SPDD...");
+        log.info("Hilos disponibles: ",
+                  std::thread::hardware_concurrency());
+    }
+
+    bool inicializar(int argc, char* argv[]) {
+        log.info("Cargando configuracion...");
+
+        auto ruta_config = std::filesystem::path(
+            argc > 1 ? argv[1] : "config.ini");
+
+        auto cfg = Configuracion::cargar(ruta_config);
+        if (!cfg) {
+            log.warn("No se pudo cargar configuracion de ",
+                      ruta_config.string());
+            log.info("Usando valores por defecto");
+            return true;
+        }
+
+        config = std::move(*cfg);
+        log.info("Configuracion cargada exitosamente:");
+        config.mostrar();
+
+        return true;
+    }
+
+    void ejecutar() {
+        log.info("=== INICIANDO EJECUCION ===");
+
+        // 1. Generar datos de prueba
+        auto datos = generarDatos(100);
+        log.info("Datos generados: ", datos.size());
+
+        // 2. Pipeline simple
+        ejecutarPipelineSimple(datos);
+
+        // 3. Pipeline con transformaciones
+        ejecutarPipelineComplejo(datos);
+
+        // 4. Procesamiento concurrente
+        ejecutarConcurrente(datos);
+
+        // 5. Serialización
+        ejecutarSerializacion(datos);
+
+        // 6. Demostración de features modernos
+        demostrarFeaturesModernos();
+
+        log.info("=== EJECUCION COMPLETADA ===");
+    }
+
+private:
+    std::vector<int> generarDatos(size_t n) {
+        std::vector<int> datos(n);
+        std::mt19937 gen(42);
+        std::uniform_int_distribution<> dist(1, 100);
+
+        std::ranges::generate(datos, [&]() {
+            return dist(gen);
+        });
+
+        return datos;
+    }
+
+    void ejecutarPipelineSimple(
+        const std::vector<int>& datos) {
+
+        log.info("--- Pipeline Simple ---");
+
+        auto inicio = std::chrono::high_resolution_clock::now();
+
+        auto pipeline = Pipeline<int>(datos, "simple")
+            .filtrar([](int x) { return x > 50; })
+            .transformar([](int x) { return x * 2; });
+
+        auto fin = std::chrono::high_resolution_clock::now();
+        auto ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(fin - inicio);
+
+        log.info("Pipeline simple: ", pipeline.size(),
+                  " elementos en ", ms.count(), "ms");
+
+        // Reducir
+        auto suma = pipeline.reducir(
+            [](int acc, int x) { return acc + x; }, 0);
+        log.info("Suma de elementos: ", suma);
+
+        pipeline.mostrar("Resultado");
+    }
+
+    void ejecutarPipelineComplejo(
+        const std::vector<int>& datos) {
+
+        log.info("--- Pipeline Complejo ---");
+
+        auto resultado = datos
+            | std::views::filter([](int x) {
+                return x > 30 && x < 80; })
+            | std::views::transform([](int x) {
+                return static_cast<double>(x) / 100.0; })
+            | std::views::transform([](double x) {
+                return std::sin(x) * std::numbers::pi; })
+            | std::views::take(10);
+
+        log.info("Resultado ranges (10 elementos):");
+        for (double v : resultado) {
+            log.info(std::format("  {:.4f}", v));
+        }
+    }
+
+    void ejecutarConcurrente(
+        const std::vector<int>& datos) {
+
+        log.info("--- Procesamiento Concurrente ---");
+
+        std::vector<std::future<Estadisticas>> futuros;
+
+        // Dividir datos en lotes
+        auto tam_lote = datos.size() / 4;
+        for (size_t i = 0; i < 4; ++i) {
+            auto inicio = i * tam_lote;
+            auto fin = (i == 3) ? datos.size()
+                                : (i + 1) * tam_lote;
+
+            std::vector<int> lote(
+                datos.begin() + inicio,
+                datos.begin() + fin);
+
+            futuros.push_back(
+                processor.procesarConcurrente(
+                    std::move(lote)));
+        }
+
+        // Recolectar resultados
+        Estadisticas total;
+        for (auto& fut : futuros) {
+            total += fut.get();
+        }
+
+        log.info("Total procesado: ", total.procesados);
+        log.info("Exitosos: ", total.exitosos);
+        log.info("Fallidos: ", total.fallidos);
+    }
+
+    void ejecutarSerializacion(
+        const std::vector<int>& datos) {
+
+        log.info("--- Serialización ---");
+
+        // CSV
+        auto csv = Serializer::toCSV(
+            "id", "valor", "timestamp");
+        log.info("CSV: ", csv);
+
+        // JSON
+        std::string json = "{";
+        for (size_t i = 0; i < std::min(datos.size(), size_t(5));
+             ++i) {
+            if (i > 0) json += ", ";
+            json += Serializer::toJSON(
+                std::pair{"id", i},
+                std::pair{"valor", datos[i]});
+        }
+        json += "}";
+        log.info("JSON: ", json);
+
+        // Guardar a archivo
+        auto ruta = std::filesystem::path("output") / "datos.csv";
+        if (Serializer::toCSVFile(ruta, datos, "valor")) {
+            log.info("Datos guardados en: ", ruta.string());
+        }
+    }
+
+    void demostrarFeaturesModernos() {
+        log.info("--- Demostración de Features Modernos ---");
+
+        // auto y decltype
+        auto x = 42;
+        decltype(x) y = 100;
+        log.info("auto/decltype: ", x, ", ", y);
+
+        // nullptr
+        int* ptr = nullptr;
+        if (!ptr) log.info("nullptr: seguro");
+
+        // Lambda genérica
+        auto suma = []<typename T>(T a, T b) {
+            return a + b;
+        };
+        log.info("Lambda generica: ", suma(5, 3));
+
+        // Variadic + fold
+        auto promedio = []<typename... Args>(Args... args) {
+            return (... + args) / double(sizeof...(Args));
+        };
+        log.info("Promedio fold: ",
+                  promedio(10, 20, 30, 40, 50));
+
+        // Optional
+        std::optional<int> opt = 42;
+        log.info("Optional: ", opt.value_or(-1));
+
+        // Variant
+        std::variant<int, double, std::string> v = "Hola";
+        std::visit([](const auto& val) {
+            std::cout << "Variant: " << val << "\n";
+        }, v);
+
+        // Structured bindings
+        auto [a, b] = std::pair{10, 20};
+        log.info("Structured bindings: ", a, ", ", b);
+
+        // Spaceship
+        struct Punto { int x, y;
+            auto operator<=>(const Punto&) const = default; };
+        static_assert(Punto{1,2} < Punto{3,4});
+
+        // Format
+        log.info(std::format("Pi: {:.6f}", std::numbers::pi));
+
+        // Source location
+        auto loc = std::source_location::current();
+        log.info("Source location: ", loc.function_name());
+    }
+};
+
+} // namespace spdd
+
+int main(int argc, char* argv[]) {
+    try {
+        spdd::Aplicacion app;
+        if (!app.inicializar(argc, argv)) {
+            std::cerr << "Error en inicialización\n";
+            return 1;
+        }
+        app.ejecutar();
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error fatal: " << e.what() << "\n";
+        return 1;
+    }
+}
+```
+
+--- ARCHIVO: Makefile ---
+
+```makefile
+CXX = g++
+CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -O2 -g
+CXXFLAGS += -pthread -fmodules-ts
+LDFLAGS = -pthread
+
+SRCS = main.cpp config.cpp pipeline.cpp processor.cpp
+OBJS = $(SRCS:.cpp=.o)
+TARGET = spdd
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+run: $(TARGET)
+	./$(TARGET)
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+	rm -rf logs output
+
+# Instalación de dependencias
+deps:
+	sudo apt-get install -y g++-12 make
+
+# Análisis estático
+analyze:
+	clang-tidy $(SRCS) -- $(CXXFLAGS)
+
+# Test
+test: $(TARGET)
+	./$(TARGET) test_config.ini
+```
+
+--- PLAN DE EXPANSIÓN ---
+
+El proyecto puede expandirse con:
+
+1. **Soporte de red**: Añadir sockets para comunicación entre
+   instancias distribuidas.
+
+2. **Base de datos**: Persistencia con SQLite usando variadic
+   templates para queries.
+
+3. **Plugins**: Sistema de plugins dinámicos con std::any y
+   factory pattern.
+
+4. **Web UI**: Servidor HTTP embebido usando coroutines para
+   manejar conexiones.
+
+5. **Benchmarking**: Sistema de benchmarks con pipelines
+   paralelos y recolección de estadísticas.
+
+6. **Tests**: Suite completa de unit tests con Google Test.
+
+7. **Contenedores**: Soporte para Docker con multi-stage build.
+
+8. **Documentación**: Generación de docs con Doxygen.
+
+================================================================================
+  RESUMEN DEL PROYECTO
+================================================================================
+
+El Sistema de Procesamiento de Datos Distribuido demuestra:
+
+• C++11: auto, decltype, nullptr, override, default/delete, lambdas.
+• Move semantics: std::move, move constructors, forwarding.
+• Rvalue references: std::forward, reference collapsing.
+• Variadic templates: packs, fold expressions, type-safe funciones.
+• C++14: lambdas genéricas, decltype(auto), make_unique.
+• C++17: if constexpr, structured bindings, optional, variant,
+  filesystem, string_view, scoped_lock.
+• C++20: concepts, ranges, coroutines (jthread), format, spaceship,
+  source_location, consteval, std::span.
+• Concurrencia: thread pool, jthread, atomic, mutex, condition_variable,
+  future/promise, stop_token.
+• STL Moderna: span, format, filesystem, random, chrono, numbers.
+
+================================================================================
+  EJERCICIOS FINALES DEL MÓDULO
+================================================================================
+
+1. Añade una nueva transformación al pipeline que use lambdas
+   genéricas.
+
+2. Implementa un nuevo formato de serialización (XML o YAML)
+   usando variadic templates.
+
+3. Añade un sistema de plugins que cargue bibliotecas dinámicas
+   usando std::any y std::function.
+
+4. Implementa un caché LRU thread-safe usando std::atomic y
+   std::shared_mutex.
+
+5. Añade monitoreo en tiempo real con std::async y std::future.
+
+6. Implementa un sistema de logging remoto usando sockets y
+   coroutines.
+
+7. Añade un REPL (Read-Eval-Print Loop) interactivo que use
+   std::variant para comandos.
+
+8. Implementa un sistema de eventos con variadic templates
+   y lambdas.
+
+9. Añade tests unitarios para el ThreadPool usando técnicas
+   de concurrencia.
+
+10. Implementa un benchmark que compare pipelines síncronos
+    vs asíncronos.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Qué versión de C++ necesito para compilar el proyecto?
+R: C++20 completo. Necesitas GCC 12+, Clang 14+, o MSVC 2022+.
+
+P: ¿Puedo compilar sin módulos?
+R: Sí. Este proyecto no usa módulos reales (solo namespaces).
+Puedes compilar con cualquier compilador C++20.
+
+P: ¿El ThreadPool es production-ready?
+R: Es una implementación educativa. Para producción, considera
+bibliotecas como TBB, Boost.Asio o libdispatch.
+
+P: ¿Cómo ejecuto los tests?
+R: El proyecto incluye un target `make test`. También puedes
+compilar y ejecutar manualmente.
+
+P: ¿Cómo extiendo el proyecto?
+R: El plan de expansión incluye 8 áreas. El diseño con
+variadic templates y concepts facilita la extensión.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO (FINAL)
+================================================================================
+
+Diseña un "Framework de Computación Distribuida" completo que:
+
+1. Use un ThreadPool con stealing de tareas (work stealing).
+2. Implemente un sistema de mensajería entre nodos usando
+   variadic templates para tipos de mensajes.
+3. Use concepts para definir interfaces de procesamiento.
+4. Use ranges para pipelines de datos distribuidos.
+5. Use coroutines para E/S asíncrona no bloqueante.
+6. Use std::atomic y memory ordering para lock-free structures.
+7. Use std::format para logging estructurado.
+8. Use source_location para trazabilidad.
+9. Use std::filesystem para gestión de recursos.
+10. Use consteval para validación de configuraciones.
+
+El framework debe ser extensible, eficiente, y demostrar el
+dominio completo de C++ moderno en un sistema real.
+
+================================================================================
+  CIERRE DEL MÓDULO VII
+================================================================================
+
+Has completado el Módulo VII: C++ Moderno. Has recorrido un
+camino desde C++11 hasta C++20, dominando:
+
+✓ auto, decltype, nullptr
+✓ Lambdas y expresiones lambda
+✓ Move semantics y rvalue references
+✓ Variadic templates y fold expressions
+✓ C++14 (genéricas, make_unique, constexpr mejorado)
+✓ C++17 (if constexpr, structured bindings, optional, filesystem)
+✓ C++20 (concepts, ranges, coroutines, format, spaceship)
+✓ Concurrencia (thread, mutex, future, condition_variable)
+
+Has construido un proyecto integrador que combina todas estas
+características en una aplicación funcional.
+
+FELICITACIONES. Ahora eres un programador de C++ moderno.
+
+El conocimiento adquirido aquí te permite escribir código C++
+más seguro, expresivo y eficiente. Las herramientas modernas
+del lenguaje te ayudarán a construir sistemas robustos y
+mantenibles.
+
+Continúa tu aprendizaje explorando:
+- Biblioteca Boost para funcionalidades adicionales
+- Patrones de diseño en C++ moderno
+- Programación en tiempo real con C++
+- Desarrollo de juegos con C++ y Unreal Engine
+- Sistemas embebidos con C++ moderno
+
+¡Hasta el próximo módulo!
+
+================================================================================
+  PRÓXIMO MÓDULO
+================================================================================
+
+El siguiente módulo cubrirá temas avanzados de C++ incluyendo
+patrones de diseño en C++ moderno, optimización de rendimiento,
+interoperabilidad con C, y técnicas de metaprogramación avanzadas.
+
+================================================================================
+  FIN DEL CAPÍTULO 70 — FIN DEL MÓDULO VII
+================================================================================

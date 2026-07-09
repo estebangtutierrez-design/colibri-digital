@@ -1,0 +1,984 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 75: OPTIMIZACIÓN EN C++
+================================================================================
+
+  "La optimización prematura es la raíz de todos los males,
+   pero la optimización informada es el corazón de todo
+   ingeniero de alto rendimiento."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido, Arquitecto!
+
+  Has construido sistemas con arquitectura sólida, has tejido
+  patrones elegantes, has depurado bugs y has establecido redes
+  de seguridad con análisis estático. Ahora es momento de hacer
+  que tu código vuele.
+
+  La optimización en C++ es un arte que combina conocimiento del
+  hardware, del compilador y del lenguaje. No se trata de escribir
+  código ilegible que corre rápido, sino de entender qué le pide
+  el código a la máquina y cómo ayudarla.
+
+  FRASE DEL DÍA
+  -------------
+  "El hardware no es lento; tu código es grosero con la caché."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Dominar las banderas de optimización (-O1, -O2, -O3, -Os).
+  2. Usar constexpr para cómputos en tiempo de compilación.
+  3. Implementar move semantics para evitar copias innecesarias.
+  4. Diseñar estructuras de datos cache-friendly.
+  5. Usar perf y otros profilers para identificar cuellos de botella.
+  6. Aplicar técnicas de optimización sin sacrificar legibilidad.
+  7. Entender cuándo optimizar y cuándo dejar que el compilador haga.
+  8. Medir, no asumir: benchmarks basados en datos reales.
+
+================================================================================
+
+  OPTIMIZACIÓN EN C++ — CONTENIDO COMPLETO
+================================================================================
+
+► 1. FLAGS DEL COMPILADOR — TU PRIMER AJUSTE
+
+  El compilador GCC/Clang ofrece múltiples niveles de optimización:
+
+  • -O0: Sin optimización. Compilación rápida, ejecución lenta.
+         Ideal para debugging.
+  • -O1: Optimizaciones básicas. Sin crecimiento de código.
+         Balance entre compilación y ejecución.
+  • -O2: Optimizaciones fuertes. Estándar para releases.
+         Incluye inlining, loop unrolling, etc.
+  • -O3: Optimizaciones agresivas. Incluye vectorización.
+         Puede aumentar tamaño del binario.
+  • -Os: Optimizar por tamaño. Útil para sistemas embebidos.
+  • -Ofast: -O3 + optimizaciones que violan el estándar.
+            No recomendado para código portable.
+  • -Og: Optimizar para debugging. Mejor que -O0 pero debuggeable.
+
+  FLAGS ESPECÍFICOS:
+  • -march=native: Optimiza para la CPU actual.
+  • -mtune=native: Ajusta para la CPU actual.
+  • -flto: Link Time Optimization — optimiza entre unidades de compilación.
+  • -funroll-loops: Desenrolla bucles (puede hinchar el código).
+  • -fomit-frame-pointer: No guarda frame pointer (más registros).
+  • -ffast-math: Matemáticas rápidas (peligroso para precisión).
+  • -fprofile-generate / -fprofile-use: PGO (Profile Guided Optimization).
+
+*/
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <array>
+#include <chrono>
+#include <algorithm>
+#include <memory>
+#include <cstring>
+#include <numeric>
+#include <execution>
+#include <bit>
+#include <ranges>
+#include <span>
+#include <charconv>
+#include <immintrin.h>
+#include <cassert>
+
+//==============================================================================
+// EJEMPLO 1: CONSTEXPR — CÓMPUTO EN TIEMPO DE COMPILACIÓN
+//==============================================================================
+
+// constexpr: la función se evalúa en compilación si los args son constantes
+constexpr int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+// C++20: consteval — OBLIGA a evaluar en compilación
+consteval int cuadrado(int n) {
+    return n * n;
+}
+
+// C++20: constinit — asegura inicialización en tiempo de compilación
+constinit int valor_global = factorial(6); // 720
+
+// constexpr con structs
+struct Punto {
+    constexpr Punto(double x, double y) : x_(x), y_(y) {}
+
+    constexpr double distancia_al_origen() const {
+        return x_ * x_ + y_ * y_;
+    }
+
+    constexpr static Punto origen() { return {0, 0}; }
+
+    double x_, y_;
+};
+
+void ejemplo_constexpr() {
+    // En compilación:
+    constexpr int fact_10 = factorial(10);
+    static_assert(fact_10 == 3628800);
+
+    // constexpr con array:
+    constexpr std::array<int, 5> cuadrados = {
+        cuadrado(1), cuadrado(2), cuadrado(3),
+        cuadrado(4), cuadrado(5)
+    };
+
+    // constexpr con struct:
+    constexpr Punto p(3.0, 4.0);
+    constexpr double dist = p.distancia_al_origen();
+    static_assert(dist == 25.0);
+
+    std::cout << "factorial(10) = " << fact_10 << "\n";
+    std::cout << "distancia = " << dist << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 2: MOVE SEMANTICS — ELIMINANDO COPIAS
+//==============================================================================
+
+/*
+  Las move semantics (C++11) permiten transferir recursos de un
+  objeto a otro sin copiar. Esencial para evitar copias costosas.
+
+  REGLAS DE ORO:
+  1. std::move no mueve nada — solo convierte a rvalue reference.
+  2. El movimiento real lo hace el constructor/move assignment.
+  3. Después de mover, el origen está en estado válido pero
+     no especificado (puedes llamar a destructor y asignación).
+*/
+
+class Buffer {
+public:
+    // Constructor
+    explicit Buffer(size_t size)
+        : size_(size), datos_(new int[size]) {
+        std::cout << "Constructor " << size << " elementos\n";
+    }
+
+    // Copy constructor (costoso)
+    Buffer(const Buffer& other)
+        : size_(other.size_), datos_(new int[other.size_]) {
+        std::cout << "Copy constructor (" << size_ << ")\n";
+        std::copy(other.datos_, other.datos_ + size_, datos_);
+    }
+
+    // Move constructor (barato)
+    Buffer(Buffer&& other) noexcept
+        : size_(other.size_), datos_(other.datos_) {
+        std::cout << "Move constructor (" << size_ << ")\n";
+        other.size_ = 0;
+        other.datos_ = nullptr;
+    }
+
+    // Copy assignment
+    Buffer& operator=(const Buffer& other) {
+        std::cout << "Copy assignment\n";
+        if (this != &other) {
+            delete[] datos_;
+            size_ = other.size_;
+            datos_ = new int[size_];
+            std::copy(other.datos_, other.datos_ + size_, datos_);
+        }
+        return *this;
+    }
+
+    // Move assignment
+    Buffer& operator=(Buffer&& other) noexcept {
+        std::cout << "Move assignment\n";
+        if (this != &other) {
+            delete[] datos_;
+            size_ = other.size_;
+            datos_ = other.datos_;
+            other.size_ = 0;
+            other.datos_ = nullptr;
+        }
+        return *this;
+    }
+
+    ~Buffer() {
+        delete[] datos_;
+    }
+
+private:
+    size_t size_;
+    int* datos_;
+};
+
+void ejemplo_move_semantics() {
+    Buffer b1(1000);           // Constructor
+    Buffer b2 = b1;            // Copy constructor
+
+    Buffer b3(std::move(b1));  // Move constructor
+
+    Buffer b4(500);
+    b4 = std::move(b2);        // Move assignment
+
+    // std::move en contenedores:
+    std::vector<Buffer> buffers;
+    buffers.reserve(3);
+
+    Buffer temp(2000);
+    buffers.push_back(std::move(temp));
+
+    // temp ya no tiene recursos, pero se puede destruir o reasignar
+}
+
+//==============================================================================
+// EJEMPLO 3: EVITANDO COPIAS — PASS BY REFERENCE
+//==============================================================================
+
+// MAL: Copia el string completo
+void procesar_nombre_mal(std::string nombre) {
+    std::cout << "Procesando: " << nombre << "\n";
+}
+
+// BIEN: Referencia const (no copia)
+void procesar_nombre_bien(const std::string& nombre) {
+    std::cout << "Procesando: " << nombre << "\n";
+}
+
+// PERFECTO: Para almacenar, move si es temporal
+class Persona {
+public:
+    // Versión 1: const ref + copia
+    void set_nombre(const std::string& n) {
+        nombre_ = n; // Copia desde const ref
+    }
+
+    // Versión 2: rvalue ref + move
+    void set_nombre(std::string&& n) noexcept {
+        nombre_ = std::move(n); // Mueve
+    }
+
+    // Versión 3 (C++ moderno): por valor + move
+    void set_nombre_moderno(std::string n) {
+        nombre_ = std::move(n); // Copia si lvalue, move si rvalue
+    }
+
+private:
+    std::string nombre_;
+};
+
+void ejemplo_pass_by_ref() {
+    std::string nombre_largo = "Juan Carlos Martínez López Fernández";
+
+    // Copia: 30+ caracteres copiados
+    procesar_nombre_mal(nombre_largo);
+
+    // Sin copia
+    procesar_nombre_bien(nombre_largo);
+
+    // Move (rápido)
+    procesar_nombre_mal(std::move(nombre_largo));
+    // nombre_largo ahora está vacío
+}
+
+//==============================================================================
+// EJEMPLO 4: CACHE-FRIENDLY DATA — POR QUÉ EL ORDEN IMPORTA
+//==============================================================================
+
+/*
+  La jerarquía de memoria es:
+  • L1 Cache: ~4 ciclos, 32KB
+  • L2 Cache: ~10 ciclos, 256KB
+  • L3 Cache: ~40 ciclos, 8-32MB
+  • RAM: ~100-200 ciclos, GBs
+  • SSD/HDD: millones de ciclos
+
+  Si tus datos no están en caché, la CPU espera.
+*/
+
+// MAL: Array de punteros (fragmentación)
+struct Nodo {
+    int datos[16];
+    Nodo* siguiente;
+};
+
+// Para acceder a todos los datos, la CPU salta por la memoria
+struct NodoMalo {
+    int x, y;
+};
+
+// BIEN: Array de estructuras (SoA vs AoS)
+
+// Array of Structures (AoS) — MAL para acceso secuencial
+struct ParticulaAoS {
+    float x, y, z;
+    float vx, vy, vz;
+    float masa;
+    int tipo;
+};
+
+// Structure of Arrays (SoA) — BIEN para acceso secuencial
+struct ParticulasSoA {
+    std::vector<float> x, y, z;
+    std::vector<float> vx, vy, vz;
+    std::vector<float> masa;
+    std::vector<int> tipo;
+};
+
+// Process AoS vs SoA
+void ejemplo_cache() {
+    const int N = 100000;
+
+    // AoS: datos mezclados en memoria
+    std::vector<ParticulaAoS> aos(N);
+    // SoA: datos contiguos por campo
+
+    // Para sumar todas las masas:
+    // AoS: salta sizeof(ParticulaAoS) cada vez
+    double suma_aos = 0;
+    for (const auto& p : aos) {
+        suma_aos += p.masa;
+    }
+
+    // SoA con acceso directo:
+    ParticulasSoA soa;
+    soa.masa.resize(N);
+    double suma_soa = std::accumulate(
+        soa.masa.begin(), soa.masa.end(), 0.0);
+}
+
+//==============================================================================
+// EJEMPLO 5: PROFILING CON PERF Y CHRONO
+//==============================================================================
+
+/*
+  "Mide, no asumas." — Tautología del ingeniero de performance.
+
+  HERRAMIENTAS DE PROFILING:
+  • perf (Linux): Muestreo de CPU, caché misses, branches.
+  • Valgrind --tool=callgrind: Simulación detallada.
+  • gperftools (Google): CPU profiler y heap profiler.
+  • Intel VTune: Completo pero comercial.
+  • std::chrono: Medición manual de tiempo.
+*/
+
+class Temporizador {
+public:
+    Temporizador(const std::string& nombre)
+        : nombre_(nombre)
+        , inicio_(std::chrono::steady_clock::now()) {}
+
+    ~Temporizador() {
+        auto fin = std::chrono::steady_clock::now();
+        auto duracion = std::chrono::duration_cast<
+            std::chrono::microseconds>(fin - inicio_);
+        std::cout << nombre_ << ": " << duracion.count()
+                  << " μs\n";
+    }
+
+private:
+    std::string nombre_;
+    std::chrono::steady_clock::time_point inicio_;
+};
+
+// Benchmark de diferentes formas de sumar
+int sumar_for(const std::vector<int>& v) {
+    int total = 0;
+    for (size_t i = 0; i < v.size(); ++i) {
+        total += v[i];
+    }
+    return total;
+}
+
+int sumar_range_for(const std::vector<int>& v) {
+    int total = 0;
+    for (int x : v) {
+        total += x;
+    }
+    return total;
+}
+
+int sumar_accumulate(const std::vector<int>& v) {
+    return std::accumulate(v.begin(), v.end(), 0);
+}
+
+#ifdef __cpp_lib_parallel_algorithm
+int sumar_parallel(const std::vector<int>& v) {
+    return std::reduce(std::execution::par, v.begin(), v.end(), 0);
+}
+#endif
+
+void ejemplo_benchmark() {
+    std::vector<int> datos(1000000);
+    std::iota(datos.begin(), datos.end(), 1);
+
+    {
+        Temporizador t("for loop");
+        volatile int r = sumar_for(datos);
+    }
+
+    {
+        Temporizador t("range-for");
+        volatile int r = sumar_range_for(datos);
+    }
+
+    {
+        Temporizador t("accumulate");
+        volatile int r = sumar_accumulate(datos);
+    }
+}
+
+//==============================================================================
+// EJEMPLO 6: INLINING Y LTO
+//==============================================================================
+
+/*
+  Inlining: reemplazar la llamada a función por su cuerpo.
+
+  inline se recomienda, pero el compilador decide.
+  -flto (Link Time Optimization) permite inlining entre
+  archivos .cpp diferentes.
+*/
+
+// inline es solo una sugerencia hoy
+inline int maximo(int a, int b) {
+    return a > b ? a : b;
+}
+
+// La keyword consteval obliga a evaluar en compilación
+consteval int maximo_compilacion(int a, int b) {
+    return a > b ? a : b;
+}
+
+// Template: inline implícito
+template<typename T>
+T minimo(T a, T b) {
+    return a < b ? a : b;
+}
+
+//==============================================================================
+// EJEMPLO 7: SSO (SMALL STRING OPTIMIZATION)
+//==============================================================================
+
+/*
+  std::string típicamente tiene SSO: para strings pequeños
+  (< 15-22 chars) no hay asignación dinámica.
+
+  Esto significa que std::string es rápido para la mayoría de
+  casos de uso. No lo evites por miedo a la asignación.
+
+  sizeof(std::string) ≈ 32 bytes (depende de la implementación)
+  • Si es corto, los datos están dentro de esos 32 bytes.
+  • Si es largo, hay un puntero a heap.
+*/
+
+void ejemplo_sso() {
+    std::string corto = "hola";       // SSO — sin heap
+    std::string largo = "Este es un string muy largo que excede SSO"; // heap
+
+    std::cout << "Corto capacity: " << corto.capacity() << "\n";
+    std::cout << "Largo capacity: " << largo.capacity() << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 8: EVITANDO ASIGNACIONES DINÁMICAS
+//==============================================================================
+
+// MAL: Asignación en cada iteración
+void concatenar_mal(const std::vector<std::string>& palabras) {
+    std::string resultado;
+    for (const auto& p : palabras) {
+        resultado += p; // Puede realocar varias veces
+    }
+}
+
+// BIEN: Reservar espacio de antemano
+void concatenar_bien(const std::vector<std::string>& palabras) {
+    std::string resultado;
+    size_t total = 0;
+    for (const auto& p : palabras) {
+        total += p.size();
+    }
+    resultado.reserve(total);
+    for (const auto& p : palabras) {
+        resultado += p;
+    }
+}
+
+// MEJOR: Usar stringstream si hay muchas concatenaciones
+#include <sstream>
+void concatenar_stream(const std::vector<std::string>& palabras) {
+    std::ostringstream oss;
+    for (const auto& p : palabras) {
+        oss << p;
+    }
+    std::string resultado = oss.str();
+}
+
+//==============================================================================
+// EJEMPLO 9: BENCHMARK CON GOOGLE BENCHMARK
+//==============================================================================
+
+/*
+  // Instalación: sudo apt install libbenchmark-dev
+  // Enlace: -lbenchmark
+
+  #include <benchmark/benchmark.h>
+
+  static void BM_StringCopy(benchmark::State& state) {
+    std::string x = "hello";
+    for (auto _ : state) {
+      std::string copy(x);
+    }
+  }
+  BENCHMARK(BM_StringCopy);
+
+  static void BM_StringMove(benchmark::State& state) {
+    std::string x = "hello";
+    std::string y;
+    for (auto _ : state) {
+      y = std::move(x);
+      x = std::move(y);
+    }
+  }
+  BENCHMARK(BM_StringMove);
+
+  BENCHMARK_MAIN();
+*/
+
+//==============================================================================
+// EJEMPLO 10: OPTIMIZACIÓN DE BUCLES
+//==============================================================================
+
+// MAL: Llamada a size() en cada iteración
+void loop_mal(const std::vector<int>& v) {
+    for (size_t i = 0; i < v.size(); ++i) {
+        std::cout << v[i];
+    }
+}
+
+// BIEN: size() fuera del loop
+void loop_bien(const std::vector<int>& v) {
+    const size_t n = v.size();
+    for (size_t i = 0; i < n; ++i) {
+        std::cout << v[i];
+    }
+}
+
+// MEJOR: Range-for (el compilador optimiza igual)
+void loop_mejor(const std::vector<int>& v) {
+    for (int x : v) {
+        std::cout << x;
+    }
+}
+
+// Loop interchange: cambiar orden para mejor localidad
+void loop_interchange_mal(std::vector<std::vector<int>>& matriz) {
+    // MAL: columnas en inner loop (salta en memoria)
+    for (size_t i = 0; i < matriz.size(); ++i) {
+        for (size_t j = 0; j < matriz[0].size(); ++j) {
+            matriz[i][j] = 0;
+        }
+    }
+}
+
+void loop_interchange_bien(std::vector<std::vector<int>>& matriz) {
+    // BIEN: filas en inner loop (acceso secuencial en memoria)
+    for (size_t i = 0; i < matriz.size(); ++i) {
+        int* fila = matriz[i].data();
+        for (size_t j = 0; j < matriz[0].size(); ++j) {
+            fila[j] = 0;
+        }
+    }
+}
+
+//==============================================================================
+// EJEMPLO 11: VECTORIZACIÓN AUTOMÁTICA
+//==============================================================================
+
+/*
+  El compilador puede vectorizar bucles (usar SIMD: Single Instruction
+  Multiple Data). Condiciones para vectorización:
+
+  1. Bucle con número fijo de iteraciones.
+  2. Sin dependencias entre iteraciones.
+  3. Acceso a memoria contiguo.
+  4. Sin branches (o predecibles).
+
+  g++ -O3 -march=native -ftree-vectorize programa.cpp
+*/
+
+// Vectorizable:
+void sumar_arrays(const float* a, const float* b, float* c, int n) {
+    for (int i = 0; i < n; ++i) {
+        c[i] = a[i] + b[i]; // Contiguo, sin dependencias
+    }
+}
+
+// NO vectorizable (dependencia):
+void suma_acumulada(float* a, int n) {
+    for (int i = 1; i < n; ++i) {
+        a[i] += a[i - 1]; // Dependencia: a[i] depende de a[i-1]
+    }
+}
+
+// Manual con SIMD intrinsics (x86):
+void sumar_simd(const float* a, const float* b, float* c, int n) {
+    int i = 0;
+    // Procesar de a 4 floats (128 bits SSE) (o 8 con AVX)
+    for (; i + 4 <= n; i += 4) {
+        __m128 va = _mm_loadu_ps(a + i);
+        __m128 vb = _mm_loadu_ps(b + i);
+        __m128 vc = _mm_add_ps(va, vb);
+        _mm_storeu_ps(c + i, vc);
+    }
+    // Procesar el resto
+    for (; i < n; ++i) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+//==============================================================================
+// EJEMPLO 12: NOEXCEPT Y OPTIMIZACIONES
+//==============================================================================
+
+/*
+  Marcar funciones como noexcept permite al compilador:
+  • No generar código de manejo de excepciones.
+  • Mejorar el reordenamiento de código.
+  • Habilitar move semantics en contenedores (std::vector).
+*/
+
+// noexcept = promesa de que no lanza excepciones
+void operacion_segura() noexcept {
+    // Código que nunca lanza
+}
+
+// noexcept condicional
+template<typename T>
+void swap(T& a, T& b) noexcept(std::is_nothrow_swappable_v<T>) {
+    using std::swap;
+    swap(a, b);
+}
+
+//==============================================================================
+// EJEMPLO 13: STRING CONVERSIONES EFICIENTES
+//==============================================================================
+
+// MAL: std::to_string + concatenación
+std::string construir_mensaje_mal(int id, double precio) {
+    return "ID: " + std::to_string(id)
+         + ", Precio: $" + std::to_string(precio);
+}
+
+// BIEN: std::ostringstream
+std::string construir_mensaje_bien(int id, double precio) {
+    std::ostringstream oss;
+    oss << "ID: " << id << ", Precio: $" << precio;
+    return oss.str();
+}
+
+// MEJOR (C++17): std::to_chars (sin alocación, más rápido)
+std::string construir_mensaje_rapido(int id, double precio) {
+    std::string resultado(64, '\0');
+
+    auto [p1, e1] = std::to_chars(
+        resultado.data(),
+        resultado.data() + resultado.size(),
+        id);
+    // No es trivial con doubles, pero es más rápido
+
+    return resultado;
+}
+
+//==============================================================================
+// EJEMPLO 14: VIRTUAL vs CRTP vs std::function
+//==============================================================================
+
+/*
+  Costo de cada mecanismo de polimorfismo:
+
+  • Virtual (vtable): 1 desreferencia de puntero + indirección.
+    ~2-5 ns de overhead por llamada.
+
+  • CRTP (static polymorphism): 0 overhead — todo en línea.
+    ~0 ns de overhead.
+
+  • std::function: Type erasure + posible heap allocation.
+    ~10-30 ns de overhead por llamada.
+
+  • Function pointer: Indirección simple.
+    ~1-3 ns de overhead.
+*/
+
+// Virtual
+struct Animal {
+    virtual void sonido() const = 0;
+    virtual ~Animal() = default;
+};
+
+struct Perro : Animal {
+    void sonido() const override { std::cout << "Guau\n"; }
+};
+
+// CRTP (ver capítulo 72)
+template<typename T>
+struct AnimalCRTP {
+    void sonido() const {
+        static_cast<const T*>(this)->sonido_impl();
+    }
+};
+
+struct PerroCRTP : AnimalCRTP<PerroCRTP> {
+    void sonido_impl() const { std::cout << "Guau\n"; }
+};
+
+// std::function
+using AnimalFunc = std::function<void()>;
+
+//==============================================================================
+// EJEMPLO 15: SMALL VECTOR OPTIMIZATION
+//==============================================================================
+
+/*
+  std::vector siempre asigna en heap. Para arrays pequeños,
+  std::array o llvm::SmallVector evitan la asignación.
+
+  boost::container::small_vector<T, N>:
+  • Si hay <= N elementos, almacena en stack (sin asignación).
+  • Si hay > N, cambia a heap automáticamente.
+*/
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 75:
+
+  1. Flags de optimización:
+     - Release: -O2 -march=native -flto
+     - Perfilado: -O2 -fprofile-generate
+     - Debug: -O0 -g
+
+  2. constexpr: cómputo en compilación. static_assert para
+     verificar. consteval para forzar evaluación en compilación.
+
+  3. Move semantics: std::move convierte a rvalue, el movimiento
+     real está en los constructores/assignment. noexcept en move
+     operations.
+
+  4. Cache-friendly: SoA vs AoS, acceso secuencial a memoria,
+     loop interchange.
+
+  5. Profiling: perf, std::chrono, Google Benchmark.
+     Mide antes y después. No asumas nada.
+
+  6. Evitar asignaciones: reserve, SSO, small_vector, arena
+     allocators.
+
+  7. Vectorización: -O3 -march=native, bucles simples,
+     datos contiguos.
+
+  8. noexcept permite mejores optimizaciones.
+
+  9. Polimorfismo: virtual tiene overhead. CRTP es gratis en
+     compilación. std::function tiene type erasure.
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Optimizar un procesador de texto
+  ----------------------------------------------
+  Dado:
+
+  std::string procesar_texto(const std::vector<std::string>& palabras) {
+      std::string resultado;
+      for (const auto& p : palabras) {
+          resultado += p + " ";
+      }
+      return resultado;
+  }
+
+  Optimízalo para mínimo de asignaciones.
+
+  EJERCICIO 2: constexpr
+  ----------------------
+  Implementa una función constexpr que calcule el n-ésimo número
+  de Fibonacci. Verifica con static_assert que Fib(10) == 55.
+
+  EJERCICIO 3: Benchmarks
+  -----------------------
+  Escribe un benchmark que compare:
+  • std::copy vs memcpy vs loop manual
+  • std::vector::push_back vs emplace_back
+  • std::string concatenation con + vs reserve vs ostringstream
+  Cre una tabla con resultados para 1000, 10000, 100000 elementos.
+
+  EJERCICIO 4: SoA vs AoS
+  -----------------------
+  Crea una simulación de N partículas donde cada iteración
+  actualiza posición basada en velocidad. Compara rendimiento
+  de AoS vs SoA para N=100000.
+
+  EJERCICIO 5: noexcept
+  --------------------
+  Revisa tu código de ejercicios anteriores y marca como noexcept
+  todas las funciones que no lancen excepciones. Verifica que
+  el código compile correctamente.
+
+  EJERCICIO 6: Profiling con perf
+  --------------------------------
+  Escribe un programa que haga cómputo intensivo (multiplicación
+  de matrices). Usa perf stat ./programa para medir:
+  • Ciclos de CPU
+  • Cache misses
+  • Branch mispredictions
+  • IPC (Instructions Per Cycle)
+
+  EJERCICIO 7: Vectorización manual
+  ---------------------------------
+  Implementa una función de multiplicar matrices 4x4 usando
+  SSE/AVX intrinsics y compara con la versión escalar.
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿Debo usar -O3 o -O2 en producción?
+  R: Generalmente -O2 es suficiente y más seguro. -O3 puede
+     aumentar el tamaño del binario y en raras ocasiones hacer
+     más lento por code bloat. Mide ambos.
+
+  P: ¿Move semantics realmente mejora el rendimiento?
+  R: Sí, especialmente con contenedores grandes (vector, string,
+     map). Moves transfieren recursos sin copiar. Hasta 10-100x
+     más rápido para datos grandes.
+
+  P: ¿Cómo sé si mi código es cache-friendly?
+  R: Con perf stat -e cache-misses ./programa. Si hay muchos
+     cache misses, revisa el patrón de acceso a memoria.
+
+  P: ¿Debo optimizar cada función?
+  R: No. El 90% del tiempo de ejecución suele estar en el 10%
+     del código. Usa un profiler para encontrar los hotspots.
+
+  P: ¿Qué es PGO (Profile Guided Optimization)?
+  R: Compilas dos veces: la primera genera un perfil, la segunda
+     usa ese perfil para optimizar. g++ -fprofile-generate run
+     → g++ -fprofile-use. Puede dar 10-20% de mejora adicional.
+
+  P: ¿std::vector<bool> es eficiente?
+  R: std::vector<bool> es una especialización que usa bits.
+     Es eficiente en espacio pero lento en acceso. Para velocidad
+     usa std::vector<char> o std::bitset.
+
+  R: Unique_ptr vs raw pointer para rendimiento?
+  R: Unique_ptr tiene CERO overhead en tiempo de ejecución.
+     Es idéntico a un puntero raw. No hay excusa para no usarlo.
+
+  P: ¿Templates hacen el código más rápido?
+  R: Sí, porque todo se resuelve en compilación y el compilador
+     puede inlinear y optimizar agresivamente. Sin overhead de
+     vtable o type erasure.
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 75                ║
+  ║        "EL AJUSTADOR DE RENDIMIENTO"                       ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Eres el ingeniero de performance de un motor de búsqueda en
+  tiempo real. El sistema debe procesar 1 millón de consultas
+  por segundo con latencia < 1ms.
+
+  El equipo ha escrito un prototipo funcional pero lento. Debes
+  optimizarlo usando todas las técnicas del capítulo.
+
+  Código base (simplificado):
+
+  struct Documento {
+      int id;
+      std::string titulo;
+      std::string contenido;
+      double relevancia;
+  };
+
+  class MotorBusqueda {
+      std::vector<Documento> docs_;
+  public:
+      void agregar(Documento d) { docs_.push_back(std::move(d)); }
+
+      std::vector<int> buscar(const std::string& query) const {
+          std::vector<int> resultados;
+          for (const auto& doc : docs_) {
+              if (doc.contenido.find(query) != std::string::npos) {
+                  resultados.push_back(doc.id);
+              }
+          }
+          return resultados;
+      }
+  };
+
+  Problemas a resolver:
+  1. La búsqueda es O(n) y copia strings.
+  2. No hay caché de resultados frecuentes.
+  3. Las inserciones pueden realocar.
+  4. No aprovecha SIMD ni paralelismo.
+
+  Tu misión:
+  1. Mide la performance actual (crea un benchmark).
+  2. Identifica los 3 cuellos de botella principales.
+  3. Implementa optimizaciones (al menos 5).
+  4. Mide la mejora y documenta cada cambio.
+
+  Criterios:
+  • Mejora de al menos 10x (40 pts)
+  • Código optimizado pero legible (30 pts)
+  • Benchmark riguroso (30 pts)
+
+  ¡El buscador más rápido del oeste!
+
+  Bonus: Implementa un pequeño caché LRU para consultas frecuentes.
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 75: Optimización en C++.
+
+  Ahora sabes que la optimización no es magia negra sino ciencia.
+  Mides, identificas cuellos de botella, aplicas técnicas específicas
+  y vuelves a medir. El compilador es tu aliado, no tu adversario.
+
+  Recuerda: "Programa pensando en el rendimiento, pero optimiza
+  basado en mediciones."
+
+  En el próximo capítulo abordaremos la seguridad en C++. Veremos
+  buffer overflows, format string attacks, y cómo los smart pointers
+  nos protegen de nosotros mismos.
+
+  "El código rápido pero inseguro es solo rápido hasta que
+   alguien lo rompe."
+
+  ¡Nos vemos en el Capítulo 76!
+
+================================================================================
+  FIN DEL CAPÍTULO 75 — OPTIMIZACIÓN EN C++
+  PRÓXIMO CAPÍTULO: SEGURIDAD EN C++ (Capítulo 76)
+================================================================================

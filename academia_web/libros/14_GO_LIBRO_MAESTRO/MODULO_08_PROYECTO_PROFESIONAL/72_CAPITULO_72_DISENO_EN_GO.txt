@@ -1,0 +1,1096 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 72: DISEÑO EN GO (SOLID)                     ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, arquitecto de software. En este capítulo dominarás los
+principios SOLID aplicados a Go. Entenderás por qué Go favorece
+interfaces pequeñas, composición sobre herencia, y cómo escribir
+código que sea fácil de mantener, probar y extender.
+
+FRASE MOTIVACIONAL
+──────────────────
+"Diseñar es tomar decisiones que hoy duelen poco y mañana evitan
+catástrofes. Un buen diseño en Go no se nota; se agradece."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Aplicar los 5 principios SOLID en Go correctamente.
+2. Entender por qué las interfaces pequeñas son poderosas.
+3. Usar composición en lugar de herencia.
+4. Escribir tests table-driven limpios y mantenibles.
+5. Reconocer olores de diseño en código Go.
+6. Implementar patrones de diseño con mentalidad Go.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. S — SINGLE RESPONSIBILITY PRINCIPLE (SRP)
+─────────────────────────────────────────────
+
+"Una clase/estructura debe tener una sola razón para cambiar."
+
+En Go, esto significa que cada paquete y cada tipo debe tener una
+responsabilidad bien definida. Si una estructura hace más de una
+cosa, hay que separarla.
+
+MAL EJEMPLO — Todo en una estructura:
+
+```go
+type UserService struct {
+    db     *sql.DB
+    logger *slog.Logger
+    cache  *redis.Client
+}
+
+func (s *UserService) CreateUser(name, email string) error {
+    s.logger.Info("creando usuario", "email", email)
+    // Validación
+    if !strings.Contains(email, "@") {
+        return errors.New("email inválido")
+    }
+    // BD
+    _, err := s.db.Exec("INSERT INTO users ...", name, email)
+    if err != nil {
+        return err
+    }
+    // Cache
+    s.cache.Del("users:list")
+    // Email de bienvenida
+    return s.sendWelcomeEmail(email)
+}
+
+func (s *UserService) sendWelcomeEmail(email string) error {
+    // Lógica de envío de email mezclada con negocio
+    return nil
+}
+```
+
+BIEN EJEMPLO — Separación de responsabilidades:
+
+```go
+// service/user_service.go — solo orquestación y reglas de negocio
+type UserService struct {
+    repo  UserRepository
+    email EmailSender
+    cache Cache
+}
+
+func (s *UserService) CreateUser(ctx context.Context, name, email string) (*User, error) {
+    if err := validateEmail(email); err != nil {
+        return nil, err
+    }
+    user := &User{Name: name, Email: email}
+    if err := s.repo.Save(ctx, user); err != nil {
+        return nil, err
+    }
+    s.cache.Delete(ctx, "users:list")
+    go s.email.SendWelcome(ctx, user.Email)
+    return user, nil
+}
+```
+
+2. O — OPEN/CLOSED PRINCIPLE (OCP)
+────────────────────────────────────
+
+"Abierto para extensión, cerrado para modificación."
+
+Usamos interfaces para permitir nuevas funcionalidades sin modificar
+el código existente.
+
+```go
+// Definimos una interfaz para estrategias de pago
+type PaymentProcessor interface {
+    Pay(ctx context.Context, amount float64, currency string) error
+}
+
+// El servicio de órdenes usa la interfaz, no una implementación
+type OrderService struct {
+    processor PaymentProcessor
+}
+
+func (s *OrderService) Checkout(ctx context.Context, order *Order) error {
+    // ... lógica de negocio ...
+    return s.processor.Pay(ctx, order.Total, order.Currency)
+}
+
+// Implementación concreta — Stripe
+type StripeProcessor struct {
+    apiKey string
+}
+
+func (p *StripeProcessor) Pay(ctx context.Context, amount float64, currency string) error {
+    // Llamada a API de Stripe
+    return nil
+}
+
+// Nueva implementación — PayPal (sin modificar OrderService)
+type PayPalProcessor struct {
+    clientID string
+    secret   string
+}
+
+func (p *PayPalProcessor) Pay(ctx context.Context, amount float64, currency string) error {
+    // Llamada a API de PayPal
+    return nil
+}
+```
+
+3. L — LISKOV SUBSTITUTION PRINCIPLE (LSP)
+────────────────────────────────────────────
+
+"Los subtipos deben ser sustituibles por sus tipos base."
+
+En Go, cuando una función acepta una interfaz, cualquier
+implementación debe poder usarse sin alterar la corrección del
+programa.
+
+```go
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+// Ambas implementaciones son sustituibles:
+// *strings.Reader
+// *bytes.Buffer
+
+func PrintContent(r Reader) error {
+    data, err := io.ReadAll(r)
+    if err != nil {
+        return err
+    }
+    fmt.Println(string(data))
+    return nil
+}
+```
+
+MAL EJEMPLO — Violación de LSP:
+
+```go
+type Bird interface {
+    Fly() error
+}
+
+type Eagle struct{}
+
+func (e *Eagle) Fly() error { return nil }
+
+type Penguin struct{}
+
+func (p *Penguin) Fly() error {
+    return errors.New("los pingüinos no vuelan")
+}
+```
+
+Solución: interfaces específicas:
+
+```go
+type Flyer interface {
+    Fly() error
+}
+
+type Swimmer interface {
+    Swim() error
+}
+
+type Eagle struct{}
+func (e *Eagle) Fly() error  { return nil }
+
+type Penguin struct{}
+func (p *Penguin) Swim() error { return nil }
+func (p *Penguin) Fly() error  { return nil } // no viola LSP
+```
+
+4. I — INTERFACE SEGREGATION PRINCIPLE (ISP)
+─────────────────────────────────────────────
+
+"Muchas interfaces específicas son mejores que una interfaz general."
+
+Go promueve interfaces pequeñas de 1 a 3 métodos. La biblioteca
+estándar es el mejor ejemplo:
+
+```go
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
+
+type Closer interface {
+    Close() error
+}
+
+type Seeker interface {
+    Seek(offset int64, whence int) (int64, error)
+}
+
+// Combinadas cuando es necesario:
+type ReadWriter interface {
+    Reader
+    Writer
+}
+
+type ReadWriteCloser interface {
+    Reader
+    Writer
+    Closer
+}
+```
+
+Ejemplo profesional — interfaces pequeñas para un servicio:
+
+```go
+type UserCreator interface {
+    Create(ctx context.Context, user *User) error
+}
+
+type UserFinder interface {
+    FindByID(ctx context.Context, id int) (*User, error)
+    FindByEmail(ctx context.Context, email string) (*User, error)
+}
+
+type UserLister interface {
+    FindAll(ctx context.Context) ([]*User, error)
+}
+
+type UserUpdater interface {
+    Update(ctx context.Context, user *User) error
+}
+
+type UserDeleter interface {
+    Delete(ctx context.Context, id int) error
+}
+
+// Servicio que solo necesita crear y listar:
+type UserReportService struct {
+    lister UserLister
+}
+```
+
+5. D — DEPENDENCY INVERSION PRINCIPLE (DIP)
+────────────────────────────────────────────
+
+"Depende de abstracciones, no de concreciones."
+
+Los módulos de alto nivel (servicios) no deben depender de módulos
+de bajo nivel (repositorios). Ambos deben depender de abstracciones.
+
+```go
+// Alto nivel — package service
+type UserRepository interface {
+    Save(ctx context.Context, user *User) error
+    FindByID(ctx context.Context, id int) (*User, error)
+}
+
+type UserService struct {
+    repo UserRepository // depende de abstracción
+}
+
+// Bajo nivel — package repository
+type PostgresUserRepo struct {
+    db *sql.DB
+}
+
+func (r *PostgresUserRepo) Save(ctx context.Context, user *User) error {
+    // implementación concreta
+    return nil
+}
+
+func (r *PostgresUserRepo) FindByID(ctx context.Context, id int) (*User, error) {
+    // implementación concreta
+    return nil, nil
+}
+```
+
+6. COMPOSICIÓN SOBRE HERENCIA
+──────────────────────────────
+
+Go no tiene clases ni herencia. Usa composición de structs y
+delegación.
+
+```go
+// Composición de structs
+type Logger struct{}
+
+func (l *Logger) Log(msg string) {
+    fmt.Println(msg)
+}
+
+type Database struct {
+    Logger // composición
+}
+
+func (d *Database) Save(data string) {
+    d.Log("guardando: " + data)
+}
+
+// Composición de interfaces
+type Reader interface { Read() }
+type Writer interface { Write() }
+type ReadWriter interface {
+    Reader
+    Writer
+}
+```
+
+6.1. DELEGACIÓN CON COMPOSICIÓN
+
+```go
+type Notifier struct {
+    email EmailSender
+    sms   SMSSender
+    push  PushSender
+}
+
+func (n *Notifier) NotifyAll(ctx context.Context, user *User, msg string) {
+    n.email.Send(ctx, user.Email, msg)
+    if user.Phone != "" {
+        n.sms.Send(ctx, user.Phone, msg)
+    }
+    if user.DeviceToken != "" {
+        n.push.Send(ctx, user.DeviceToken, msg)
+    }
+}
+```
+
+7. TABLE-DRIVEN TESTS
+──────────────────────
+
+Go promueve tests basados en tablas para cubrir múltiples casos.
+
+```go
+func TestCalculateDiscount(t *testing.T) {
+    tests := []struct {
+        name     string
+        amount   float64
+        tier     string
+        expected float64
+        wantErr  bool
+    }{
+        {
+            name:     "gold tier gets 20% discount",
+            amount:   100.0,
+            tier:     "gold",
+            expected: 80.0,
+        },
+        {
+            name:     "silver tier gets 10% discount",
+            amount:   100.0,
+            tier:     "silver",
+            expected: 90.0,
+        },
+        {
+            name:     "no tier gets 0% discount",
+            amount:   100.0,
+            tier:     "basic",
+            expected: 100.0,
+        },
+        {
+            name:     "zero amount returns zero",
+            amount:   0.0,
+            tier:     "gold",
+            expected: 0.0,
+        },
+        {
+            name:     "negative amount returns error",
+            amount:   -50.0,
+            tier:     "gold",
+            wantErr:  true,
+        },
+        {
+            name:     "invalid tier returns error",
+            amount:   100.0,
+            tier:     "platinum",
+            wantErr:  true,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := CalculateDiscount(tt.amount, tt.tier)
+            if tt.wantErr {
+                if err == nil {
+                    t.Error("expected error but got none")
+                }
+                return
+            }
+            if err != nil {
+                t.Errorf("unexpected error: %v", err)
+            }
+            if got != tt.expected {
+                t.Errorf("got %v, want %v", got, tt.expected)
+            }
+        })
+    }
+}
+```
+
+8. SUBTESTS CON EJECUCIÓN PARALELA
+───────────────────────────────────
+
+```go
+func TestUserService(t *testing.T) {
+    repo := repository.NewMemoryRepository()
+    svc := service.NewUserService(repo)
+
+    t.Run("create user", func(t *testing.T) {
+        t.Parallel()
+        user, err := svc.CreateUser(context.Background(), "Alice", "alice@example.com")
+        if err != nil {
+            t.Fatal(err)
+        }
+        if user.ID == 0 {
+            t.Error("expected non-zero ID")
+        }
+    })
+
+    t.Run("create duplicate email", func(t *testing.T) {
+        t.Parallel()
+        _, err := svc.CreateUser(context.Background(), "Bob", "alice@example.com")
+        if err == nil {
+            t.Error("expected error for duplicate email")
+        }
+    })
+
+    t.Run("get non-existent user", func(t *testing.T) {
+        t.Parallel()
+        _, err := svc.GetUser(context.Background(), 999)
+        if err == nil {
+            t.Error("expected error for non-existent user")
+        }
+    })
+}
+```
+
+9. MOCKING CON INTERFACES PEQUEÑAS
+────────────────────────────────────
+
+Las interfaces pequeñas son fáciles de mockear.
+
+```go
+// Interface a mockear
+type EmailSender interface {
+    Send(ctx context.Context, to, subject, body string) error
+}
+
+// Mock
+type MockEmailSender struct {
+    SendFunc func(ctx context.Context, to, subject, body string) error
+    Calls    []struct{ To, Subject, Body string }
+}
+
+func (m *MockEmailSender) Send(ctx context.Context, to, subject, body string) error {
+    m.Calls = append(m.Calls, struct{ To, Subject, Body string }{to, subject, body})
+    if m.SendFunc != nil {
+        return m.SendFunc(ctx, to, subject, body)
+    }
+    return nil
+}
+
+// Uso en test
+func TestWelcomeEmail(t *testing.T) {
+    mockEmail := &MockEmailSender{}
+    svc := service.NewUserService(repo, mockEmail)
+
+    _, err := svc.CreateUser(context.Background(), "Alice", "alice@example.com")
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if len(mockEmail.Calls) != 1 {
+        t.Errorf("expected 1 email call, got %d", len(mockEmail.Calls))
+    }
+    if mockEmail.Calls[0].To != "alice@example.com" {
+        t.Errorf("wrong recipient: %s", mockEmail.Calls[0].To)
+    }
+}
+```
+
+10. PATRÓN STRATEGY
+────────────────────
+
+```go
+type SortingStrategy interface {
+    Sort(data []int) []int
+}
+
+type BubbleSort struct{}
+func (BubbleSort) Sort(data []int) []int {
+    n := len(data)
+    result := make([]int, n)
+    copy(result, data)
+    for i := 0; i < n-1; i++ {
+        for j := 0; j < n-i-1; j++ {
+            if result[j] > result[j+1] {
+                result[j], result[j+1] = result[j+1], result[j]
+            }
+        }
+    }
+    return result
+}
+
+type QuickSort struct{}
+func (QuickSort) Sort(data []int) []int {
+    if len(data) < 2 {
+        return data
+    }
+    result := make([]int, len(data))
+    copy(result, data)
+    quickSort(result, 0, len(result)-1)
+    return result
+}
+
+func quickSort(data []int, low, high int) {
+    if low < high {
+        p := partition(data, low, high)
+        quickSort(data, low, p-1)
+        quickSort(data, p+1, high)
+    }
+}
+
+func partition(data []int, low, high int) int {
+    pivot := data[high]
+    i := low - 1
+    for j := low; j < high; j++ {
+        if data[j] < pivot {
+            i++
+            data[i], data[j] = data[j], data[i]
+        }
+    }
+    data[i+1], data[high] = data[high], data[i+1]
+    return i + 1
+}
+
+type Sorter struct {
+    strategy SortingStrategy
+}
+
+func (s *Sorter) SetStrategy(strategy SortingStrategy) {
+    s.strategy = strategy
+}
+
+func (s *Sorter) Sort(data []int) []int {
+    return s.strategy.Sort(data)
+}
+```
+
+11. PATRÓN REPOSITORY GENÉRICO
+───────────────────────────────
+
+Usando genéricos (Go 1.18+):
+
+```go
+type Repository[T any] interface {
+    Create(ctx context.Context, entity *T) error
+    FindByID(ctx context.Context, id int) (*T, error)
+    Update(ctx context.Context, entity *T) error
+    Delete(ctx context.Context, id int) error
+    FindAll(ctx context.Context) ([]*T, error)
+}
+
+type InMemoryRepository[T any] struct {
+    mu     sync.RWMutex
+    data   map[int]*T
+    nextID int
+}
+
+func NewInMemoryRepository[T any]() *InMemoryRepository[T] {
+    return &InMemoryRepository[T]{
+        data: make(map[int]*T),
+    }
+}
+
+func (r *InMemoryRepository[T]) Create(ctx context.Context, entity *T) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    r.nextID++
+    // Usamos reflection para asignar ID si el tipo tiene campo ID
+    setID(entity, r.nextID)
+    r.data[r.nextID] = entity
+    return nil
+}
+
+func (r *InMemoryRepository[T]) FindByID(ctx context.Context, id int) (*T, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    entity, ok := r.data[id]
+    if !ok {
+        return nil, fmt.Errorf("entity %d not found", id)
+    }
+    return entity, nil
+}
+
+func (r *InMemoryRepository[T]) Update(ctx context.Context, entity *T) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    id := getID(entity)
+    if _, ok := r.data[id]; !ok {
+        return fmt.Errorf("entity %d not found", id)
+    }
+    r.data[id] = entity
+    return nil
+}
+
+func (r *InMemoryRepository[T]) Delete(ctx context.Context, id int) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if _, ok := r.data[id]; !ok {
+        return fmt.Errorf("entity %d not found", id)
+    }
+    delete(r.data, id)
+    return nil
+}
+
+func (r *InMemoryRepository[T]) FindAll(ctx context.Context) ([]*T, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    result := make([]*T, 0, len(r.data))
+    for _, v := range r.data {
+        result = append(result, v)
+    }
+    return result, nil
+}
+```
+
+12. PATRÓN OPTIONS FUNCIONALES (REVISITADO)
+────────────────────────────────────────────
+
+Aplicando SRP y OCP:
+
+```go
+type Server struct {
+    host        string
+    port        int
+    readTimeout time.Duration
+    middleware  []func(http.Handler) http.Handler
+    notFound    http.Handler
+}
+
+type Option func(*Server)
+
+func WithHost(host string) Option {
+    return func(s *Server) { s.host = host }
+}
+
+func WithPort(port int) Option {
+    return func(s *Server) { s.port = port }
+}
+
+func WithReadTimeout(d time.Duration) Option {
+    return func(s *Server) { s.readTimeout = d }
+}
+
+func WithMiddleware(m ...func(http.Handler) http.Handler) Option {
+    return func(s *Server) { s.middleware = append(s.middleware, m...) }
+}
+
+func WithNotFoundHandler(h http.Handler) Option {
+    return func(s *Server) { s.notFound = h }
+}
+
+func NewServer(opts ...Option) *Server {
+    s := &Server{
+        host: "0.0.0.0",
+        port: 8080,
+    }
+    for _, opt := range opts {
+        opt(s)
+    }
+    return s
+}
+```
+
+13. OLORES DE DISEÑO EN GO (CODE SMELLS)
+─────────────────────────────────────────
+
+🔴 Interfaz grande (más de 5 métodos):
+   → Dividir en interfaces más pequeñas.
+
+🔴 Struct con muchos campos (más de 10):
+   → Agrupar campos relacionados en sub-structs.
+
+🔴 Función que recibe >5 parámetros:
+   → Usar un struct de configuración o Options.
+
+🔴 Método que usa solo un campo del receptor:
+   → Podría ser una función independiente.
+
+🔴 Código duplicado en tests:
+   → Extraer helpers y usar table-driven tests.
+
+🔴 if err != nil repetitivo sin contexto:
+   → Usar fmt.Errorf("contexto: %w", err) para wrapping.
+
+🔴 Paquete llamado "util" o "helpers":
+   → Nombrar por responsabilidad (strutil, httputil).
+
+14. ERROR WRAPPING Y DOMINIO
+─────────────────────────────
+
+```go
+package domain
+
+import "errors"
+
+var (
+    ErrNotFound     = errors.New("entity not found")
+    ErrConflict     = errors.New("entity already exists")
+    ErrValidation   = errors.New("validation error")
+    ErrUnauthorized = errors.New("unauthorized")
+)
+
+type ValidationErrors []string
+
+func (ve ValidationErrors) Error() string {
+    return fmt.Sprintf("validation errors: %v", []string(ve))
+}
+
+func (ve ValidationErrors) Target() error {
+    return ErrValidation
+}
+```
+
+15. DISEÑO DE APIs HTTP EN GO
+──────────────────────────────
+
+```go
+package handler
+
+import (
+    "encoding/json"
+    "net/http"
+)
+
+type APIResponse struct {
+    Success bool        `json:"success"`
+    Data    interface{} `json:"data,omitempty"`
+    Error   string      `json:"error,omitempty"`
+}
+
+func respond(w http.ResponseWriter, status int, data interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(APIResponse{
+        Success: status < 400,
+        Data:    data,
+    })
+}
+
+func respondError(w http.ResponseWriter, status int, msg string) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(APIResponse{
+        Success: false,
+        Error:   msg,
+    })
+}
+
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+    var req CreateUserRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        respondError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+    user, err := h.svc.CreateUser(r.Context(), req.Name, req.Email)
+    if err != nil {
+        switch {
+        case errors.Is(err, domain.ErrValidation):
+            respondError(w, http.StatusBadRequest, err.Error())
+        case errors.Is(err, domain.ErrConflict):
+            respondError(w, http.StatusConflict, err.Error())
+        default:
+            respondError(w, http.StatusInternalServerError, "internal error")
+        }
+        return
+    }
+    respond(w, http.StatusCreated, toUserResponse(user))
+}
+```
+
+16. VALIDACIÓN ESTRUCTURADA
+───────────────────────────
+
+```go
+package validator
+
+import (
+    "regexp"
+    "strings"
+)
+
+type Validator struct {
+    errors map[string]string
+}
+
+func New() *Validator {
+    return &Validator{errors: make(map[string]string)}
+}
+
+func (v *Validator) Required(field, value string) *Validator {
+    if strings.TrimSpace(value) == "" {
+        v.errors[field] = "this field is required"
+    }
+    return v
+}
+
+func (v *Validator) MinLength(field, value string, min int) *Validator {
+    if len(value) < min {
+        v.errors[field] = fmt.Sprintf("minimum %d characters", min)
+    }
+    return v
+}
+
+func (v *Validator) MaxLength(field, value string, max int) *Validator {
+    if len(value) > max {
+        v.errors[field] = fmt.Sprintf("maximum %d characters", max)
+    }
+    return v
+}
+
+func (v *Validator) Email(field, value string) *Validator {
+    emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+    if !emailRegex.MatchString(value) {
+        v.errors[field] = "invalid email format"
+    }
+    return v
+}
+
+func (v *Validator) Valid() bool {
+    return len(v.errors) == 0
+}
+
+func (v *Validator) Errors() map[string]string {
+    return v.errors
+}
+```
+
+17. DISEÑO DE CONCURRENCIA
+───────────────────────────
+
+```go
+package worker
+
+type Job func(ctx context.Context) error
+
+type Pool struct {
+    jobs    chan Job
+    results chan error
+    workers int
+}
+
+func NewPool(workers int) *Pool {
+    return &Pool{
+        jobs:    make(chan Job, 100),
+        results: make(chan error, 100),
+        workers: workers,
+    }
+}
+
+func (p *Pool) Start(ctx context.Context) {
+    for i := 0; i < p.workers; i++ {
+        go p.worker(ctx, i)
+    }
+}
+
+func (p *Pool) worker(ctx context.Context, id int) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-p.jobs:
+            if !ok {
+                return
+            }
+            p.results <- job(ctx)
+        }
+    }
+}
+
+func (p *Pool) Submit(job Job) {
+    p.jobs <- job
+}
+
+func (p *Pool) Results() <-chan error {
+    return p.results
+}
+
+func (p *Pool) Close() {
+    close(p.jobs)
+}
+```
+
+18. DISEÑO DE CONFIGURACIÓN (12 FACTOR APP)
+────────────────────────────────────────────
+
+```go
+package config
+
+type Config struct {
+    Port    int     `env:"PORT" default:"8080"`
+    DB      DBConfig
+    Redis   RedisConfig
+    Log     LogConfig
+    JWT     JWTConfig
+}
+
+type DBConfig struct {
+    DSN         string `env:"DB_DSN" required:"true"`
+    MaxConns    int    `env:"DB_MAX_CONNS" default:"25"`
+    MaxIdle     int    `env:"DB_MAX_IDLE" default:"5"`
+    ConnTimeout Duration `env:"DB_CONN_TIMEOUT" default:"5s"`
+}
+
+type JWTConfig struct {
+    Secret     string   `env:"JWT_SECRET" required:"true"`
+    Expiration Duration `env:"JWT_EXPIRATION" default:"24h"`
+}
+```
+
+19. TEST DE INTEGRACIÓN VS UNITARIOS
+─────────────────────────────────────
+
+```go
+// service_test.go — test unitario (mockeamos repo)
+func TestCreateUser_Unit(t *testing.T) {
+    mockRepo := &MockUserRepository{
+        SaveFunc: func(ctx context.Context, u *User) error { return nil },
+    }
+    svc := NewUserService(mockRepo, &MockEmailSender{})
+    user, err := svc.CreateUser(context.Background(), "Alice", "a@b.com")
+    assert.NoError(t, err)
+    assert.Equal(t, "Alice", user.Name)
+}
+
+// integration_test.go — test de integración (base real)
+func TestCreateUser_Integration(t *testing.T) {
+    if testing.Short() {
+        t.Skip("saltando test de integración")
+    }
+    db := setupTestDB(t)
+    defer db.Close()
+    repo := repository.NewPostgresRepository(db)
+    svc := service.NewUserService(repo, &MockEmailSender{})
+    user, err := svc.CreateUser(context.Background(), "Alice", "a@b.com")
+    assert.NoError(t, err)
+    assert.True(t, user.ID > 0)
+}
+```
+
+20. DIAGRAMA DE DEPENDENCIAS (VISUAL)
+──────────────────────────────────────
+
+```
+┌─────────────┐     ┌──────────────┐
+│   Handler   │────▶│   Service    │
+│ (transporte)│     │  (negocio)   │
+└─────────────┘     └──────┬───────┘
+                           │
+                    ┌──────▼───────┐
+                    │  Repository  │
+                    │  (interface) │
+                    └──────┬───────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+       ┌──────────┐ ┌──────────┐ ┌──────────┐
+       │PostgreSQL│ │  Memory  │ │   Mock   │
+       └──────────┘ └──────────┘ └──────────┘
+```
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• SRP: cada paquete/tipo tiene una sola responsabilidad.
+• OCP: interfaces para extender sin modificar.
+• LSP: toda implementación de interfaz debe ser sustituible.
+• ISP: interfaces pequeñas (1-3 métodos).
+• DIP: depende de abstracciones, no de concreciones.
+• Composición > herencia: embedding y delegación.
+• Table-driven tests: cubren múltiples casos eficientemente.
+• Mocking sencillo gracias a interfaces pequeñas.
+• Separar errores de dominio de errores técnicos.
+
+EJERCICIOS
+──────────
+
+1. Refactoriza un servicio existente que tenga más de 3
+   responsabilidades aplicando SRP.
+
+2. Diseña un sistema de notificaciones (email, SMS, push) usando el
+   principio OCP. Debe ser posible añadir Telegram sin modificar el
+   servicio existente.
+
+3. Escribe tests table-driven para una función que calcule el precio
+   final con impuestos según el país.
+
+4. Crea un pool de workers genérico usando interfaces pequeñas.
+
+5. Implementa un validador de formularios usando el patrón Builder.
+
+6. Diseña un sistema de plugins donde cada plugin implementa una
+   interfaz de 1 método.
+
+7. Encuentra 3 code smells en un proyecto Go real (o simulado) y
+   propón refactors.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Por qué Go no tiene herencia?
+R: La composición es más flexible y evita los problemas de
+   jerarquías rígidas. Go logra polimorfismo con interfaces.
+
+P: ¿Cuándo una interfaz es demasiado grande?
+R: Si tiene más de 3-5 métodos, probablemente puedas dividirla.
+   La biblioteca estándar es referencia: Reader (1 método),
+   Writer (1 método), Closer (1 método).
+
+P: ¿Debo crear interfaces para todo?
+R: No. Crea interfaces cuando tengas múltiples implementaciones
+   o necesites mockear. La regla "accept interfaces, return structs"
+   de Go es una guía, no un dogma.
+
+P: ¿Table-driven tests o test helpers?
+R: Ambos. Table-driven para cubrir variaciones de entrada/salida.
+   Helpers para setup repetitivo. Se complementan.
+
+P: ¿Cómo aplico DIP en Go sin frameworks?
+R: Define interfaces en el paquete consumidor (service). El paquete
+   proveedor (repository) implementa la interfaz sin importarla.
+   La conexión se hace en main o con Wire.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Diseña un sistema de reservas para un hotel aplicando SOLID:
+
+Requisitos:
+• Gestión de habitaciones (tipos, precios, disponibilidad).
+• Reservas (crear, modificar, cancelar).
+• Facturación (cálculo de costos, impuestos, descuentos).
+• Notificaciones (email confirmación, recordatorio, cancelación).
+• Diferentes estrategias de descuento (temporada, fidelidad, código).
+
+Tu diseño debe:
+a) Mostrar las interfaces de cada componente.
+b) Explicar cómo cada principio SOLID se aplica.
+c) Incluir tests table-driven para al menos 2 servicios.
+d) Mostrar la estructura de paquetes final.
+e) Demostrar que añadir un nuevo tipo de descuento no requiere
+   modificar código existente (OCP).
+
+CIERRE
+──────
+Diseñar bien en Go es entender que menos es más. Interfaces pequeñas,
+composición, y tests claros son las herramientas del maestro. En el
+próximo capítulo nos sumergiremos en debugging con Delve, esencial
+para mantener sistemas profesionales en producción.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 73: Debugging — Delve y técnicas de depuración

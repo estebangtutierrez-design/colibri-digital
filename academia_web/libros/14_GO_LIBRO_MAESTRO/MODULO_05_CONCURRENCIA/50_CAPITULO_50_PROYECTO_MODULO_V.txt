@@ -1,0 +1,978 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 50: PROYECTO MÓDULO V
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA AL PROYECTO FINAL
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto, al proyecto culminante del Módulo V. Has recorrido
+un viaje extraordinario a través de la concurrencia en Go:
+
+  • Capítulo 41: Gorutinas — Los hilos ligeros de Go.
+  • Capítulo 42: Channels — Comunicación entre gorutinas.
+  • Capítulo 43: Channels Bufferizados — Canales con capacidad.
+  • Capítulo 44: Range y Close — Iteración y ciclo de vida.
+  • Capítulo 45: Select — Multiplexación de canales.
+  • Capítulo 46: WaitGroup — Coordinación de gorutinas.
+  • Capítulo 47: Mutex — Exclusión mutua.
+  • Capítulo 48: Atomic — Operaciones atómicas.
+  • Capítulo 49: Patrones de Concurrencia — Arquitecturas reutilizables.
+
+Ahora es momento de unir todo este conocimiento en un proyecto completo.
+El proyecto de este módulo es un Web Crawler Concurrente: un rastreador
+de sitios web que descarga y procesa páginas de forma concurrente,
+extrayendo enlaces y generando un reporte.
+
+Este proyecto integra TODOS los conceptos del módulo y te prepara para
+aplicaciones concurrentes del mundo real.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"La teoría sin práctica es como un barco sin vela. Construye, prueba,
+itera. Ese es el camino del verdadero arquitecto." — Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL PROYECTO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Construir un web crawler concurrente completo en Go.
+  • Aplicar gorutinas, channels, select y WaitGroup.
+  • Usar Mutex y Atomic para proteger datos compartidos.
+  • Implementar los patrones pipeline, fan-out, fan-in.
+  • Manejar timeouts y cancelación con context.
+  • Diseñar una arquitectura modular y extensible.
+  • Implementar shutdown graceful.
+  • Recolectar estadísticas en tiempo real.
+  • Escribir código limpio, bien estructurado y documentado.
+  • Verificar que el código sea race-free.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL PROYECTO — WEB CRAWLER CONCURRENTE
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. DESCRIPCIÓN DEL PROYECTO
+----------------------------------------------------------------------
+
+Construiremos un rastreador web concurrente que:
+
+  1. Recibe una URL inicial y un número máximo de páginas a rastrear.
+  2. Descarga páginas web concurrentemente (simulado con time.Sleep).
+  3. Extrae enlaces de cada página.
+  4. Rastrea los nuevos enlaces encontrados.
+  5. Evita rastrear la misma URL dos veces.
+  6. Genera un reporte con estadísticas y el mapa del sitio.
+  7. Se detiene ordenadamente al alcanzar el límite o por timeout.
+
+----------------------------------------------------------------------
+  2. ARQUITECTURA DEL SISTEMA
+----------------------------------------------------------------------
+
+El sistema está compuesto por:
+
+  • Fetcher: Simula la descarga de una página web.
+  • Parser: Extrae enlaces del contenido HTML simulado.
+  • Crawler: Coordina el rastreo usando un worker pool.
+  • URLStore: Almacena URLs visitadas y pendientes (protegido con Mutex).
+  • StatsCollector: Recolecta estadísticas (con Atomic).
+  • Reporter: Genera el reporte final.
+
+Flujo de datos:
+  seedURL → [Crawler] → worker pool (fan-out)
+    → fetcher → parser → extraer enlaces
+    → agregar nuevas URLs a la cola
+    → repetir hasta límite o cola vacía
+    → generar reporte
+
+----------------------------------------------------------------------
+  3. COMPONENTES DEL SISTEMA
+----------------------------------------------------------------------
+
+COMPONENTE 1: URLStore
+  • Almacena URLs visitadas y pendientes.
+  • Protegido con sync.RWMutex.
+  • Métodos: Add, IsVisited, Pendientes, Len.
+
+COMPONENTE 2: Fetcher
+  • Recibe una URL y devuelve el contenido simulado.
+  • Tiempo de respuesta simulado entre 50-200ms.
+  • Puede fallar aleatoriamente (10% de las veces).
+  • Usa context para soportar cancelación.
+
+COMPONENTE 3: Parser
+  • Recibe contenido HTML simulado.
+  • Extrae enlaces (hrefs) usando expresiones regulares.
+  • Convierte URLs relativas a absolutas.
+  • Filtra enlaces externos (solo mismo dominio).
+
+COMPONENTE 4: Worker (Crawler Worker)
+  • Recibe una URL del canal de tareas.
+  • Llama a Fetcher para descargar.
+  • Llama a Parser para extraer enlaces.
+  • Envía nuevos enlaces al canal de descubrimiento.
+  • Reporta estadísticas (URLs procesadas, errores, tiempo).
+
+COMPONENTE 5: StatsCollector
+  • Contadores atómicos: pagesFetched, pagesFailed, totalLinks, totalTime.
+  • Métodos: Increment, Snapshot.
+
+COMPONENTE 6: Reporter
+  • Recibe el snapshot de estadísticas.
+  • Genera reporte formateado con:
+    - URLs visitadas y pendientes
+    - Páginas exitosas y fallidas
+    - Total enlaces encontrados
+    - Tiempo promedio por página
+    - Throughput (páginas/segundo)
+    - Mapa del sitio (árbol de URLs)
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL PROYECTO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "math/rand"
+    "regexp"
+    "strings"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+// ============================================================================
+// URLStore: Almacén seguro de URLs
+// ============================================================================
+
+type URLStore struct {
+    mu        sync.RWMutex
+    visitados map[string]bool
+    pendientes []string
+    limite    int
+}
+
+func NewURLStore(seedURL string, limite int) *URLStore {
+    return &URLStore{
+        visitados:  make(map[string]bool),
+        pendientes: []string{seedURL},
+        limite:     limite,
+    }
+}
+
+func (s *URLStore) Siguiente() (string, bool) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if len(s.pendientes) == 0 {
+        return "", false
+    }
+
+    url := s.pendientes[0]
+    s.pendientes = s.pendientes[1:]
+    s.visitados[url] = true
+    return url, true
+}
+
+func (s *URLStore) Agregar(urls []string) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    for _, url := range urls {
+        if !s.visitados[url] && !s.contienePendiente(url) {
+            if len(s.visitados)+len(s.pendientes) < s.limite {
+                s.pendientes = append(s.pendientes, url)
+            }
+        }
+    }
+}
+
+func (s *URLStore) contienePendiente(url string) bool {
+    for _, p := range s.pendientes {
+        if p == url {
+            return true
+        }
+    }
+    return false
+}
+
+func (s *URLStore) Visitados() int {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    return len(s.visitados)
+}
+
+func (s *URLStore) PendientesCount() int {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    return len(s.pendientes)
+}
+
+func (s *URLStore) Total() int {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    return len(s.visitados) + len(s.pendientes)
+}
+
+func (s *URLStore) ListaVisitados() []string {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+    urls := make([]string, 0, len(s.visitados))
+    for url := range s.visitados {
+        urls = append(urls, url)
+    }
+    return urls
+}
+
+// ============================================================================
+// StatsCollector: Estadísticas con Atomic
+// ============================================================================
+
+type StatsCollector struct {
+    pagesFetched int64
+    pagesFailed  int64
+    totalLinks   int64
+    totalTimeNs  int64
+}
+
+func (s *StatsCollector) PageFetched(duracion time.Duration) {
+    atomic.AddInt64(&s.pagesFetched, 1)
+    atomic.AddInt64(&s.totalTimeNs, int64(duracion))
+}
+
+func (s *StatsCollector) PageFailed() {
+    atomic.AddInt64(&s.pagesFailed, 1)
+}
+
+func (s *StatsCollector) LinksFound(count int) {
+    atomic.AddInt64(&s.totalLinks, int64(count))
+}
+
+func (s *StatsCollector) Snapshot() StatsSnapshot {
+    return StatsSnapshot{
+        PagesFetched: atomic.LoadInt64(&s.pagesFetched),
+        PagesFailed:  atomic.LoadInt64(&s.pagesFailed),
+        TotalLinks:   atomic.LoadInt64(&s.totalLinks),
+        TotalTimeNs:  atomic.LoadInt64(&s.totalTimeNs),
+    }
+}
+
+type StatsSnapshot struct {
+    PagesFetched int64
+    PagesFailed  int64
+    TotalLinks   int64
+    TotalTimeNs  int64
+}
+
+func (s StatsSnapshot) TiempoPromedio() time.Duration {
+    if s.PagesFetched == 0 {
+        return 0
+    }
+    return time.Duration(s.TotalTimeNs / s.PagesFetched)
+}
+
+func (s StatsSnapshot) TasaError() float64 {
+    total := s.PagesFetched + s.PagesFailed
+    if total == 0 {
+        return 0
+    }
+    return float64(s.PagesFailed) / float64(total) * 100
+}
+
+// ============================================================================
+// Fetcher: Descarga simulada de páginas
+// ============================================================================
+
+type Fetcher struct {
+    dominio string
+    client  *http.Client // En un crawler real, usaríamos http
+}
+
+func NewFetcher(dominio string) *Fetcher {
+    return &Fetcher{
+        dominio: dominio,
+    }
+}
+
+func (f *Fetcher) Fetch(ctx context.Context, url string) (string, error) {
+    // Simular latencia de red
+    select {
+    case <-time.After(time.Duration(50+rand.Intn(150)) * time.Millisecond):
+    case <-ctx.Done():
+        return "", ctx.Err()
+    }
+
+    // Simular error aleatorio (10%)
+    if rand.Float64() < 0.1 {
+        return "", fmt.Errorf("error simulado al descargar %s", url)
+    }
+
+    // Generar HTML simulado con enlaces
+    html := f.generarHTML(url)
+    return html, nil
+}
+
+func (f *Fetcher) generarHTML(url string) string {
+    var links []string
+    numLinks := rand.Intn(5) + 1
+
+    for i := 0; i < numLinks; i++ {
+        path := fmt.Sprintf("/pagina-%d-%d.html", rand.Intn(100), i)
+        links = append(links, f.dominio+path)
+    }
+
+    var sb strings.Builder
+    sb.WriteString("<html><body>\n")
+    sb.WriteString(fmt.Sprintf("<h1>Página: %s</h1>\n", url))
+    for _, link := range links {
+        sb.WriteString(fmt.Sprintf("<a href=\"%s\">Enlace</a>\n", link))
+    }
+    sb.WriteString("<p>Contenido simulado de página web.</p>\n")
+    sb.WriteString("</body></html>")
+    return sb.String()
+}
+
+// ============================================================================
+// Parser: Extracción de enlaces
+// ============================================================================
+
+var linkRegex = regexp.MustCompile(`<a\s+(?:[^>]*?\s+)?href="([^"]*)"`)
+
+func ParseLinks(html, baseURL string) []string {
+    matches := linkRegex.FindAllStringSubmatch(html, -1)
+
+    var links []string
+    seen := make(map[string]bool)
+
+    for _, match := range matches {
+        if len(match) < 2 {
+            continue
+        }
+        link := match[1]
+
+        // Resolver URLs relativas
+        if strings.HasPrefix(link, "/") {
+            link = baseURL + link
+        }
+
+        // Solo URLs del mismo dominio
+        if strings.HasPrefix(link, baseURL) {
+            if !seen[link] {
+                links = append(links, link)
+                seen[link] = true
+            }
+        }
+    }
+
+    return links
+}
+
+// ============================================================================
+// Reporter: Generación de reportes
+// ============================================================================
+
+type Reporter struct {
+    inicio time.Time
+}
+
+func NewReporter() *Reporter {
+    return &Reporter{inicio: time.Now()}
+}
+
+func (r *Reporter) Generar(stats StatsSnapshot, urls []string) {
+    duracion := time.Since(r.inicio)
+    pagesTotal := stats.PagesFetched + stats.PagesFailed
+    throughput := float64(pagesTotal) / duracion.Seconds()
+
+    fmt.Println("\n" + strings.Repeat("=", 60))
+    fmt.Println("  REPORTE DEL WEB CRAWLER")
+    fmt.Println(strings.Repeat("=", 60))
+    fmt.Printf("  Duración:                %v\n", duracion.Round(time.Millisecond))
+    fmt.Printf("  URLs visitadas:          %d\n", len(urls))
+    fmt.Printf("  Páginas exitosas:        %d\n", stats.PagesFetched)
+    fmt.Printf("  Páginas fallidas:        %d\n", stats.PagesFailed)
+    fmt.Printf("  Tasa de error:           %.2f%%\n", stats.TasaError())
+    fmt.Printf("  Total enlaces:           %d\n", stats.TotalLinks)
+    fmt.Printf("  Tiempo promedio/página:  %v\n", stats.TiempoPromedio().Round(time.Millisecond))
+    fmt.Printf("  Throughput:              %.1f páginas/segundo\n", throughput)
+    fmt.Println(strings.Repeat("-", 60))
+    fmt.Println("  MAPA DEL SITIO:")
+    for i, url := range urls {
+        fmt.Printf("  %3d. %s\n", i+1, url)
+    }
+    fmt.Println(strings.Repeat("=", 60))
+}
+
+// ============================================================================
+// Monitor: Estadísticas en tiempo real
+// ============================================================================
+
+type Monitor struct {
+    stats     *StatsCollector
+    store     *URLStore
+    ticker    *time.Ticker
+    done      chan struct{}
+}
+
+func NewMonitor(stats *StatsCollector, store *URLStore, intervalo time.Duration) *Monitor {
+    return &Monitor{
+        stats:  stats,
+        store:  store,
+        ticker: time.NewTicker(intervalo),
+        done:   make(chan struct{}),
+    }
+}
+
+func (m *Monitor) Start() {
+    go func() {
+        for {
+            select {
+            case <-m.ticker.C:
+                m.mostrar()
+            case <-m.done:
+                m.ticker.Stop()
+                return
+            }
+        }
+    }()
+}
+
+func (m *Monitor) Stop() {
+    close(m.done)
+}
+
+func (m *Monitor) mostrar() {
+    stats := m.stats.Snapshot()
+    fmt.Printf("[MONITOR] Visitadas: %d | Pendientes: %d | Éxito: %d | Fallo: %d | Enlaces: %d\n",
+        m.store.Visitados(),
+        m.store.PendientesCount(),
+        stats.PagesFetched,
+        stats.PagesFailed,
+        stats.TotalLinks)
+}
+
+// ============================================================================
+// Crawler: Coordinador principal
+// ============================================================================
+
+type Crawler struct {
+    store    *URLStore
+    fetcher  *Fetcher
+    stats    *StatsCollector
+    monitor  *Monitor
+    reporter *Reporter
+    numWorkers int
+    limite     int
+    timeout    time.Duration
+}
+
+func NewCrawler(seedURL string, limite, numWorkers int, timeout time.Duration) *Crawler {
+    dominio := extraerDominio(seedURL)
+    store := NewURLStore(seedURL, limite)
+    stats := &StatsCollector{}
+    fetcher := NewFetcher(dominio)
+    monitor := NewMonitor(stats, store, 1*time.Second)
+    reporter := NewReporter()
+
+    return &Crawler{
+        store:      store,
+        fetcher:    fetcher,
+        stats:      stats,
+        monitor:    monitor,
+        reporter:   reporter,
+        numWorkers: numWorkers,
+        limite:     limite,
+        timeout:    timeout,
+    }
+}
+
+func extraerDominio(url string) string {
+    // Simulación: extraemos la base
+    parts := strings.Split(url, "/")
+    if len(parts) >= 3 {
+        return parts[0] + "//" + parts[2]
+    }
+    return url
+}
+
+func (c *Crawler) Start(ctx context.Context) {
+    fmt.Println("=== INICIANDO WEB CRAWLER ===")
+    fmt.Printf("URL inicial: %s\n", c.store.pendientes[0])
+    fmt.Printf("Workers: %d\n", c.numWorkers)
+    fmt.Printf("Límite: %d páginas\n", c.limite)
+    fmt.Printf("Timeout: %v\n", c.timeout)
+    fmt.Println()
+
+    c.monitor.Start()
+    defer c.monitor.Stop()
+
+    // Canales
+    tareas := make(chan string, c.numWorkers*10)
+    descubrimientos := make(chan []string, c.numWorkers*10)
+
+    var wg sync.WaitGroup
+
+    // Fan-Out: Workers
+    for i := 0; i < c.numWorkers; i++ {
+        wg.Add(1)
+        go c.worker(ctx, i, tareas, descubrimientos, &wg)
+    }
+
+    // Gorutina que alimenta el canal de tareas
+    go func() {
+        defer close(tareas)
+        for {
+            url, ok := c.store.Siguiente()
+            if !ok {
+                return
+            }
+            select {
+            case tareas <- url:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+
+    // Gorutina que procesa descubrimientos
+    go func() {
+        for {
+            select {
+            case links := <-descubrimientos:
+                c.store.Agregar(links)
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+
+    // Esperar workers o timeout
+    done := make(chan struct{})
+    go func() {
+        wg.Wait()
+        close(descubrimientos)
+        close(done)
+    }()
+
+    select {
+    case <-done:
+        fmt.Println("\nCrawler completado: todas las URLs procesadas")
+    case <-ctx.Done():
+        fmt.Println("\nCrawler cancelado por timeout o señal externa")
+    }
+
+    // Pequeña pausa para que se procesen los últimos descubrimientos
+    time.Sleep(100 * time.Millisecond)
+
+    // Generar reporte
+    stats := c.stats.Snapshot()
+    urls := c.store.ListaVisitados()
+    c.reporter.Generar(stats, urls)
+}
+
+func (c *Crawler) worker(ctx context.Context, id int, tareas <-chan string, descubrimientos chan<- []string, wg *sync.WaitGroup) {
+    defer wg.Done()
+
+    for url := range tareas {
+        select {
+        case <-ctx.Done():
+            return
+        default:
+        }
+
+        inicio := time.Now()
+        fmt.Printf("[Worker %d] Descargando: %s\n", id, url)
+
+        // Fetch
+        html, err := c.fetcher.Fetch(ctx, url)
+        if err != nil {
+            c.stats.PageFailed()
+            fmt.Printf("[Worker %d] ERROR: %v\n", id, err)
+            continue
+        }
+
+        c.stats.PageFetched(time.Since(inicio))
+
+        // Parsear enlaces
+        dominio := extraerDominio(url)
+        links := ParseLinks(html, dominio)
+        c.stats.LinksFound(len(links))
+
+        fmt.Printf("[Worker %d] OK: %s (%d enlaces)\n", id, url, len(links))
+
+        // Enviar descubrimientos
+        select {
+        case descubrimientos <- links:
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    // Configuración
+    seedURL := "https://ejemplo.com"
+    limite := 50
+    numWorkers := 5
+    timeout := 30 * time.Second
+
+    // Context con timeout
+    ctx, cancel := context.WithTimeout(context.Background(), timeout)
+    defer cancel()
+
+    // Crear y ejecutar crawler
+    crawler := NewCrawler(seedURL, limite, numWorkers, timeout)
+    crawler.Start(ctx)
+
+    fmt.Println("Proyecto Web Crawler completado exitosamente")
+}
+
+// ============================================================================
+// TEST — Verificación del sistema
+// ============================================================================
+
+func testURLStore() {
+    fmt.Println("Test: URLStore")
+    store := NewURLStore("https://test.com", 10)
+
+    url, ok := store.Siguiente()
+    fmt.Printf("  Primera URL: %s, ok=%t\n", url, ok)
+
+    store.Agregar([]string{"https://test.com/pag1", "https://test.com/pag2"})
+    fmt.Printf("  Visitados: %d, Pendientes: %d\n", store.Visitados(), store.PendientesCount())
+
+    store.Agregar([]string{"https://test.com/pag1"}) // Duplicado
+    fmt.Printf("  Después de duplicado: Pendientes: %d\n", store.PendientesCount())
+    fmt.Println("  URLStore OK\n")
+}
+
+func testParser() {
+    fmt.Println("Test: Parser")
+    html := `<html><body>
+        <a href="/page1.html">Link 1</a>
+        <a href="/page2.html">Link 2</a>
+        <a href="https://externo.com">Externo</a>
+    </body></html>`
+
+    links := ParseLinks(html, "https://ejemplo.com")
+    fmt.Printf("  Encontrados %d enlaces internos\n", len(links))
+    for _, l := range links {
+        fmt.Printf("    - %s\n", l)
+    }
+    fmt.Println("  Parser OK\n")
+}
+
+func testStatsCollector() {
+    fmt.Println("Test: StatsCollector")
+    var stats StatsCollector
+
+    stats.PageFetched(100 * time.Millisecond)
+    stats.PageFetched(200 * time.Millisecond)
+    stats.PageFailed()
+    stats.LinksFound(10)
+
+    s := stats.Snapshot()
+    fmt.Printf("  Fetched: %d, Failed: %d, Links: %d, Promedio: %v\n",
+        s.PagesFetched, s.PagesFailed, s.TotalLinks, s.TiempoPromedio())
+    fmt.Printf("  Tasa error: %.2f%%\n", s.TasaError())
+    fmt.Println("  StatsCollector OK\n")
+}
+
+func testFetcher() {
+    fmt.Println("Test: Fetcher")
+    fetcher := NewFetcher("https://ejemplo.com")
+    ctx := context.Background()
+
+    html, err := fetcher.Fetch(ctx, "https://ejemplo.com/inicio")
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        links := ParseLinks(html, "https://ejemplo.com")
+        fmt.Printf("  HTML generado, %d enlaces extraídos\n", len(links))
+    }
+    fmt.Println("  Fetcher OK\n")
+}
+
+func testMonitor() {
+    fmt.Println("Test: Monitor")
+    store := NewURLStore("https://test.com", 100)
+    stats := &StatsCollector{}
+    monitor := NewMonitor(stats, store, 100*time.Millisecond)
+
+    monitor.Start()
+    stats.PageFetched(50 * time.Millisecond)
+    store.Agregar([]string{"https://test.com/pag1"})
+    time.Sleep(300 * time.Millisecond)
+    monitor.Stop()
+
+    fmt.Println("  Monitor OK\n")
+}
+
+func ejecutarTests() {
+    fmt.Println(strings.Repeat("=", 60))
+    fmt.Println("  EJECUTANDO TESTS DEL SISTEMA")
+    fmt.Println(strings.Repeat("=", 60))
+
+    testURLStore()
+    testParser()
+    testStatsCollector()
+    testFetcher()
+    testMonitor()
+
+    fmt.Println(strings.Repeat("=", 60))
+    fmt.Println("  TODOS LOS TESTS PASARON")
+    fmt.Println(strings.Repeat("=", 60))
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  GUÍA DE EJECUCIÓN
+══════════════════════════════════════════════════════════════════════════════
+
+1. GUARDAR EL CÓDIGO:
+   Guarda el código en un archivo llamado main.go.
+
+2. EJECUTAR EL CRAWLER:
+   ```bash
+   go run main.go
+   ```
+   Esto ejecutará el crawler con la configuración por defecto.
+
+3. EJECUTAR SOLO LOS TESTS:
+   Comenta la llamada a main() en la función main y descomenta
+   la llamada a ejecutarTests():
+   ```go
+   func main() {
+       ejecutarTests()
+   }
+   ```
+   Luego:
+   ```bash
+   go run main.go
+   ```
+
+4. VERIFICAR RACE CONDITIONS:
+   ```bash
+   go run -race main.go
+   ```
+   No debe mostrar ninguna warning del race detector.
+
+5. PERSONALIZAR:
+   Puedes cambiar los parámetros en main():
+   - seedURL: URL inicial para el rastreo
+   - limite: Número máximo de páginas a visitar
+   - numWorkers: Número de workers concurrentes
+   - timeout: Tiempo máximo de ejecución
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DE EXTENSIÓN DEL PROYECTO
+══════════════════════════════════════════════════════════════════════════════
+
+1. AÑADIR PROFUNDIDAD — Añade un límite de profundidad al rastreo. La URL
+   inicial tiene profundidad 0. Cada enlace extraído incrementa en 1.
+
+2. PERSISTENCIA — Guarda el mapa del sitio en un archivo JSON al finalizar
+   el rastreo.
+
+3. REPORTE EN VIVO — Mejora el monitor para que muestre una barra de
+   progreso y ETA (tiempo estimado de finalización).
+
+4. PRIORIDAD — Implementa URLs con prioridad. Las URLs con más enlaces
+   entrantes tienen mayor prioridad.
+
+5. ROBOTS.TXT — Simula un archivo robots.txt que impide rastrear ciertas
+   rutas. Respeta las exclusiones.
+
+6. ALMACENAMIENTO — Almacena el contenido de cada página visitada en
+   archivos individuales en disco.
+
+7. ESTADÍSTICAS AVANZADAS — Añade: páginas más rápidas/lentas, histograma
+   de tiempos, distribución de profundidad.
+
+8. RECOLECTOR DE BASURA — Implementa un mecanismo que descarte URLs de
+   la cola si llevan demasiado tiempo esperando.
+
+9. WEB REAL — Reemplaza el Fetcher simulado por uno real usando el
+   paquete net/http. (Cuidado: respeta el archivo robots.txt).
+
+10. INTERFAZ WEB — Crea una interfaz web simple usando net/http que
+    muestre el progreso del crawler en tiempo real.
+
+══════════════════════════════════════════════════════════════════════════════
+  CONCEPTOS APLICADOS EN EL PROYECTO
+══════════════════════════════════════════════════════════════════════════════
+
+  ✓ GORUTINAS: Workers, monitor, alimentador, procesador de descubrimientos.
+  ✓ CHANNELS: tareas (bufferizado), descubrimientos (bufferizado), done.
+  ✓ CHANNELS BUFFERIZADOS: Canales con buffer para desacoplar productores.
+  ✓ RANGE Y CLOSE: Range sobre canales, close para señalizar finalización.
+  ✓ SELECT: En workers para detectar cancelación, en monitor para ticker.
+  ✓ WAITGROUP: Coordinar la finalización de los workers.
+  ✓ MUTEX: RWMutex para proteger URLStore (lecturas concurrentes).
+  ✓ ATOMIC: StatsCollector con operaciones atómicas.
+  ✓ PATRONES: Pipeline, Fan-Out (workers), Generator (URLs), Timeout.
+
+══════════════════════════════════════════════════════════════════════════════
+  CRITERIOS DE EVALUACIÓN
+══════════════════════════════════════════════════════════════════════════════
+
+  • [ ] El crawler visita correctamente las URLs sin duplicados.
+  • [ ] El número de workers funciona como límite de concurrencia.
+  • [ ] Las URLs se agregan y distribuyen correctamente.
+  • [ ] Los errores se manejan sin detener el sistema.
+  • [ ] El monitor muestra estadísticas en tiempo real.
+  • [ ] El sistema se detiene al alcanzar el límite de URLs.
+  • [ ] El timeout cancela el sistema ordenadamente.
+  • [ ] El reporte final contiene estadísticas precisas.
+  • [ ] No hay condiciones de carrera (go run -race es limpio).
+  • [ ] No hay fugas de gorutinas.
+  • [ ] Todos los canales se cierran correctamente.
+  • [ ] El código es limpio, legible y está bien organizado.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES DEL PROYECTO
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Por qué usamos RWMutex en URLStore en lugar de Mutex?
+R: Porque las lecturas (Visitados, PendientesCount) son más frecuentes que
+las escrituras (Agregar, Siguiente). RWMutex permite múltiples lectores
+simultáneos.
+
+❓ ¿Por qué los canales tienen buffer?
+R: Para desacoplar a productores y consumidores. Si un worker es lento,
+los demás pueden seguir enviando tareas al buffer sin bloquearse.
+
+❓ ¿Cómo se evita rastrear la misma URL dos veces?
+R: URLStore mantiene un mapa de URLs visitadas. Antes de agregar una URL,
+se verifica que no esté en visitados ni en pendientes.
+
+❓ ¿Qué pasa si todos los workers fallan?
+R: Los workers individuales pueden fallar, pero el worker pool sigue
+funcionando. Si todas las URLs fallan, no se agregan nuevas URLs y el
+crawler termina naturalmente.
+
+❓ ¿Cómo se implementa el timeout?
+R: Usamos context.WithTimeout. Cuando el contexto expira, ctx.Done() se
+cierra, y todas las gorutinas que usan select detectan la cancelación.
+
+❓ ¿Por qué hay una gorutina separada para procesar descubrimientos?
+R: Para evitar que los workers se bloqueen al agregar URLs al store.
+El envío al canal de descubrimientos es no bloqueante (gracias al buffer).
+
+❓ ¿El sistema maneja correctamente el shutdown?
+R: Sí. Cuando se alcanza el límite o el timeout, se cierran los canales,
+los workers terminan, y se espera a todos con WaitGroup.
+
+❓ ¿Cuántas gorutinas se crean en total?
+R: N workers + 1 monitor + 1 alimentador + 1 procesador descubrimientos
++ 1 gorutina de espera = N+4 gorutinas aproximadamente.
+
+❓ ¿Puedo usar este crawler en producción?
+R: El Fetcher es simulado. Para uso real, reemplázalo con net/http y
+añade respeto a robots.txt, rate limiting, y manejo de redirecciones.
+
+❓ ¿Cómo puedo verificar que no hay fugas de gorutinas?
+R: Usa runtime.NumGoroutine() antes y después de la ejecución. También
+puedes usar el endpoint /debug/pprof/goroutine de net/http/pprof.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO — EXTENSIÓN DEL PROYECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO DEL ARQUITECTO: CRAWLER DISTRIBUIDO                            │
+│                                                                          │
+│  Extiende el Web Crawler para que funcione en múltiples máquinas        │
+│  usando una arquitectura distribuida con los siguientes cambios:        │
+│                                                                          │
+│  1. COLA DE TAREAS DISTRIBUIDA: Reemplaza el channel de tareas por     │
+│     una cola externa (simulada con un archivo o base de datos).         │
+│     Múltiples instancias del crawler pueden añadir y tomar tareas.      │
+│                                                                          │
+│  2. WORKERS REMOTOS: Los workers pueden ejecutarse en diferentes        │
+│     procesos/máquinas, comunicándose a través de HTTP o gRPC.           │
+│                                                                          │
+│  3. ALMACENAMIENTO COMPARTIDO: URLStore debe ser reemplazado por        │
+│     un almacén externo (simulado con archivos o maps compartidos        │
+│     mediante RPC).                                                       │
+│                                                                          │
+│  4. BALANCEO DE CARGA: Implementa un coordinator que distribuya         │
+│     las URLs entre los workers según su carga actual.                   │
+│                                                                          │
+│  5. TOLERANCIA A FALLOS: Si un worker falla, sus tareas deben           │
+│     reasignarse a otro worker.                                          │
+│                                                                          │
+│  6. RECOLECTOR DISTRIBUIDO: Las estadísticas se recogen de todos       │
+│     los workers y se consolidan en un reporte único.                    │
+│                                                                          │
+│  PISTAS:                                                                 │
+│  • Para simular la cola distribuida, usa un archivo JSON con locks.    │
+│  • Para workers remotos, crea un servidor HTTP con endpoints            │
+│    /tarea (GET para tomar, POST para resultado).                        │
+│  • Para el almacén compartido, usa un servidor central con Mutex.      │
+│  • Implementa heartbeats de los workers al coordinator.                │
+│  • Usa context con timeout para detectar workers caídos.               │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío lleva el proyecto al nivel de sistema distribuido, integrando
+concurrencia, redes y tolerancia a fallos. Es el desafío más avanzado
+de todo el libro.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL MÓDULO V
+══════════════════════════════════════════════════════════════════════════════
+
+Has completado el Módulo V de Go Master Book. Has recorrido un viaje
+extraordinario desde las gorutinas más básicas hasta un sistema concurrente
+completo con patrones de diseño avanzados.
+
+Este proyecto final demuestra tu capacidad para diseñar e implementar
+sistemas concurrentes en Go utilizando:
+
+  • Gorutinas como unidad fundamental de concurrencia.
+  • Channels para comunicación segura entre gorutinas.
+  • Select para multiplexar operaciones de canales.
+  • WaitGroup para coordinar la finalización de gorutinas.
+  • Mutex/RWMutex para proteger datos compartidos.
+  • Atomic para operaciones de bajo nivel sin locks.
+  • Patrones de concurrencia para arquitecturas reutilizables.
+
+Has pasado de ser un desarrollador que escribe código secuencial a un
+arquitecto que diseña sistemas concurrentes. Este conocimiento te
+diferencia y te prepara para los desafíos del software moderno.
+
+Recuerda siempre las lecciones de este módulo:
+  • La concurrencia no es paralelismo, pero permite el paralelismo.
+  • No comuniques mediante memoria compartida; comparte memoria
+    mediante comunicación.
+  • Los canales son para flujo de datos; los mutex para proteger estado.
+  • Diseña primero, codifica después. La concurrencia mal planificada
+    es fuente de bugs difíciles de encontrar.
+  • Usa el race detector siempre. Es tu mejor aliado.
+
+El viaje continúa. En el Módulo VI exploraremos temas avanzados: reflection,
+cgo, compilación condicional, y optimización de rendimiento. Pero nada de
+eso sería posible sin los cimientos que has construido aquí.
+
+¡Enhorabuena, Arquitecto de la Concurrencia! Has dominado el corazón de Go.
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE MÓDULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ MÓDULO VI: TEMAS AVANZADOS → Reflection, CGO, Optimización
+
+══════════════════════════════════════════════════════════════════════════════

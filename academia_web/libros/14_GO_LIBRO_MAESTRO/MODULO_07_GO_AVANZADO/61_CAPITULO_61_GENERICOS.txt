@@ -1,0 +1,809 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 61: GENÉRICOS (GO 1.18)
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 61, el primero del Módulo VII. Has recorrido un
+  largo camino desde los fundamentos de Go. Ahora entramos en territorio
+  avanzado: los genéricos, introducidos en Go 1.18, representan el cambio
+  más significativo en la historia del lenguaje. Dominarlos te separará
+  de un desarrollador intermedio de uno experto.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "La abstracción no es menos precisa que el detalle; es simplemente una
+  forma diferente de expresar la misma verdad." — Barbara Liskov
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Comprender qué son los genéricos y por qué llegaron a Go 1.18.
+  2. Escribir funciones genéricas usando type parameters.
+  3. Usar tipos parametrizados (structs, interfaces, slices genéricos).
+  4. Aplicar la palabra clave `any` y el operador `~`.
+  5. Distinguir entre type inference y type instantiation.
+  6. Evitar los errores comunes con nil y tipos paramétricos.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. INTRODUCCIÓN A LOS GENÉRICOS ──
+
+  Antes de Go 1.18, escribir una función que sumara dos números implicaba
+  duplicar código para int, float64, etc., o usar interface{} con type
+  switches. Los genéricos eliminan esa repetición:
+
+  // Sin genéricos (antes de 1.18)
+  func SumInts(a, b int) int        { return a + b }
+  func SumFloats(a, b float64) float64 { return a + b }
+
+  // Con genéricos (Go 1.18+)
+  func Sum[T int | float64](a, b T) T { return a + b }
+
+  El compilador genera código especializado (monomorfización) o usa
+  diccionarios (según la implementación). En cualquier caso, el
+  rendimiento en tiempo de ejecución es idéntico al código escrito
+  manualmente para cada tipo.
+
+  ── 2. TYPE PARAMETERS ──
+
+  Los type parameters se declaran entre corchetes `[]` después del nombre
+  de la función o tipo:
+
+  func Nombre[T TipoConstraint](param T) T { ... }
+
+  type MiSlice[T any] []T
+
+  Ejemplo completo:
+
+  package main
+
+  import "fmt"
+
+  // Tiene un type parameter T con constraint int | float64
+  func Sum[T int | float64](a, b T) T {
+      return a + b
+  }
+
+  func main() {
+      // Type inference: el compilador deduce T = int
+      fmt.Println(Sum(3, 5))       // 8
+
+      // Type instantiation explícita
+      fmt.Println(Sum[float64](3.5, 2.5)) // 6.0
+  }
+
+  ── 3. EL CONSTRAINT `any` ──
+
+  `any` es un alias de `interface{}`. Permite que T sea cualquier tipo:
+
+  func Print[T any](v T) {
+      fmt.Println(v)
+  }
+
+  // Uso
+  Print(42)
+  Print("hola")
+  Print(3.14)
+
+  Limitación: con `any` no puedes usar operadores como +, -, * porque el
+  compilador no sabe si T soporta esas operaciones. Para eso necesitas
+  constraints específicos.
+
+  ── 4. EL OPERADOR `~` (TILDE) ──
+
+  El operador `~` permite que un constraint acepte tipos subyacentes.
+  Por ejemplo, `type MiEntero int` tiene subyacente `int`. Con `~int`,
+  tanto `int` como `MiEntero` son aceptados:
+
+  type Numerico interface {
+      ~int | ~float64
+  }
+
+  func Duplicar[T Numerico](v T) T {
+      return v + v
+  }
+
+  type Peso int
+
+  func main() {
+      p := Peso(50)
+      fmt.Println(Duplicar(p)) // 100 (Peso)
+      fmt.Println(Duplicar(10)) // 20 (int)
+  }
+
+  Sin `~`, solo `int` sería aceptado, no `Peso`.
+
+  ── 5. FUNCIONES GENÉRICAS AVANZADAS ──
+
+  5.1 Múltiples type parameters
+
+  func Map[T, U any](slice []T, fn func(T) U) []U {
+      result := make([]U, len(slice))
+      for i, v := range slice {
+          result[i] = fn(v)
+      }
+      return result
+  }
+
+  func main() {
+      nums := []int{1, 2, 3}
+      strs := Map(nums, func(n int) string {
+          return fmt.Sprintf("N-%d", n)
+      })
+      fmt.Println(strs) // [N-1 N-2 N-3]
+  }
+
+  5.2 Filter genérico
+
+  func Filter[T any](slice []T, fn func(T) bool) []T {
+      var result []T
+      for _, v := range slice {
+          if fn(v) {
+              result = append(result, v)
+          }
+      }
+      return result
+  }
+
+  5.3 Reduce / Fold
+
+  func Reduce[T, U any](slice []T, init U, fn func(U, T) U) U {
+      acc := init
+      for _, v := range slice {
+          acc = fn(acc, v)
+      }
+      return acc
+  }
+
+  5.4 Find
+
+  func Find[T any](slice []T, fn func(T) bool) (T, bool) {
+      for _, v := range slice {
+          if fn(v) {
+              return v, true
+          }
+      }
+      var zero T
+      return zero, false
+  }
+
+  ── 6. TIPOS GENÉRICOS ──
+
+  Puedes definir structs, interfaces y otros tipos con type parameters:
+
+  // Pila genérica
+  type Stack[T any] struct {
+      items []T
+  }
+
+  func (s *Stack[T]) Push(v T) {
+      s.items = append(s.items, v)
+  }
+
+  func (s *Stack[T]) Pop() (T, bool) {
+      if len(s.items) == 0 {
+          var zero T
+          return zero, false
+      }
+      v := s.items[len(s.items)-1]
+      s.items = s.items[:len(s.items)-1]
+      return v, true
+  }
+
+  func (s *Stack[T]) Peek() (T, bool) {
+      if len(s.items) == 0 {
+          var zero T
+          return zero, false
+      }
+      return s.items[len(s.items)-1], true
+  }
+
+  func (s *Stack[T]) IsEmpty() bool {
+      return len(s.items) == 0
+  }
+
+  func (s *Stack[T]) Size() int {
+      return len(s.items)
+  }
+
+  func main() {
+      s := Stack[int]{}
+      s.Push(10)
+      s.Push(20)
+      v, _ := s.Pop()
+      fmt.Println(v) // 20
+
+      ss := Stack[string]{}
+      ss.Push("hola")
+      ss.Push("mundo")
+      fmt.Println(ss.Peek()) // mundo
+  }
+
+  ── 7. CONSTRAINT INTERFACES ──
+
+  Puedes definir interfaces que actúan como constraints:
+
+  // Solo tipos que soportan los operadores == y !=
+  type Comparable[T any] interface {
+      Equal(other T) bool
+  }
+
+  // Pero los constraints nativos pueden usar operadores
+  type Ordered interface {
+      ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+          ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
+          ~float32 | ~float64 | ~string
+  }
+
+  func Max[T Ordered](a, b T) T {
+      if a > b {
+          return a
+      }
+      return b
+  }
+
+  func main() {
+      fmt.Println(Max(10, 20))       // 20
+      fmt.Println(Max("abc", "xyz")) // xyz
+      fmt.Println(Max(3.14, 2.71))   // 3.14
+  }
+
+  ── 8. CONSTRAINT `comparable` ──
+
+  Go provee el constraint predefinido `comparable` para tipos que
+  soportan `==` y `!=`:
+
+  func Contains[T comparable](slice []T, target T) bool {
+      for _, v := range slice {
+          if v == target {
+              return true
+          }
+      }
+      return false
+  }
+
+  func main() {
+      fmt.Println(Contains([]string{"a", "b", "c"}, "b")) // true
+      fmt.Println(Contains([]int{1, 2, 3}, 4))             // false
+  }
+
+  `comparable` no funciona con slices o maps (no son comparables).
+
+  ── 9. GENÉRICOS Y MÉTODOS ──
+
+  Los métodos pueden tener type parameters adicionales (a partir de
+  Go 1.18, aunque con limitaciones):
+
+  type Box[T any] struct {
+      value T
+  }
+
+  func (b Box[T]) Get() T { return b.value }
+
+  // Método adicional con otro type parameter
+  func (b Box[T]) Transform[U any](fn func(T) U) Box[U] {
+      return Box[U]{value: fn(b.value)}
+  }
+
+  func main() {
+      b := Box[int]{value: 42}
+      result := b.Transform(func(n int) string {
+          return fmt.Sprintf("%d!", n)
+      })
+      fmt.Println(result.Get()) // 42!
+  }
+
+  ── 10. ERRORS COMUNES ──
+
+  10.1 Zero value con genéricos
+
+  func ReturnZero[T any]() T {
+      var zero T
+      return zero
+  }
+
+  // Útil para comparar con nil en punteros
+  func IsNil[T any](v *T) bool {
+      return v == nil
+  }
+
+  10.2 Type switch con genéricos
+
+  func Describe[T any](v T) string {
+      // No puedes usar type switch directamente con T
+      // Necesitas convertir a interface{} o usar reflect
+      switch any(v).(type) {
+      case int:
+          return "entero"
+      case string:
+          return "cadena"
+      default:
+          return "desconocido"
+      }
+  }
+
+  10.3 No puedes usar genéricos en:
+
+  // ❌ No permitido: métodos con nuevos type parameters
+  // func (s *Stack[T]) Convert[U any]() Stack[U] { ... }
+
+  // ❌ No permitido: type parameters en closures anónimos
+  // fn := func[T any](v T) T { return v }
+
+  ── 11. EJEMPLO COMPLETO: COLECCIÓN GENÉRICA ──
+
+  package main
+
+  import (
+      "fmt"
+      "strings"
+  )
+
+  // --------------- Constraint ---------------
+  type Stringer interface {
+      ~int | ~string
+  }
+
+  // --------------- Lista genérica ---------------
+  type Node[T any] struct {
+      value T
+      next  *Node[T]
+  }
+
+  type LinkedList[T any] struct {
+      head *Node[T]
+      size int
+  }
+
+  func NewLinkedList[T any]() *LinkedList[T] {
+      return &LinkedList[T]{}
+  }
+
+  func (l *LinkedList[T]) Prepend(value T) {
+      node := &Node[T]{value: value, next: l.head}
+      l.head = node
+      l.size++
+  }
+
+  func (l *LinkedList[T]) Append(value T) {
+      node := &Node[T]{value: value}
+      if l.head == nil {
+          l.head = node
+      } else {
+          curr := l.head
+          for curr.next != nil {
+              curr = curr.next
+          }
+          curr.next = node
+      }
+      l.size++
+  }
+
+  func (l *LinkedList[T]) Values() []T {
+      var result []T
+      curr := l.head
+      for curr != nil {
+          result = append(result, curr.value)
+          curr = curr.next
+      }
+      return result
+  }
+
+  func (l *LinkedList[T]) Size() int {
+      return l.size
+  }
+
+  // --------------- Funciones helper ---------------
+  func Map[T, U any](s []T, fn func(T) U) []U {
+      r := make([]U, len(s))
+      for i, v := range s {
+          r[i] = fn(v)
+      }
+      return r
+  }
+
+  func Filter[T any](s []T, fn func(T) bool) []T {
+      var r []T
+      for _, v := range s {
+          if fn(v) {
+              r = append(r, v)
+          }
+      }
+      return r
+  }
+
+  // --------------- Main ---------------
+  func main() {
+      // LinkedList de enteros
+      ints := NewLinkedList[int]()
+      ints.Append(1)
+      ints.Append(2)
+      ints.Append(3)
+      ints.Prepend(0)
+      fmt.Println("Enteros:", ints.Values())
+
+      // LinkedList de strings
+      strs := NewLinkedList[string]()
+      strs.Append("Go")
+      strs.Append("Rust")
+      strs.Append("Zig")
+      fmt.Println("Strings:", strs.Values())
+
+      // Map y Filter genéricos
+      nums := []int{1, 2, 3, 4, 5, 6}
+      pares := Filter(nums, func(n int) bool { return n%2 == 0 })
+      fmt.Println("Pares:", pares)
+
+      cuadrados := Map(nums, func(n int) int { return n * n })
+      fmt.Println("Cuadrados:", cuadrados)
+
+      strs2 := []string{"hola", "mundo", "go"}
+      mayus := Map(strs2, strings.ToUpper)
+      fmt.Println("Mayúsculas:", mayus)
+  }
+
+  ── 12. TYPE INFERENCE VS TYPE INSTANTIATION ──
+
+  // Type inference: el compilador deduce T
+  resultado := Sum(3, 5)    // T = int (inferido)
+  fmt.Println(resultado)
+
+  // Type instantiation: tú especificas T
+  resultado2 := Sum[float64](3.5, 2.5) // T = float64 (explícito)
+
+  La inferencia funciona analizando los tipos de los argumentos. Si hay
+  ambigüedad, debes usar instantiation explícita.
+
+  ── 13. CONSTRAINTS CON MÚLTIPLES TÉRMINOS ──
+
+  type Number interface {
+      ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+          ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
+          ~float32 | ~float64
+  }
+
+  type Signed interface {
+      ~int | ~int8 | ~int16 | ~int32 | ~int64
+  }
+
+  type Unsigned interface {
+      ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+  }
+
+  type Float interface {
+      ~float32 | ~float64
+  }
+
+  func SumNumbers[T Number](vals ...T) T {
+      var sum T
+      for _, v := range vals {
+          sum += v
+      }
+      return sum
+  }
+
+  func main() {
+      fmt.Println(SumNumbers(1, 2, 3))           // 6
+      fmt.Println(SumNumbers(1.5, 2.5, 3.0))     // 7.0
+      // fmt.Println(SumNumbers("a", "b"))        // ❌ no compila
+  }
+
+  ── 14. GENÉRICOS EN LA BIBLIOTECA ESTÁNDAR ──
+
+  Go 1.18 añadió funciones genéricas en la stdlib:
+
+  // slices (Go 1.21+)
+  // import "slices"
+  // slices.Contains(slice, value)
+  // slices.Index(slice, value)
+  // slices.Sort(slice)
+  // slices.Delete(slice, i, j)
+
+  // maps (Go 1.21+)
+  // import "maps"
+  // maps.Keys(m)
+  // maps.Values(m)
+  // maps.Clone(m)
+
+  // sync (Go 1.21+)
+  // sync.Map no es genérico, pero hay propuestas
+
+  // Ejemplo con slices:
+  // s := []int{3, 1, 4, 1, 5}
+  // slices.Sort(s)
+  // fmt.Println(s) // [1 1 3 4 5]
+
+  ── 15. PTRICAS Y BUENAS PRÁCTICAS ──
+
+  1. Usa `any` como constraint por defecto cuando no necesites
+     operaciones sobre el tipo.
+
+  2. Define constraints reutilizables en interfaces separadas.
+
+  3. No uses genéricos cuando un simple interface{} baste.
+
+  4. Los genéricos NO reemplazan a las interfaces; se complementan.
+
+  5. Para tipos pequeños y homogéneos (Stack, List, Map), los genéricos
+     son ideales.
+
+  6. Evita genéricos en APIs públicas si no aportan valor real.
+
+  7. Documenta el type parameter con un nombre descriptivo (T, K, V, E).
+
+  ── 16. EJEMPLO AVANZADO: CACHE GENÉRICA ──
+
+  package main
+
+  import (
+      "fmt"
+      "sync"
+      "time"
+  )
+
+  type CacheEntry[T any] struct {
+      value    T
+      expiresAt time.Time
+  }
+
+  type Cache[T any] struct {
+      data    map[string]CacheEntry[T]
+      mu      sync.RWMutex
+      ttl     time.Duration
+  }
+
+  func NewCache[T any](ttl time.Duration) *Cache[T] {
+      return &Cache[T]{
+          data: make(map[string]CacheEntry[T]),
+          ttl:  ttl,
+      }
+  }
+
+  func (c *Cache[T]) Set(key string, value T) {
+      c.mu.Lock()
+      defer c.mu.Unlock()
+      c.data[key] = CacheEntry[T]{
+          value:     value,
+          expiresAt: time.Now().Add(c.ttl),
+      }
+  }
+
+  func (c *Cache[T]) Get(key string) (T, bool) {
+      c.mu.RLock()
+      defer c.mu.RUnlock()
+      entry, ok := c.data[key]
+      if !ok {
+          var zero T
+          return zero, false
+      }
+      if time.Now().After(entry.expiresAt) {
+          var zero T
+          return zero, false
+      }
+      return entry.value, true
+  }
+
+  func (c *Cache[T]) Delete(key string) {
+      c.mu.Lock()
+      defer c.mu.Unlock()
+      delete(c.data, key)
+  }
+
+  func (c *Cache[T]) Clear() {
+      c.mu.Lock()
+      defer c.mu.Unlock()
+      c.data = make(map[string]CacheEntry[T])
+  }
+
+  func (c *Cache[T]) Size() int {
+      c.mu.RLock()
+      defer c.mu.RUnlock()
+      return len(c.data)
+  }
+
+  func main() {
+      cache := NewCache[string](5 * time.Minute)
+      cache.Set("greeting", "¡Hola, Go!")
+      if val, ok := cache.Get("greeting"); ok {
+          fmt.Println(val)
+      }
+      fmt.Println("Tamaño:", cache.Size())
+
+      cacheInt := NewCache[int](1 * time.Minute)
+      cacheInt.Set("answer", 42)
+      if val, ok := cacheInt.Get("answer"); ok {
+          fmt.Println(val)
+      }
+  }
+
+  ── 17. COMPARATIVA: INTERFACES VS GENÉRICOS ──
+
+  type Summer interface {
+      Sum() int
+  }
+
+  // Con interfaces (dispatch dinámico)
+  func Total(s []Summer) int {
+      var t int
+      for _, v := range s {
+          t += v.Sum()
+      }
+      return t
+  }
+
+  // Con genéricos (monomorfización)
+  func TotalGeneric[T Summer](s []T) int {
+      var t int
+      for _, v := range s {
+          t += v.Sum()
+      }
+      return t
+  }
+
+  // Diferencia: con interfaces los elementos pueden ser tipos distintos
+  // (polimorfismo). Con genéricos, todos deben ser el mismo tipo T.
+
+  ── 18. CÓMO FUNCIONA INTERNAMENTE ──
+
+  Go usa dos estrategias para implementar genéricos:
+
+  1. Monomorfización (GCShape): genera una copia especializada de la
+     función para cada conjunto único de type arguments. Es similar a
+     las templates de C++. Ventaja: máximo rendimiento. Desventaja:
+     aumenta el tamaño del binario.
+
+  2. Diccionarios (GCShape + dictionaries): comparte la misma función
+     para tipos con la misma "shape" (misma representación en memoria),
+     usando un diccionario de operaciones. Go usa una combinación de
+     ambos: monomorfización para shapes, diccionarios para métodos.
+
+  Esto significa que `Sum[int]` y `Sum[uint64]` pueden compartir código
+  si ambos son de 64 bits, pero `Sum[int64]` y `Sum[string]` no.
+
+  ── 19. LIMITACIONES CONOCIDAS ──
+
+  // ❌ No puedes usar type parameters en métodos con receiver parametrizado
+  // func (s Stack[T]) Convert[U any]() Stack[U] { ... }
+
+  // ❌ No puedes usar type parameters en closures
+  // fn := func[T any](v T) T { return v }
+
+  // ❌ No puedes usar type assertions directamente
+  // var v any = x.(T)  // ❌
+
+  // ❌ No puedes usar tipos genéricos sin instanciar
+  // var s Stack  // ❌ debe ser Stack[int]
+
+  // ⚠️ Los genéricos añaden complejidad al código. Úsalos con medida.
+
+  ── 20. EJERCICIO INTEGRADOR ──
+
+  Crea un paquete `collections` con:
+
+  1. `Queue[T any]` - cola FIFO genérica con Enqueue, Dequeue, Peek.
+  2. `Set[T comparable]` - conjunto genérico con Add, Remove, Contains.
+  3. `Graph[K comparable, V any]` - grafo genérico con AddEdge, BFS.
+
+  Implementa desde cero, sin usar tipos genéricos de la stdlib.
+
+  Solución parcial (Queue):
+
+  type Queue[T any] struct {
+      items []T
+  }
+
+  func (q *Queue[T]) Enqueue(v T) {
+      q.items = append(q.items, v)
+  }
+
+  func (q *Queue[T]) Dequeue() (T, bool) {
+      if len(q.items) == 0 {
+          var zero T
+          return zero, false
+      }
+      v := q.items[0]
+      q.items = q.items[1:]
+      return v, true
+  }
+
+  func (q *Queue[T]) Peek() (T, bool) {
+      if len(q.items) == 0 {
+          var zero T
+          return zero, false
+      }
+      return q.items[0], true
+  }
+
+  func (q *Queue[T]) IsEmpty() bool {
+      return len(q.items) == 0
+  }
+
+  func (q *Queue[T]) Size() int {
+      return len(q.items)
+  }
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● Los genéricos (Go 1.18+) permiten escribir funciones y tipos polimórficos
+    usando type parameters entre corchetes `[]`.
+  ● `any` es el constraint más permisivo; `comparable` permite == y !=.
+  ● El operador `~` extiende constraints a tipos con el mismo tipo subyacente.
+  ● Los genéricos se combinan con interfaces, no las reemplazan.
+  ● La stdlib incorpora funciones genéricas en `slices`, `maps`, y `sync`.
+  ● Usa genéricos con criterio; no toda abstracción los necesita.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Implementa una función `Zip[T, U any]([]T, []U) []struct{ A T; B U }`
+     que combine dos slices en uno de pares.
+  2. Implementa `Unzip[T, U any]([]Pair[T, U]) ([]T, []U)`.
+  3. Implementa `Flatten[T any](slices [][]T) []T`.
+  4. Crea un `Tree[T any]` binario genérico con Insert, Search, InOrder.
+  5. Implementa `Unique[T comparable](slice []T) []T` que elimine duplicados.
+  6. Escribe `Chunk[T any](slice []T, size int) [][]T`.
+  7. Implementa `Partition[T any](slice []T, fn func(T) bool) ([]T, []T)`.
+  8. Crea un `RingBuffer[T any]` circular con capacidad fija.
+  9. Implementa `IndexOf[T comparable](slice []T, val T) int`.
+  10. Escribe un `Pool[T any]` genérico con Get y Put usando sync.Pool.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Los genéricos ralentizan mi programa?
+  R: No. Go usa monomorfización, generando código especializado para cada
+     combinación de tipos. El rendimiento es idéntico al código manual.
+
+  P: ¿Puedo usar punteros como type parameters?
+  R: Sí. `func Foo[T *int](v T) {}` es válido, pero poco común.
+
+  P: ¿Qué pasa si no uso el type parameter?
+  R: Go 1.18+ exige que el type parameter se use al menos una vez en la
+     firma de la función (excepto en tipos).
+
+  P: ¿Puedo usar genéricos con reflection?
+  R: Sí, pero reflect.TypeOf(v) siempre devuelve el tipo concreto, no el
+     parametrizado.
+
+  P: ¿Hay genéricos en métodos de interfaces?
+  R: No directamente. Pero puedes definir interfaces con type parameters:
+     `type Container[T any] interface { Get() T }`
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Implementa un sistema de "Middleware Pipeline" genérico:
+
+  type Handler[T any] func(context.Context, T) (T, error)
+  type Middleware[T any] func(Handler[T]) Handler[T]
+
+  type Pipeline[T any] struct {
+      middlewares []Middleware[T]
+  }
+
+  func (p *Pipeline[T]) Use(m Middleware[T]) { ... }
+  func (p *Pipeline[T]) Run(ctx context.Context, req T) (T, error) { ... }
+
+  Luego implementa middlewares concretos: LoggingMiddleware, AuthMiddleware,
+  TimeoutMiddleware. El desafío está en componer middlewares tipados sin
+  perder la seguridad de tipos.
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has dominado el sistema de genéricos de Go 1.18+. Este conocimiento te
+  permite escribir bibliotecas reutilizables, seguras y eficientes. En el
+  próximo capítulo exploraremos Constraints en profundidad: cómo definir
+  restricciones precisas sobre los type parameters para crear APIs
+  expresivas.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 62: CONSTRAINTS → Aprenderás a diseñar constraints
+  sofisticados usando interfaces, el operador `~`, y la biblioteca
+  golang.org/x/exp/constraints.
+
+================================================================================
+  FIN DEL CAPÍTULO 61
+================================================================================

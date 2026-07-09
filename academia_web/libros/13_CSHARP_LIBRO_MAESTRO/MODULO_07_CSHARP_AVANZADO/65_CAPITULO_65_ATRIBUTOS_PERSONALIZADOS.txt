@@ -1,0 +1,1732 @@
+================================================================================
+  CAPÍTULO 65: ATRIBUTOS PERSONALIZADOS
+  MÓDULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 65! En el Capítulo 63 aprendimos sobre los
+atributos built-in de .NET. Ahora ha llegado el momento de crear nuestros
+propios atributos personalizados. Combinando atributos personalizados con
+reflection, podemos crear metadatos semánticos ricos que frameworks,
+herramientas y nuestro propio código pueden interpretar.
+
+FRASE DEL DÍA
+-------------
+"Los metadatos convierten el código en una fuente de conocimiento, no solo
+en instrucciones para la máquina." — Anónimo
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Crear clases de atributos heredando de Attribute.
+2. Configurar AttributeUsage para restringir su aplicación.
+3. Definir constructores y propiedades en atributos.
+4. Recuperar atributos en tiempo de ejecución con reflection.
+5. Aplicar múltiples atributos y atributos repetibles.
+6. Construir sistemas basados en atributos personalizados.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. ESTRUCTURA DE UN ATRIBUTO PERSONALIZADO ---
+
+Un atributo personalizado es una clase que:
+1. Hereda de System.Attribute (directa o indirectamente).
+2. Tiene el sufijo "Attribute" por convención (el compilador permite omitirlo).
+3. Se marca con [AttributeUsage] para especificar destinos válidos.
+
+```csharp
+using System;
+
+// Definición básica
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public class InformacionAttribute : Attribute
+{
+    public string Descripcion { get; }
+    
+    public InformacionAttribute(string descripcion)
+    {
+        Descripcion = descripcion;
+    }
+}
+
+// Uso
+[Informacion("Esta clase maneja operaciones de usuarios")]
+public class UsuarioService
+{
+    [Informacion("Autentica un usuario con credenciales")]
+    public bool Login(string user, string pass) => true;
+}
+```
+
+--- 2. ATTRIBUTEUSAGE EN DETALLE ---
+
+```csharp
+using System;
+
+// Restringir a clases y structs
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
+public class EntidadAttribute : Attribute { }
+
+// Restringir a propiedades, AllowMultiple = false (por defecto)
+[AttributeUsage(AttributeTargets.Property)]
+public class ClavePrimariaAttribute : Attribute { }
+
+// Permitir múltiples instancias en el mismo elemento
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = true)]
+public class ValidacionAttribute : Attribute
+{
+    public string Regla { get; }
+    public ValidacionAttribute(string regla) => Regla = regla;
+}
+
+// Heredable (por defecto true)
+[AttributeUsage(AttributeTargets.Class, Inherited = true)]
+public class VersionableAttribute : Attribute
+{
+    public int Version { get; }
+    public VersionableAttribute(int version) => Version = version;
+}
+
+// Atributo para parámetros
+[AttributeUsage(AttributeTargets.Parameter)]
+public class ImportanteAttribute : Attribute { }
+
+// Atributo para returns
+[AttributeUsage(AttributeTargets.ReturnValue)]
+public class ResultadoCriticoAttribute : Attribute { }
+
+// Atributo para assemblies
+[AttributeUsage(AttributeTargets.Assembly)]
+public class NombreClaveAttribute : Attribute
+{
+    public string Clave { get; }
+    public NombreClaveAttribute(string clave) => Clave = clave;
+}
+
+// Atributo para enum members
+[AttributeUsage(AttributeTargets.Field)]
+public class DescripcionEnumAttribute : Attribute
+{
+    public string Texto { get; }
+    public DescripcionEnumAttribute(string texto) => Texto = texto;
+}
+
+// Demo de AttributeUsage combinado
+[AttributeUsage(
+    AttributeTargets.Class | AttributeTargets.Struct |
+    AttributeTargets.Method | AttributeTargets.Property,
+    AllowMultiple = false,
+    Inherited = true)]
+public class ComandoAttribute : Attribute
+{
+    public string Nombre { get; }
+    public ComandoAttribute(string nombre) => Nombre = nombre;
+}
+```
+
+--- 3. CONSTRUCTORES Y PROPIEDADES EN ATRIBUTOS ---
+
+```csharp
+using System;
+
+public class ConfigWebAttribute : Attribute
+{
+    // Parámetros posicionales (obligatorios, constructor)
+    public string Ruta { get; }
+    public string MetodoHttp { get; }
+    
+    // Parámetros nombrados (opcionales, propiedades/fields)
+    public bool RequiereAutenticacion { get; set; }
+    public string Descripcion { get; set; }
+    public string[] RolesPermitidos { get; set; }
+    public int TimeoutSegundos { get; set; } = 30;
+    
+    // Constructor con parámetros posicionales
+    public ConfigWebAttribute(string ruta, string metodoHttp)
+    {
+        Ruta = ruta;
+        MetodoHttp = metodoHttp.ToUpper();
+    }
+    
+    // Constructor sin parámetros (permite solo named params)
+    public ConfigWebAttribute() { }
+}
+
+// Uso con parámetros posicionales y nombrados
+class ControladorAPI
+{
+    [ConfigWeb("/api/usuarios", "GET",
+        Descripcion = "Obtiene todos los usuarios",
+        RequiereAutenticacion = true,
+        RolesPermitidos = new[] { "Admin", "Usuario" },
+        TimeoutSegundos = 60)]
+    public void ListarUsuarios() { }
+    
+    [ConfigWeb("/api/usuarios", "POST",
+        RequiereAutenticacion = true)]
+    public void CrearUsuario() { }
+    
+    // Solo con named parameters
+    [ConfigWeb(Descripcion = "Ruta especial")]
+    public void RutaEspecial() { }
+}
+```
+
+--- 4. RECUPERAR ATRIBUTOS CON REFLECTION ---
+
+```csharp
+using System;
+using System.Reflection;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== RECUPERAR ATRIBUTOS ===\n");
+        
+        // Obtener atributos de una clase
+        Type tipo = typeof(ServicioAutenticacion);
+        
+        var infoAttr = tipo.GetCustomAttribute<InformacionAttribute>();
+        if (infoAttr != null)
+        {
+            Console.WriteLine($"Clase: {tipo.Name}");
+            Console.WriteLine($"  Descripción: {infoAttr.Descripcion}");
+        }
+        
+        // Obtener atributos de métodos
+        Console.WriteLine("\nMétodos:");
+        foreach (var metodo in tipo.GetMethods(
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+        {
+            var attr = metodo.GetCustomAttribute<InformacionAttribute>();
+            Console.WriteLine($"  {metodo.Name}: {(attr?.Descripcion ?? "Sin descripción")}");
+        }
+        
+        // Obtener TODOS los atributos (no solo uno)
+        Console.WriteLine("\nTodos los atributos de la clase:");
+        foreach (var attr in tipo.GetCustomAttributes(false))
+        {
+            Console.WriteLine($"  - {attr.GetType().Name}");
+        }
+        
+        // Verificar si existe un atributo
+        bool tieneAtributo = tipo.IsDefined(typeof(InformacionAttribute), false);
+        Console.WriteLine($"\n¿Tiene InformacionAttribute? {tieneAtributo}");
+        
+        // GetCustomAttributes con filtro
+        var atributos = tipo.GetCustomAttributes(typeof(ObsoletoAttribute), false);
+        Console.WriteLine($"¿Es obsoleto? {atributos.Length > 0}");
+    }
+}
+
+[Informacion("Servicio de autenticación de usuarios")]
+[Obsoleto("Usar ServicioAutenticacionV2")]
+public class ServicioAutenticacion
+{
+    [Informacion("Inicia sesión en el sistema")]
+    public void Login(string user, string pass) { }
+    
+    [Informacion("Cierra la sesión actual")]
+    public void Logout() { }
+    
+    public void CambiarPassword(string oldPass, string newPass) { }
+}
+```
+
+--- 5. ATRIBUTOS CON CAMPOS Y PROPIEDADES COMPLEJAS ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+[AttributeUsage(AttributeTargets.All, AllowMultiple = true)]
+public class MetadataAttribute : Attribute
+{
+    public string Clave { get; }
+    public object Valor { get; }
+    
+    // Propiedades con tipos complejos
+    public Type TipoAsociado { get; set; }
+    public Dictionary<string, object> Datos { get; set; }
+    public int[] Numeros { get; set; }
+    
+    public MetadataAttribute(string clave, object valor)
+    {
+        Clave = clave;
+        Valor = valor;
+        Datos = new Dictionary<string, object>();
+    }
+    
+    public T ObtenerValor<T>()
+    {
+        try { return (T)Valor; }
+        catch { return default; }
+    }
+}
+
+[Metadata("autor", "Juan Pérez", TipoAsociado = typeof(Program))]
+[Metadata("version", "2.0.1")]
+[Metadata("fecha_creacion", "2024-01-15")]
+[Metadata("tags", new[] { "utilidad", "ejemplo", "atributos" })]
+class ClaseConMetadata
+{
+    [Metadata("campo", "importante", Numeros = new[] { 1, 2, 3 })]
+    public string Propiedad { get; set; }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== ATRIBUTOS COMPLEJOS ===\n");
+        
+        var tipo = typeof(ClaseConMetadata);
+        
+        foreach (MetadataAttribute meta in tipo.GetCustomAttributes(typeof(MetadataAttribute), false))
+        {
+            Console.WriteLine($"  {meta.Clave} = {meta.Valor} (tipo: {meta.Valor?.GetType().Name})");
+            if (meta.TipoAsociado != null)
+                Console.WriteLine($"    Tipo asociado: {meta.TipoAsociado.Name}");
+        }
+        
+        // Leer atributo de propiedad
+        var prop = tipo.GetProperty("Propiedad");
+        foreach (MetadataAttribute meta in prop.GetCustomAttributes(typeof(MetadataAttribute), false))
+        {
+            Console.WriteLine($"\nPropiedad.Propiedad:");
+            Console.WriteLine($"  {meta.Clave} = {meta.Valor}");
+            if (meta.Numeros != null)
+                Console.WriteLine($"  Números: [{string.Join(", ", meta.Numeros)}]");
+        }
+    }
+}
+```
+
+--- 6. ATRIBUTOS REPETIBLES (AllowMultiple = true) ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = true)]
+public class ReglaValidacionAttribute : Attribute
+{
+    public string Nombre { get; }
+    public object[] Parametros { get; }
+    
+    public ReglaValidacionAttribute(string nombre, params object[] parametros)
+    {
+        Nombre = nombre;
+        Parametros = parametros;
+    }
+}
+
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = true)]
+public class EtiquetaAttribute : Attribute
+{
+    public string Texto { get; }
+    public EtiquetaAttribute(string texto) => Texto = texto;
+}
+
+class UsuarioModelo
+{
+    [ReglaValidacion("Requerido")]
+    [ReglaValidacion("LongitudMaxima", 100)]
+    [ReglaValidacion("ExpresionRegular", @"^[a-zA-Z\s]+$")]
+    [Etiqueta("Nombre Completo")]
+    [Etiqueta("Campo Obligatorio")]
+    public string Nombre { get; set; }
+    
+    [ReglaValidacion("Requerido")]
+    [ReglaValidacion("Email")]
+    [Etiqueta("Correo Electrónico")]
+    public string Email { get; set; }
+    
+    [ReglaValidacion("Rango", 18, 120)]
+    public int Edad { get; set; }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== ATRIBUTOS REPETIBLES ===\n");
+        
+        var tipo = typeof(UsuarioModelo);
+        
+        foreach (var prop in tipo.GetProperties())
+        {
+            Console.WriteLine($"Propiedad: {prop.Name}");
+            
+            // Obtener TODAS las instancias del atributo
+            var reglas = prop.GetCustomAttributes<ReglaValidacionAttribute>();
+            foreach (var regla in reglas)
+            {
+                string parametros = regla.Parametros.Length > 0
+                    ? $" ({string.Join(", ", regla.Parametros)})"
+                    : "";
+                Console.WriteLine($"  - {regla.Nombre}{parametros}");
+            }
+            
+            var etiquetas = prop.GetCustomAttributes<EtiquetaAttribute>();
+            foreach (var etiqueta in etiquetas)
+                Console.WriteLine($"  [Etiqueta: {etiqueta.Texto}]");
+            
+            Console.WriteLine();
+        }
+    }
+}
+```
+
+--- 7. ATRIBUTOS Y HERENCIA ---
+
+```csharp
+using System;
+
+[AttributeUsage(AttributeTargets.Class, Inherited = true)]
+public class VersionableAttribute : Attribute
+{
+    public int Version { get; }
+    public VersionableAttribute(int v) => Version = v;
+}
+
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public class NoHerableAttribute : Attribute { }
+
+[Versionable(1)]
+[NoHerable]
+public class Base
+{
+    public virtual void Metodo() { }
+}
+
+// Hereda VersionableAttribute pero NO NoHerableAttribute
+[Versionable(2)] // Sobrescribe el valor heredado
+public class Derivada : Base
+{
+    public override void Metodo() { }
+}
+
+// Hereda Versionable de Derivada (que a su vez heredó de Base)
+public class SubDerivada : Derivada { }
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== ATRIBUTOS Y HERENCIA ===\n");
+        
+        // Base
+        Console.WriteLine("Base:");
+        var baseAttr1 = typeof(Base).GetCustomAttribute<VersionableAttribute>(false);
+        var baseAttr2 = typeof(Base).GetCustomAttribute<VersionableAttribute>(true);
+        Console.WriteLine($"  Versionable (no inhert): {baseAttr1?.Version}");
+        Console.WriteLine($"  Versionable (inhert): {baseAttr2?.Version}");
+        Console.WriteLine($"  NoHerable: {typeof(Base).IsDefined(typeof(NoHerableAttribute), false)}");
+        
+        // Derivada
+        Console.WriteLine("\nDerivada:");
+        var derAttr1 = typeof(Derivada).GetCustomAttribute<VersionableAttribute>(false);
+        var derAttr2 = typeof(Derivada).GetCustomAttribute<VersionableAttribute>(true);
+        Console.WriteLine($"  Versionable (no inhert): {derAttr1?.Version}");
+        Console.WriteLine($"  Versionable (inhert): {derAttr2?.Version}");
+        Console.WriteLine($"  NoHerable: {typeof(Derivada).IsDefined(typeof(NoHerableAttribute), false)}");
+        
+        // SubDerivada
+        Console.WriteLine("\nSubDerivada:");
+        var subAttr1 = typeof(SubDerivada).GetCustomAttribute<VersionableAttribute>(false);
+        var subAttr2 = typeof(SubDerivada).GetCustomAttribute<VersionableAttribute>(true);
+        Console.WriteLine($"  Versionable (no inhert): {subAttr1?.Version}");
+        Console.WriteLine($"  Versionable (inhert): {subAttr2?.Version}");
+    }
+}
+```
+
+--- 8. SISTEMA DE PLUGINS CON ATRIBUTOS ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.Class)]
+public class PluginInfoAttribute : Attribute
+{
+    public string Nombre { get; }
+    public string Version { get; }
+    public string Autor { get; set; }
+    public string Descripcion { get; set; }
+    
+    public PluginInfoAttribute(string nombre, string version)
+    {
+        Nombre = nombre;
+        Version = version;
+    }
+}
+
+[AttributeUsage(AttributeTargets.Class)]
+public class PluginDependencyAttribute : Attribute
+{
+    public string NombrePlugin { get; }
+    public string VersionMinima { get; }
+    
+    public PluginDependencyAttribute(string nombre, string version)
+    {
+        NombrePlugin = nombre;
+        VersionMinima = version;
+    }
+}
+
+// Interfaz que deben implementar los plugins
+public interface IPlugin
+{
+    void Inicializar();
+    void Ejecutar();
+    void Finalizar();
+}
+
+// Plugin de ejemplo 1
+[PluginInfo("CompresorImagenes", "1.2.0",
+    Autor = "Juan Pérez",
+    Descripcion = "Comprime imágenes en formato JPEG y PNG")]
+public class CompresorImagenesPlugin : IPlugin
+{
+    public void Inicializar()
+        => Console.WriteLine("  [CompresorImagenes] Inicializado");
+    public void Ejecutar()
+        => Console.WriteLine("  [CompresorImagenes] Comprimiendo...");
+    public void Finalizar()
+        => Console.WriteLine("  [CompresorImagenes] Finalizado");
+}
+
+// Plugin de ejemplo 2
+[PluginInfo("EncriptadorAES", "2.0.1",
+    Autor = "María García",
+    Descripcion = "Encripta y desencripta archivos con AES-256")]
+[PluginDependency("CompresorImagenes", "1.0.0")]
+public class EncriptadorAESPlugin : IPlugin
+{
+    public void Inicializar()
+        => Console.WriteLine("  [EncriptadorAES] Inicializado");
+    public void Ejecutar()
+        => Console.WriteLine("  [EncriptadorAES] Encriptando...");
+    public void Finalizar()
+        => Console.WriteLine("  [EncriptadorAES] Finalizado");
+}
+
+// Plugin de ejemplo 3
+[PluginInfo("GeneradorReportes", "1.0.0",
+    Autor = "Carlos Ruiz",
+    Descripcion = "Genera reportes en PDF y Excel")]
+public class GeneradorReportesPlugin : IPlugin
+{
+    public void Inicializar()
+        => Console.WriteLine("  [GeneradorReportes] Inicializado");
+    public void Ejecutar()
+        => Console.WriteLine("  [GeneradorReportes] Generando reporte...");
+    public void Finalizar()
+        => Console.WriteLine("  [GeneradorReportes] Finalizado");
+}
+
+// Motor de plugins
+public class PluginManager
+{
+    private readonly Dictionary<string, Type> _plugins = new();
+    private readonly Dictionary<string, IPlugin> _instancias = new();
+    
+    public void CargarPlugins(Assembly assembly)
+    {
+        foreach (var tipo in assembly.GetTypes())
+        {
+            if (typeof(IPlugin).IsAssignableFrom(tipo) && !tipo.IsInterface)
+            {
+                var info = tipo.GetCustomAttribute<PluginInfoAttribute>();
+                if (info != null)
+                {
+                    _plugins[info.Nombre] = tipo;
+                    Console.WriteLine($"Plugin registrado: {info.Nombre} v{info.Version}");
+                }
+            }
+        }
+    }
+    
+    public void InicializarTodos()
+    {
+        foreach (var kvp in _plugins)
+        {
+            var plugin = (IPlugin)Activator.CreateInstance(kvp.Value);
+            _instancias[kvp.Key] = plugin;
+            plugin.Inicializar();
+        }
+    }
+    
+    public void EjecutarPlugin(string nombre)
+    {
+        if (_instancias.TryGetValue(nombre, out var plugin))
+        {
+            Console.WriteLine($"\nEjecutando plugin: {nombre}");
+            plugin.Ejecutar();
+        }
+        else
+        {
+            Console.WriteLine($"Plugin '{nombre}' no encontrado.");
+        }
+    }
+    
+    public void ListarPlugins()
+    {
+        Console.WriteLine("\nPlugins cargados:");
+        foreach (var kvp in _plugins)
+        {
+            var info = kvp.Value.GetCustomAttribute<PluginInfoAttribute>();
+            var deps = kvp.Value.GetCustomAttributes<PluginDependencyAttribute>();
+            
+            Console.WriteLine($"  - {info?.Nombre} v{info?.Version}");
+            Console.WriteLine($"    Autor: {info?.Autor}");
+            Console.WriteLine($"    Desc: {info?.Descripcion}");
+            
+            if (deps.Any())
+            {
+                Console.WriteLine($"    Dependencias:");
+                foreach (var dep in deps)
+                    Console.WriteLine($"      - {dep.NombrePlugin} >= {dep.VersionMinima}");
+            }
+        }
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== SISTEMA DE PLUGINS CON ATRIBUTOS ===\n");
+        
+        var manager = new PluginManager();
+        manager.CargarPlugins(Assembly.GetExecutingAssembly());
+        manager.ListarPlugins();
+        manager.InicializarTodos();
+        
+        manager.EjecutarPlugin("CompresorImagenes");
+        manager.EjecutarPlugin("GeneradorReportes");
+        manager.EjecutarPlugin("PluginInexistente");
+    }
+}
+```
+
+--- 9. ATRIBUTOS PARA MAPEO OBJETO-RELACIONAL (ORM) ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Text;
+
+[AttributeUsage(AttributeTargets.Class)]
+public class TablaAttribute : Attribute
+{
+    public string Nombre { get; }
+    public string Esquema { get; set; }
+    public TablaAttribute(string nombre) => Nombre = nombre;
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ColumnaAttribute : Attribute
+{
+    public string Nombre { get; }
+    public bool EsClave { get; set; }
+    public bool EsAutoIncrement { get; set; }
+    public bool EsNulo { get; set; } = true;
+    public int Longitud { get; set; }
+    public string TipoSql { get; set; }
+    public ColumnaAttribute(string nombre) => Nombre = nombre;
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class RelacionAttribute : Attribute
+{
+    public string Tipo { get; }
+    public string EntidadRelacionada { get; }
+    public string ColumnaLocal { get; set; }
+    public string ColumnaForanea { get; set; }
+    public RelacionAttribute(string tipo, string entidad)
+    {
+        Tipo = tipo;
+        EntidadRelacionada = entidad;
+    }
+}
+
+// Modelos usando atributos
+[Tabla("Categorias", Esquema = "dbo")]
+public class Categoria
+{
+    [Columna("Id", EsClave = true, EsAutoIncrement = true)]
+    public int Id { get; set; }
+    
+    [Columna("Nombre", EsNulo = false, Longitud = 100)]
+    public string Nombre { get; set; }
+    
+    [Relacion("OneToMany", "dbo.Productos", ColumnaLocal = "Id", ColumnaForanea = "CategoriaId")]
+    public List<Producto> Productos { get; set; }
+}
+
+[Tabla("Productos", Esquema = "dbo")]
+public class Producto
+{
+    [Columna("Id", EsClave = true, EsAutoIncrement = true)]
+    public int Id { get; set; }
+    
+    [Columna("Nombre", EsNulo = false, Longitud = 200)]
+    public string Nombre { get; set; }
+    
+    [Columna("Precio", TipoSql = "DECIMAL(10,2)")]
+    public decimal Precio { get; set; }
+    
+    [Columna("CategoriaId")]
+    public int CategoriaId { get; set; }
+    
+    [Relacion("ManyToOne", "dbo.Categorias", ColumnaLocal = "CategoriaId", ColumnaForanea = "Id")]
+    public Categoria Categoria { get; set; }
+}
+
+// Generador SQL
+public class GeneradorSQL
+{
+    public string GenerarInsert<T>(T entidad)
+    {
+        var tipo = typeof(T);
+        var propiedades = tipo.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        
+        var columnas = new List<string>();
+        var valores = new List<string>();
+        
+        foreach (var prop in propiedades)
+        {
+            var columna = prop.GetCustomAttribute<ColumnaAttribute>();
+            if (columna == null || columna.EsAutoIncrement) continue;
+            
+            columnas.Add(columna.Nombre);
+            object valor = prop.GetValue(entidad);
+            
+            if (valor == null)
+                valores.Add("NULL");
+            else if (valor is string || valor is DateTime)
+                valores.Add($"'{valor}'");
+            else if (valor is bool)
+                valores.Add((bool)valor ? "1" : "0");
+            else
+                valores.Add(valor.ToString());
+        }
+        
+        var tablaAttr = tipo.GetCustomAttribute<TablaAttribute>();
+        string nombreTabla = tablaAttr != null
+            ? $"{tablaAttr.Esquema}.{tablaAttr.Nombre}"
+            : tipo.Name;
+        
+        return $"INSERT INTO {nombreTabla} ({string.Join(", ", columnas)})\n" +
+               $"VALUES ({string.Join(", ", valores)});";
+    }
+    
+    public string GenerarSelect<T>(string condicion = null)
+    {
+        var tipo = typeof(T);
+        var propiedades = tipo.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        
+        var columnas = new List<string>();
+        foreach (var prop in propiedades)
+        {
+            var columna = prop.GetCustomAttribute<ColumnaAttribute>();
+            if (columna != null)
+                columnas.Add(columna.Nombre);
+            else
+                columnas.Add(prop.Name);
+        }
+        
+        var tablaAttr = tipo.GetCustomAttribute<TablaAttribute>();
+        string nombreTabla = tablaAttr != null
+            ? $"{tablaAttr.Esquema}.{tablaAttr.Nombre}"
+            : tipo.Name;
+        
+        string sql = $"SELECT {string.Join(", ", columnas)}\nFROM {nombreTabla}";
+        
+        if (!string.IsNullOrEmpty(condicion))
+            sql += $"\nWHERE {condicion}";
+        
+        // Joins por relaciones
+        foreach (var prop in propiedades)
+        {
+            var relacion = prop.GetCustomAttribute<RelacionAttribute>();
+            if (relacion != null && relacion.Tipo == "ManyToOne")
+            {
+                sql += $"\nINNER JOIN {relacion.EntidadRelacionada} ON " +
+                       $"{relacion.EntidadRelacionada}.{relacion.ColumnaForanea} = " +
+                       $"{nombreTabla}.{relacion.ColumnaLocal}";
+            }
+        }
+        
+        return sql + ";";
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== ORM CON ATRIBUTOS PERSONALIZADOS ===\n");
+        
+        var sql = new GeneradorSQL();
+        
+        var producto = new Producto
+        {
+            Nombre = "Laptop Gamer",
+            Precio = 1500.99m,
+            CategoriaId = 1
+        };
+        
+        Console.WriteLine("INSERT generado:");
+        Console.WriteLine(sql.GenerarInsert(producto));
+        
+        Console.WriteLine("\nSELECT generado:");
+        Console.WriteLine(sql.GenerarSelect<Producto>("Productos.Precio > 100"));
+    }
+}
+```
+
+--- 10. ATRIBUTOS PARA VALIDACIÓN COMPLETA ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarRequeridoAttribute : Attribute
+{
+    public string Mensaje { get; set; }
+    public ValidarRequeridoAttribute() { Mensaje = "El campo es requerido."; }
+    public ValidarRequeridoAttribute(string mensaje) { Mensaje = mensaje; }
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarRangoAttribute : Attribute
+{
+    public double Min { get; }
+    public double Max { get; }
+    public string Mensaje { get; set; }
+    
+    public ValidarRangoAttribute(double min, double max)
+    {
+        Min = min;
+        Max = max;
+        Mensaje = $"El valor debe estar entre {min} y {max}.";
+    }
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarLongitudAttribute : Attribute
+{
+    public int Min { get; set; } = 0;
+    public int Max { get; set; } = int.MaxValue;
+    public string Mensaje { get; set; }
+    
+    public ValidarLongitudAttribute(int max)
+    {
+        Max = max;
+        Mensaje = $"La longitud máxima es {max} caracteres.";
+    }
+    
+    public ValidarLongitudAttribute(int min, int max)
+    {
+        Min = min;
+        Max = max;
+        Mensaje = $"La longitud debe estar entre {min} y {max} caracteres.";
+    }
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarEmailAttribute : Attribute
+{
+    public string Mensaje { get; set; } = "El formato del email no es válido.";
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarExpresionRegularAttribute : Attribute
+{
+    public string Patron { get; }
+    public string Mensaje { get; set; }
+    
+    public ValidarExpresionRegularAttribute(string patron)
+    {
+        Patron = patron;
+        Mensaje = "El valor no coincide con el formato requerido.";
+    }
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValidarCompararAttribute : Attribute
+{
+    public string OtraPropiedad { get; }
+    public string Mensaje { get; set; }
+    
+    public ValidarCompararAttribute(string otraPropiedad)
+    {
+        OtraPropiedad = otraPropiedad;
+        Mensaje = "Los valores no coinciden.";
+    }
+}
+
+public class ResultadoValidacion
+{
+    public bool EsValido => Errores.Count == 0;
+    public Dictionary<string, List<string>> Errores { get; } = new();
+    
+    public void AgregarError(string propiedad, string mensaje)
+    {
+        if (!Errores.ContainsKey(propiedad))
+            Errores[propiedad] = new List<string>();
+        Errores[propiedad].Add(mensaje);
+    }
+}
+
+public class ValidadorPorAtributos
+{
+    public ResultadoValidacion Validar<T>(T objeto)
+    {
+        var resultado = new ResultadoValidacion();
+        var tipo = typeof(T);
+        
+        foreach (var prop in tipo.GetProperties())
+        {
+            var valor = prop.GetValue(objeto);
+            
+            foreach (var atributo in prop.GetCustomAttributes(true))
+            {
+                if (atributo is ValidarRequeridoAttribute req)
+                {
+                    if (valor == null || (valor is string s && string.IsNullOrWhiteSpace(s)))
+                        resultado.AgregarError(prop.Name, req.Mensaje);
+                }
+                else if (atributo is ValidarRangoAttribute rango)
+                {
+                    if (valor is IComparable comparable)
+                    {
+                        if (comparable.CompareTo(Convert.ChangeType(rango.Min, comparable.GetType())) < 0 ||
+                            comparable.CompareTo(Convert.ChangeType(rango.Max, comparable.GetType())) > 0)
+                            resultado.AgregarError(prop.Name, rango.Mensaje);
+                    }
+                }
+                else if (atributo is ValidarLongitudAttribute lon)
+                {
+                    if (valor is string strVal)
+                    {
+                        if (strVal.Length < lon.Min || strVal.Length > lon.Max)
+                            resultado.AgregarError(prop.Name, lon.Mensaje);
+                    }
+                }
+                else if (atributo is ValidarEmailAttribute)
+                {
+                    if (valor is string email && !string.IsNullOrWhiteSpace(email))
+                    {
+                        if (!Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"))
+                            resultado.AgregarError(prop.Name, "El formato del email no es válido.");
+                    }
+                }
+                else if (atributo is ValidarExpresionRegularAttribute regex)
+                {
+                    if (valor is string str && !string.IsNullOrWhiteSpace(str))
+                    {
+                        if (!Regex.IsMatch(str, regex.Patron))
+                            resultado.AgregarError(prop.Name, regex.Mensaje);
+                    }
+                }
+                else if (atributo is ValidarCompararAttribute comp)
+                {
+                    var otraProp = tipo.GetProperty(comp.OtraPropiedad);
+                    if (otraProp != null)
+                    {
+                        var otroValor = otraProp.GetValue(objeto);
+                        if (!Equals(valor, otroValor))
+                            resultado.AgregarError(prop.Name, comp.Mensaje ?? "Los valores no coinciden.");
+                    }
+                }
+            }
+        }
+        
+        return resultado;
+    }
+}
+
+public class RegistroUsuario
+{
+    [ValidarRequerido(Mensaje = "El nombre es obligatorio.")]
+    [ValidarLongitud(2, 50)]
+    public string Nombre { get; set; }
+    
+    [ValidarRequerido]
+    [ValidarEmail]
+    public string Email { get; set; }
+    
+    [ValidarRequerido]
+    [ValidarLongitud(8, 100)]
+    public string Password { get; set; }
+    
+    [ValidarComparar("Password", Mensaje = "Las contraseñas no coinciden.")]
+    public string ConfirmarPassword { get; set; }
+    
+    [ValidarRango(18, 120)]
+    public int Edad { get; set; }
+    
+    [ValidarExpresionRegular(@"^\d{3}-\d{3}-\d{4}$", Mensaje = "Formato telefónico: 555-123-4567")]
+    public string Telefono { get; set; }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== VALIDACIÓN CON ATRIBUTOS PERSONALIZADOS ===\n");
+        
+        var validador = new ValidadorPorAtributos();
+        
+        var usuario = new RegistroUsuario
+        {
+            Nombre = "",
+            Email = "email-invalido",
+            Password = "123",
+            ConfirmarPassword = "456",
+            Edad = 15,
+            Telefono = "abc-def-ghij"
+        };
+        
+        var resultado = validador.Validar(usuario);
+        
+        Console.WriteLine($"¿Válido? {resultado.EsValido}");
+        if (!resultado.EsValido)
+        {
+            Console.WriteLine("Errores:");
+            foreach (var kvp in resultado.Errores)
+            {
+                Console.WriteLine($"  {kvp.Key}:");
+                foreach (var err in kvp.Value)
+                    Console.WriteLine($"    - {err}");
+            }
+        }
+        
+        Console.WriteLine("\n--- Con datos válidos ---");
+        var usuarioValido = new RegistroUsuario
+        {
+            Nombre = "Juan Pérez",
+            Email = "juan@email.com",
+            Password = "MiPassword123",
+            ConfirmarPassword = "MiPassword123",
+            Edad = 25,
+            Telefono = "555-123-4567"
+        };
+        
+        resultado = validador.Validar(usuarioValido);
+        Console.WriteLine($"¿Válido? {resultado.EsValido}");
+    }
+}
+```
+
+--- 11. ATRIBUTOS PARA INTERCEPTACIÓN (AOP SIMPLIFICADO) ---
+
+```csharp
+using System;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.Method)]
+public class RegistrarAttribute : Attribute
+{
+    public string Categoria { get; set; }
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class MedirTiempoAttribute : Attribute
+{
+    public string NombreOperacion { get; set; }
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class CachearAttribute : Attribute
+{
+    public int DuracionSegundos { get; set; } = 60;
+    public string Clave { get; set; }
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class ReintentarAttribute : Attribute
+{
+    public int Intentos { get; set; } = 3;
+    public int EsperaMs { get; set; } = 100;
+}
+
+// Interceptor manual
+public class Interceptor
+{
+    public static void EjecutarConAtributos(object target, string metodo, params object[] args)
+    {
+        var tipo = target.GetType();
+        var methodInfo = tipo.GetMethod(metodo);
+        
+        if (methodInfo == null)
+        {
+            Console.WriteLine($"Método '{metodo}' no encontrado.");
+            return;
+        }
+        
+        var timerAttr = methodInfo.GetCustomAttribute<MedirTiempoAttribute>();
+        var cacheAttr = methodInfo.GetCustomAttribute<CachearAttribute>();
+        var reintentarAttr = methodInfo.GetCustomAttribute<ReintentarAttribute>();
+        var logAttr = methodInfo.GetCustomAttribute<RegistrarAttribute>();
+        
+        if (logAttr != null)
+            Console.WriteLine($"[LOG] [{logAttr.Categoria}] Invocando {metodo}");
+        
+        if (timerAttr != null)
+            Console.WriteLine($"[TIMER] Midiendo {timerAttr.NombreOperacion ?? metodo}...");
+        
+        if (reintentarAttr != null)
+            Console.WriteLine($"[RETRY] Máximo {reintentarAttr.Intentos} intentos, espera {reintentarAttr.EsperaMs}ms");
+        
+        if (cacheAttr != null)
+            Console.WriteLine($"[CACHE] Buscando clave '{cacheAttr.Clave ?? metodo}'...");
+        
+        // Ejecución real
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            methodInfo.Invoke(target, args);
+            sw.Stop();
+            
+            if (timerAttr != null)
+                Console.WriteLine($"[TIMER] {timerAttr.NombreOperacion ?? metodo}: {sw.ElapsedMilliseconds}ms");
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            Console.WriteLine($"[ERROR] {metodo}: {ex.InnerException?.Message ?? ex.Message}");
+        }
+    }
+}
+
+public class ServicioNegocio
+{
+    [Registrar(Categoria = "Seguridad")]
+    [MedirTiempo(NombreOperacion = "Login de usuario")]
+    [Reintentar(Intentos = 3, EsperaMs = 200)]
+    public void IniciarSesion(string usuario)
+    {
+        Console.WriteLine($"  Iniciando sesión para '{usuario}'...");
+    }
+    
+    [Cachear(DuracionSegundos = 300)]
+    public void ObtenerConfiguracion()
+    {
+        Console.WriteLine("  Obteniendo configuración (operación costosa)...");
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== AOP CON ATRIBUTOS ===\n");
+        
+        var servicio = new ServicioNegocio();
+        
+        Console.WriteLine("Llamada a IniciarSesion:");
+        Interceptor.EjecutarConAtributos(servicio, "IniciarSesion", "admin");
+        
+        Console.WriteLine("\nLlamada a ObtenerConfiguracion:");
+        Interceptor.EjecutarConAtributos(servicio, "ObtenerConfiguracion");
+    }
+}
+```
+
+--- 12. ATRIBUTOS PARA SEGURIDAD Y AUTORIZACIÓN ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public class AutorizarAttribute : Attribute
+{
+    public string[] Roles { get; }
+    public string Permiso { get; set; }
+    
+    public AutorizarAttribute(params string[] roles)
+    {
+        Roles = roles;
+    }
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class AuditoriaAttribute : Attribute
+{
+    public string TipoEvento { get; }
+    public AuditoriaAttribute(string tipo) => TipoEvento = tipo;
+}
+
+[AttributeUsage(AttributeTargets.Parameter)]
+public class SanitizarAttribute : Attribute
+{
+    public string Tipo { get; set; } = "html";
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public class TasaLimitadaAttribute : Attribute
+{
+    public int MaxLlamadas { get; }
+    public int PeriodoSegundos { get; }
+    public TasaLimitadaAttribute(int max, int segundos)
+    {
+        MaxLlamadas = max;
+        PeriodoSegundos = segundos;
+    }
+}
+
+public class ControlSeguridad
+{
+    private readonly Dictionary<string, List<string>> _rolesPorUsuario = new()
+    {
+        ["admin"] = new() { "Admin", "Usuario" },
+        ["jperez"] = new() { "Usuario" }
+    };
+    
+    private readonly Dictionary<string, int> _contadorLlamadas = new();
+    
+    public bool EjecutarSiAutorizado(
+        object target, string metodo, string usuario, params object[] args)
+    {
+        var tipo = target.GetType();
+        var methodInfo = tipo.GetMethod(metodo);
+        
+        if (methodInfo == null) return false;
+        
+        // Verificar autorización
+        var autorizar = methodInfo.GetCustomAttribute<AutorizarAttribute>();
+        if (autorizar != null && autorizar.Roles.Length > 0)
+        {
+            if (!_rolesPorUsuario.TryGetValue(usuario, out var roles))
+            {
+                Console.WriteLine($"  [SEGURIDAD] Usuario '{usuario}' no encontrado.");
+                return false;
+            }
+            
+            bool autorizado = false;
+            foreach (var rol in autorizar.Roles)
+            {
+                if (roles.Contains(rol))
+                {
+                    autorizado = true;
+                    break;
+                }
+            }
+            
+            if (!autorizado)
+            {
+                Console.WriteLine($"  [SEGURIDAD] '{usuario}' no tiene rol requerido.");
+                return false;
+            }
+        }
+        
+        // Verificar tasa límite
+        var tasa = methodInfo.GetCustomAttribute<TasaLimitadaAttribute>();
+        if (tasa != null)
+        {
+            string clave = $"{usuario}:{metodo}";
+            _contadorLlamadas.TryGetValue(clave, out int llamadas);
+            _contadorLlamadas[clave] = ++llamadas;
+            
+            if (llamadas > tasa.MaxLlamadas)
+            {
+                Console.WriteLine($"  [TASA] '{usuario}' excedió límite de {metodo}");
+                return false;
+            }
+        }
+        
+        // Auditoría
+        var auditoria = methodInfo.GetCustomAttribute<AuditoriaAttribute>();
+        if (auditoria != null)
+        {
+            Console.WriteLine($"  [AUDITORÍA] {usuario} -> {auditoria.TipoEvento} a las {DateTime.Now:HH:mm:ss}");
+        }
+        
+        // Ejecutar
+        methodInfo.Invoke(target, args);
+        return true;
+    }
+}
+
+[Autorizar("Admin")]
+public class PanelAdmin
+{
+    public void VerDashboard()
+        => Console.WriteLine("  Dashboard visible.");
+    
+    [Autorizar("Admin", "Supervisor")]
+    [Auditoria("EliminacionUsuario")]
+    [TasaLimitada(5, 60)]
+    public void EliminarUsuario(int id)
+        => Console.WriteLine($"  Usuario #{id} eliminado.");
+    
+    [Auditoria("ExportacionDatos")]
+    public void ExportarDatos()
+        => Console.WriteLine("  Datos exportados.");
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== SEGURIDAD CON ATRIBUTOS ===\n");
+        
+        var admin = new PanelAdmin();
+        var seguridad = new ControlSeguridad();
+        
+        string[] usuarios = { "admin", "jperez", "invasor" };
+        
+        foreach (var user in usuarios)
+        {
+            Console.WriteLine($"\n--- Usuario: {user} ---");
+            seguridad.EjecutarSiAutorizado(admin, "VerDashboard", user);
+            seguridad.EjecutarSiAutorizado(admin, "EliminarUsuario", user, 1);
+            seguridad.EjecutarSiAutorizado(admin, "ExportarDatos", user);
+        }
+    }
+}
+```
+
+--- 13. ATRIBUTOS PARA CONFIGURACIÓN DECLARATIVA ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.Class)]
+public sealed class ComponenteAttribute : Attribute
+{
+    public string Id { get; }
+    public TipoCicloVida CicloVida { get; set; } = TipoCicloVida.Transient;
+    public ComponenteAttribute(string id) => Id = id;
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class InyectarAttribute : Attribute
+{
+    public string NombreServicio { get; }
+    public InyectarAttribute(string nombre) => NombreServicio = nombre;
+}
+
+public enum TipoCicloVida
+{
+    Transient,
+    Scoped,
+    Singleton
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class ConfigurarAttribute : Attribute
+{
+    public string Clave { get; }
+    public string ValorDefecto { get; set; }
+    public ConfigurarAttribute(string clave) => Clave = clave;
+}
+
+// Configurador automático
+public class ConfiguradorAuto
+{
+    private Dictionary<string, object> _singletons = new();
+    
+    public void Configurar(object componente)
+    {
+        var tipo = componente.GetType();
+        var compAttr = tipo.GetCustomAttribute<ComponenteAttribute>();
+        
+        if (compAttr == null) return;
+        
+        Console.WriteLine($"Configurando componente: {compAttr.Id} ({compAttr.CicloVida})");
+        
+        // Inyectar dependencias
+        foreach (var metodo in tipo.GetMethods())
+        {
+            var inyectar = metodo.GetCustomAttribute<InyectarAttribute>();
+            if (inyectar != null)
+            {
+                Console.WriteLine($"  Inyectando '{inyectar.NombreServicio}' en {metodo.Name}");
+                // En un contenedor real, resolvería la dependencia
+                metodo.Invoke(componente, new object[] { $"<servicio:{inyectar.NombreServicio}>" });
+            }
+        }
+        
+        // Configurar propiedades
+        foreach (var prop in tipo.GetProperties())
+        {
+            var config = prop.GetCustomAttribute<ConfigurarAttribute>();
+            if (config != null)
+            {
+                string valor = config.ValorDefecto ?? $"<valor para {config.Clave}>";
+                Console.WriteLine($"  Configurando {prop.Name} <- {valor}");
+                
+                if (prop.PropertyType == typeof(string))
+                    prop.SetValue(componente, valor);
+                else if (prop.PropertyType == typeof(int))
+                    prop.SetValue(componente, int.TryParse(valor, out int n) ? n : 0);
+            }
+        }
+    }
+}
+
+[Componente("servicio.usuarios", CicloVida = TipoCicloVida.Singleton)]
+public class UsuarioService
+{
+    [Configurar("api.url.usuarios", ValorDefecto = "https://api.example.com/usuarios")]
+    public string UrlApi { get; set; }
+    
+    [Configurar("api.timeout")]
+    public int Timeout { get; set; }
+    
+    [Inyectar("servicio.logger")]
+    public void Inicializar(string logger)
+    {
+        Console.WriteLine($"  Inicializando con logger: {logger}");
+    }
+    
+    public void ObtenerUsuario(int id)
+    {
+        Console.WriteLine($"  Obteniendo usuario {id} desde {UrlApi}");
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== CONFIGURACIÓN DECLARATIVA ===\n");
+        
+        var config = new ConfiguradorAuto();
+        
+        var service = new UsuarioService();
+        config.Configurar(service);
+        
+        Console.WriteLine("\nUsando el servicio:");
+        service.ObtenerUsuario(1);
+    }
+}
+```
+
+--- 14. ATRIBUTOS Y DOCUMENTACIÓN AUTOMÁTICA ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+
+[AttributeUsage(AttributeTargets.All)]
+public class DocumentarAttribute : Attribute
+{
+    public string Descripcion { get; }
+    public string Ejemplo { get; set; }
+    public string Notas { get; set; }
+    public string Categoria { get; set; }
+    public string[] Tags { get; set; }
+    
+    public DocumentarAttribute(string descripcion)
+    {
+        Descripcion = descripcion;
+    }
+}
+
+public class GeneradorDocumentacion
+{
+    public string GenerarDocumentacion(Type tipo)
+    {
+        var lines = new List<string>();
+        
+        var doc = tipo.GetCustomAttribute<DocumentarAttribute>();
+        lines.Add($"=== {tipo.Name} ===");
+        lines.Add($"Descripción: {doc?.Descripcion ?? "Sin documentación"}");
+        
+        if (doc?.Categoria != null)
+            lines.Add($"Categoría: {doc.Categoria}");
+        
+        if (doc?.Notas != null)
+            lines.Add($"Notas: {doc.Notas}");
+        
+        if (doc?.Tags != null)
+            lines.Add($"Tags: {string.Join(", ", doc.Tags)}");
+        
+        lines.Add("");
+        
+        foreach (var prop in tipo.GetProperties())
+        {
+            var propDoc = prop.GetCustomAttribute<DocumentarAttribute>();
+            if (propDoc != null)
+            {
+                lines.Add($"  [Prop] {prop.Name}: {propDoc.Descripcion}");
+                if (propDoc.Ejemplo != null)
+                    lines.Add($"    Ej: {propDoc.Ejemplo}");
+            }
+        }
+        
+        foreach (var metodo in tipo.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+        {
+            var metodoDoc = metodo.GetCustomAttribute<DocumentarAttribute>();
+            if (metodoDoc != null)
+            {
+                var parametros = metodo.GetParameters();
+                string paramStr = string.Join(", ",
+                    Array.ConvertAll(parametros, p => $"{p.ParameterType.Name} {p.Name}"));
+                
+                lines.Add($"  [Met] {metodo.ReturnType.Name} {metodo.Name}({paramStr})");
+                lines.Add($"    {metodoDoc.Descripcion}");
+                
+                if (metodoDoc.Ejemplo != null)
+                    lines.Add($"    Ej: {metodoDoc.Ejemplo}");
+                
+                if (metodoDoc.Notas != null)
+                    lines.Add($"    Notas: {metodoDoc.Notas}");
+            }
+        }
+        
+        return string.Join("\n", lines);
+    }
+}
+
+[Documentar("API de facturación electrónica",
+    Categoria = "Facturación",
+    Notas = "Requiere certificado digital vigente.",
+    Tags = new[] { "factura", "SII", "XML" })]
+public class FacturacionAPI
+{
+    [Documentar("Obtiene una factura por su ID",
+        Ejemplo = "api.ObtenerFactura(1234);",
+        Notas = "Lanza FacturaNoEncontradaException si no existe")]
+    public Factura ObtenerFactura(int id)
+    {
+        return new Factura();
+    }
+    
+    [Documentar("Envía una factura al SII",
+        Ejemplo = "api.EnviarFactura(factura);",
+        Notas = "Requiere firma electrónica")]
+    public bool EnviarFactura(Factura factura)
+    {
+        return true;
+    }
+    
+    [Documentar("Lista las facturas por rango de fechas",
+        Ejemplo = "api.ListarFacturas(DateTime.Now.AddDays(-30), DateTime.Now);")]
+    public List<Factura> ListarFacturas(DateTime desde, DateTime hasta)
+    {
+        return new List<Factura>();
+    }
+}
+
+public class Factura { }
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DOCUMENTACIÓN AUTOMÁTICA ===\n");
+        
+        var gen = new GeneradorDocumentacion();
+        string docs = gen.GenerarDocumentacion(typeof(FacturacionAPI));
+        Console.WriteLine(docs);
+    }
+}
+```
+
+--- 15. ATRIBUTOS CON VALIDACIÓN EN TIEMPO DE COMPILACIÓN ---
+
+```csharp
+using System;
+
+// Aunque los atributos no pueden ejecutar código en compilación,
+// podemos usar analizadores Roslyn (source generators) para
+// validar su uso. Aquí mostramos validación en runtime.
+
+[AttributeUsage(AttributeTargets.Property)]
+public class NoVacioAttribute : Attribute
+{
+    public string Mensaje { get; set; } = "El valor no puede estar vacío.";
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public class ValorUnicoAttribute : Attribute
+{
+    // Indica que el valor debe ser único entre instancias
+}
+
+// Validador en tiempo de carga
+public class ValidadorConfiguracion
+{
+    public static void ValidarConfiguracion(Type tipo)
+    {
+        foreach (var prop in tipo.GetProperties())
+        {
+            if (prop.GetCustomAttribute<NoVacioAttribute>() != null)
+            {
+                if (prop.PropertyType != typeof(string))
+                    Console.WriteLine($"  [WARN] {prop.Name}: NoVacioAttribute solo aplica a strings.");
+            }
+            
+            if (prop.GetCustomAttribute<ValorUnicoAttribute>() != null)
+            {
+                if (!prop.PropertyType.IsValueType && prop.PropertyType != typeof(string))
+                    Console.WriteLine($"  [WARN] {prop.Name}: ValorUnicoAttribute puede no funcionar con ref types.");
+            }
+        }
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== VALIDACIÓN DE CONFIGURACIÓN ===\n");
+        
+        ValidadorConfiguracion.ValidarConfiguracion(typeof(ConfigMal));
+    }
+}
+
+public class ConfigMal
+{
+    [NoVacio]
+    public int ValorNumerico { get; set; }  // Warning: NoVacio en int
+    
+    [ValorUnico]
+    public object Objeto { get; set; }  // Warning: ref type
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. Los atributos personalizados heredan de System.Attribute.
+2. [AttributeUsage] controla dónde y cómo se aplica el atributo.
+3. Los parámetros posicionales van en el constructor (obligatorios).
+4. Los parámetros nombrados son propiedades/fields (opcionales).
+5. AllowMultiple = true permite múltiples instancias del mismo atributo.
+6. Inherited controla si el atributo se hereda a clases derivadas.
+7. La recuperación se hace con GetCustomAttribute(s) mediante reflection.
+8. Los atributos personalizados son la base de frameworks: validación,
+   ORMs, plugins, AOP, seguridad, configuración, etc.
+
+================================================================================
+  EJERCICIOS PRÁCTICOS
+================================================================================
+
+Ejercicio 1: Cree un atributo [MostrarEnUI] con propiedades: Etiqueta,
+Orden, Grupo, Visible. Úselo en un modelo y escriba un renderizador que
+genere una descripción de la UI.
+
+Ejercicio 2: Implemente [OcultarDeSwagger] que marque propiedades/métodos
+que no deben aparecer en documentación automática de API.
+
+Ejercicio 3: Cree un sistema de atributos para exportación a Excel:
+[NombreColumna], [Formato], [IgnorarEnExportacion]. Escriba el exportador.
+
+Ejercicio 4: Diseñe [CachearResultado] que almacene en caché el resultado
+de un método basado en sus parámetros (use Dictionary como cache).
+
+Ejercicio 5: Cree un atributo [VersionDesde] que registre desde qué
+versión existe un miembro. Escriba una herramienta que liste cambios
+entre versiones.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Los atributos personalizados afectan el rendimiento?
+R: Los atributos en sí no. La reflexión para leerlos sí, pero puede
+mitigarse cacheando los resultados de GetCustomAttribute.
+
+P: ¿Puedo tener un atributo que ejecute código al aplicarse?
+R: No. Los atributos solo almacenan metadatos. El código que responde
+a ellos debe ejecutarse explícitamente (por un framework, por reflection,
+por un source generator).
+
+P: ¿Debo usar el sufijo "Attribute"?
+R: Es la convención. El compilador permite omitirlo al usar el atributo,
+pero la clase debe llamarse así. Ej: class MyAttribute : Attribute ->
+[My] o [MyAttribute].
+
+P: ¿Puedo tener propiedades de solo lectura en un atributo?
+R: Sí, pero solo se pueden establecer mediante parámetros posicionales
+del constructor. Los parámetros nombrados requieren setter público.
+
+P: ¿Qué tipos puede tener un parámetro de atributo?
+R: bool, byte, short, int, long, float, double, char, string, enum, Type,
+y arrays unidimensionales de esos tipos.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseñe e implemente un framework completo de "Mapeo Objeto-Objeto"
+similar a AutoMapper, basado en atributos personalizados:
+
+1. Atributos de configuración:
+   - [MapDe(origen)]: en clase destino, indica la clase origen.
+   - [Ignorar]: propiedad a ignorar durante el mapeo.
+   - [Mapear(origen)]: mapea a propiedad con nombre diferente.
+   - [Convertir(origen, tipoConversor)]: aplica un conversor personalizado.
+   - [ValorDefecto(valor)]: valor por defecto si origen es null.
+   - [DespuesDelMapa(metodo)]: método a ejecutar después del mapeo.
+
+2. Mapeador genérico:
+   - TDestino Mapear<TO, TD>(TO origen) donde TD : new()
+   - Soporte para mapeo de colecciones (List<T>, arrays, IEnumerable)
+   - Soporte para mapeo anidado (propiedades que son objetos)
+   - Soporte para mapeo inverso (bidireccional)
+
+3. Conversores incluidos:
+   - StringToInt, StringToDateTime, IntToString
+   - Conversor de enums (string -> enum, int -> enum)
+   - Formato de fechas y números
+
+4. Perfiles de mapeo:
+   - Atributo [Perfil(nombre)] para agrupar configuraciones
+   - Posibilidad de tener múltiples perfiles para diferentes contextos
+
+5. Validación post-mapeo:
+   - Atributo [ValidarDespues] que ejecuta validaciones en el destino
+   - Reporte de errores de mapeo
+
+6. Rendimiento:
+   - Cache de expresiones de mapeo compiladas (Expression Trees)
+   - Cache de PropertyInfo y MethodInfo
+   - Uso de CreateDelegate para invocación rápida
+
+Extensión: Integre con el sistema de validación del capítulo anterior
+para validar automáticamente los objetos mapeados.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Los atributos personalizados son una herramienta extremadamente versátil
+que permite incrustar metadatos semánticos en el código. Combinados con
+reflection, permiten crear frameworks elegantes y declarativos. En el
+próximo capítulo exploraremos la palabra clave dynamic y la programación
+dinámica en C#.
+
+¡Felicidades! Ya es capaz de crear y usar atributos personalizados como
+todo un arquitecto de software.
+
+PRÓXIMO CAPÍTULO: 66 - Palabra Clave Dynamic
+================================================================================

@@ -1,0 +1,1121 @@
+===============================================================================
+  GO MASTER BOOK — MODULO IV: POO EN GO
+  CAPITULO 40: PROYECTO MODULO IV
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capitulo 40, el proyecto integrador del Modulo IV.
+
+A lo largo de este modulo has aprendido:
+
+  * Capitulo 31: Metodos con value receiver
+  * Capitulo 32: Pointer receivers, eficiencia y nil receiver
+  * Capitulo 33: Interfaces, duck typing y polimorfismo
+  * Capitulo 34: Interfaz vacia any y type switch
+  * Capitulo 35: Type assertion y comma ok idiom
+  * Capitulo 36: Embedding y composicion sobre herencia
+  * Capitulo 37: Stringers y representacion textual
+  * Capitulo 38: Errores, wrapping y sentinel errors
+  * Capitulo 39: Panic y recover
+
+Ahora llega el momento de INTEGRAR TODO en un proyecto real.
+
+Construiremos un sistema de figuras geometricas que demuestre:
+interfaces, metodos, type assertion, embedding, Stringers, errores
+personalizados, y manejo de panics.
+
+No es un proyecto trivial: es tu certificacion como Arquitecto Go.
+
+Manos a la obra!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"El codigo no se lee, se vive. Y cada proyecto es la catedral donde
+demuestras lo que aprendiste."
+
+  - E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Integrar todos los conceptos del modulo en un solo proyecto.
+  * Disenar una jerarquia de formas geometricas con interfaces.
+  * Implementar metodos, Stringers, errores y panic handling.
+  * Aplicar type assertion y type switch en casos reales.
+  * Usar embedding para compartir comportamiento.
+  * Escribir codigo modular, testeable y extensible.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL PROYECTO
+--------------------------------------------------------------------------------
+
+--- 1. ARQUITECTURA DEL PROYECTO --------------------------------------------
+
+El proyecto se estructura en los siguientes modulos logicos:
+
+  * shapes/   - definiciones de formas e interfaces
+  * drawing/  - renderizado de formas
+  * calc/     - calculos geometricos
+  * errors/   - errores personalizados
+  * main      - punto de entrada
+
+Para simplificar, lo implementaremos todo en un solo archivo main.go
+con secciones claramente delimitadas.
+
+--- 2. INTERFACES FUNDAMENTALES ---------------------------------------------
+
+type Forma interface {
+    Area() float64
+    Perimetro() float64
+    String() string
+}
+
+type FormaConNombre interface {
+    Forma
+    Nombre() string
+}
+
+type FormaTridimensional interface {
+    Forma
+    Volumen() float64
+    AreaSuperficial() float64
+}
+
+type Dibujable interface {
+    Dibujar() string
+}
+
+type Escalable interface {
+    Escalar(factor float64) error
+}
+
+--- 3. ERRORES PERSONALIZADOS -----------------------------------------------
+
+  * ErrDimensionInvalida - cuando una dimension es negativa o cero
+  * ErrFormaNoValida - cuando una forma no es reconocida
+  * ErrEscalaInvalida - cuando el factor de escala es invalido
+  * ErrorDimension con campos Forma, Campo, Valor, Err
+
+--- 4. FORMAS IMPLEMENTADAS -------------------------------------------------
+
+  * Circulo      - Radio float64
+  * Rectangulo   - Ancho, Alto float64
+  * Cuadrado     - embebe Rectangulo
+  * Triangulo    - Base, Altura, Lados
+  * Elipse       - RadioMayor, RadioMenor
+  * PoligonoRegular - NumLados, LongitudLado
+  * Cubo         - Lado float64 (3D)
+  * Esfera       - Radio float64 (3D)
+
+--- 5. COLECCION DE FORMAS --------------------------------------------------
+
+ContenedorFormas almacena cualquier Forma y permite:
+  * Agregar, Obtener, Eliminar
+  * CalcularAreaTotal, PerimetroTotal
+  * FiltrarPorTipo (type switch)
+  * DibujarTodas (type assertion a Dibujable)
+  * EscalarTodas (type assertion a Escalable)
+
+--- 6. CODIGO FUENTE COMPLETO ------------------------------------------------
+
+A continuacion el proyecto completo:
+
+```go
+package main
+
+import (
+    "errors"
+    "fmt"
+    "math"
+    "strings"
+)
+
+// ============================================================
+// PAQUETE DE ERRORES PERSONALIZADOS
+// ============================================================
+
+var (
+    ErrDimensionInvalida = errors.New("dimension invalida: debe ser positiva")
+    ErrFormaNoValida     = errors.New("forma no valida para esta operacion")
+    ErrEscalaInvalida    = errors.New("factor de escala debe ser positivo")
+    ErrIndiceFueraRango  = errors.New("indice fuera de rango")
+)
+
+type ErrorDimension struct {
+    Forma string
+    Campo string
+    Valor float64
+    Err   error
+}
+
+func (e *ErrorDimension) Error() string {
+    return fmt.Sprintf("ErrorDimension[%s.%s = %.2f]: %v",
+        e.Forma, e.Campo, e.Valor, e.Err)
+}
+
+func (e *ErrorDimension) Unwrap() error {
+    return e.Err
+}
+
+func NewErrorDimension(forma, campo string, valor float64) error {
+    return &ErrorDimension{
+        Forma: forma,
+        Campo: campo,
+        Valor: valor,
+        Err:   ErrDimensionInvalida,
+    }
+}
+
+// ============================================================
+// INTERFACES BASE
+// ============================================================
+
+type Forma interface {
+    Area() float64
+    Perimetro() float64
+    String() string
+}
+
+type FormaConNombre interface {
+    Forma
+    Nombre() string
+}
+
+type FormaTridimensional interface {
+    Forma
+    Volumen() float64
+    AreaSuperficial() float64
+}
+
+type Dibujable interface {
+    Dibujar() string
+}
+
+type Escalable interface {
+    Escalar(factor float64) error
+}
+
+// ============================================================
+// CIRCULO
+// ============================================================
+
+type Circulo struct {
+    Radio float64
+}
+
+func NewCirculo(radio float64) (*Circulo, error) {
+    if radio <= 0 {
+        return nil, NewErrorDimension("Circulo", "Radio", radio)
+    }
+    return &Circulo{Radio: radio}, nil
+}
+
+func MustCirculo(radio float64) *Circulo {
+    c, err := NewCirculo(radio)
+    if err != nil {
+        panic(err)
+    }
+    return c
+}
+
+func (c *Circulo) Area() float64 {
+    return math.Pi * c.Radio * c.Radio
+}
+
+func (c *Circulo) Perimetro() float64 {
+    return 2 * math.Pi * c.Radio
+}
+
+func (c *Circulo) Nombre() string {
+    return fmt.Sprintf("Circulo(R=%.2f)", c.Radio)
+}
+
+func (c *Circulo) String() string {
+    return fmt.Sprintf("Circulo{radio: %.2f, area: %.2f, perimetro: %.2f}",
+        c.Radio, c.Area(), c.Perimetro())
+}
+
+func (c *Circulo) GoString() string {
+    return fmt.Sprintf("&Circulo{Radio: %.2f}", c.Radio)
+}
+
+func (c *Circulo) Dibujar() string {
+    return "  ( )  \n ( O ) \n  ( )  "
+}
+
+func (c *Circulo) Escalar(factor float64) error {
+    if factor <= 0 {
+        return fmt.Errorf("%w: %.2f", ErrEscalaInvalida, factor)
+    }
+    c.Radio *= factor
+    return nil
+}
+
+// ============================================================
+// RECTANGULO
+// ============================================================
+
+type Rectangulo struct {
+    Ancho float64
+    Alto  float64
+}
+
+func NewRectangulo(ancho, alto float64) (*Rectangulo, error) {
+    if ancho <= 0 {
+        return nil, NewErrorDimension("Rectangulo", "Ancho", ancho)
+    }
+    if alto <= 0 {
+        return nil, NewErrorDimension("Rectangulo", "Alto", alto)
+    }
+    return &Rectangulo{Ancho: ancho, Alto: alto}, nil
+}
+
+func MustRectangulo(ancho, alto float64) *Rectangulo {
+    r, err := NewRectangulo(ancho, alto)
+    if err != nil {
+        panic(err)
+    }
+    return r
+}
+
+func (r *Rectangulo) Area() float64 {
+    return r.Ancho * r.Alto
+}
+
+func (r *Rectangulo) Perimetro() float64 {
+    return 2 * (r.Ancho + r.Alto)
+}
+
+func (r *Rectangulo) Diagonal() float64 {
+    return math.Sqrt(r.Ancho*r.Ancho + r.Alto*r.Alto)
+}
+
+func (r *Rectangulo) Nombre() string {
+    return fmt.Sprintf("Rectangulo(%.2fx%.2f)", r.Ancho, r.Alto)
+}
+
+func (r *Rectangulo) String() string {
+    return fmt.Sprintf("Rectangulo{ancho: %.2f, alto: %.2f, area: %.2f, perimetro: %.2f, diagonal: %.2f}",
+        r.Ancho, r.Alto, r.Area(), r.Perimetro(), r.Diagonal())
+}
+
+func (r *Rectangulo) Dibujar() string {
+    linea := strings.Repeat("*", int(r.Ancho))
+    filas := make([]string, int(r.Alto))
+    for i := range filas {
+        filas[i] = linea
+    }
+    return strings.Join(filas, "\n")
+}
+
+func (r *Rectangulo) Escalar(factor float64) error {
+    if factor <= 0 {
+        return fmt.Errorf("%w: %.2f", ErrEscalaInvalida, factor)
+    }
+    r.Ancho *= factor
+    r.Alto *= factor
+    return nil
+}
+
+// ============================================================
+// CUADRADO (EMBEDDING)
+// ============================================================
+
+type Cuadrado struct {
+    Rectangulo
+}
+
+func NewCuadrado(lado float64) (*Cuadrado, error) {
+    if lado <= 0 {
+        return nil, NewErrorDimension("Cuadrado", "Lado", lado)
+    }
+    return &Cuadrado{Rectangulo: Rectangulo{Ancho: lado, Alto: lado}}, nil
+}
+
+func MustCuadrado(lado float64) *Cuadrado {
+    c, err := NewCuadrado(lado)
+    if err != nil {
+        panic(err)
+    }
+    return c
+}
+
+func (c *Cuadrado) Lado() float64 {
+    return c.Ancho
+}
+
+func (c *Cuadrado) Nombre() string {
+    return fmt.Sprintf("Cuadrado(L=%.2f)", c.Lado())
+}
+
+func (c *Cuadrado) String() string {
+    return fmt.Sprintf("Cuadrado{lado: %.2f, area: %.2f, perimetro: %.2f, diagonal: %.2f}",
+        c.Lado(), c.Area(), c.Perimetro(), c.Diagonal())
+}
+
+// ============================================================
+// TRIANGULO
+// ============================================================
+
+type Triangulo struct {
+    Base   float64
+    Altura float64
+    LadoA  float64
+    LadoB  float64
+    LadoC  float64
+}
+
+func NewTriangulo(base, altura, ladoA, ladoB, ladoC float64) (*Triangulo, error) {
+    if base <= 0 || altura <= 0 || ladoA <= 0 || ladoB <= 0 || ladoC <= 0 {
+        return nil, fmt.Errorf("%w: todas las dimensiones deben ser positivas", ErrDimensionInvalida)
+    }
+    if ladoA+ladoB <= ladoC || ladoA+ladoC <= ladoB || ladoB+ladoC <= ladoA {
+        return nil, fmt.Errorf("los lados no forman un triangulo valido")
+    }
+    return &Triangulo{
+        Base: base, Altura: altura,
+        LadoA: ladoA, LadoB: ladoB, LadoC: ladoC,
+    }, nil
+}
+
+func (t *Triangulo) Area() float64 {
+    return (t.Base * t.Altura) / 2
+}
+
+func (t *Triangulo) Perimetro() float64 {
+    return t.LadoA + t.LadoB + t.LadoC
+}
+
+func (t *Triangulo) Nombre() string {
+    return fmt.Sprintf("Triangulo(%.2f, %.2f, %.2f)", t.LadoA, t.LadoB, t.LadoC)
+}
+
+func (t *Triangulo) String() string {
+    return fmt.Sprintf("Triangulo{base: %.2f, altura: %.2f, lados: [%.2f, %.2f, %.2f], area: %.2f, perimetro: %.2f}",
+        t.Base, t.Altura, t.LadoA, t.LadoB, t.LadoC, t.Area(), t.Perimetro())
+}
+
+func (t *Triangulo) Escalar(factor float64) error {
+    if factor <= 0 {
+        return fmt.Errorf("%w: %.2f", ErrEscalaInvalida, factor)
+    }
+    t.Base *= factor
+    t.Altura *= factor
+    t.LadoA *= factor
+    t.LadoB *= factor
+    t.LadoC *= factor
+    return nil
+}
+
+// ============================================================
+// ELIPSE
+// ============================================================
+
+type Elipse struct {
+    RadioMayor float64
+    RadioMenor float64
+}
+
+func NewElipse(radioMayor, radioMenor float64) (*Elipse, error) {
+    if radioMayor <= 0 {
+        return nil, NewErrorDimension("Elipse", "RadioMayor", radioMayor)
+    }
+    if radioMenor <= 0 {
+        return nil, NewErrorDimension("Elipse", "RadioMenor", radioMenor)
+    }
+    return &Elipse{RadioMayor: radioMayor, RadioMenor: radioMenor}, nil
+}
+
+func (e *Elipse) Area() float64 {
+    return math.Pi * e.RadioMayor * e.RadioMenor
+}
+
+func (e *Elipse) Perimetro() float64 {
+    h := math.Pow(e.RadioMayor-e.RadioMenor, 2) / math.Pow(e.RadioMayor+e.RadioMenor, 2)
+    return math.Pi * (e.RadioMayor + e.RadioMenor) * (1 + (3*h)/(10+math.Sqrt(4-3*h)))
+}
+
+func (e *Elipse) Nombre() string {
+    return fmt.Sprintf("Elipse(a=%.2f, b=%.2f)", e.RadioMayor, e.RadioMenor)
+}
+
+func (e *Elipse) String() string {
+    return fmt.Sprintf("Elipse{radioMayor: %.2f, radioMenor: %.2f, area: %.2f, perimetro: %.2f}",
+        e.RadioMayor, e.RadioMenor, e.Area(), e.Perimetro())
+}
+
+// ============================================================
+// POLIGONO REGULAR
+// ============================================================
+
+type PoligonoRegular struct {
+    NumLados     int
+    LongitudLado float64
+    Apotema      float64
+}
+
+func NewPoligonoRegular(numLados int, longitudLado float64) (*PoligonoRegular, error) {
+    if numLados < 3 {
+        return nil, fmt.Errorf("un poligono debe tener al menos 3 lados: %d", numLados)
+    }
+    if longitudLado <= 0 {
+        return nil, NewErrorDimension("PoligonoRegular", "LongitudLado", longitudLado)
+    }
+    apotema := longitudLado / (2 * math.Tan(math.Pi/float64(numLados)))
+    return &PoligonoRegular{
+        NumLados:     numLados,
+        LongitudLado: longitudLado,
+        Apotema:      apotema,
+    }, nil
+}
+
+func (p *PoligonoRegular) Area() float64 {
+    return (p.Perimetro() * p.Apotema) / 2
+}
+
+func (p *PoligonoRegular) Perimetro() float64 {
+    return float64(p.NumLados) * p.LongitudLado
+}
+
+func (p *PoligonoRegular) Nombre() string {
+    nombres := map[int]string{
+        3: "Triangulo", 4: "Cuadrado", 5: "Pentagono",
+        6: "Hexagono", 7: "Heptagono", 8: "Octagono",
+        9: "Nonagono", 10: "Decagono",
+    }
+    nombre, ok := nombres[p.NumLados]
+    if !ok {
+        nombre = fmt.Sprintf("Poligono-%d", p.NumLados)
+    }
+    return fmt.Sprintf("%s(L=%.2f)", nombre, p.LongitudLado)
+}
+
+func (p *PoligonoRegular) String() string {
+    return fmt.Sprintf("PoligonoRegular{%s, lados: %d, longitud: %.2f, apotema: %.2f, area: %.2f, perimetro: %.2f}",
+        p.Nombre(), p.NumLados, p.LongitudLado, p.Apotema, p.Area(), p.Perimetro())
+}
+
+// ============================================================
+// FORMAS 3D: CUBO
+// ============================================================
+
+type Cubo struct {
+    Lado float64
+}
+
+func NewCubo(lado float64) (*Cubo, error) {
+    if lado <= 0 {
+        return nil, NewErrorDimension("Cubo", "Lado", lado)
+    }
+    return &Cubo{Lado: lado}, nil
+}
+
+func (c *Cubo) Area() float64 {
+    return 6 * c.Lado * c.Lado
+}
+
+func (c *Cubo) Perimetro() float64 {
+    return 12 * c.Lado
+}
+
+func (c *Cubo) Volumen() float64 {
+    return c.Lado * c.Lado * c.Lado
+}
+
+func (c *Cubo) AreaSuperficial() float64 {
+    return c.Area()
+}
+
+func (c *Cubo) Nombre() string {
+    return fmt.Sprintf("Cubo(L=%.2f)", c.Lado)
+}
+
+func (c *Cubo) String() string {
+    return fmt.Sprintf("Cubo{lado: %.2f, area: %.2f, volumen: %.2f}",
+        c.Lado, c.AreaSuperficial(), c.Volumen())
+}
+
+// ============================================================
+// FORMAS 3D: ESFERA
+// ============================================================
+
+type Esfera struct {
+    Radio float64
+}
+
+func NewEsfera(radio float64) (*Esfera, error) {
+    if radio <= 0 {
+        return nil, NewErrorDimension("Esfera", "Radio", radio)
+    }
+    return &Esfera{Radio: radio}, nil
+}
+
+func (e *Esfera) Area() float64 {
+    return 4 * math.Pi * e.Radio * e.Radio
+}
+
+func (e *Esfera) Perimetro() float64 {
+    return 2 * math.Pi * e.Radio
+}
+
+func (e *Esfera) Volumen() float64 {
+    return (4.0 / 3.0) * math.Pi * math.Pow(e.Radio, 3)
+}
+
+func (e *Esfera) AreaSuperficial() float64 {
+    return e.Area()
+}
+
+func (e *Esfera) Nombre() string {
+    return fmt.Sprintf("Esfera(R=%.2f)", e.Radio)
+}
+
+func (e *Esfera) String() string {
+    return fmt.Sprintf("Esfera{radio: %.2f, area: %.2f, volumen: %.2f}",
+        e.Radio, e.AreaSuperficial(), e.Volumen())
+}
+
+// ============================================================
+// COLECCION DE FORMAS
+// ============================================================
+
+type ContenedorFormas struct {
+    formas []Forma
+}
+
+func NewContenedorFormas() *ContenedorFormas {
+    return &ContenedorFormas{
+        formas: make([]Forma, 0),
+    }
+}
+
+func (c *ContenedorFormas) Agregar(formas ...Forma) {
+    c.formas = append(c.formas, formas...)
+}
+
+func (c *ContenedorFormas) Obtener(i int) (Forma, error) {
+    if i < 0 || i >= len(c.formas) {
+        return nil, fmt.Errorf("%w: indice %d, longitud %d",
+            ErrIndiceFueraRango, i, len(c.formas))
+    }
+    return c.formas[i], nil
+}
+
+func (c *ContenedorFormas) Eliminar(i int) error {
+    if i < 0 || i >= len(c.formas) {
+        return fmt.Errorf("%w: indice %d", ErrIndiceFueraRango, i)
+    }
+    c.formas = append(c.formas[:i], c.formas[i+1:]...)
+    return nil
+}
+
+func (c *ContenedorFormas) Cantidad() int {
+    return len(c.formas)
+}
+
+func (c *ContenedorFormas) AreaTotal() float64 {
+    var total float64
+    for _, f := range c.formas {
+        total += f.Area()
+    }
+    return total
+}
+
+func (c *ContenedorFormas) PerimetroTotal() float64 {
+    var total float64
+    for _, f := range c.formas {
+        total += f.Perimetro()
+    }
+    return total
+}
+
+func (c *ContenedorFormas) Listar() {
+    fmt.Println("=== COLECCION DE FORMAS ===")
+    for i, f := range c.formas {
+        fmt.Printf("[%d] %s\n", i, f)
+    }
+    fmt.Printf("Total: %d formas\n", c.Cantidad())
+    fmt.Printf("Area total: %.2f\n", c.AreaTotal())
+    fmt.Printf("Perimetro total: %.2f\n", c.PerimetroTotal())
+}
+
+func (c *ContenedorFormas) FiltrarPorTipo() map[string][]Forma {
+    resultado := make(map[string][]Forma)
+    for _, f := range c.formas {
+        tipo := fmt.Sprintf("%T", f)
+        resultado[tipo] = append(resultado[tipo], f)
+    }
+    return resultado
+}
+
+func (c *ContenedorFormas) DibujarTodas() {
+    fmt.Println("=== DIBUJANDO FORMAS ===")
+    for i, f := range c.formas {
+        if d, ok := f.(Dibujable); ok {
+            fmt.Printf("[%d] Forma dibujable:\n%s\n", i, d.Dibujar())
+        }
+    }
+}
+
+func (c *ContenedorFormas) EscalarTodas(factor float64) []error {
+    var errores []error
+    for i, f := range c.formas {
+        if e, ok := f.(Escalable); ok {
+            if err := e.Escalar(factor); err != nil {
+                errores = append(errores, fmt.Errorf("[%d] %w", i, err))
+            }
+        }
+    }
+    return errores
+}
+
+func (c *ContenedorFormas) ObtenerTridimensionales() []FormaTridimensional {
+    var result []FormaTridimensional
+    for _, f := range c.formas {
+        if f3d, ok := f.(FormaTridimensional); ok {
+            result = append(result, f3d)
+        }
+    }
+    return result
+}
+
+func (c *ContenedorFormas) ProcesarConPanic() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Printf("PANIC capturado en ProcesarConPanic: %v\n", r)
+        }
+    }()
+
+    for i, f := range c.formas {
+        if c, ok := f.(*Circulo); ok && c.Radio > 100 {
+            panic(fmt.Sprintf("Circulo demasiado grande en indice %d: radio=%.2f", i, c.Radio))
+        }
+        fmt.Printf("Procesando [%d]: %s\n", i, f.String())
+    }
+}
+
+// ============================================================
+// FUNCIONES UTILITARIAS
+// ============================================================
+
+func CompararFormas(a, b Forma) string {
+    diff := math.Abs(a.Area() - b.Area())
+    if diff < 0.0001 {
+        return "Las formas tienen areas practicamente iguales"
+    }
+    mayor := a
+    menor := b
+    if b.Area() > a.Area() {
+        mayor = b
+        menor = a
+    }
+    return fmt.Sprintf("La forma con mayor area es %s (%.2f vs %.2f)",
+        mayor, mayor.Area(), menor.Area())
+}
+
+func DescribirForma(f Forma) string {
+    if f == nil {
+        return "nil"
+    }
+
+    desc := fmt.Sprintf("Descripcion: %s\n", f.String())
+    desc += fmt.Sprintf("  Area: %.2f\n", f.Area())
+    desc += fmt.Sprintf("  Perimetro: %.2f\n", f.Perimetro())
+
+    if fn, ok := f.(FormaConNombre); ok {
+        desc += fmt.Sprintf("  Nombre: %s\n", fn.Nombre())
+    }
+
+    if d, ok := f.(Dibujable); ok {
+        desc += fmt.Sprintf("  Dibujo:\n%s\n", d.Dibujar())
+    }
+
+    if f3d, ok := f.(FormaTridimensional); ok {
+        desc += fmt.Sprintf("  Volumen: %.2f\n", f3d.Volumen())
+        desc += fmt.Sprintf("  Area Superficial: %.2f\n", f3d.AreaSuperficial())
+    }
+
+    if e, ok := f.(Escalable); ok {
+        _ = e
+        desc += "  Escalable: si\n"
+    }
+
+    return desc
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+
+func main() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Printf("PANIC en main: %v\n", r)
+        }
+    }()
+
+    fmt.Println("======= SISTEMA DE FORMAS GEOMETRICAS =======")
+    fmt.Println("Modulo IV - GO MASTER BOOK")
+    fmt.Println()
+
+    // Crear contenedor
+    coleccion := NewContenedorFormas()
+
+    // Crear formas individuales
+    fmt.Println("1. Creando formas...")
+    formas := []Forma{
+        MustCirculo(5),
+        MustRectangulo(4, 6),
+        MustCuadrado(4),
+    }
+
+    // Formas con error controlado
+    circulo2, err := NewCirculo(3)
+    if err != nil {
+        fmt.Printf("  Error controlado: %v\n", err)
+    } else {
+        formas = append(formas, circulo2)
+    }
+
+    triangulo, err := NewTriangulo(3, 4, 3, 4, 5)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        formas = append(formas, triangulo)
+    }
+
+    elipse, err := NewElipse(5, 3)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        formas = append(formas, elipse)
+    }
+
+    poligono, err := NewPoligonoRegular(6, 4)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        formas = append(formas, poligono)
+    }
+
+    cubo, err := NewCubo(3)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        formas = append(formas, cubo)
+    }
+
+    esfera, err := NewEsfera(2.5)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+    } else {
+        formas = append(formas, esfera)
+    }
+
+    coleccion.Agregar(formas...)
+    fmt.Println()
+
+    // Listar formas
+    coleccion.Listar()
+    fmt.Println()
+
+    // Describir cada forma
+    fmt.Println("2. Descripcion detallada...")
+    for i := 0; i < coleccion.Cantidad(); i++ {
+        f, _ := coleccion.Obtener(i)
+        fmt.Printf("--- Forma %d ---\n%s\n", i, DescribirForma(f))
+    }
+
+    // Dibujar formas
+    fmt.Println("3. Dibujando formas dibujables...")
+    coleccion.DibujarTodas()
+    fmt.Println()
+
+    // Escalar formas
+    fmt.Println("4. Escalando formas (factor 2.0)...")
+    errores := coleccion.EscalarTodas(2.0)
+    if len(errores) > 0 {
+        for _, err := range errores {
+            fmt.Printf("  Error al escalar: %v\n", err)
+        }
+    }
+    coleccion.Listar()
+    fmt.Println()
+
+    // Type switch
+    fmt.Println("5. Clasificacion por tipo...")
+    clasificacion := coleccion.FiltrarPorTipo()
+    for tipo, formas := range clasificacion {
+        fmt.Printf("  %s: %d forma(s)\n", tipo, len(formas))
+    }
+    fmt.Println()
+
+    // Formas tridimensionales
+    fmt.Println("6. Formas 3D...")
+    formas3d := coleccion.ObtenerTridimensionales()
+    for _, f3d := range formas3d {
+        fmt.Printf("  %s: Volumen=%.2f, AreaSup=%.2f\n",
+            f3d, f3d.Volumen(), f3d.AreaSuperficial())
+    }
+    fmt.Println()
+
+    // Comparar formas
+    fmt.Println("7. Comparando formas...")
+    if coleccion.Cantidad() >= 2 {
+        f1, _ := coleccion.Obtener(0)
+        f2, _ := coleccion.Obtener(1)
+        fmt.Println(CompararFormas(f1, f2))
+    }
+    fmt.Println()
+
+    // Error wrapping
+    fmt.Println("8. Demostracion de error wrapping...")
+    _, err = NewCirculo(-5)
+    if err != nil {
+        fmt.Printf("  Error: %v\n", err)
+        if errors.Is(err, ErrDimensionInvalida) {
+            fmt.Println("  (error es de tipo ErrDimensionInvalida)")
+        }
+        var dimErr *ErrorDimension
+        if errors.As(err, &dimErr) {
+            fmt.Printf("  Forma: %s, Campo: %s, Valor: %.2f\n",
+                dimErr.Forma, dimErr.Campo, dimErr.Valor)
+        }
+    }
+    fmt.Println()
+
+    // Panic handling
+    fmt.Println("9. Demostracion de panic handling...")
+    coleccionGrande := NewContenedorFormas()
+    coleccionGrande.Agregar(MustCirculo(200))
+    coleccionGrande.ProcesarConPanic()
+    fmt.Println("  (panic capturado correctamente)")
+    fmt.Println()
+
+    // GoString
+    fmt.Println("10. GoString demo...")
+    if coleccion.Cantidad() > 0 {
+        f, _ := coleccion.Obtener(0)
+        fmt.Printf("  %%v:  %v\n", f)
+        fmt.Printf("  %%#v: %#v\n", f)
+    }
+    fmt.Println()
+
+    fmt.Println("======= PROYECTO COMPLETADO EXITOSAMENTE =======")
+}
+```
+
+--- 7. EJECUCION Y SALIDA ESPERADA ------------------------------------------
+
+Al ejecutar el programa, deberias ver:
+
+1. Creacion de formas (con algunos errores controlados)
+2. Listado de la coleccion con areas y perimetros
+3. Descripcion detallada de cada forma (incluyendo dibujos)
+4. Formas dibujables renderizadas en texto
+5. Escalado de formas (factor 2.0)
+6. Clasificacion por tipo (type switch)
+7. Formas tridimensionales con volumen
+8. Comparacion entre formas
+9. Error wrapping demostrado
+10. Panic capturado correctamente
+11. GoString con %#v
+
+--- 8. EXTENSIONES POSIBLES --------------------------------------------------
+
+1. **Persistencia**: Guardar/cargar formas desde JSON o archivo binario.
+2. **Graficos**: Renderizar formas en 2D con una libreria grafica.
+3. **Operaciones booleanas**: Union, interseccion, diferencia de areas.
+4. **Calculo de limites**: Obtener el rectangulo que engloba cada forma.
+5. **Animaciones**: Mover, rotar y escalar formas en el tiempo.
+6. **Formas compuestas**: Combinar formas para crear figuras complejas.
+7. **Validacion avanzada**: Verificar solapamiento o contencion.
+8. **Benchmarking**: Medir el rendimiento de calculos con muchas formas.
+9. **Web API**: Exponer las operaciones via HTTP REST.
+10. **Generacion procedural**: Crear formas aleatorias con restricciones.
+
+--- 9. PRUEBAS UNITARIAS ----------------------------------------------------
+
+Para probar el sistema, puedes escribir pruebas como estas:
+
+```
+func TestCirculoArea(t *testing.T) {
+    c := MustCirculo(5)
+    esperado := math.Pi * 25
+    if math.Abs(c.Area()-esperado) > 0.0001 {
+        t.Errorf("Area: got %.2f, want %.2f", c.Area(), esperado)
+    }
+}
+
+func TestCuadradoEmbedding(t *testing.T) {
+    c := MustCuadrado(4)
+    if c.Ancho != c.Alto {
+        t.Error("Cuadrado debe tener ancho == alto")
+    }
+    if c.Area() != 16 {
+        t.Errorf("Area: got %.2f, want 16", c.Area())
+    }
+}
+
+func TestDimensionInvalida(t *testing.T) {
+    _, err := NewCirculo(-1)
+    if !errors.Is(err, ErrDimensionInvalida) {
+        t.Error("se esperaba ErrDimensionInvalida")
+    }
+}
+
+func TestTridimensionalInterface(t *testing.T) {
+    var f Forma = MustCubo(3)
+    f3d, ok := f.(FormaTridimensional)
+    if !ok {
+        t.Error("Cubo deberia implementar FormaTridimensional")
+    }
+    if f3d.Volumen() != 27 {
+        t.Errorf("Volumen: got %.2f, want 27", f3d.Volumen())
+    }
+}
+
+func TestPanicRecover(t *testing.T) {
+    defer func() {
+        if r := recover(); r != nil {
+            t.Logf("Panic capturado: %v", r)
+        }
+    }()
+    _ = MustCirculo(-1)
+    t.Error("no deberia llegar aqui")
+}
+```
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPITULO
+--------------------------------------------------------------------------------
+
+En este proyecto integrador has aplicado:
+
+  * Interfaces: Forma, FormaConNombre, FormaTridimensional, Dibujable, Escalable
+  * Metodos: cada forma con Area, Perimetro, String, Nombre, Dibujar, Escalar
+  * Pointer receivers: mutacion con Escalar, creacion con constructores
+  * Embedding: Cuadrado embebe Rectangulo
+  * Stringers: cada forma con String() y algunas con GoString()
+  * Errores personalizados: ErrorDimension con Unwrap
+  * Sentinel errors: ErrDimensionInvalida, ErrEscalaInvalida, etc.
+  * Error wrapping: fmt.Errorf con %w
+  * errors.Is y errors.As: inspeccion de errores
+  * Type assertion: f.(Dibujable), f.(Escalable), f.(FormaTridimensional)
+  * Type switch: en DescribirForma y FiltrarPorTipo
+  * Comma ok idiom: en todas las type assertions
+  * Panic y recover: en Must* functions y ProcesarConPanic
+  * Defer: en main y en funciones de procesamiento
+
+Este proyecto es la culminacion de todo lo aprendido en el Modulo IV.
+No solo has aprendido teoria: has construido un sistema funcional,
+extensible y bien disenado.
+
+--- EJERCICIOS ADICIONALES ---
+
+1. Anade una nueva forma (Trapecio, Rombo, Pentagono, etc.).
+2. Implementa la interfaz json.Marshaler para serializar formas.
+3. Crea un tipo FactoryFormas que cree formas desde strings.
+4. Implementa un metodo Clonar() en cada forma (prototype pattern).
+5. Anade validacion de triangulo con la desigualdad triangular.
+6. Crea un metodo Mover(dx, dy float64) para formas 2D.
+7. Implementa un "AreaZero" error para formas sin area.
+8. Crea un tipo GrupoFormas que embeba ContenedorFormas y agrupe.
+
+--- FAQ DEL PROYECTO ---
+
+P: Por que usar Must* functions si paniquean?
+R: Son utiles en init() o cuando sabes que los valores son validos
+   en compilacion. Para datos de usuario, usa New* que retorna error.
+
+P: Por que Cuadrado usa embedding de Rectangulo y no al reves?
+R: Porque un cuadrado es un caso especial de rectangulo donde
+   ancho == alto. Embedding permite reutilizar metodos.
+
+P: La interfaz FormaTridimensional extiende Forma, pero Perimetro
+   no tiene sentido en 3D?
+R: Correcto, se incluye por consistencia pero podria separarse.
+   En una implementacion mas refinada, se podria omitir.
+
+P: Como evito que Escalar afecte al area incorrectamente?
+R: Si escalas una forma, el area se escala al cuadrado del factor.
+   El metodo Escalar solo modifica las dimensiones lineales; el
+   area se recalcula automaticamente en Area().
+
+--- DESAFIO FINAL DEL ARQUITECTO ---
+
+Constructor de Escenas 3D:
+
+Extiende el sistema para manejar escenas 3D completas:
+
+1. Crea una interfaz Escena que contenga formas 3D y tenga:
+   - Iluminacion() string (metodo)
+   - Renderizar() string (metodo)
+
+2. Crea un tipo EscenaBasica que tenga:
+   - Formas []FormaTridimensional
+   - Luces []Luz
+   - Camara Camara
+
+3. Define los tipos:
+   - Luz con Tipo (puntual, direccional), Posicion, Intensidad
+   - Camara con Posicion, Direccion, CampoDeVision
+
+4. Implementa el trazado de rayos simplificado:
+   - Detectar que formas intersectan con un rayo
+   - Calcular la primera interseccion
+   - Aplicar sombras basicas
+
+5. Exporta la escena a formato OBJ o STL.
+
+Este desafio final integra TODO el conocimiento de POO en Go:
+interfaces, composicion, metodos, errores, y manejo de panics
+en un contexto de graficos 3D.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL MODULO IV
+--------------------------------------------------------------------------------
+
+Has completado el MODULO IV de GO MASTER BOOK: POO EN GO.
+
+Comenzaste aprendiendo que los metodos son funciones con receptor,
+y has llegado hasta construir un sistema completo de figuras
+geometricas con interfaces, composicion, errores y recuperacion
+de panics.
+
+Este modulo te ha ensenado que la POO en Go no es la POO clasica:
+es mas simple, mas flexible y mas poderosa.
+
+  * No hay clases, pero hay tipos con metodos.
+  * No hay herencia, pero hay composicion (embedding).
+  * No hay excepciones, pero hay errores como valores.
+  * No hay try/catch, pero hay panic/recover.
+
+Y lo mas importante: has aprendido a disenar sistemas modulares,
+extensibles y mantenibles.
+
+El conocimiento que has adquirido aqui es la base para construir
+desde microservicios hasta sistemas de graficos, pasando por
+herramientas CLI, APIs web y cualquier tipo de aplicacion en Go.
+
+Felicitaciones, Arquitecto Go.
+
+Nos vemos en el proximo modulo!
+
+--------------------------------------------------------------------------------
+  PROXIMO MODULO
+--------------------------------------------------------------------------------
+
+  MODULO V: CONCURRENCIA EN GO
+    -> Gorutinas, canales, select, patrones de concurrencia,
+      sync primitives, context, y proyecto integrador.
+
+===============================================================================
+  FIN DEL MODULO IV - POO EN GO
+===============================================================================

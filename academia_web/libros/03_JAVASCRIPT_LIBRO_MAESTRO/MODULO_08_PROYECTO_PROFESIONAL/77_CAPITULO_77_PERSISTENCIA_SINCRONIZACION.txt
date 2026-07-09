@@ -1,0 +1,398 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                        MÓDULO VIII
+##                        CAPÍTULO 77
+##      PERSISTENCIA Y SINCRONIZACIÓN
+################################################################################
+################################################################################
+
+"Los datos deben sobrevivir a recargas y navegadores.
+Persistencia local para el usuario, sincronización
+con el servidor para la colaboración."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+Tu aplicación tiene datos que deben persistir:
+- localStorage: datos offline.
+- Servidor: datos compartidos.
+- Sincronización: reconciliar ambos.
+
+Hoy aprenderás a manejar la persistencia completa.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Implementar persistencia offline con IndexedDB.
+✓ Sincronizar datos locales con el servidor.
+✓ Manejar conflictos de datos.
+✓ Estrategia offline-first.
+
+===============================================================================
+1. INDEXEDDB WRAPPER
+===============================================================================
+
+```javascript
+// indexeddb.js - Almacenamiento local avanzado
+
+class BaseDatosLocal {
+    constructor(nombre, version = 1) {
+        this.nombre = nombre;
+        this.version = version;
+        this.db = null;
+    }
+
+    async conectar() {
+        return new Promise(function(resolve, reject) {
+            let solicitud = indexedDB.open(this.nombre, this.version);
+
+            solicitud.onupgradeneeded = function(evento) {
+                let db = evento.target.result;
+
+                // Crear stores si no existen
+                if (!db.objectStoreNames.contains("proyectos")) {
+                    db.createObjectStore("proyectos", { keyPath: "id" });
+                }
+                if (!db.objectStoreNames.contains("tareas")) {
+                    db.createObjectStore("tareas", { keyPath: "id" });
+                }
+                if (!db.objectStoreNames.contains("usuarios")) {
+                    db.createObjectStore("usuarios", { keyPath: "id" });
+                }
+            };
+
+            solicitud.onsuccess = function(evento) {
+                this.db = evento.target.result;
+                resolve(this.db);
+            };
+
+            solicitud.onerror = function() {
+                reject("Error al conectar con IndexedDB");
+            };
+        });
+    }
+
+    async guardar(store, datos) {
+        return new Promise(function(resolve, reject) {
+            let transaccion = this.db.transaction(store, "readwrite");
+            let objectStore = transaccion.objectStore(store);
+            let solicitud = objectStore.put(datos);
+
+            solicitud.onsuccess = () => resolve(true);
+            solicitud.onerror = () => reject("Error al guardar en " + store);
+        });
+    }
+
+    async obtener(store, id) {
+        return new Promise(function(resolve, reject) {
+            let transaccion = this.db.transaction(store, "readonly");
+            let objectStore = transaccion.objectStore(store);
+            let solicitud = objectStore.get(id);
+
+            solicitud.onsuccess = () => resolve(solicitud.result);
+            solicitud.onerror = () => reject("Error al leer de " + store);
+        });
+    }
+
+    async obtenerTodos(store) {
+        return new Promise(function(resolve, reject) {
+            let transaccion = this.db.transaction(store, "readonly");
+            let objectStore = transaccion.objectStore(store);
+            let solicitud = objectStore.getAll();
+
+            solicitud.onsuccess = () => resolve(solicitud.result);
+            solicitud.onerror = () => reject("Error al leer todos de " + store);
+        });
+    }
+
+    async eliminar(store, id) {
+        return new Promise(function(resolve, reject) {
+            let transaccion = this.db.transaction(store, "readwrite");
+            let objectStore = transaccion.objectStore(store);
+            let solicitud = objectStore.delete(id);
+
+            solicitud.onsuccess = () => resolve(true);
+            solicitud.onerror = () => reject("Error al eliminar de " + store);
+        });
+    }
+}
+
+const dbLocal = new BaseDatosLocal("GestorProyectos", 1);
+```
+
+===============================================================================
+2. SERVICIO DE SINCRONIZACIÓN
+===============================================================================
+
+```javascript
+// sync.js - Sincronización local-servidor
+
+class SyncService {
+    constructor() {
+        this._pendientes = [];  // Operaciones no sincronizadas
+        this._sincronizando = false;
+    }
+
+    async iniciar() {
+        await dbLocal.conectar();
+
+        // Cargar operaciones pendientes
+        try {
+            let pendientes = localStorage.getItem("sync-pendientes");
+            this._pendientes = pendientes ? JSON.parse(pendientes) : [];
+        } catch {
+            this._pendientes = [];
+        }
+
+        // Escuchar cambios para marcar como pendiente de sync
+        EventBus.on("tareas:actualizado", (datos) => {
+            this._marcarPendiente("tarea", "actualizar", datos);
+        });
+
+        // Intentar sincronizar al inicio
+        this.sincronizar();
+    }
+
+    _marcarPendiente(tipo, accion, datos) {
+        this._pendientes.push({
+            id: Date.now().toString(),
+            tipo: tipo,
+            accion: accion,
+            datos: datos,
+            timestamp: new Date().toISOString()
+        });
+        this._guardarPendientes();
+    }
+
+    _guardarPendientes() {
+        localStorage.setItem("sync-pendientes", JSON.stringify(this._pendientes));
+    }
+
+    async sincronizar() {
+        if (this._sincronizando || this._pendientes.length === 0) return;
+        this._sincronizando = true;
+
+        console.log("🔄 Sincronizando " + this._pendientes.length + " operaciones...");
+
+        let exitosas = [];
+        let fallidas = [];
+
+        for (let op of this._pendientes) {
+            try {
+                if (op.tipo === "tarea") {
+                    let url = `/api/tareas/${op.datos.tareaId}`;
+                    let res = await fetch(url, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(op.datos)
+                    });
+
+                    if (res.ok) {
+                        exitosas.push(op.id);
+                    } else {
+                        fallidas.push(op);
+                    }
+                }
+            } catch (error) {
+                fallidas.push(op);
+            }
+        }
+
+        // Eliminar operaciones exitosas
+        this._pendientes = this._pendientes.filter(
+            op => !exitosas.includes(op.id)
+        );
+        this._guardarPendientes();
+
+        this._sincronizando = false;
+
+        console.log(`✅ Sincronización: ${exitosas.length} OK, ${fallidas.length} pendientes`);
+
+        if (this._pendientes.length > 0) {
+            // Reintentar en 30 segundos
+            setTimeout(() => this.sincronizar(), 30000);
+        }
+    }
+
+    get hayPendientes() {
+        return this._pendientes.length > 0;
+    }
+
+    get cantidadPendientes() {
+        return this._pendientes.length;
+    }
+}
+
+const syncService = new SyncService();
+```
+
+===============================================================================
+3. ESTRATEGIA OFFLINE-FIRST
+===============================================================================
+
+```javascript
+// Uso combinado: localStorage + API
+
+class RepositorioDatos {
+    async obtenerTareas(proyectoId) {
+        // 1. Intentar servidor
+        try {
+            let res = await fetch(`/api/tareas?proyectoId=${proyectoId}`);
+            if (res.ok) {
+                let tareas = await res.json();
+                // 2. Guardar en local para offline
+                tareas.forEach(t => dbLocal.guardar("tareas", t));
+                return tareas;
+            }
+        } catch {
+            console.log("📡 Offline: usando datos locales");
+        }
+
+        // 3. Fallback a datos locales
+        let todas = await dbLocal.obtenerTodos("tareas");
+        return todas.filter(t => t.proyectoId === proyectoId);
+    }
+
+    async guardarTarea(tarea) {
+        // 1. Guardar local inmediato
+        await dbLocal.guardar("tareas", tarea);
+
+        // 2. Intentar servidor
+        try {
+            let res = await fetch("/api/tareas", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(tarea)
+            });
+            if (res.ok) {
+                return await res.json();
+            }
+        } catch {
+            console.log("📡 Offline: tarea guardada localmente");
+            syncService._marcarPendiente("tarea", "crear", tarea);
+        }
+
+        return tarea;
+    }
+
+    async detectarConflictos(tareaId, versionLocal) {
+        try {
+            let res = await fetch(`/api/tareas/${tareaId}`);
+            let servidor = await res.json();
+
+            if (servidor.version > versionLocal) {
+                return {
+                    hayConflicto: true,
+                    local: versionLocal,
+                    servidor: servidor.version,
+                    datosServidor: servidor
+                };
+            }
+        } catch { /* ignorar */ }
+
+        return { hayConflicto: false };
+    }
+
+    async resolverConflicto(tareaId, accion) {
+        let conflicto = await this.detectarConflictos(tareaId, 1);
+
+        if (conflicto.hayConflicto) {
+            if (accion === "usar-servidor") {
+                await dbLocal.guardar("tareas", conflicto.datosServidor);
+                return conflicto.datosServidor;
+            }
+            if (accion === "usar-local") {
+                let local = await dbLocal.obtener("tareas", tareaId);
+                await fetch(`/api/tareas/${tareaId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(local)
+                });
+                return local;
+            }
+        }
+    }
+}
+
+const repo = new RepositorioDatos();
+```
+
+===============================================================================
+4. INDICADOR DE ESTADO DE RED
+===============================================================================
+
+```javascript
+// Indicador visual de conexión
+
+function crearIndicadorRed() {
+    let indicador = document.createElement("div");
+    indicador.id = "sync-status";
+    indicador.style.cssText = "position:fixed;bottom:10px;left:10px;" +
+        "padding:5px 12px;border-radius:15px;font-size:12px;z-index:9999;" +
+        "transition:all 0.3s;";
+
+    document.body.appendChild(indicador);
+
+    function actualizar() {
+        if (navigator.onLine) {
+            let pendientes = syncService.cantidadPendientes;
+            if (pendientes > 0) {
+                indicador.textContent = `🔄 ${pendientes} cambios pendientes`;
+                indicador.style.background = "#fff3e0";
+                indicador.style.color = "#ef6c00";
+            } else {
+                indicador.textContent = "✅ En línea";
+                indicador.style.background = "#e8f5e9";
+                indicador.style.color = "#2e7d32";
+            }
+        } else {
+            indicador.textContent = "📡 Sin conexión";
+            indicador.style.background = "#ffebee";
+            indicador.style.color = "#c62828";
+        }
+    }
+
+    window.addEventListener("online", () => {
+        actualizar();
+        syncService.sincronizar();
+    });
+
+    window.addEventListener("offline", actualizar);
+    EventBus.on("sync:completado", actualizar);
+
+    actualizar();
+}
+
+// crearIndicadorRed();
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ IndexedDB: almacenamiento local avanzado (más de 5-10MB).
+✔ SyncService: operaciones pendientes con reintento.
+✔ RepositorioDatos: offline-first (local primero, servidor después).
+✔ Detección de conflictos: comparar versiones.
+✔ Indicador de red: estado visual de conexión.
+✔ Sincronización automática al reconectar.
+
+===============================================================================
+FIN DEL CAPÍTULO 77
+===============================================================================
+
+"La persistencia es la memoria de una aplicación.
+Sin ella, cada recarga es un nuevo comienzo.
+Con ella, los datos cruzan el tiempo."
+— Profesor Búho AI
+
+===============================================================================

@@ -1,0 +1,799 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                   CAPÍTULO 51: ARQUITECTURA MVC
+##
+################################################################################
+
+"Un buen arquitecto no construye muros, organiza espacios.
+El MVC organiza el caos del código en capas de significado."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Bienvenido al Módulo VI, el nivel profesional de PHP Master Book. Aquí
+dejamos atrás los scripts sueltos y comenzamos a construir aplicaciones
+como verdaderos ingenieros de software.
+
+El patrón MVC (Model-View-Controller) es la columna vertebral de casi
+todo framework web moderno: Laravel, Symfony, CodeIgniter, CakePHP y
+muchos más lo utilizan. Entender MVC te permitirá trabajar con cualquier
+framework y escribir código limpio, mantenible y escalable.
+
+En este capítulo construiremos un mini framework MVC desde cero para
+que entiendas exactamente cómo fluye la información entre el modelo,
+la vista y el controlador. Sin magia, sin misterios: solo PHP puro.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El código bien organizado no es un lujo, es una profesión.
+Los mejores developers no escriben mejor código, organizan mejor el caos."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender el patrón MVC y su separación de responsabilidades.
+✓ Implementar un controlador frontal (front controller) con PHP.
+✓ Diseñar modelos que encapsulen el acceso a datos.
+✓ Construir vistas reutilizables sin lógica de negocio.
+✓ Enrutar peticiones HTTP al controlador correcto.
+✓ Conectar el flujo: Ruta → Controlador → Modelo → Vista.
+✓ Sentar las bases para usar Composer y namespaces en capítulos siguientes.
+
+===============================================================================
+1. ¿QUÉ ES MVC?
+===============================================================================
+
+MVC significa Model-View-Controller. Es un patrón de arquitectura de
+software que separa la lógica de una aplicación en tres componentes
+interconectados:
+
+  ┌──────────┐     ┌──────────┐     ┌──────────┐
+  │  MODEL   │◄───►│ CONTROLLER│◄───►│   VIEW   │
+  │ (Datos)  │     │ (Lógica)  │     │ (Interfaz)│
+  └──────────┘     └──────────┘     └──────────┘
+
+Modelo (Model):
+  - Gestiona los datos y las reglas de negocio.
+  - Se comunica con la base de datos.
+  - No sabe nada del HTML ni del controlador.
+
+Vista (View):
+  - Presenta los datos al usuario.
+  - Solo contiene HTML y variables PHP.
+  - No hace consultas SQL ni procesa formularios.
+
+Controlador (Controller):
+  - Recibe la petición del usuario.
+  - Decide qué modelo usar y qué vista mostrar.
+  - Es el pegamento entre el modelo y la vista.
+
+===============================================================================
+2. ESTRUCTURA DE DIRECTORIOS
+===============================================================================
+
+Antes de escribir código, definamos la estructura de carpetas:
+
+```
+mi_app/
+├── index.php          ← Front Controller (punto de entrada)
+├── .htaccess          ← Reescribe URLs
+├── config/
+│   └── database.php   ← Configuración
+├── controllers/
+│   └── HomeController.php
+├── models/
+│   └── Usuario.php
+├── views/
+│   ├── layout/
+│   │   └── header.php
+│   └── home/
+│       └── index.php
+└── core/
+    ├── Router.php
+    ├── Controller.php
+    └── Model.php
+```
+
+Cada carpeta tiene una responsabilidad única. Nunca mezcles archivos
+de modelo con archivos de vista. Esta disciplina es la base de todo
+código profesional.
+
+===============================================================================
+3. FRONT CONTROLLER (index.php)
+===============================================================================
+
+El front controller es el único punto de entrada a la aplicación.
+Todas las peticiones pasan por él gracias a la reescritura de URLs.
+
+```php
+<?php
+// index.php - Front Controller
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/core/Router.php';
+require_once __DIR__ . '/core/Controller.php';
+require_once __DIR__ . '/core/Model.php';
+
+$router = new Router();
+
+// Definir rutas
+$router->add('GET', '/', 'HomeController@index');
+$router->add('GET', '/usuarios', 'UsuarioController@index');
+$router->add('GET', '/usuarios/{id}', 'UsuarioController@show');
+
+// Resolver la ruta actual
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$method = $_SERVER['REQUEST_METHOD'];
+
+$router->dispatch($method, $uri);
+```
+
+Este archivo es el corazón. Cada petición, sin importar la URL, llega
+aquí y el router decide qué hacer con ella.
+
+El archivo .htaccess hace posible la reescritura:
+
+```apache
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]
+```
+
+Con esto, cualquier URL como /usuarios/5 termina ejecutando index.php,
+que a su vez llama al controlador correspondiente.
+
+===============================================================================
+4. EL ROUTER
+===============================================================================
+
+El Router es el componente que interpreta la URL y determina qué
+controlador y método ejecutar.
+
+```php
+<?php
+// core/Router.php
+class Router
+{
+    private array $routes = [];
+
+    public function add(string $method, string $pattern, string $handler): void
+    {
+        // Convertir {param} en grupo de captura regex
+        $pattern = preg_replace('/\{(\w+)\}/', '(?P<$1>[^/]+)', $pattern);
+        $pattern = '#^' . $pattern . '$#';
+
+        $this->routes[] = [
+            'method'  => strtoupper($method),
+            'pattern' => $pattern,
+            'handler' => $handler,
+        ];
+    }
+
+    public function dispatch(string $method, string $uri): void
+    {
+        $method = strtoupper($method);
+
+        foreach ($this->routes as $route) {
+            if ($route['method'] !== $method) {
+                continue;
+            }
+
+            if (preg_match($route['pattern'], $uri, $matches)) {
+                // Extraer solo los parámetros nombrados
+                $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+
+                [$controllerName, $action] = explode('@', $route['handler']);
+                $controllerFile = __DIR__ . '/../controllers/' . $controllerName . '.php';
+
+                if (!file_exists($controllerFile)) {
+                    http_response_code(500);
+                    echo "Controlador no encontrado: $controllerName";
+                    return;
+                }
+
+                require_once $controllerFile;
+                $controller = new $controllerName();
+                $controller->$action(...array_values($params));
+                return;
+            }
+        }
+
+        http_response_code(404);
+        echo "404 - Página no encontrada";
+    }
+}
+```
+
+El Router hace tres cosas:
+  1. Almacena rutas con su método HTTP y patrón.
+  2. Convierte parámetros como {id} en grupos de captura regex.
+  3. Cuando encuentra una coincidencia, instancia el controlador
+     y ejecuta el método con los parámetros extraídos.
+
+Este diseño permite rutas como:
+  - GET / → HomeController@index
+  - GET /usuarios/42 → UsuarioController@show con id=42
+  - POST /usuarios → UsuarioController@store
+
+===============================================================================
+5. CONTROLADOR BASE
+===============================================================================
+
+El controlador base proporciona utilidades comunes a todos los
+controladores, como la carga de vistas.
+
+```php
+<?php
+// core/Controller.php
+class Controller
+{
+    protected function render(string $view, array $data = []): void
+    {
+        // Extraer variables para la vista
+        extract($data);
+
+        $viewFile = __DIR__ . '/../views/' . $view . '.php';
+
+        if (!file_exists($viewFile)) {
+            throw new RuntimeException("Vista no encontrada: $view");
+        }
+
+        // Incluir layout si existe
+        $layoutFile = __DIR__ . '/../views/layout/header.php';
+        if (file_exists($layoutFile)) {
+            require $layoutFile;
+        }
+
+        require $viewFile;
+
+        // Incluir footer
+        $footerFile = __DIR__ . '/../views/layout/footer.php';
+        if (file_exists($footerFile)) {
+            require $footerFile;
+        }
+    }
+
+    protected function redirect(string $url): void
+    {
+        header('Location: ' . $url);
+        exit;
+    }
+
+    protected function json(array $data, int $status = 200): void
+    {
+        http_response_code($status);
+        header('Content-Type: application/json');
+        echo json_encode($data, JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+```
+
+El método render() extrae el array $data en variables individuales
+usando extract(), luego incluye la vista. Esto mantiene las vistas
+limpias: solo acceden a variables, no a $this.
+
+El método json() es útil para APIs y peticiones AJAX. El método
+redirect() evita tener que escribir header() manualmente cada vez.
+
+===============================================================================
+6. CONTROLADOR ESPECÍFICO
+===============================================================================
+
+Ahora veamos un controlador de ejemplo que maneja la lógica de
+usuarios.
+
+```php
+<?php
+// controllers/HomeController.php
+require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../models/Usuario.php';
+
+class HomeController extends Controller
+{
+    public function index(): void
+    {
+        $usuarioModel = new Usuario();
+        $usuarios = $usuarioModel->getAll();
+
+        $this->render('home/index', [
+            'titulo'   => 'Bienvenido a Mi App MVC',
+            'mensaje'  => 'Esta es la página principal',
+            'usuarios' => $usuarios,
+        ]);
+    }
+}
+```
+
+```php
+<?php
+// controllers/UsuarioController.php
+require_once __DIR__ . '/../core/Controller.php';
+require_once __DIR__ . '/../models/Usuario.php';
+
+class UsuarioController extends Controller
+{
+    public function index(): void
+    {
+        $model = new Usuario();
+        $usuarios = $model->getAll();
+
+        $this->render('usuarios/index', ['usuarios' => $usuarios]);
+    }
+
+    public function show(int $id): void
+    {
+        $model = new Usuario();
+        $usuario = $model->findById($id);
+
+        if (!$usuario) {
+            http_response_code(404);
+            $this->render('errors/404', ['mensaje' => 'Usuario no encontrado']);
+            return;
+        }
+
+        $this->render('usuarios/show', ['usuario' => $usuario]);
+    }
+
+    public function store(): void
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            $this->redirect('/usuarios');
+        }
+
+        $nombre = trim($_POST['nombre'] ?? '');
+        $email  = trim($_POST['email'] ?? '');
+
+        if (empty($nombre) || empty($email)) {
+            // Podríamos usar sesiones para mensajes flash
+            $this->redirect('/usuarios?error=1');
+        }
+
+        $model = new Usuario();
+        $model->create(['nombre' => $nombre, 'email' => $email]);
+
+        $this->redirect('/usuarios?success=1');
+    }
+}
+```
+
+Observa que el controlador no contiene HTML, solo lógica de
+aplicación. Decide qué modelo usar, valida datos, y pasa
+resultados a la vista.
+
+Cada método del controlador se corresponde con una acción que el
+usuario puede realizar: listar, ver, crear, actualizar o eliminar.
+
+===============================================================================
+7. MODELO
+===============================================================================
+
+El modelo encapsula el acceso a la base de datos. Ningún controlador
+debería hacer consultas SQL directamente.
+
+```php
+<?php
+// core/Model.php
+class Model
+{
+    protected PDO $db;
+
+    public function __construct()
+    {
+        $this->db = new PDO(
+            'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
+            DB_USER,
+            DB_PASS,
+            [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+            ]
+        );
+    }
+}
+```
+
+```php
+<?php
+// config/database.php
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'mi_app');
+define('DB_USER', 'root');
+define('DB_PASS', '');
+```
+
+```php
+<?php
+// models/Usuario.php
+require_once __DIR__ . '/../core/Model.php';
+
+class Usuario extends Model
+{
+    public function getAll(): array
+    {
+        $stmt = $this->db->query('SELECT id, nombre, email, creado_en FROM usuarios ORDER BY id DESC');
+        return $stmt->fetchAll();
+    }
+
+    public function findById(int $id): array|false
+    {
+        $stmt = $this->db->prepare('SELECT id, nombre, email, creado_en FROM usuarios WHERE id = :id');
+        $stmt->execute([':id' => $id]);
+        return $stmt->fetch();
+    }
+
+    public function create(array $data): int
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO usuarios (nombre, email) VALUES (:nombre, :email)'
+        );
+        $stmt->execute([
+            ':nombre' => $data['nombre'],
+            ':email'  => $data['email'],
+        ]);
+        return (int) $this->db->lastInsertId();
+    }
+
+    public function update(int $id, array $data): bool
+    {
+        $campos = [];
+        foreach ($data as $key => $value) {
+            $campos[] = "$key = :$key";
+        }
+
+        $sql = 'UPDATE usuarios SET ' . implode(', ', $campos) . ' WHERE id = :id';
+        $data[':id'] = $id;
+
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute($data);
+    }
+
+    public function delete(int $id): bool
+    {
+        $stmt = $this->db->prepare('DELETE FROM usuarios WHERE id = :id');
+        return $stmt->execute([':id' => $id]);
+    }
+}
+```
+
+El modelo extiende la clase base Model que ya tiene la conexión PDO.
+Cada método del modelo se enfoca en una operación de base de datos:
+CRUD (Create, Read, Update, Delete).
+
+Siempre usamos consultas preparadas (prepared statements) para evitar
+inyección SQL. Nunca concatenamos variables en las consultas.
+
+===============================================================================
+8. VISTAS
+===============================================================================
+
+Las vistas solo contienen HTML y variables PHP. No deben hacer
+consultas ni llamar a métodos del modelo.
+
+```php
+<!-- views/layout/header.php -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= htmlspecialchars($titulo ?? 'Mi App MVC') ?></title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <nav>
+        <a href="/">Inicio</a>
+        <a href="/usuarios">Usuarios</a>
+    </nav>
+    <main>
+```
+
+```php
+<!-- views/home/index.php -->
+<h1><?= htmlspecialchars($mensaje) ?></h1>
+
+<h2>Usuarios Registrados</h2>
+
+<?php if (empty($usuarios)): ?>
+    <p>No hay usuarios registrados.</p>
+<?php else: ?>
+    <ul>
+        <?php foreach ($usuarios as $u): ?>
+            <li>
+                <a href="/usuarios/<?= $u['id'] ?>">
+                    <?= htmlspecialchars($u['nombre']) ?>
+                </a>
+                - <?= htmlspecialchars($u['email']) ?>
+            </li>
+        <?php endforeach; ?>
+    </ul>
+<?php endif; ?>
+```
+
+```php
+<!-- views/usuarios/show.php -->
+<h1><?= htmlspecialchars($usuario['nombre']) ?></h1>
+
+<table>
+    <tr><th>ID</th><td><?= $usuario['id'] ?></td></tr>
+    <tr><th>Email</th><td><?= htmlspecialchars($usuario['email']) ?></td></tr>
+    <tr><th>Registrado</th><td><?= $usuario['creado_en'] ?></td></tr>
+</table>
+
+<a href="/usuarios">← Volver al listado</a>
+```
+
+```php
+<!-- views/layout/footer.php -->
+    </main>
+    <footer>
+        <p>&copy; <?= date('Y') ?> Mi App MVC</p>
+    </footer>
+</body>
+</html>
+```
+
+Las vistas reciben variables gracias a extract($data) en el
+controlador base. Siempre escapamos la salida con htmlspecialchars()
+para prevenir XSS.
+
+Las vistas de layout (header y footer) envuelven el contenido. Esto
+evita repetir la estructura HTML en cada vista.
+
+===============================================================================
+9. FLUJO COMPLETO DE UNA PETICIÓN
+===============================================================================
+
+Veamos qué sucede paso a paso cuando un usuario visita /usuarios/5:
+
+  1. El navegador hace GET a http://localhost/usuarios/5
+  2. .htaccess reescribe la URL a index.php
+  3. index.php crea el Router y define las rutas
+  4. Router::dispatch() coincide con 'GET /usuarios/{id}'
+  5. El router extrae id=5 del patrón
+  6. Se instancia UsuarioController y se llama a show(5)
+  7. show() crea un Usuario (modelo) y llama a findById(5)
+  8. El modelo ejecuta SELECT con prepared statement
+  9. El controlador recibe el array $usuario
+  10. El controlador llama a $this->render('usuarios/show', [...])
+  11. render() incluye header.php, luego views/usuarios/show.php,
+      luego footer.php
+  12. El HTML resultante se envía al navegador
+
+Cada paso tiene una responsabilidad clara y única. Si algo falla,
+sabemos exactamente dónde mirar.
+
+===============================================================================
+10. BENEFICIOS DE MVC EN PROYECTOS REALES
+===============================================================================
+
+MVC no es solo una moda. Es una necesidad cuando los proyectos crecen:
+
+Separación de responsabilidades:
+  - Los diseñadores web trabajan solo en las vistas.
+  - Los desarrolladores backend trabajan en modelos y controladores.
+  - Los cambios en la base de datos no afectan el HTML.
+
+Reutilización:
+  - Un mismo modelo puede usarse desde múltiples controladores.
+  - Las vistas parciales (como header/footer) se reutilizan en
+    toda la aplicación.
+
+Testabilidad:
+  - Los modelos se pueden probar sin necesidad del navegador.
+  - Los controladores se pueden probar con datos simulados.
+
+Mantenibilidad:
+  - Cuando hay un bug, sabes dónde buscar.
+  - Cuando necesitas una nueva funcionalidad, sabes dónde ponerla.
+  - El próximo developer que lea tu código te lo agradecerá.
+
+Escalabilidad:
+  - Puedes agregar más desarrolladores al proyecto sin pisar el
+    código de otros.
+  - Puedes cambiar la base de datos sin tocar las vistas.
+  - Puedes cambiar el diseño sin tocar la lógica de negocio.
+
+===============================================================================
+11. ERRORES COMUNES EN MVC
+===============================================================================
+
+Aprender MVC tiene su curva. Estos son los errores más frecuentes:
+
+Lógica en las vistas:
+  - Malo: Hacer consultas SQL dentro de un archivo .php de vista.
+  - Bueno: Pasar los datos ya procesados desde el controlador.
+
+Controladores gordos (Fat Controllers):
+  - Malo: Toda la lógica de negocio en el controlador.
+  - Bueno: El controlador solo orquesta, la lógica va en modelos.
+
+Modelos anémicos:
+  - Malo: Modelos que solo tienen propiedades y getters/setters.
+  - Bueno: Modelos con métodos de negocio significativos.
+
+Falta de validación:
+  - Malo: Confiar ciegamente en los datos que llegan.
+  - Bueno: Validar siempre en el controlador o en el modelo.
+
+Mezcla de responsabilidades:
+  - Malo: Un controlador que también renderiza HTML directamente.
+  - Bueno: Usar el método render() del controlador base.
+
+No usar prepared statements:
+  - Malo: "SELECT * FROM usuarios WHERE id = $id"
+  - Bueno: "SELECT * FROM usuarios WHERE id = :id" con bind.
+
+===============================================================================
+12. MVC VS FRAMEWORKS POPULARES
+===============================================================================
+
+Cuando aprendas Laravel, Symfony o CodeIgniter, reconocerás este
+patrón inmediatamente:
+
+Laravel:
+  - Routes: web.php define las rutas (similar a nuestro Router).
+  - Eloquent ORM: modelos que extienden Model (similar al nuestro).
+  - Blade: sistema de templates (similar a nuestras vistas).
+  - Artisan: línea de comandos para generar archivos.
+
+Symfony:
+  - Routes: anotaciones en los propios controladores.
+  - Doctrine ORM: modelos con repositorios.
+  - Twig: motor de plantillas.
+  - Bundle: módulos reutilizables.
+
+CodeIgniter:
+  - Routes: config/routes.php.
+  - Query Builder: construcción de consultas.
+  - Helpers: funciones auxiliares para vistas.
+
+La esencia es la misma en todos: separación clara de capas.
+Aprender MVC puro te da el superpoder de entender cualquier framework
+en cuestión de días.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- MVC separa la aplicación en Modelo (datos), Vista (interfaz) y
+  Controlador (lógica de orquestación).
+- El Front Controller (index.php) es el punto de entrada único que
+  recibe todas las peticiones.
+- El Router interpreta la URL y determina qué controlador ejecutar.
+- Los controladores reciben peticiones, usan modelos y devuelven vistas.
+- Los modelos encapsulan el acceso a datos y las reglas de negocio.
+- Las vistas solo contienen HTML y variables escapadas.
+- El uso de .htaccess con mod_rewrite permite URLs limpias.
+- Los prepared statements previenen inyección SQL.
+- MVC es la base de frameworks como Laravel, Symfony y CodeIgniter.
+- Un buen diseño MVC hace el código mantenible, testeable y escalable.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un controlador ProductoController con los
+   métodos index (lista todos), show (muestra uno), create (formulario)
+   y store (guarda). Implementa el modelo Producto con sus métodos CRUD.
+
+🧩 **Ejercicio 2:** Agrega al Router la capacidad de manejar rutas con
+   prefijo opcional, como /admin/usuarios. Modifica el dispatch para
+   que soporte subdirectorios.
+
+🧩 **Ejercicio 3:** Implementa un sistema de layouts múltiples. Crea
+   un layout para el panel de administración (admin) y otro para la
+   página pública. Modifica Controller::render() para aceptar un
+   layout opcional como tercer parámetro.
+
+🧩 **Ejercicio 4:** Agrega manejo de errores 404 y 500 en el Router.
+   Crea un método notFound() y un método serverError() que carguen
+   vistas específicas de error.
+
+🧩 **Ejercicio 5:** Implementa un middleware simple que verifique si
+   el usuario está autenticado. Crea una clase AuthMiddleware con un
+   método handle() que redirija al login si no hay sesión activa.
+
+🧩 **Ejercicio 6:** Escribe una prueba unitaria para el modelo Usuario.
+   Usa SQLite en memoria para simular la base de datos y verifica que
+   create(), findById() y delete() funcionen correctamente.
+
+🧩 **Ejercicio 7:** Refactoriza el Router actual para que soporte
+   grupos de rutas con un prefijo común. Por ejemplo:
+   Router::group('/admin', function($router) { ... });
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿MVC solo se usa en aplicaciones web?**
+   No, MVC se originó en aplicaciones de escritorio con Smalltalk en
+   los años 70. Hoy se usa en web, mobile, desktop y juegos. Cualquier
+   aplicación con interfaz de usuario puede beneficiarse de MVC.
+
+❓ **¿Debo siempre usar MVC?**
+   Para scripts pequeños (< 500 líneas) puede ser excesivo. Pero para
+   aplicaciones que crecerán, empezar con MVC desde el día 1 es la
+   decisión correcta. Es más fácil mantener una buena arquitectura
+   desde el principio que refactorizar después.
+
+❓ **¿Qué diferencia hay entre MVC y MVVM?**
+   MVVM (Model-View-ViewModel) es una variante donde el ViewModel
+   reemplaza al Controller. Es más común en aplicaciones frontend
+   con frameworks como Vue.js o Angular. El concepto es similar:
+   separación de responsabilidades.
+
+❓ **¿Puedo tener múltiples controladores por ruta?**
+   Técnicamente sí, pero no es recomendable. Una ruta debería
+   corresponder a una acción en un controlador. Si necesitas varias
+   acciones, son rutas diferentes.
+
+❓ **¿Los modelos siempre se conectan a una base de datos?**
+   No. Un modelo puede representar datos de una API externa, un
+   archivo JSON, una sesión, o cualquier fuente de datos. La
+   esencia del modelo es encapsular el acceso a datos y reglas
+   de negocio, independientemente de su origen.
+
+❓ **¿Qué hago si mi controlador crece demasiado?**
+   Señal de que necesitas refactorizar. Extrae la lógica de negocio
+   a servicios (clases separadas) o repositorios. El controlador debe
+   ser delgado: solo orquestar, no implementar.
+
+❓ **¿MVC funciona con APIs REST?**
+   Sí, perfectamente. En APIs REST, los controladores devuelven JSON
+   en lugar de HTML. Las vistas son replacedas por formateadores de
+   respuesta. Los modelos siguen siendo los mismos.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Mini Framework MVC desde Cero**
+
+   Construye un mini framework MVC completo con las siguientes
+   características profesionales:
+
+   1. Sistema de rutas con parámetros opcionales y nombres de ruta.
+   2. Controladores con before/after filters (middleware).
+   3. Modelo base con Query Builder fluido:
+      $usuario->where('activo', 1)->orderBy('id', 'DESC')->get()
+   4. Sistema de plantillas con secciones:
+      @section('sidebar') ... @endsection
+   5. Manejo de errores con whoops-like debug screen.
+   6. Inyector de dependencias simple para controladores.
+   7. Migraciones básicas para crear tablas desde PHP.
+
+   El desafío es hacerlo funcionar SIN framework externo, solo con
+   PHP puro. Prueba tu framework creando un blog funcional con:
+   - CRUD de artículos
+   - Autenticación básica
+   - Panel de administración
+   - URLs amigables
+
+   Este proyecto solidificará tu comprensión de MVC para siempre.
+
+===============================================================================
+FIN DEL CAPÍTULO 51
+===============================================================================
+
+"La arquitectura no es lo que hace grandiosa a una aplicación,
+sino lo que evita que se derrumbe cuando crece."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+52_CAPITULO_52_COMPOSER.txt
+===============================================================================

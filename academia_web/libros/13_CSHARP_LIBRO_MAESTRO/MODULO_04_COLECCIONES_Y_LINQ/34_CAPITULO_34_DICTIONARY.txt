@@ -1,0 +1,1246 @@
+================================================================================
+  MÓDULO IV: COLECCIONES Y LINQ
+  C# MASTER BOOK
+  CAPÍTULO 34: DICTIONARY<K,V>
+================================================================================
+
+  << BIENVENIDA >>
+
+  Bienvenido al Capítulo 34. Hasta ahora hemos trabajado con colecciones
+  indexadas por posición (arrays, listas). Pero en el mundo real, la
+  mayoría de los datos se buscan por una clave, no por un índice.
+
+  Dictionary<K,V> es la implementación de tabla hash de C#. Te permite
+  almacenar pares clave-valor y recuperarlos en tiempo O(1) promedio.
+  Es, después de List<T>, la colección más utilizada en aplicaciones
+  profesionales.
+
+  En este capítulo exploraremos cada aspecto de Dictionary<K,V>: desde
+  su funcionamiento interno (hash buckets) hasta patrones avanzados como
+  cachés, contadores y agrupaciones.
+
+  -----------------------------------------------------------------------
+
+  << FRASE DEL DÍA >>
+
+  "En un diccionario no buscas por página, buscas por palabra clave.
+   Así debería ser tu código: acceso directo a lo que importa."
+   — Lucas Ega
+
+  -----------------------------------------------------------------------
+
+  << OBJETIVOS DEL CAPÍTULO >>
+
+  1. Comprender el funcionamiento interno de las tablas hash.
+  2. Crear y poblar diccionarios con diferentes técnicas.
+  3. Agregar y recuperar elementos con Add y el indexador [].
+  4. Usar TryGetValue para acceso seguro.
+  5. Iterar sobre Keys, Values y KeyValuePair.
+  6. Comprobar existencia con ContainsKey y ContainsValue.
+  7. Combinar LINQ con diccionarios.
+  8. Implementar patrones avanzados con diccionarios.
+
+  -----------------------------------------------------------------------
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+  --- 34.1 ¿QUÉ ES Dictionary<K,V>? ---
+
+  Dictionary<K,V> es una colección genérica que almacena pares clave-valor.
+  Cada clave debe ser única y proporciona un código hash para determinar
+  su ubicación en la tabla.
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class DefinicionDictionary
+  {
+      static void Main()
+      {
+          // Crear diccionario vacío
+          Dictionary<string, int> edades = new Dictionary<string, int>();
+
+          // Crear con capacidad inicial
+          Dictionary<int, string> usuarios = new Dictionary<int, string>(1000);
+
+          // Crear con IEqualityComparer personalizado
+          Dictionary<string, string> insensitive = new Dictionary<string, string>(
+              StringComparer.OrdinalIgnoreCase);
+
+          // Crear desde otra colección
+          var temporal = new Dictionary<string, int>
+          {
+              { "Ana", 25 },
+              { "Luis", 30 }
+          };
+          Dictionary<string, int> copia = new Dictionary<string, int>(temporal);
+
+          // Collection initializer (sintaxis moderna)
+          Dictionary<string, double> precios = new Dictionary<string, double>
+          {
+              ["Manzana"] = 1.99,
+              ["Pera"] = 2.49,
+              ["Uva"] = 3.99
+          };
+
+          Console.WriteLine($"Edades count: {edades.Count}");
+          Console.WriteLine($"Precios: {precios.Count} items");
+      }
+  }
+  ```
+
+  --- 34.2 ARQUITECTURA INTERNA: TABLA HASH ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Reflection;
+
+  class ArquitecturaHash
+  {
+      static void Main()
+      {
+          Dictionary<string, int> dict = new Dictionary<string, int>(4);
+
+          // Ver los buckets internos (reflection)
+          Type type = dict.GetType();
+          FieldInfo? bucketsField = type.GetField("_buckets",
+              BindingFlags.NonPublic | BindingFlags.Instance);
+          FieldInfo? entriesField = type.GetField("_entries",
+              BindingFlags.NonPublic | BindingFlags.Instance);
+
+          void MostrarEstado()
+          {
+              if (bucketsField != null && entriesField != null)
+              {
+                  var buckets = (int[])bucketsField.GetValue(dict)!;
+                  var entries = (Array)entriesField.GetValue(dict)!;
+                  int entriesLength = entries?.Length ?? 0;
+                  Console.WriteLine($"  Buckets: [{string.Join(",", buckets)}]");
+                  Console.WriteLine($"  Entries array size: {entriesLength}");
+                  Console.WriteLine($"  Count: {dict.Count}");
+              }
+          }
+
+          Console.WriteLine("Estado inicial:");
+          MostrarEstado();
+
+          Console.WriteLine("\nAgregando elementos...");
+          dict.Add("uno", 1);
+          MostrarEstado();
+
+          dict.Add("dos", 2);
+          MostrarEstado();
+
+          dict.Add("tres", 3);
+          MostrarEstado();
+
+          dict.Add("cuatro", 4);
+          MostrarEstado();
+
+          Console.WriteLine("\nRedimensionamiento:");
+          dict.Add("cinco", 5);
+          MostrarEstado();
+
+          // El hash code determina el bucket
+          string clave = "prueba";
+          int hash = clave.GetHashCode();
+          int bucketIndex = Math.Abs(hash) % 7; // 7 es el tamaño actual de buckets
+          Console.WriteLine($"\nHash de '{clave}': {hash}");
+          Console.WriteLine($"Bucket probable: {bucketIndex}");
+      }
+  }
+  ```
+
+  Internamente:
+  - _buckets: array de enteros que apuntan a la primera entrada en cada bucket.
+  - _entries: array de entradas (cada entrada tiene key, value, next, hashCode).
+  - La capacidad siempre es un número primo.
+  - Al redimensionar, se duplica y se redispersan todas las entradas.
+
+  --- 34.3 ADD E INDEXADOR ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploAddIndexer
+  {
+      static void Main()
+      {
+          Dictionary<int, string> empleados = new Dictionary<int, string>();
+
+          // Add: agrega un par clave-valor. Lanza excepción si la clave existe.
+          empleados.Add(101, "Ana García");
+          empleados.Add(102, "Luis Pérez");
+          empleados.Add(103, "Carlos López");
+          Console.WriteLine("Después de Add:");
+
+          foreach (var kvp in empleados)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Indexador []: agrega o modifica (no lanza excepción)
+          empleados[104] = "Marta Ruiz"; // Agrega si no existe
+          empleados[101] = "Ana García Modificada"; // Modifica si existe
+          Console.WriteLine("\nDespués de indexador:");
+          foreach (var kvp in empleados)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Indexador para lectura
+          string nombre = empleados[102];
+          Console.WriteLine($"\nempleados[102]: {nombre}");
+
+          // Error si la clave no existe
+          try
+          {
+              string noExiste = empleados[999];
+          }
+          catch (KeyNotFoundException ex)
+          {
+              Console.WriteLine($"Error: {ex.Message}");
+          }
+
+          // Add lanza excepción si la clave ya existe
+          try
+          {
+              empleados.Add(101, "Duplicado");
+          }
+          catch (ArgumentException ex)
+          {
+              Console.WriteLine($"Error: {ex.Message}");
+          }
+      }
+  }
+  ```
+
+  Diferencia clave:
+  - Add(key, value): lanza excepción si la clave existe.
+  - dict[key] = value: sobrescribe si la clave existe, agrega si no.
+
+  --- 34.4 TRYGETVALUE ---
+
+  TryGetValue es la forma más segura y eficiente de recuperar valores.
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploTryGetValue
+  {
+      static void Main()
+      {
+          Dictionary<string, int> inventario = new Dictionary<string, int>
+          {
+              { "Laptop", 10 },
+              { "Mouse", 50 },
+              { "Teclado", 30 },
+              { "Monitor", 15 }
+          };
+
+          // TryGetValue: intenta obtener el valor, devuelve bool
+          if (inventario.TryGetValue("Mouse", out int cantidad))
+          {
+              Console.WriteLine($"Mouse: {cantidad} unidades");
+          }
+          else
+          {
+              Console.WriteLine("Mouse no encontrado");
+          }
+
+          // Con clave que no existe
+          if (inventario.TryGetValue("Tablet", out int cantidad2))
+          {
+              Console.WriteLine($"Tablet: {cantidad2}");
+          }
+          else
+          {
+              Console.WriteLine("Tablet no encontrada");
+          }
+
+          // TryGetValue es más eficiente que ContainsKey + indexador
+          // porque solo hace una búsqueda en lugar de dos.
+
+          // Patrón: actualizar si existe, agregar si no
+          string producto = "Laptop";
+          if (inventario.TryGetValue(producto, out int actual))
+          {
+              inventario[producto] = actual + 5;
+          }
+          else
+          {
+              inventario.Add(producto, 5);
+          }
+
+          Console.WriteLine($"\n{producto} actualizado: {inventario[producto]}");
+      }
+  }
+  ```
+
+  --- 34.5 CONTAINSKEY Y CONTAINSVALUE ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploContains
+  {
+      static void Main()
+      {
+          Dictionary<string, string> capitales = new Dictionary<string, string>
+          {
+              { "España", "Madrid" },
+              { "Francia", "París" },
+              { "Italia", "Roma" },
+              { "Alemania", "Berlín" },
+              { "Portugal", "Lisboa" }
+          };
+
+          // ContainsKey: O(1) - muy eficiente
+          bool tieneFrancia = capitales.ContainsKey("Francia");
+          Console.WriteLine($"¿Contiene Francia? {tieneFrancia}");
+
+          bool tieneSuecia = capitales.ContainsKey("Suecia");
+          Console.WriteLine($"¿Contiene Suecia? {tieneSuecia}");
+
+          // ContainsValue: O(n) - recorre todo el diccionario
+          bool tieneMadrid = capitales.ContainsValue("Madrid");
+          Console.WriteLine($"¿Contiene Madrid? {tieneMadrid}");
+
+          bool tieneLondres = capitales.ContainsValue("Londres");
+          Console.WriteLine($"¿Contiene Londres? {tieneLondres}");
+
+          // ContainsKey + indexador (dos búsquedas)
+          if (capitales.ContainsKey("Italia"))
+          {
+              string capital = capitales["Italia"];
+              Console.WriteLine($"\nItalia -> {capital}");
+          }
+
+          // Mejor: TryGetValue (una sola búsqueda)
+          if (capitales.TryGetValue("Italia", out string? capitalItalia))
+          {
+              Console.WriteLine($"Italia -> {capitalItalia} (más eficiente)");
+          }
+      }
+  }
+  ```
+
+  Complejidades:
+  - ContainsKey: O(1) promedio.
+  - ContainsValue: O(n) - debe recorrer todos los valores.
+  - TryGetValue: O(1) promedio.
+
+  --- 34.6 KEYS, VALUES Y KEYVALUEPAIR ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploKeysValues
+  {
+      static void Main()
+      {
+          Dictionary<int, string> productos = new Dictionary<int, string>
+          {
+              { 1001, "Laptop Gamer" },
+              { 1002, "Mouse Inalámbrico" },
+              { 1003, "Teclado Mecánico" },
+              { 1004, "Monitor 27p" },
+              { 1005, "Webcam HD" }
+          };
+
+          // Keys: colección de todas las claves
+          Console.WriteLine("Keys (IDs):");
+          foreach (int key in productos.Keys)
+              Console.WriteLine($"  {key}");
+
+          // Values: colección de todos los valores
+          Console.WriteLine("\nValues (Productos):");
+          foreach (string value in productos.Values)
+              Console.WriteLine($"  {value}");
+
+          // KeyValuePair: par clave-valor
+          Console.WriteLine("\nKeyValuePair:");
+          foreach (KeyValuePair<int, string> kvp in productos)
+              Console.WriteLine($"  ID: {kvp.Key} -> {kvp.Value}");
+
+          // Tuplas desestructuradas (C# 7+)
+          Console.WriteLine("\nDesestructuración:");
+          foreach (var (id, nombre) in productos)
+              Console.WriteLine($"  {id}: {nombre}");
+
+          // Keys y Values son vistas dinámicas
+          var keys = productos.Keys;
+          productos.Add(1006, "Tablet");
+          Console.WriteLine($"\nKeys count después de agregar: {keys.Count}"); // 6
+
+          // Convertir a listas
+          List<int> listaIds = productos.Keys.ToList();
+          List<string> listaNombres = productos.Values.ToList();
+          Console.WriteLine($"IDs como lista: {string.Join(", ", listaIds)}");
+      }
+  }
+  ```
+
+  --- 34.7 REMOVE Y CLEAR ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploRemove
+  {
+      static void Main()
+      {
+          Dictionary<string, int> puntuaciones = new Dictionary<string, int>
+          {
+              { "Ana", 95 },
+              { "Luis", 87 },
+              { "Carlos", 92 },
+              { "Marta", 78 },
+              { "Pedro", 88 }
+          };
+
+          Console.WriteLine("Original: " + string.Join(", ", puntuaciones));
+
+          // Remove: elimina por clave
+          bool eliminado = puntuaciones.Remove("Luis");
+          Console.WriteLine($"\nRemove('Luis'): {eliminado}");
+          Console.WriteLine(string.Join(", ", puntuaciones));
+
+          // Remove de clave inexistente
+          eliminado = puntuaciones.Remove("NoExiste");
+          Console.WriteLine($"Remove('NoExiste'): {eliminado}");
+
+          // Clear: elimina todos
+          Dictionary<string, int> respaldo = new Dictionary<string, int>(puntuaciones);
+          puntuaciones.Clear();
+          Console.WriteLine($"\nClear: Count = {puntuaciones.Count}");
+
+          // Remove con TryGetValue integrado (patrón común)
+          string claveRemover = "Carlos";
+          if (respaldo.Remove(claveRemover, out int valorRemovido))
+          {
+              Console.WriteLine($"\nRemovido '{claveRemover}' con valor {valorRemovido}");
+          }
+
+          // El Remove con out (C# 7+) obtiene el valor antes de eliminar
+          Console.WriteLine($"Respaldo: {string.Join(", ", respaldo)}");
+      }
+  }
+  ```
+
+  Los métodos Remove y Clear actualizan Keys y Values automáticamente
+  porque son vistas en vivo (live views) de las colecciones subyacentes.
+
+  --- 34.8 DICCIONARIO CON IEqualityComparer ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploComparer
+  {
+      static void Main()
+      {
+          // Diccionario case-insensitive
+          Dictionary<string, string> insensitive = new Dictionary<string, string>(
+              StringComparer.OrdinalIgnoreCase);
+
+          insensitive.Add("ESPAÑA", "Madrid");
+          Console.WriteLine(insensitive["españa"]); // "Madrid"
+          Console.WriteLine(insensitive["España"]); // "Madrid"
+          Console.WriteLine(insensitive["ESPAña"]); // "Madrid"
+
+          // Todas apuntan a la misma entrada
+          Console.WriteLine($"Count: {insensitive.Count}"); // 1
+
+          // Diccionario con claves personalizadas
+          Dictionary<Persona, string> personas = new Dictionary<Persona, string>(
+              new PersonaComparer());
+
+          personas.Add(new Persona("Ana", 25), "Ingeniera");
+          personas.Add(new Persona("Luis", 30), "Médico");
+
+          // Buscar con un objeto equivalente pero diferente referencia
+          Persona buscar = new Persona("Ana", 25);
+          if (personas.TryGetValue(buscar, out string? profesion))
+          {
+              Console.WriteLine($"\nAna: {profesion}");
+          }
+
+          // Diccionario con IEquatable
+          Dictionary<ProductoId, string> porProducto = new Dictionary<ProductoId, string>();
+          porProducto.Add(new ProductoId(1001), "Laptop");
+          Console.WriteLine(porProducto[new ProductoId(1001)]);
+      }
+
+      record Persona(string Nombre, int Edad);
+
+      class PersonaComparer : IEqualityComparer<Persona>
+      {
+          public bool Equals(Persona? x, Persona? y)
+          {
+              if (x == null || y == null) return false;
+              return x.Nombre == y.Nombre && x.Edad == y.Edad;
+          }
+
+          public int GetHashCode(Persona obj)
+          {
+              return HashCode.Combine(obj.Nombre, obj.Edad);
+          }
+      }
+
+      record ProductoId(int Id);
+  }
+  ```
+
+  --- 34.9 DICCIONARIO ANIDADO ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class DiccionarioAnidado
+  {
+      static void Main()
+      {
+          // Diccionario de diccionarios
+          Dictionary<string, Dictionary<string, int>> ventas = new();
+
+          ventas["Norte"] = new Dictionary<string, int>
+          {
+              { "Enero", 15000 },
+              { "Febrero", 18000 },
+              { "Marzo", 22000 }
+          };
+
+          ventas["Sur"] = new Dictionary<string, int>
+          {
+              { "Enero", 12000 },
+              { "Febrero", 14000 },
+              { "Marzo", 16000 }
+          };
+
+          ventas["Este"] = new Dictionary<string, int>
+          {
+              { "Enero", 10000 },
+              { "Febrero", 11000 }
+          };
+
+          // Acceder a valores anidados
+          Console.WriteLine("Ventas región Norte, Marzo: " + ventas["Norte"]["Marzo"]);
+
+          // Recorrer diccionario anidado
+          foreach (var region in ventas)
+          {
+              Console.WriteLine($"\nRegión {region.Key}:");
+              foreach (var mes in region.Value)
+              {
+                  Console.WriteLine($"  {mes.Key}: ${mes.Value}");
+              }
+          }
+
+          // Agregar con verificación
+          string regionName = "Oeste";
+          if (!ventas.ContainsKey(regionName))
+          {
+              ventas[regionName] = new Dictionary<string, int>();
+          }
+          ventas[regionName]["Abril"] = 9000;
+
+          // Método auxiliar para acceso seguro
+          int GetVenta(string region, string mes)
+          {
+              if (ventas.TryGetValue(region, out var meses))
+                  if (meses.TryGetValue(mes, out int valor))
+                      return valor;
+              return 0;
+          }
+
+          Console.WriteLine($"\nVenta segura (Norte, Febrero): {GetVenta("Norte", "Febrero")}");
+          Console.WriteLine($"Venta segura (Oeste, Abril): {GetVenta("Oeste", "Abril")}");
+      }
+  }
+  ```
+
+  --- 34.10 DICCIONARIO CON LISTAS (MULTIDICT) ---
+
+  Un patrón muy común: diccionario donde los valores son listas (one-to-many).
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class MultiDict
+  {
+      static void Main()
+      {
+          Dictionary<string, List<string>> cursos = new();
+
+          // Agregar alumnos a cursos
+          void AgregarAlumno(string curso, string alumno)
+          {
+              if (!cursos.ContainsKey(curso))
+                  cursos[curso] = new List<string>();
+
+              cursos[curso].Add(alumno);
+          }
+
+          AgregarAlumno("Matemáticas", "Ana");
+          AgregarAlumno("Matemáticas", "Luis");
+          AgregarAlumno("Matemáticas", "Carlos");
+          AgregarAlumno("Física", "Ana");
+          AgregarAlumno("Física", "Marta");
+          AgregarAlumno("Programación", "Carlos");
+          AgregarAlumno("Programación", "Luis");
+          AgregarAlumno("Programación", "Pedro");
+          AgregarAlumno("Programación", "Sofía");
+
+          // Mostrar cursos y alumnos
+          foreach (var curso in cursos)
+          {
+              Console.WriteLine($"\n{curso.Key} ({curso.Value.Count} alumnos):");
+              foreach (var alumno in curso.Value)
+                  Console.WriteLine($"  - {alumno}");
+          }
+
+          // Alumnos comunes entre dos cursos
+          Console.WriteLine("\nAlumnos en Matemáticas y Programación:");
+          foreach (var alumno in cursos["Matemáticas"])
+          {
+              if (cursos["Programación"].Contains(alumno))
+                  Console.WriteLine($"  - {alumno}");
+          }
+
+          // Contar total de alumnos únicos
+          HashSet<string> totalAlumnos = new HashSet<string>();
+          foreach (var lista in cursos.Values)
+              foreach (var a in lista)
+                  totalAlumnos.Add(a);
+          Console.WriteLine($"\nTotal alumnos únicos: {totalAlumnos.Count}");
+      }
+  }
+  ```
+
+  --- 34.11 LINQ CON DICCIONARIOS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+
+  class EjemploLinQDict
+  {
+      static void Main()
+      {
+          Dictionary<string, int> edades = new Dictionary<string, int>
+          {
+              { "Ana", 25 },
+              { "Luis", 30 },
+              { "Carlos", 17 },
+              { "Marta", 22 },
+              { "Pedro", 35 },
+              { "Sofía", 19 },
+              { "Diego", 28 },
+              { "Laura", 16 }
+          };
+
+          // Filtrar por valor
+          var mayores = edades.Where(e => e.Value >= 18);
+          Console.WriteLine("Mayores de edad:");
+          foreach (var kvp in mayores)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Filtrar por clave
+          var conA = edades.Where(e => e.Key.Contains("a"));
+          Console.WriteLine("\nNombres con 'a':");
+          foreach (var kvp in conA)
+              Console.WriteLine($"  {kvp.Key}");
+
+          // Proyectar a nuevo diccionario
+          var mayoresDict = edades
+              .Where(e => e.Value >= 18)
+              .ToDictionary(e => e.Key, e => e.Value);
+
+          Console.WriteLine($"\nMayores dict: {string.Join(", ", mayoresDict)}");
+
+          // Proyectar a otro tipo
+          var nombresMayuscula = edades
+              .ToDictionary(e => e.Key.ToUpper(), e => e.Value);
+
+          Console.WriteLine("\nNombres en mayúscula:");
+          foreach (var kvp in nombresMayuscula)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Select sobre Keys y Values
+          var soloNombres = edades.Keys.Select(k => k.ToUpper());
+          Console.WriteLine($"\nSolo nombres: {string.Join(", ", soloNombres)}");
+
+          // Ordenar por valor
+          var ordenadoPorEdad = edades.OrderBy(e => e.Value);
+          Console.WriteLine("\nOrdenado por edad:");
+          foreach (var kvp in ordenadoPorEdad)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Agregaciones
+          Console.WriteLine($"\nEdad promedio: {edades.Values.Average():F1}");
+          Console.WriteLine($"Edad máxima: {edades.Values.Max()}");
+          Console.WriteLine($"Edad mínima: {edades.Values.Min()}");
+          Console.WriteLine($"Suma edades: {edades.Values.Sum()}");
+
+          // GroupBy con diccionario
+          var porRango = edades.GroupBy(
+              e => e.Value switch
+              {
+                  < 18 => "Menor",
+                  < 30 => "Joven",
+                  _ => "Adulto"
+              },
+              e => e.Key
+          );
+
+          Console.WriteLine("\nPor rango de edad:");
+          foreach (var grupo in porRango)
+          {
+              Console.WriteLine($"  {grupo.Key}: {string.Join(", ", grupo)}");
+          }
+
+          // Join con otro diccionario
+          Dictionary<string, string> departamentos = new()
+          {
+              { "Ana", "IT" },
+              { "Luis", "Ventas" },
+              { "Carlos", "IT" },
+              { "Marta", "RH" }
+          };
+
+          var joinResult = edades
+              .Where(e => departamentos.ContainsKey(e.Key))
+              .Select(e => new
+              {
+                  e.Key,
+                  e.Value,
+                  Dept = departamentos[e.Key]
+              });
+
+          Console.WriteLine("\nJoin con departamentos:");
+          foreach (var item in joinResult)
+              Console.WriteLine($"  {item.Key}: {item.Value} años, {item.Dept}");
+      }
+  }
+  ```
+
+  --- 34.12 PATRONES AVANZADOS CON DICCIONARIOS ---
+
+  34.12.1 Contador de Frecuencias
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class ContadorFrecuencias
+  {
+      static void Main()
+      {
+          string texto = "el gato y el perro y el ratón y el gato y el perro";
+          string[] palabras = texto.Split(' ');
+
+          Dictionary<string, int> frecuencia = new Dictionary<string, int>();
+
+          foreach (string palabra in palabras)
+          {
+              if (frecuencia.ContainsKey(palabra))
+                  frecuencia[palabra]++;
+              else
+                  frecuencia[palabra] = 1;
+          }
+
+          Console.WriteLine("Frecuencia de palabras:");
+          foreach (var kvp in frecuencia)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Más elegante con TryGetValue
+          Dictionary<string, int> freq = new Dictionary<string, int>();
+          foreach (string palabra in palabras)
+          {
+              freq.TryGetValue(palabra, out int count);
+              freq[palabra] = count + 1;
+          }
+
+          Console.WriteLine("\nVersión elegante:");
+          foreach (var kvp in freq)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Con GetValueOrDefault
+          Dictionary<string, int> freq3 = new Dictionary<string, int>();
+          foreach (string palabra in palabras)
+          {
+              freq3[palabra] = freq3.GetValueOrDefault(palabra) + 1;
+          }
+      }
+  }
+  ```
+
+  34.12.2 Caché Simple
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+
+  class CacheSimple
+  {
+      private readonly Dictionary<string, int> _cache = new();
+
+      public int ObtenerOMemorizar(string clave, Func<int> generador)
+      {
+          if (_cache.TryGetValue(clave, out int valor))
+          {
+              Console.WriteLine($"[CACHE] Hit para '{clave}'");
+              return valor;
+          }
+
+          Console.WriteLine($"[CACHE] Miss para '{clave}', generando...");
+          valor = generador();
+          _cache[clave] = valor;
+          return valor;
+      }
+
+      public void Limpiar() => _cache.Clear();
+      public int Count => _cache.Count;
+  }
+
+  class EjemploCache
+  {
+      static void Main()
+      {
+          CacheSimple cache = new CacheSimple();
+          Stopwatch sw = new Stopwatch();
+
+          // Función costosa (simulada)
+          int CalcularFibonacci(int n)
+          {
+              if (n <= 1) return n;
+              return CalcularFibonacci(n - 1) + CalcularFibonacci(n - 2);
+          }
+
+          int[] valores = { 10, 20, 10, 15, 20, 10 };
+
+          foreach (int v in valores)
+          {
+              sw.Restart();
+              int resultado = cache.ObtenerOMemorizar($"fib_{v}", () => CalcularFibonacci(v));
+              sw.Stop();
+              Console.WriteLine($"  fib({v}) = {resultado} ({sw.ElapsedMilliseconds} ms)");
+          }
+
+          Console.WriteLine($"\nElementos en caché: {cache.Count}");
+      }
+  }
+  ```
+
+  34.12.3 Diccionario con Orden de Inserción (OrderedDictionary)
+
+  .NET tiene OrderedDictionary (no genérico) o podemos usar
+  Dictionary + List para mantener el orden.
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class OrderedDictionary<TKey, TValue> where TKey : notnull
+  {
+      private readonly Dictionary<TKey, TValue> _dict = new();
+      private readonly List<TKey> _order = new();
+
+      public void Add(TKey key, TValue value)
+      {
+          _dict.Add(key, value);
+          _order.Add(key);
+      }
+
+      public TValue this[TKey key]
+      {
+          get => _dict[key];
+          set
+          {
+              if (!_dict.ContainsKey(key))
+                  _order.Add(key);
+              _dict[key] = value;
+          }
+      }
+
+      public bool TryGetValue(TKey key, out TValue value)
+          => _dict.TryGetValue(key, out value);
+
+      public bool ContainsKey(TKey key) => _dict.ContainsKey(key);
+
+      public int Count => _dict.Count;
+
+      public IEnumerable<KeyValuePair<TKey, TValue>> InOrder()
+      {
+          foreach (var key in _order)
+              yield return new KeyValuePair<TKey, TValue>(key, _dict[key]);
+      }
+
+      public IEnumerable<TValue> ValuesInOrder()
+      {
+          foreach (var key in _order)
+              yield return _dict[key];
+      }
+  }
+
+  class EjemploOrderedDict
+  {
+      static void Main()
+      {
+          OrderedDictionary<string, int> dict = new();
+          dict.Add("Primero", 100);
+          dict.Add("Segundo", 200);
+          dict.Add("Tercero", 300);
+
+          Console.WriteLine("En orden de inserción:");
+          foreach (var kvp in dict.InOrder())
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+      }
+  }
+  ```
+
+  34.12.4 Diccionario Bidireccional
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class DiccionarioBidireccional<T1, T2> where T1 : notnull where T2 : notnull
+  {
+      private readonly Dictionary<T1, T2> _forward = new();
+      private readonly Dictionary<T2, T1> _backward = new();
+
+      public void Add(T1 key, T2 value)
+      {
+          _forward.Add(key, value);
+          _backward.Add(value, key);
+      }
+
+      public T2 GetForward(T1 key) => _forward[key];
+      public T1 GetBackward(T2 value) => _backward[value];
+
+      public bool TryGetForward(T1 key, out T2 value)
+          => _forward.TryGetValue(key, out value);
+
+      public bool TryGetBackward(T2 value, out T1 key)
+          => _backward.TryGetValue(value, out key);
+
+      public bool ContainsForward(T1 key) => _forward.ContainsKey(key);
+      public bool ContainsBackward(T2 value) => _backward.ContainsKey(value);
+
+      public int Count => _forward.Count;
+  }
+
+  class EjemploBidireccional
+  {
+      static void Main()
+      {
+          DiccionarioBidireccional<int, string> dict = new();
+          dict.Add(1, "Uno");
+          dict.Add(2, "Dos");
+          dict.Add(3, "Tres");
+
+          Console.WriteLine($"1 -> {dict.GetForward(1)}");
+          Console.WriteLine($"Uno -> {dict.GetBackward("Uno")}");
+          Console.WriteLine($"Cantidad: {dict.Count}");
+      }
+  }
+  ```
+
+  --- 34.13 DICCIONARIO CON VALORES POR DEFECTO ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class ValoresPorDefecto
+  {
+      static void Main()
+      {
+          // Diccionario con valor por defecto usando GetValueOrDefault
+          Dictionary<string, int> edades = new()
+          {
+              { "Ana", 25 },
+              { "Luis", 30 }
+          };
+
+          int edadAna = edades.GetValueOrDefault("Ana");
+          int edadPedro = edades.GetValueOrDefault("Pedro"); // 0 (default)
+          Console.WriteLine($"Ana: {edadAna}, Pedro: {edadPedro}");
+
+          // GetValueOrDefault con valor por defecto específico
+          int edadMaria = edades.GetValueOrDefault("María", -1);
+          Console.WriteLine($"María: {edadMaria}"); // -1
+
+          // Colección de valores por defecto con TryAdd (C# 8+)
+          Dictionary<string, List<int>> grupos = new();
+
+          // TryAdd: agrega solo si no existe
+          grupos.TryAdd("Pares", new List<int> { 2, 4, 6 });
+          grupos.TryAdd("Impares", new List<int> { 1, 3, 5 });
+
+          // El segundo TryAdd no hace nada porque la clave ya existe
+          grupos.TryAdd("Pares", new List<int> { 8, 10 });
+          Console.WriteLine($"Pares: {string.Join(", ", grupos["Pares"])}");
+
+          // EnsureCapacity (C# 8+)
+          Dictionary<string, int> grande = new();
+          grande.EnsureCapacity(1000);
+          Console.WriteLine($"\nCapacity asegurada: {grande.Count}");
+      }
+  }
+  ```
+
+  --- 34.14 DICCIONARIO ORDENADO (SortedDictionary) ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+
+  class EjemploSortedDict
+  {
+      static void Main()
+      {
+          // SortedDictionary: ordenado por clave (árbol binario)
+          SortedDictionary<string, int> clasificacion = new();
+
+          clasificacion["Carlos"] = 95;
+          clasificacion["Ana"] = 88;
+          clasificacion["Pedro"] = 92;
+          clasificacion["Luis"] = 78;
+          clasificacion["Marta"] = 85;
+
+          Console.WriteLine("Clasificación ordenada por nombre:");
+          foreach (var kvp in clasificacion)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value} puntos");
+
+          // SortedDictionary con IComparer personalizado
+          SortedDictionary<int, string> ordenInverso = new(
+              Comparer<int>.Create((a, b) => b.CompareTo(a))
+          );
+
+          ordenInverso[3] = "Tercero";
+          ordenInverso[1] = "Primero";
+          ordenInverso[2] = "Segundo";
+
+          Console.WriteLine("\nOrden inverso:");
+          foreach (var kvp in ordenInverso)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+
+          // Diferencia: SortedDictionary vs Dictionary + Ordenar
+          Dictionary<string, int> normal = new()
+          {
+              { "Z", 26 }, { "A", 1 }, { "M", 13 }
+          };
+
+          Console.WriteLine("\nDictionary sin orden:");
+          foreach (var kvp in normal)
+              Console.WriteLine($"  {kvp.Key}: {kvp.Value}");
+      }
+  }
+  ```
+
+  --- 34.15 SERIALIZACIÓN DE DICCIONARIOS ---
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Text.Json;
+
+  class SerializacionDict
+  {
+      static void Main()
+      {
+          Dictionary<string, Producto> catalogo = new()
+          {
+              ["LAP-001"] = new Producto("Laptop", 1200.99m, 10),
+              ["MOU-002"] = new Producto("Mouse", 25.50m, 50),
+              ["TEC-003"] = new Producto("Teclado", 89.99m, 30)
+          };
+
+          // Serializar a JSON
+          string json = JsonSerializer.Serialize(catalogo,
+              new JsonSerializerOptions { WriteIndented = true });
+          Console.WriteLine("JSON del catálogo:");
+          Console.WriteLine(json);
+
+          // Deserializar desde JSON
+          string jsonInput = @"
+          {
+              ""MON-004"": { ""Nombre"": ""Monitor"", ""Precio"": 299.99, ""Stock"": 15 },
+              ""WEB-005"": { ""Nombre"": ""Webcam"", ""Precio"": 79.99, ""Stock"": 25 }
+          }";
+
+          var cargados = JsonSerializer.Deserialize<Dictionary<string, Producto>>(jsonInput);
+          Console.WriteLine("\nCargados:");
+          if (cargados != null)
+              foreach (var kvp in cargados)
+                  Console.WriteLine($"  {kvp.Key}: {kvp.Value.Nombre} ${kvp.Value.Precio}");
+      }
+
+      record Producto(string Nombre, decimal Precio, int Stock);
+  }
+  ```
+
+================================================================================
+  << RESUMEN DEL CAPÍTULO >>
+================================================================================
+
+  1. Dictionary<K,V> es una tabla hash que ofrece acceso O(1) promedio
+     por clave. Usa _buckets y _entries internamente.
+
+  2. Add: lanza excepción si la clave existe. Indexador []: agrega o
+     sobrescribe silenciosamente.
+
+  3. TryGetValue: el método más seguro y eficiente para recuperar
+     valores (una sola búsqueda hash).
+
+  4. ContainsKey: O(1). ContainsValue: O(n). Prefiere TryGetValue
+     sobre ContainsKey + indexador.
+
+  5. Keys y Values son colecciones que reflejan cambios en vivo.
+
+  6. Se puede usar IEqualityComparer para personalizar la comparación
+     de claves (case-insensitive, objetos personalizados).
+
+  7. LINQ se integra perfectamente: Where, Select, ToDictionary,
+     GroupBy, Join, OrderBy, agregaciones.
+
+  8. Patrones profesionales: contador de frecuencias, caché,
+     diccionario ordenado, bidireccional, multidict (valores por
+     defecto y listas como valores).
+
+================================================================================
+  << EJERCICIOS PROPUESTOS >>
+================================================================================
+
+  1. BÁSICO: Crea un Dictionary<string, int> con nombres y edades.
+     Agrega 5 personas, muestra todas las entradas.
+
+  2. INTERMEDIO: Implementa un contador de caracteres que reciba un
+     string y devuelva un Dictionary<char, int> con la frecuencia de
+     cada carácter.
+
+  3. AVANZADO: Crea un sistema de agenda telefónica con búsqueda por
+     nombre y por número (diccionario bidireccional).
+
+  4. BÁSICO: Demuestra la diferencia entre Add e indexador cuando la
+     clave ya existe.
+
+  5. INTERMEDIO: Usa TryGetValue para implementar una función que
+     devuelva el valor de una clave o un valor por defecto.
+
+  6. AVANZADO: Implementa un diccionario con expiración automática
+     (cada entrada tiene un TimeSpan de vida útil).
+
+  7. BÁSICO: Itera sobre Keys, Values y KeyValuePairs de un
+     diccionario.
+
+  8. INTERMEDIO: Usa LINQ para filtrar un diccionario y crear uno
+     nuevo con solo los elementos que cumplen una condición.
+
+  9. AVANZADO: Implementa el algoritmo de compresión LZW usando
+     Dictionary<string, int> como tabla de códigos.
+
+  10. DESAFÍO: Implementa un diccionario concurrente thread-safe sin
+      usar ConcurrentDictionary<K,V>. Usa lock y stripes para
+      minimizar la contención.
+
+================================================================================
+  << FAQ - PREGUNTAS FRECUENTES >>
+================================================================================
+
+  P: ¿Por qué mi diccionario lanza KeyNotFoundException?
+  R: Porque intentas acceder con [] a una clave que no existe. Usa
+     TryGetValue o ContainsKey para verificar primero.
+
+  P: ¿Cuál es la diferencia entre Dictionary y Hashtable?
+  R: Dictionary<K,V> es genérico y type-safe. Hashtable (no genérico)
+     almacena object. Dictionary es más eficiente (sin boxing/unboxing).
+
+  P: ¿Cómo elijo entre Dictionary y SortedDictionary?
+  R: Dictionary ofrece O(1) en inserciones/búsquedas pero no mantiene
+     orden. SortedDictionary mantiene orden por clave (árbol RB, O(log n))
+     pero es más lento. Para orden, también puedes ordenar con LINQ.
+
+  P: ¿Qué requisitos debe cumplir la clave?
+  R: Debe implementar GetHashCode() y Equals() correctamente. Los tipos
+     básicos (int, string) ya lo hacen. Para objetos personalizados,
+     implementa IEquatable<T> o proporciona IEqualityComparer.
+
+  P: ¿Qué pasa si dos claves tienen el mismo hash?
+  R: Hay una colisión. Dictionary maneja colisiones con listas enlazadas
+     dentro del bucket (separate chaining). El rendimiento se degrada si
+     hay muchas colisiones.
+
+  P: ¿Cómo funciona el redimensionamiento?
+  R: Cuando la carga (count / capacity) supera un umbral (~0.72), se
+     duplica la capacidad y se redistribuyen todas las entradas (O(n)).
+
+  P: ¿Dictionary preserva el orden de inserción?
+  R: No, Dictionary no garantiza orden. Para orden de inserción usa
+     OrderedDictionary o mantén una lista paralela.
+
+================================================================================
+  << DESAFÍO DEL ARQUITECTO >>
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                       DESAFÍO DEL ARQUITECTO                        │
+  │                                                                     │
+  │  Implementa un Graph<TVertex> (grafo no dirigido) usando            │
+  │  Dictionary<TVertex, HashSet<TVertex>> como estructura              │
+  │  subyacente (lista de adyacencia).                                  │
+  │                                                                     │
+  │  Debe soportar:                                                     │
+  │  1. AddVertex(vertex) / RemoveVertex(vertex)                       │
+  │  2. AddEdge(v1, v2) / RemoveEdge(v1, v2)                           │
+  │  3. GetNeighbors(vertex) → IEnumerable                              │
+  │  4. BFS(start) → recorrido en anchura                              │
+  │  5. DFS(start) → recorrido en profundidad (iterativo y recursivo)  │
+  │  6. HasPath(start, end) → ¿existe camino?                           │
+  │  7. ShortestPath(start, end) → camino más corto (BFS)               │
+  │  8. HasCycle() → ¿hay ciclos?                                       │
+  │  9. IsConnected() → ¿es conexo?                                     │
+  │  10. ExportToAdjacencyMatrix() → matriz de adyacencia               │
+  │                                                                     │
+  │  El grafo debe ser genérico (TVertex) y usar IEqualityComparer      │
+  │  para la comparación de vértices.                                   │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  << CIERRE DEL CAPÍTULO >>
+================================================================================
+
+  Has completado el Capítulo 34: Dictionary<K,V>. Ahora dominas la tabla
+  hash de C#, comprendes su funcionamiento interno, sus métodos
+  fundamentales y los patrones de uso más avanzados.
+
+  El diccionario es una herramienta indispensable en el arsenal de todo
+  desarrollador C#. Su capacidad para almacenar y recuperar datos por
+  clave en tiempo O(1) lo hace ideal para cachés, contadores, índices,
+  grafos y cualquier escenario donde necesites acceso rápido por clave.
+
+  En el próximo capítulo exploraremos dos estructuras de datos
+  fundamentales: Queue<T> y Stack<T>. Verás cómo estos patrones FIFO
+  y LIFO resuelven problemas específicos de forma elegante.
+
+  ¡Nos vemos en el Capítulo 35!
+
+================================================================================
+  FIN DEL CAPÍTULO 34
+  C# MASTER BOOK — MÓDULO IV: COLECCIONES Y LINQ
+================================================================================

@@ -1,0 +1,1317 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 59: MIDDLEWARE
+================================================================================
+
+  "El middleware es la tubería de tu aplicación. Cada capa filtra,
+   enriquece o protege antes de que el mensaje llegue a su destino."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 59 de GO MASTER BOOK. El patrón middleware
+  es uno de los conceptos más importantes en el desarrollo web con Go.
+  Un middleware es una función que envuelve un http.Handler para
+  añadir funcionalidad antes o después de que se procese la petición.
+  En este capítulo aprenderás a construir, componer y aplicar
+  middlewares para logging, autenticación, recuperación de panics,
+  compresión, rate limiting y mucho más.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "El middleware ideal es invisible: hace su trabajo sin que el
+   handler final se entere."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Comprender el patrón func(http.Handler) http.Handler.
+  ✓ Construir middlewares de logging y recuperación.
+  ✓ Implementar autenticación y autorización como middleware.
+  ✓ Componer múltiples middlewares en un pipeline.
+  ✓ Pasar contexto entre middlewares con context.Context.
+  ✓ Implementar rate limiting, compresión y CORS.
+  ✓ Construir una cadena de middlewares reutilizable.
+  ✓ Usar middleware con diferentes routers (ServeMux, Chi).
+  ✓ Escribir tests para middleware.
+  ✓ Conocer los middlewares más usados de la comunidad.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. EL PATRÓN MIDDLEWARE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  En Go, un middleware es simplemente una función que recibe un
+  http.Handler y devuelve otro http.Handler:
+
+  ```go
+  type Middleware func(http.Handler) http.Handler
+  ```
+
+  El middleware puede ejecutar código antes de llamar al handler
+  original, después, o ambos.
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+  )
+
+  // Middleware de logging
+  func loggingMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+
+          // Antes del handler
+          log.Printf("[%s] %s %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+          // Llamar al siguiente handler
+          next.ServeHTTP(w, r)
+
+          // Después del handler
+          log.Printf("[%s] %s completado en %v", r.Method, r.URL.Path, time.Since(inicio))
+      })
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Hola, Mundo!")
+      })
+
+      http.Handle("/", loggingMiddleware(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  2. ESTRUCTURA BÁSICA DE UN MIDDLEWARE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  func miMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          // 1. Código antes del handler (pre-procesamiento)
+          // - Validar autenticación
+          // - Verificar permisos
+          // - Loggear la petición
+          // - Comprimir/descomprimir
+          // - Rate limiting
+
+          // 2. Llamar al siguiente handler
+          next.ServeHTTP(w, r)
+
+          // 3. Código después del handler (post-procesamiento)
+          // - Loggear la respuesta
+          // - Modificar headers
+          // - Comprimir respuesta
+      })
+  }
+  ```
+
+  3. CADENA DE MIDDLEWARES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+  )
+
+  func middlewareA(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          log.Println("Middleware A: antes")
+          next.ServeHTTP(w, r)
+          log.Println("Middleware A: después")
+      })
+  }
+
+  func middlewareB(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          log.Println("Middleware B: antes")
+          next.ServeHTTP(w, r)
+          log.Println("Middleware B: después")
+      })
+  }
+
+  func middlewareC(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          log.Println("Middleware C: antes")
+          next.ServeHTTP(w, r)
+          log.Println("Middleware C: después")
+      })
+  }
+
+  func finalHandler(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Handler final ejecutado")
+  }
+
+  func main() {
+      // Orden de ejecución: A → B → C → handler → C → B → A
+      handler := middlewareA(middlewareB(middlewareC(http.HandlerFunc(finalHandler))))
+
+      http.Handle("/", handler)
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  4. FUNCIÓN PARA COMPONER MIDDLEWARES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  type Middleware func(http.Handler) http.Handler
+
+  // Componer múltiples middlewares en orden
+  func Pipeline(handler http.Handler, middlewares ...Middleware) http.Handler {
+      for i := len(middlewares) - 1; i >= 0; i-- {
+          handler = middlewares[i](handler)
+      }
+      return handler
+  }
+
+  func middlewareUno(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Println("Middleware 1: antes")
+          next.ServeHTTP(w, r)
+          fmt.Println("Middleware 1: después")
+      })
+  }
+
+  func middlewareDos(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Println("Middleware 2: antes")
+          next.ServeHTTP(w, r)
+          fmt.Println("Middleware 2: después")
+      })
+  }
+
+  func main() {
+      final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Handler final")
+      })
+
+      handler := Pipeline(final, middlewareUno, middlewareDos)
+
+      http.Handle("/", handler)
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  5. MIDDLEWARE DE LOGGING AVANZADO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "os"
+      "time"
+  )
+
+  type responseWriter struct {
+      http.ResponseWriter
+      statusCode int
+      bytesEscritos int
+  }
+
+  func (rw *responseWriter) WriteHeader(code int) {
+      rw.statusCode = code
+      rw.ResponseWriter.WriteHeader(code)
+  }
+
+  func (rw *responseWriter) Write(b []byte) (int, error) {
+      n, err := rw.ResponseWriter.Write(b)
+      rw.bytesEscritos += n
+      return n, err
+  }
+
+  func loggingMiddleware(logger *log.Logger) Middleware {
+      return func(next http.Handler) http.Handler {
+          return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+              inicio := time.Now()
+              rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+              next.ServeHTTP(rw, r)
+
+              duracion := time.Since(inicio)
+              logger.Printf(
+                  "%s %s %s %d %d %v",
+                  r.Method,
+                  r.URL.Path,
+                  r.RemoteAddr,
+                  rw.statusCode,
+                  rw.bytesEscritos,
+                  duracion,
+              )
+          })
+      }
+  }
+
+  type Middleware func(http.Handler) http.Handler
+
+  func main() {
+      logger := log.New(os.Stdout, "[HTTP] ", log.LstdFlags)
+
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.WriteHeader(http.StatusOK)
+          fmt.Fprintf(w, "Hello, World!")
+      })
+
+      http.Handle("/", loggingMiddleware(logger)(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  6. MIDDLEWARE DE RECUPERACIÓN (RECOVER)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "log"
+      "net/http"
+      "runtime/debug"
+  )
+
+  func recoveryMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          defer func() {
+              if rec := recover(); rec != nil {
+                  log.Printf("PANIC: %v\n%s", rec, debug.Stack())
+                  w.Header().Set("Content-Type", "application/json")
+                  w.WriteHeader(http.StatusInternalServerError)
+                  json.NewEncoder(w).Encode(map[string]string{
+                      "error": "Error interno del servidor",
+                  })
+              }
+          }()
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          panic("¡Algo salió muy mal!")
+      })
+
+      http.Handle("/", recoveryMiddleware(handler))
+      log.Println("Servidor en :8080")
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  7. MIDDLEWARE DE AUTENTICACIÓN (JWT)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "encoding/json"
+      "fmt"
+      "net/http"
+      "strings"
+  )
+
+  type contextKey string
+
+  const UserIDKey contextKey = "userID"
+  const UserRoleKey contextKey = "userRole"
+
+  // Versión simple - en producción usa una librería JWT real
+  func authMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          authHeader := r.Header.Get("Authorization")
+          if authHeader == "" {
+              http.Error(w, `{"error":"token requerido"}`, http.StatusUnauthorized)
+              return
+          }
+
+          // Esperamos "Bearer <token>"
+          partes := strings.SplitN(authHeader, " ", 2)
+          if len(partes) != 2 || partes[0] != "Bearer" {
+              http.Error(w, `{"error":"formato inválido"}`, http.StatusUnauthorized)
+              return
+          }
+
+          token := partes[1]
+
+          // Validar token (simplificado)
+          if token != "mi-token-valido" {
+              http.Error(w, `{"error":"token inválido"}`, http.StatusUnauthorized)
+              return
+          }
+
+          // Extraer información del usuario (simulado)
+          ctx := context.WithValue(r.Context(), UserIDKey, "user-123")
+          ctx = context.WithValue(ctx, UserRoleKey, "admin")
+
+          // Pasar el contexto actualizado al siguiente handler
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func adminMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          role, ok := r.Context().Value(UserRoleKey).(string)
+          if !ok || role != "admin" {
+              http.Error(w, `{"error":"se requiere rol admin"}`, http.StatusForbidden)
+              return
+          }
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+
+      // Ruta pública
+      mux.HandleFunc("/publico", func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(map[string]string{"mensaje": "acceso público"})
+      })
+
+      // Ruta protegida
+      handlerProtegido := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          userID := r.Context().Value(UserIDKey).(string)
+          fmt.Fprintf(w, `{"mensaje":"acceso permitido","usuario":"%s"}`, userID)
+      })
+      mux.Handle("/protegido", authMiddleware(handlerProtegido))
+
+      // Ruta de admin
+      handlerAdmin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(map[string]string{"mensaje": "panel de admin"})
+      })
+      mux.Handle("/admin", authMiddleware(adminMiddleware(handlerAdmin)))
+
+      http.ListenAndServe(":8080", mux)
+  }
+  ```
+
+  8. MIDDLEWARE DE RATE LIMITING
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+      "sync"
+      "time"
+  )
+
+  type RateLimiter struct {
+      mu       sync.Mutex
+      visitas  map[string]int
+      limite   int
+      ventana  time.Duration
+  }
+
+  func NewRateLimiter(limite int, ventana time.Duration) *RateLimiter {
+      rl := &RateLimiter{
+          visitas: make(map[string]int),
+          limite:  limite,
+          ventana: ventana,
+      }
+
+      // Limpiar visitas antiguas periódicamente
+      go func() {
+          for {
+              time.Sleep(ventana)
+              rl.mu.Lock()
+              rl.visitas = make(map[string]int)
+              rl.mu.Unlock()
+          }
+      }()
+
+      return rl
+  }
+
+  func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          ip := r.RemoteAddr
+
+          rl.mu.Lock()
+          rl.visitas[ip]++
+          count := rl.visitas[ip]
+          rl.mu.Unlock()
+
+          if count > rl.limite {
+              w.Header().Set("Content-Type", "application/json")
+              w.Header().Set("Retry-After", fmt.Sprintf("%.0f", rl.ventana.Seconds()))
+              w.WriteHeader(http.StatusTooManyRequests)
+              json.NewEncoder(w).Encode(map[string]string{
+                  "error": "demasiadas peticiones",
+              })
+              return
+          }
+
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      limiter := NewRateLimiter(10, 1*time.Minute)
+
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(map[string]string{"mensaje": "éxito"})
+      })
+
+      http.Handle("/", limiter.Middleware(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+
+  var fmt fmt
+  ```
+
+  9. MIDDLEWARE DE COMPRESIÓN GZIP
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "compress/gzip"
+      "io"
+      "net/http"
+      "strings"
+  )
+
+  type gzipResponseWriter struct {
+      io.Writer
+      http.ResponseWriter
+  }
+
+  func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+      return w.Writer.Write(b)
+  }
+
+  func compressionMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+              next.ServeHTTP(w, r)
+              return
+          }
+
+          w.Header().Set("Content-Encoding", "gzip")
+          gw := gzip.NewWriter(w)
+          defer gw.Close()
+
+          gzw := &gzipResponseWriter{Writer: gw, ResponseWriter: w}
+          next.ServeHTTP(gzw, r)
+      })
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Write([]byte(strings.Repeat("Hola Go Master Book! ", 1000)))
+      })
+
+      http.Handle("/", compressionMiddleware(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  10. MIDDLEWARE DE CORS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "net/http"
+  )
+
+  func corsMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Header().Set("Access-Control-Allow-Origin", "*")
+          w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+          w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+          w.Header().Set("Access-Control-Max-Age", "86400")
+
+          if r.Method == "OPTIONS" {
+              w.WriteHeader(http.StatusNoContent)
+              return
+          }
+
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Write([]byte(`{"mensaje":"CORS habilitado"}`))
+      })
+
+      http.Handle("/", corsMiddleware(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  11. MIDDLEWARE DE TIMEOUT
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "encoding/json"
+      "net/http"
+      "time"
+  )
+
+  func timeoutMiddleware(duracion time.Duration) Middleware {
+      return func(next http.Handler) http.Handler {
+          return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+              ctx, cancel := context.WithTimeout(r.Context(), duracion)
+              defer cancel()
+
+              r = r.WithContext(ctx)
+
+              done := make(chan struct{})
+              go func() {
+                  next.ServeHTTP(w, r)
+                  close(done)
+              }()
+
+              select {
+              case <-done:
+                  return
+              case <-ctx.Done():
+                  w.Header().Set("Content-Type", "application/json")
+                  w.WriteHeader(http.StatusGatewayTimeout)
+                  json.NewEncoder(w).Encode(map[string]string{
+                      "error": "tiempo de espera agotado",
+                  })
+              }
+          })
+      }
+  }
+
+  type Middleware func(http.Handler) http.Handler
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          time.Sleep(5 * time.Second) // simula proceso lento
+          w.Write([]byte(`{"mensaje":"completado"}`))
+      })
+
+      http.Handle("/lento", timeoutMiddleware(2*time.Second)(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  12. MIDDLEWARE DE REQUEST ID
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "crypto/rand"
+      "encoding/hex"
+      "log"
+      "net/http"
+  )
+
+  type contextKey string
+
+  const RequestIDKey contextKey = "requestID"
+
+  func generarID() string {
+      bytes := make([]byte, 16)
+      rand.Read(bytes)
+      return hex.EncodeToString(bytes)
+  }
+
+  func requestIDMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          id := r.Header.Get("X-Request-ID")
+          if id == "" {
+              id = generarID()
+          }
+
+          w.Header().Set("X-Request-ID", id)
+          ctx := context.WithValue(r.Context(), RequestIDKey, id)
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func loggingMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          reqID := r.Context().Value(RequestIDKey)
+          log.Printf("[%s] %s %s", reqID, r.Method, r.URL.Path)
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          reqID := r.Context().Value(RequestIDKey)
+          w.Write([]byte("Request ID: " + reqID.(string)))
+      })
+
+      http.Handle("/", requestIDMiddleware(loggingMiddleware(handler)))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  13. MIDDLEWARE CON CHI
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Chi tiene soporte nativo de middleware:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+      "time"
+
+      "github.com/go-chi/chi/v5"
+      "github.com/go-chi/chi/v5/middleware"
+  )
+
+  func miMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Println("Antes del handler")
+          next.ServeHTTP(w, r)
+          fmt.Println("Después del handler")
+      })
+  }
+
+  func main() {
+      r := chi.NewRouter()
+
+      // Middleware global
+      r.Use(middleware.Logger)
+      r.Use(middleware.Recoverer)
+      r.Use(middleware.RequestID)
+      r.Use(middleware.RealIP)
+      r.Use(miMiddleware)
+      r.Use(middleware.Timeout(30 * time.Second))
+
+      r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Hola desde Chi con middleware")
+      })
+
+      // Middleware específico de un grupo
+      r.Group(func(r chi.Router) {
+          r.Use(middleware.BasicAuth("admin", map[string]string{
+              "admin": "secreto",
+          }))
+          r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+              fmt.Fprintf(w, "Panel admin")
+          })
+      })
+
+      http.ListenAndServe(":8080", r)
+  }
+  ```
+
+  14. MIDDLEWARE CON GORILLA MUX
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+
+      "github.com/gorilla/mux"
+  )
+
+  func loggingMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+          next.ServeHTTP(w, r)
+          log.Printf("%s %s %v", r.Method, r.RequestURI, time.Since(inicio))
+      })
+  }
+
+  func main() {
+      r := mux.NewRouter()
+
+      // Middleware global
+      r.Use(loggingMiddleware)
+
+      r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Hola desde Gorilla Mux")
+      })
+
+      // Subrouter con middleware específico
+      api := r.PathPrefix("/api").Subrouter()
+      api.Use(func(next http.Handler) http.Handler {
+          return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+              if r.Header.Get("Authorization") == "" {
+                  http.Error(w, "No autorizado", http.StatusUnauthorized)
+                  return
+              }
+              next.ServeHTTP(w, r)
+          })
+      })
+      api.HandleFunc("/tareas", listarTareas).Methods("GET")
+
+      http.ListenAndServe(":8080", r)
+  }
+
+  func listarTareas(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Lista de tareas")
+  }
+  ```
+
+  15. MIDDLEWARE CON SERVMUX (SIN BIBLIOTECAS)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+  )
+
+  func middlewareCadena(handler http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
+      for i := len(middlewares) - 1; i >= 0; i-- {
+          handler = middlewares[i](handler)
+      }
+      return handler
+  }
+
+  func logger(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+          next.ServeHTTP(w, r)
+          log.Printf("%s %s %v", r.Method, r.URL.Path, time.Since(inicio))
+      })
+  }
+
+  func recoverer(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          defer func() {
+              if err := recover(); err != nil {
+                  log.Printf("panic: %v", err)
+                  http.Error(w, "Error interno", http.StatusInternalServerError)
+              }
+          }()
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func contentJSON(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Header().Set("Content-Type", "application/json")
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, `{"mensaje":"Hola desde ServeMux con middleware"}`)
+      })
+
+      handler := middlewareCadena(mux, logger, recoverer, contentJSON)
+      http.ListenAndServe(":8080", handler)
+  }
+  ```
+
+  16. MIDDLEWARE DE CONTEXTO — PASAR DATOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "encoding/json"
+      "net/http"
+  )
+
+  type contextKey string
+
+  const (
+      KeyUserID   contextKey = "userID"
+      KeyUserRole contextKey = "userRole"
+      KeyRequestID contextKey = "requestID"
+  )
+
+  func contextoMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          ctx := r.Context()
+          ctx = context.WithValue(ctx, KeyRequestID, "req-123")
+          ctx = context.WithValue(ctx, KeyUserID, "user-456")
+          ctx = context.WithValue(ctx, KeyUserRole, "editor")
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func handler(w http.ResponseWriter, r *http.Request) {
+      userID := r.Context().Value(KeyUserID).(string)
+      role := r.Context().Value(KeyUserRole).(string)
+      reqID := r.Context().Value(KeyRequestID).(string)
+
+      json.NewEncoder(w).Encode(map[string]string{
+          "requestID": reqID,
+          "userID":    userID,
+          "role":      role,
+      })
+  }
+
+  func main() {
+      http.Handle("/", contextoMiddleware(http.HandlerFunc(handler)))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  17. MIDDLEWARE DE CACHE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+      "sync"
+      "time"
+  )
+
+  type CacheEntry struct {
+      data       []byte
+      creado     time.Time
+      duracion   time.Duration
+  }
+
+  type CacheMiddleware struct {
+      mu       sync.RWMutex
+      entries  map[string]*CacheEntry
+      duracion time.Duration
+  }
+
+  func NewCacheMiddleware(duracion time.Duration) *CacheMiddleware {
+      return &CacheMiddleware{
+          entries:  make(map[string]*CacheEntry),
+          duracion: duracion,
+      }
+  }
+
+  func (c *CacheMiddleware) Middleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          key := r.Method + ":" + r.URL.String()
+
+          c.mu.RLock()
+          entry, exists := c.entries[key]
+          c.mu.RUnlock()
+
+          if exists && time.Since(entry.creado) < entry.duracion {
+              w.Header().Set("X-Cache", "HIT")
+              w.Write(entry.data)
+              return
+          }
+
+          cw := &cacheWriter{ResponseWriter: w, key: key, cache: c}
+          next.ServeHTTP(cw, r)
+      })
+  }
+
+  type cacheWriter struct {
+      http.ResponseWriter
+      key   string
+      cache *CacheMiddleware
+      data  []byte
+  }
+
+  func (cw *cacheWriter) Write(b []byte) (int, error) {
+      cw.data = append(cw.data, b...)
+      cw.cache.mu.Lock()
+      cw.cache.entries[cw.key] = &CacheEntry{
+          data:     cw.data,
+          creado:   time.Now(),
+          duracion: cw.cache.duracion,
+      }
+      cw.cache.mu.Unlock()
+      return cw.ResponseWriter.Write(b)
+  }
+
+  func main() {
+      cache := NewCacheMiddleware(30 * time.Second)
+
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Header().Set("Content-Type", "application/json")
+          json.NewEncoder(w).Encode(map[string]string{
+              "mensaje": "respuesta cacheable",
+              "timestamp": time.Now().Format(time.RFC3339),
+          })
+      })
+
+      http.Handle("/", cache.Middleware(handler))
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  18. PROGRAMA COMPLETO — PIPELINE DE MIDDLEWARES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "encoding/json"
+      "fmt"
+      "log"
+      "net/http"
+      "os"
+      "strings"
+      "time"
+  )
+
+  type contextKey string
+
+  const (
+      KeyRequestID contextKey = "request_id"
+      KeyStartTime contextKey = "start_time"
+  )
+
+  type Middleware func(http.Handler) http.Handler
+
+  func Chain(handler http.Handler, middlewares ...Middleware) http.Handler {
+      for i := len(middlewares) - 1; i >= 0; i-- {
+          handler = middlewares[i](handler)
+      }
+      return handler
+  }
+
+  func RequestID(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          id := r.Header.Get("X-Request-ID")
+          if id == "" {
+              id = fmt.Sprintf("%d", time.Now().UnixNano())
+          }
+          w.Header().Set("X-Request-ID", id)
+          ctx := context.WithValue(r.Context(), KeyRequestID, id)
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func Logger(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          ctx := context.WithValue(r.Context(), KeyStartTime, time.Now())
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func LoggerAfter(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          lw := &loggingWriter{ResponseWriter: w, statusCode: http.StatusOK}
+          next.ServeHTTP(lw, r)
+
+          startTime, _ := r.Context().Value(KeyStartTime).(time.Time)
+          duration := time.Since(startTime)
+          reqID, _ := r.Context().Value(KeyRequestID).(string)
+
+          log.Printf("[%s] %s %s %d %d %v",
+              reqID, r.Method, r.URL.Path,
+              lw.statusCode, lw.bytesWritten, duration)
+      })
+  }
+
+  type loggingWriter struct {
+      http.ResponseWriter
+      statusCode   int
+      bytesWritten int
+  }
+
+  func (w *loggingWriter) WriteHeader(code int) {
+      w.statusCode = code
+      w.ResponseWriter.WriteHeader(code)
+  }
+
+  func (w *loggingWriter) Write(b []byte) (int, error) {
+      n, err := w.ResponseWriter.Write(b)
+      w.bytesWritten += n
+      return n, err
+  }
+
+  func Recoverer(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          defer func() {
+              if err := recover(); err != nil {
+                  log.Printf("PANIC: %v", err)
+                  w.Header().Set("Content-Type", "application/json")
+                  w.WriteHeader(http.StatusInternalServerError)
+                  json.NewEncoder(w).Encode(map[string]string{
+                      "error": "internal server error",
+                  })
+              }
+          }()
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func Auth(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          auth := r.Header.Get("Authorization")
+          if !strings.HasPrefix(auth, "Bearer ") {
+              w.Header().Set("Content-Type", "application/json")
+              w.WriteHeader(http.StatusUnauthorized)
+              json.NewEncoder(w).Encode(map[string]string{"error": "no autorizado"})
+              return
+          }
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func ContentTypeJSON(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Header().Set("Content-Type", "application/json")
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+
+      mux.HandleFunc("/publico", func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(map[string]string{"ruta": "publica"})
+      })
+
+      mux.HandleFunc("/protegido", func(w http.ResponseWriter, r *http.Request) {
+          reqID, _ := r.Context().Value(KeyRequestID).(string)
+          json.NewEncoder(w).Encode(map[string]string{
+              "ruta":      "protegida",
+              "requestID": reqID,
+          })
+      })
+
+      // Middleware por ruta
+      publicHandler := Chain(mux, RequestID, Logger, LoggerAfter, Recoverer, ContentTypeJSON)
+      protectedHandler := Chain(mux, RequestID, Logger, LoggerAfter, Recoverer, ContentTypeJSON, Auth)
+
+      // Enrutar manualmente
+      finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          if r.URL.Path == "/protegido" {
+              protectedHandler.ServeHTTP(w, r)
+          } else {
+              publicHandler.ServeHTTP(w, r)
+          }
+      })
+
+      port := os.Getenv("PORT")
+      if port == "" {
+          port = "8080"
+      }
+
+      server := &http.Server{
+          Addr:         ":" + port,
+          Handler:      finalHandler,
+          ReadTimeout:  15 * time.Second,
+          WriteTimeout: 15 * time.Second,
+          IdleTimeout:  60 * time.Second,
+      }
+
+      log.Printf("Servidor iniciado en :%s", port)
+      log.Fatal(server.ListenAndServe())
+  }
+  ```
+
+  19. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Los middlewares deben ser genéricos y reutilizables.
+  2. No modifiques la respuesta después de escribir el status code.
+  3. Usa context.Context para pasar datos entre middlewares.
+  4. Los middlewares deben ejecutarse rápido (no hagas I/O bloqueante).
+  5. Documenta qué hace cada middleware y su orden esperado.
+  6. No asumas el contenido de la respuesta.
+  7. Usa el patrón de closure para configurar middlewares.
+  8. Componer con Chain() es más limpio que anidar manualmente.
+  9. Los middlewares de recuperación deben ir al inicio del pipeline.
+  10. Prueba cada middleware de forma aislada.
+
+  20. MIDDLEWARES POPULARES DE LA COMUNIDAD
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Middleware              | Paquete                              |
+  |------------------------|--------------------------------------|
+  | Logger                 | chi/middleware.Logger                |
+  | Recoverer              | chi/middleware.Recoverer             |
+  | RequestID              | chi/middleware.RequestID             |
+  | RealIP                 | chi/middleware.RealIP                |
+  | Timeout                | chi/middleware.Timeout               |
+  | Compress               | chi/middleware.Compress              |
+  | BasicAuth              | chi/middleware.BasicAuth             |
+  | CORS                   | github.com/rs/cors                   |
+  | Rate Limiter           | golang.org/x/time/rate               |
+  | Negroni (middleware)   | github.com/urfave/negroni            |
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • Un middleware es func(http.Handler) http.Handler.
+  • Los middlewares se componen anidando o con Chain().
+  • El orden de ejecución es: primero en entrar, último en salir.
+  • Context.Context permite pasar datos entre middlewares.
+  • Los middlewares típicos: logging, auth, recovery, CORS, rate limit.
+  • Chi y Gorilla Mux tienen soporte nativo de middleware.
+  • Con ServeMux se envuelve el handler manualmente.
+  • Los middlewares deben ser genéricos y configurables.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un middleware que añada el header X-Server: GoMasterBook
+    a todas las respuestas.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Implementa un middleware que mida el tiempo de cada petición
+    y lo registre en un log con formato JSON.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Construye un middleware de rate limiting basado en el token
+    bucket algorithm (golang.org/x/time/rate).
+
+  ★ EJERCICIO 4 (MEDIO):
+    Crea un middleware que valide que el Content-Type de las
+    peticiones POST sea application/json.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Implementa un sistema de middlewares con prioridades (orden
+    de ejecución configurable).
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Construye un middleware de caché que almacene respuestas en
+    memoria y las sirva para peticiones GET idénticas dentro de
+    una ventana de tiempo.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Crea un middleware de circuit breaker que deje de pasar
+    peticiones a un handler si hay más de N errores en M segundos.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Implementa un middleware que agregue tracing distribuido
+    (como Zipkin) inyectando y propagando headers de trace.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Cuál es el orden de ejecución de los middlewares?
+  R: Si tienes A(B(handler)), se ejecuta A antes, luego B, luego
+  handler, luego B después, luego A después. Es una pila (LIFO).
+
+  ❓ ¿Cómo paso datos de un middleware al handler?
+  R: Usa context.WithValue para almacenar datos en el contexto de
+  la petición, y luego recupéralos con r.Context().Value(key).
+
+  ❓ ¿Puedo tener middlewares que modifiquen la respuesta?
+  R: Sí, pero debes hacerlo antes de que se escriba el status code.
+  Una vez escrito, los headers no se pueden modificar.
+
+  ❓ ¿Cuándo debo usar recover() en un middleware?
+  R: Siempre. Un panic en cualquier handler tumba el servidor
+  completo. El middleware de recovery debe ser el primero en la cadena.
+
+  ❓ ¿Qué hago si un middleware necesita configuración?
+  R: Usa el patrón de closure: una función que recibe configuración
+  y devuelve el middleware. Ej: loggingMiddleware(logger *log.Logger).
+
+  ❓ ¿Cómo pruebo un middleware de forma aislada?
+  R: Crea un handler de prueba (httptest.NewRecorder), envuélvelo
+  con el middleware, y haz peticiones con httptest.NewRequest.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 FRAMEWORK DE MIDDLEWARE CON PIPELINE VISUAL
+
+  Diseña e implementa un framework de middleware avanzado que:
+
+  1. Permita definir pipelines con nombre, donde cada pipeline
+     sea una cadena de middlewares con orden explícito.
+  2. Tenga un DSL para definir pipelines en YAML/JSON:
+     ```yaml
+     pipelines:
+       api:
+         - cors
+         - logger
+         - auth: { tipo: jwt, secreto: "..." }
+         - rate_limit: { peticiones: 100, ventana: "1m" }
+         - handler
+  3. Soporte middlewares condicionales (solo ejecutar si
+     cierta condición se cumple).
+  4. Implemente un panel de administración web que muestre
+     el pipeline y estadísticas de cada middleware (tiempo,
+     errores, throughput).
+  5. Tenga un modo de depuración que añada headers con el
+     tiempo que cada middleware tomó.
+  6. Sea compatible con http.Handler (pueda usarse con cualquier router).
+
+  Requisitos técnicos:
+  - Implementa una estructura Pipeline con métodos Add, Remove, Insert.
+  - Cada middleware reporta métricas (duración, errores, estado).
+  - El panel web expone métricas vía JSON.
+  - Los pipelines se cargan desde archivos de configuración.
+  - Usa sync/atomic para las métricas.
+
+  Este desafío integra:
+  - Patrón middleware avanzado
+  - Metaprogramación y configuración
+  - Observabilidad y métricas
+  - Diseño de APIs
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 59. Ahora dominas el patrón middleware
+  en Go, una de las herramientas más poderosas para construir
+  aplicaciones web modulares, seguras y observables.
+
+  Los middlewares son la pieza central de la arquitectura de
+  servidores HTTP modernos. Te permiten separar preocupaciones
+  transversales (autenticación, logging, métricas) de la lógica
+  de negocio, manteniendo tu código limpio y mantenible.
+
+  En el próximo y último capítulo de este módulo, pondremos
+  todo en práctica con un proyecto completo.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 60: PROYECTO DEL MÓDULO VI
+    Construirás una API REST completa que integra archivos, JSON,
+    CSV, cliente HTTP, servidor, routing y middleware en un
+    proyecto del mundo real.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 59 — FIN DEL CAPÍTULO
+================================================================================

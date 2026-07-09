@@ -1,0 +1,906 @@
+================================================================================
+  MÓDULO VI: ENTRADA, SALIDA Y ARCHIVOS
+  CAPÍTULO 58: NIO (FILES, PATHS)
+  "Java Master Book" — El arte de dominar Java
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 58! La API java.io.File ha servido fielmente desde
+JDK 1.0, pero con el tiempo sus limitaciones se hicieron evidentes. En
+Java 7, se introdujo NIO.2 (java.nio.file) para superar esas limitaciones.
+Con clases como Path, Paths y Files, ahora podemos realizar operaciones
+de archivos de forma más expresiva, con mejor manejo de errores, soporte
+de enlaces simbólicos, operaciones atómicas, y un Walk API que facilita
+recorrer árboles de directorios. Este capítulo te mostrará cómo NIO puede
+simplificar drásticamente tu código de manejo de archivos.
+
+FRASE DEL DÍA
+-------------
+"El camino (Path) es más importante que la llegada (File)."
+— Anónimo (amante de NIO)
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+• Comprender la diferencia entre Path y File.
+• Crear y manipular objetos Path con Paths y Path.of().
+• Leer y escribir archivos con Files.readAllLines(), Files.write().
+• Copiar, mover y eliminar archivos con Files.
+• Recorrer árboles de directorios con Files.walk() y FileVisitor.
+• Manejar atributos de archivos con Files.readAttributes().
+• Usar WatchService para monitorear cambios en directorios.
+• Operaciones atómicas de archivos.
+• Manejo de enlaces simbólicos.
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+1. PATH VS FILE
+-----------------
+
+  File (java.io):
+  • Representación de rutas con métodos limitados.
+  • Métodos que retornan boolean en lugar de lanzar excepciones.
+  • Soporte pobre para enlaces simbólicos.
+  • Sin operaciones atómicas.
+  • toString() puede generar rutas dependientes del SO.
+
+  Path (java.nio.file):
+  • Representación inmutable de rutas.
+  • Métodos que lanzan IOException (más informativo).
+  • Soporte completo para enlaces simbólicos.
+  • Operaciones atómicas disponibles.
+  • Integración con Files para operaciones de archivos.
+
+  // Creación de Path
+  Path p1 = Paths.get("/tmp/archivo.txt");
+  Path p2 = Path.of("/tmp/archivo.txt"); // Java 11+
+  Path p3 = Paths.get("/tmp", "archivo.txt");
+  Path p4 = new File("/tmp/archivo.txt").toPath(); // Desde File
+
+2. METODOS ESENCIALES DE PATH
+------------------------------
+
+  Path path = Paths.get("/home/usuario/docs/./archivo.txt");
+
+  • toString(): "/home/usuario/docs/./archivo.txt"
+  • getFileName(): "archivo.txt"
+  • getParent(): "/home/usuario/docs/."
+  • getRoot(): "/"
+  • getNameCount(): 5
+  • getName(0): "home"
+  • getName(1): "usuario"
+  • getName(2): "docs"
+  • getName(3): "."
+  • getName(4): "archivo.txt"
+  • subpath(0, 2): "home/usuario"
+  • isAbsolute(): true (si comienza con /)
+  • normalize(): "/home/usuario/docs/archivo.txt" (elimina . y ..)
+  • toAbsolutePath(): resuelve contra el directorio de trabajo actual
+  • toRealPath(): resuelve enlaces simbolicos y normaliza
+  • resolve("otro.txt"): "/home/usuario/docs/./archivo/otro.txt"
+  • resolveSibling("hermano.txt"): "/home/usuario/docs/./hermano.txt"
+  • relativize(other): calcula ruta relativa entre dos paths
+  • startsWith("/home"): true
+  • endsWith("archivo.txt"): true
+  • compareTo(other): comparacion lexicografica
+
+3. FILES — OPERACIONES PRINCIPALES
+-----------------------------------
+
+  La clase Files (java.nio.file.Files) proporciona metodos estaticos
+  que simplifican drasticamente el trabajo con archivos.
+
+  Verificacion de existencia y tipo:
+  • Files.exists(path, options...)
+  • Files.notExists(path, options...)
+  • Files.isDirectory(path, options...)
+  • Files.isRegularFile(path, options...)
+  • Files.isSymbolicLink(path)
+  • Files.isReadable(path)
+  • Files.isWritable(path)
+  • Files.isExecutable(path)
+  • Files.isHidden(path)
+
+  Informacion del archivo:
+  • Files.size(path): tamaño en bytes
+  • Files.getLastModifiedTime(path, options...)
+  • Files.getOwner(path, options...)
+  • Files.getFileStore(path): informacion del sistema de archivos
+
+  Operaciones de creacion:
+  • Files.createFile(path, attrs...): crea archivo vacio
+  • Files.createDirectory(path, attrs...): crea directorio
+  • Files.createDirectories(path, attrs...): crea jerarquia completa
+  • Files.createTempFile(prefix, suffix, attrs...)
+  • Files.createTempDirectory(prefix, attrs...)
+  • Files.createSymbolicLink(link, target, attrs...)
+  • Files.createLink(link, existing): hard link
+
+  Operaciones de escritura/lectura:
+  • Files.write(path, bytes, options...): escribe bytes
+  • Files.write(path, lines, charset, options...): escribe lineas
+  • Files.writeString(path, charSequence, options...): Java 11+
+  • Files.readAllBytes(path): lee todo como bytes
+  • Files.readAllLines(path, charset): lee todas las lineas
+  • Files.readString(path, charset): Java 11+
+  • Files.newInputStream(path, options...): obtiene InputStream
+  • Files.newOutputStream(path, options...): obtiene OutputStream
+  • Files.newBufferedReader(path, charset): obtiene BufferedReader
+  • Files.newBufferedWriter(path, charset, options...): obtiene BufferedWriter
+
+  Operaciones de copia y movimiento:
+  • Files.copy(source, target, options...): copia archivo o stream
+  • Files.move(source, target, options...): mueve o renombra
+  • Files.delete(path): elimina (lanza excepcion si no existe)
+  • Files.deleteIfExists(path): elimina si existe
+
+  Opciones comunes (enums):
+  • StandardCopyOption: REPLACE_EXISTING, COPY_ATTRIBUTES, ATOMIC_MOVE
+  • StandardOpenOption: READ, WRITE, APPEND, CREATE, TRUNCATE_EXISTING,
+    CREATE_NEW, DELETE_ON_CLOSE, SPARSE, SYNC, DSYNC
+  • LinkOption: NOFOLLOW_LINKS
+  • FileVisitOption: FOLLOW_LINKS
+
+4. LEER ARCHIVOS CON FILES
+----------------------------
+
+  Leer todas las lineas en memoria (para archivos pequenos):
+
+  List<String> lineas = Files.readAllLines(
+      Paths.get("/tmp/archivo.txt"), StandardCharsets.UTF_8);
+
+  Leer todo el contenido como String (Java 11+):
+
+  String contenido = Files.readString(
+      Paths.get("/tmp/archivo.txt"), StandardCharsets.UTF_8);
+
+  Leer como bytes (para binarios):
+
+  byte[] bytes = Files.readAllBytes(Paths.get("/tmp/imagen.jpg"));
+
+  Leer con Stream (para archivos grandes, no carga todo en memoria):
+
+  try (Stream<String> stream = Files.lines(
+          Paths.get("/tmp/gigante.txt"), StandardCharsets.UTF_8)) {
+      stream.filter(l -> l.contains("ERROR"))
+            .forEach(System.out::println);
+  }
+
+  Leer con BufferedReader (control fino):
+
+  try (BufferedReader br = Files.newBufferedReader(
+          Paths.get("/tmp/archivo.txt"), StandardCharsets.UTF_8)) {
+      String linea;
+      while ((linea = br.readLine()) != null) {
+          System.out.println(linea);
+      }
+  }
+
+5. ESCRIBIR ARCHIVOS CON FILES
+--------------------------------
+
+  Escribir lineas:
+
+  List<String> lineas = Arrays.asList("Linea 1", "Linea 2", "Linea 3");
+  Files.write(Paths.get("/tmp/salida.txt"), lineas,
+      StandardCharsets.UTF_8,
+      StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+  Escribir String (Java 11+):
+
+  Files.writeString(Paths.get("/tmp/salida.txt"), "Contenido completo",
+      StandardCharsets.UTF_8,
+      StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+
+  Escribir bytes:
+
+  byte[] datos = { 0x48, 0x65, 0x6C, 0x6C, 0x6F };
+  Files.write(Paths.get("/tmp/salida.bin"), datos);
+
+  Escribir con BufferedWriter:
+
+  try (BufferedWriter bw = Files.newBufferedWriter(
+          Paths.get("/tmp/salida.txt"), StandardCharsets.UTF_8,
+          StandardOpenOption.APPEND)) {
+      bw.write("Nueva linea");
+      bw.newLine();
+  }
+
+  Opciones comunes:
+  • StandardOpenOption.CREATE: crea si no existe
+  • StandardOpenOption.CREATE_NEW: crea, falla si existe
+  • StandardOpenOption.TRUNCATE_EXISTING: vacia el archivo existente
+  • StandardOpenOption.APPEND: escribe al final
+  • StandardOpenOption.DELETE_ON_CLOSE: elimina al cerrar (temporal)
+
+6. COPIAR, MOVER Y ELIMINAR CON FILES
+---------------------------------------
+
+  Copiar archivo:
+
+  Path origen = Paths.get("/tmp/origen.txt");
+  Path destino = Paths.get("/tmp/destino.txt");
+  Files.copy(origen, destino, StandardCopyOption.REPLACE_EXISTING);
+  Files.copy(origen, destino, StandardCopyOption.COPY_ATTRIBUTES);
+
+  Copiar desde InputStream:
+
+  try (InputStream in = ...) {
+      Files.copy(in, destino, StandardCopyOption.REPLACE_EXISTING);
+  }
+
+  Copiar a OutputStream:
+
+  try (OutputStream out = ...) {
+      Files.copy(origen, out);
+  }
+
+  Mover (renombrar):
+
+  Files.move(origen, destino, StandardCopyOption.REPLACE_EXISTING);
+  Files.move(origen, destino, StandardCopyOption.ATOMIC_MOVE);
+
+  El movimiento atomico garantiza que la operacion se completa o no
+  se realiza, sin estados intermedios. Solo funciona en el mismo
+  sistema de archivos.
+
+  Eliminar:
+
+  Files.delete(path); // Lanza NoSuchFileException si no existe
+  Files.deleteIfExists(path); // No lanza si no existe
+
+7. WALK — RECORRER ARBOLES DE DIRECTORIOS
+-------------------------------------------
+
+  Files.walk(path) devuelve un Stream<Path> que recorre recursivamente
+  el arbol de directorios de forma lazy (bajo demanda).
+
+  // Listar todos los archivos .java recursivamente
+  try (Stream<Path> stream = Files.walk(Paths.get("/home/proyecto"))) {
+      stream.filter(p -> p.toString().endsWith(".java"))
+            .forEach(System.out::println);
+  }
+
+  // Walk con profundidad maxima
+  Files.walk(path, maxDepth): limita la profundidad de recursion.
+
+  // Walk con opciones
+  Files.walk(path, maxDepth, FileVisitOption.FOLLOW_LINKS);
+
+  // Walk devuelve directorios antes que archivos (pre-order)
+  // Para orden inverso, usar sorted() o collect y reverse
+
+  IMPORTANTE: Files.walk() devuelve un Stream que debe cerrarse
+  (usa try-with-resources) para liberar los recursos del sistema.
+
+8. WALKFILETREE CON FILEVISITOR
+---------------------------------
+
+  Files.walkFileTree() ofrece mas control que walk(), permitiendo
+  acciones especificas al entrar/salir de directorios y manejar
+  errores.
+
+  Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
+      @Override
+      public FileVisitResult preVisitDirectory(Path dir,
+              BasicFileAttributes attrs) {
+          System.out.println("Entrando a: " + dir);
+          return FileVisitResult.CONTINUE;
+          // SKIP_SUBTREE: no entra en este directorio
+          // SKIP_SIBLINGS: salta hermanos
+          // TERMINATE: detiene el recorrido
+      }
+
+      @Override
+      public FileVisitResult visitFile(Path file,
+              BasicFileAttributes attrs) {
+          System.out.println("Archivo: " + file);
+          return FileVisitResult.CONTINUE;
+      }
+
+      @Override
+      public FileVisitResult visitFileFailed(Path file,
+              IOException exc) {
+          System.err.println("Error en: " + file);
+          return FileVisitResult.CONTINUE; // Continuar pese al error
+      }
+
+      @Override
+      public FileVisitResult postVisitDirectory(Path dir,
+              IOException exc) {
+          System.out.println("Saliendo de: " + dir);
+          return FileVisitResult.CONTINUE;
+      }
+  });
+
+  FileVisitResult valores:
+  • CONTINUE: continua con el siguiente archivo/directorio
+  • SKIP_SUBTREE: no entra en este directorio (solo preVisit)
+  • SKIP_SIBLINGS: salta los hermanos restantes
+  • TERMINATE: detiene el recorrido
+
+9. ATRIBUTOS DE ARCHIVOS
+--------------------------
+
+  BasicFileAttributes — atributos basicos de cualquier sistema:
+
+  BasicFileAttributes attrs = Files.readAttributes(
+      path, BasicFileAttributes.class);
+  System.out.println("Tamano: " + attrs.size());
+  System.out.println("Creacion: " + attrs.creationTime());
+  System.out.println("Ultima modificacion: " + attrs.lastModifiedTime());
+  System.out.println("Ultimo acceso: " + attrs.lastAccessTime());
+  System.out.println("Es directorio: " + attrs.isDirectory());
+  System.out.println("Es regular: " + attrs.isRegularFile());
+  System.out.println("Es enlace: " + attrs.isSymbolicLink());
+  System.out.println("Es otro: " + attrs.isOther());
+  System.out.println("FileKey: " + attrs.fileKey());
+
+  Atributos especificos del SO:
+
+  // DOS (Windows)
+  DosFileAttributes dosAttrs = Files.readAttributes(
+      path, DosFileAttributes.class);
+  System.out.println("Read-only: " + dosAttrs.isReadOnly());
+  System.out.println("Hidden: " + dosAttrs.isHidden());
+  System.out.println("Archive: " + dosAttrs.isArchive());
+  System.out.println("System: " + dosAttrs.isSystem());
+
+  // POSIX (Linux/Mac)
+  PosixFileAttributes posixAttrs = Files.readAttributes(
+      path, PosixFileAttributes.class);
+  System.out.println("Permisos: " + posixAttrs.permissions());
+  System.out.println("Grupo: " + posixAttrs.group());
+  System.out.println("Owner: " + posixAttrs.owner());
+
+  Atributos como mapa (seleccion especifica):
+
+  Map<String, Object> mapa = Files.readAttributes(
+      path, "size,lastModifiedTime,creationTime,isRegularFile");
+  mapa.forEach((k, v) -> System.out.println(k + " = " + v));
+
+  Establecer atributos:
+
+  Files.setAttribute(path, "dos:hidden", true);
+  Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
+  Files.setPosixFilePermissions(path,
+      Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+
+10. WATCHSERVICE — MONITOREO DE DIRECTORIOS
+---------------------------------------------
+
+  WatchService permite monitorear cambios en directorios (crear,
+  modificar, eliminar archivos). Es la base de herramientas como
+  auto-recompile o hot-reload.
+
+  // Crear WatchService
+  try (WatchService watcher = FileSystems.getDefault().newWatchService()) {
+      Path dir = Paths.get("/tmp/monitoreado");
+      Files.createDirectories(dir);
+
+      // Registrar el directorio con los eventos de interes
+      WatchKey key = dir.register(watcher,
+          StandardWatchEventKinds.ENTRY_CREATE,
+          StandardWatchEventKinds.ENTRY_DELETE,
+          StandardWatchEventKinds.ENTRY_MODIFY,
+          StandardWatchEventKinds.OVERFLOW);
+
+      System.out.println("Monitoreando " + dir + "...");
+
+      // Bucle infinito de eventos
+      while (true) {
+          // take() es BLOQUEANTE — espera hasta que ocurra un evento
+          WatchKey wk = watcher.take();
+
+          // poll() no bloqueante — devuelve null si no hay eventos
+          // WatchKey wk = watcher.poll();
+          // WatchKey wk = watcher.poll(5, TimeUnit.SECONDS);
+
+          for (WatchEvent<?> event : wk.pollEvents()) {
+              WatchEvent.Kind<?> kind = event.kind();
+
+              if (kind == StandardWatchEventKinds.OVERFLOW) {
+                  System.out.println("Overflow — algunos eventos perdidos");
+                  continue;
+              }
+
+              @SuppressWarnings("unchecked")
+              Path filename = ((WatchEvent<Path>) event).context();
+              long count = event.count();
+
+              System.out.println(kind.name() + ": " + filename
+                      + " (x" + count + ")");
+          }
+
+          // IMPORTANTE: reset() debe llamarse para volver a recibir eventos
+          boolean valido = wk.reset();
+          if (!valido) {
+              System.out.println("WatchKey invalido — el directorio ya no existe");
+              break;
+          }
+      }
+  }
+
+  Limitaciones:
+  • No monitorea subdirectorios (solo el directorio registrado).
+  • Puede perder eventos si hay alta frecuencia de cambios.
+  • El comportamiento exacto depende del SO (inotify en Linux,
+    ReadDirectoryChanges en Windows, FSEvents en macOS).
+
+11. ENLACES SIMBOLICOS
+------------------------
+
+  NIO soporta completamente enlaces simbolicos, algo que java.io.File
+  maneja pobremente.
+
+  // Crear enlace simbolico
+  Path target = Paths.get("/tmp/real.txt");
+  Path link = Paths.get("/tmp/enlace.txt");
+  Files.createFile(target);
+  Files.createSymbolicLink(link, target);
+
+  // Verificar si es enlace
+  boolean esEnlace = Files.isSymbolicLink(link);
+
+  // Leer el destino del enlace
+  Path destino = Files.readSymbolicLink(link);
+
+  // Seguir enlaces (o no) con LinkOption
+  boolean existeReal = Files.exists(link); // Sigue enlaces por defecto
+  boolean existeSinSeguir = Files.exists(link, LinkOption.NOFOLLOW_LINKS);
+
+  // Atributos sin seguir enlaces
+  BasicFileAttributes attrsLink = Files.readAttributes(
+      link, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+
+  // Hard links
+  Files.createLink(Paths.get("/tmp/hard_link.txt"), Paths.get("/tmp/real.txt"));
+
+12. DIRECTORYSTREAM — FILTRAR ARCHIVOS
+---------------------------------------
+
+  DirectoryStream es ideal para listar archivos con filtro:
+
+  // Filtro glob
+  try (DirectoryStream<Path> stream = Files.newDirectoryStream(
+          Paths.get("/tmp"), "*.{txt,log}")) {
+      for (Path entry : stream) {
+          System.out.println(entry.getFileName());
+      }
+  }
+
+  // Filtro personalizado con DirectoryStream.Filter
+  DirectoryStream.Filter<Path> filtro = new DirectoryStream.Filter<>() {
+      public boolean accept(Path entry) {
+          try {
+              return Files.size(entry) > 1024;
+          } catch (IOException e) {
+              return false;
+          }
+      }
+  };
+
+  try (DirectoryStream<Path> stream = Files.newDirectoryStream(
+          Paths.get("/tmp"), filtro)) {
+      for (Path p : stream) {
+          System.out.println(p + " > 1 KB");
+      }
+  }
+
+  // Sintaxis glob:
+  • "*.txt" — todos los .txt
+  • "???.java" — 3 caracteres + .java
+  • "[abc]*" — empieza con a, b o c
+  • "{*.txt,*.log}" — .txt o .log (multiples patrones)
+  • "**" — cualquier archivo (para walk, no DirectoryStream)
+
+  NOTA: DirectoryStream no es recursivo. Para listar recursivo usa walk().
+
+13. ARCHIVOS TEMPORALES
+-------------------------
+
+  Files.createTempFile(prefix, suffix, attrs...):
+  Crea un archivo temporal en el directorio temporal del sistema.
+
+  Files.createTempDirectory(prefix, attrs...):
+  Crea un directorio temporal.
+
+  Files.createTempFile(dir, prefix, suffix, attrs...):
+  Crea temporal en un directorio especifico.
+
+  Path tempFile = Files.createTempFile("app_", ".tmp");
+  System.out.println("Temp file: " + tempFile);
+  // ... usar el archivo ...
+  Files.delete(tempFile); // Limpiar manualmente o con DELETE_ON_CLOSE
+
+  // Con eliminacion automatica al cerrar
+  try (OutputStream os = Files.newOutputStream(tempFile,
+          StandardOpenOption.DELETE_ON_CLOSE)) {
+      os.write("datos temporales".getBytes());
+  } // El archivo se elimina al salir del try
+
+14. COMPARACION: NIO VS IO
+----------------------------
+
+  Operacion           | java.io.File            | java.nio.file.Files
+  ---------------------|-------------------------|-----------------------
+  Crear directorio     | mkdir() / mkdirs()      | createDirectory / createDirectories
+  Eliminar             | delete() -> boolean     | delete() -> void (lanza excepcion)
+  Copiar               | No soportado            | Files.copy()
+  Mover/Renombrar      | renameTo() -> boolean   | Files.move() con opciones atomicas
+  Listar directorio    | listFiles() -> File[]   | DirectoryStream / walk()
+  Atributos            | length(), lastModified  | readAttributes() -> BasicFileAttributes
+  Enlaces simbolicos   | Soporte muy pobre       | Soporte completo
+  Operaciones atomicas | No                      | Si (ATOMIC_MOVE, CREATE_NEW)
+  Excepciones          | boolean (poco informa)  | IOException (detallado)
+  Archivos temporales  | createTempFile()        | Files.createTempFile/Directory
+  Walk recursivo       | Recursion manual        | Files.walk() / walkFileTree()
+  Monitoreo            | No                      | WatchService
+  Atributos POSIX      | No                      | PosixFileAttributes
+  Lectura de archivos  | No (solo metadatos)     | readAllLines, readString, lines
+  Codificacion         | No control              | Control explicito con Charset
+
+15. MEJORES PRACTICAS CON NIO
+-------------------------------
+
+  • Usar Path.of() (Java 11+) en lugar de Paths.get().
+  • Preferir Files.newBufferedReader/Writer sobre FileReader/Writer.
+  • Usar try-with-resources siempre (especialmente con Stream de walk/lines).
+  • Para archivos grandes, usar Files.lines() en lugar de readAllLines().
+  • Para operaciones atomicas, usar Files.move con ATOMIC_MOVE.
+  • No olvidar cerrar DirectoryStream (implementa Iterable, no AutoCloseable?
+    Si lo hace, usar try-with-resources).
+  • Para atributos, preferir BasicFileAttributes class sobre el mapa.
+  • Validar existencia antes de operar (Files.exists/precedes check).
+  • Usar FileVisitOption.FOLLOW_LINKS con cuidado (riesgo de bucles).
+  • Para vigilar cambios, usar WatchService en un hilo separado.
+
+================================================================================
+  CODIGO DE EJEMPLO COMPLETO
+================================================================================
+
+import java.io.IOException;
+import java.nio.file.*;
+import java.nio.file.attribute.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.stream.*;
+
+public class Capitulo58NIO {
+
+    public static void main(String[] args) {
+        System.out.println("=== CAPÍTULO 58: NIO (FILES, PATHS) ===\n");
+
+        // 1. Creación de Paths
+        System.out.println("--- Creación de Paths ---");
+        Path ruta1 = Paths.get("/tmp/cap58_demo.txt");
+        Path ruta2 = Path.of("/tmp/cap58_demo.txt");
+        Path ruta3 = Paths.get("/tmp", "cap58_demo.txt");
+        System.out.println("ruta1: " + ruta1);
+        System.out.println("ruta2: " + ruta2);
+        System.out.println("ruta3: " + ruta3);
+        System.out.println("Iguales: " + ruta1.equals(ruta2));
+
+        // 2. Métodos de Path
+        System.out.println("\n--- Métodos de Path ---");
+        Path path = Paths.get("/home/usuario/docs/./archivo.txt");
+        System.out.println("toString: " + path);
+        System.out.println("getFileName: " + path.getFileName());
+        System.out.println("getParent: " + path.getParent());
+        System.out.println("getRoot: " + path.getRoot());
+        System.out.println("getNameCount: " + path.getNameCount());
+        System.out.println("getName(0): " + path.getName(0));
+        System.out.println("subpath(0,2): " + path.subpath(0, 2));
+        System.out.println("isAbsolute: " + path.isAbsolute());
+        System.out.println("normalize: " + path.normalize());
+        System.out.println("resolve('otros'): " + path.resolve("otros"));
+
+        // 3. Files.write y Files.readAllLines
+        System.out.println("\n--- Files.write / Files.readAllLines ---");
+        List<String> lineas = Arrays.asList(
+            "Primera linea del archivo NIO",
+            "Segunda linea con acentos: aeiou",
+            "Tercera linea: numeros 12345",
+            "Cuarta linea: nono"
+        );
+        Path archivo = Paths.get("/tmp/cap58_nio.txt");
+        try {
+            Files.write(archivo, lineas, StandardCharsets.UTF_8);
+            System.out.println("Archivo escrito (" + Files.size(archivo) + " bytes)");
+
+            List<String> leidas = Files.readAllLines(archivo, StandardCharsets.UTF_8);
+            System.out.println("Contenido (" + leidas.size() + " lineas):");
+            for (String l : leidas) {
+                System.out.println("  " + l);
+            }
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 4. Files.readString / Files.writeString (Java 11+)
+        System.out.println("\n--- readString / writeString ---");
+        try {
+            Files.writeString(Paths.get("/tmp/cap58_string.txt"),
+                    "Hola desde Files.writeString!\nSegunda linea.",
+                    StandardCharsets.UTF_8);
+            String contenido = Files.readString(
+                    Paths.get("/tmp/cap58_string.txt"),
+                    StandardCharsets.UTF_8);
+            System.out.println("Contenido:\n" + contenido);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 5. Files.copy, move, delete
+        System.out.println("\n--- copy / move / delete ---");
+        Path origen = Paths.get("/tmp/cap58_nio.txt");
+        Path destino = Paths.get("/tmp/cap58_copia.txt");
+        Path movido = Paths.get("/tmp/cap58_movido.txt");
+        try {
+            Files.copy(origen, destino, StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("Copiado a " + destino);
+            Files.move(destino, movido, StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("Movido a " + movido);
+            Files.delete(movido);
+            System.out.println("Eliminado.");
+            boolean ok = Files.deleteIfExists(Paths.get("/tmp/no_existe.txt"));
+            System.out.println("deleteIfExists: " + ok);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 6. Crear directorios
+        System.out.println("\n--- Crear directorios ---");
+        try {
+            Path dir = Files.createDirectory(Paths.get("/tmp/cap58_dir"));
+            System.out.println("Directorio: " + dir);
+            Path jerarquia = Files.createDirectories(
+                    Paths.get("/tmp/cap58_a/b/c/d"));
+            System.out.println("Jerarquia: " + jerarquia);
+            Files.deleteIfExists(Paths.get("/tmp/cap58_dir"));
+            Files.walk(Paths.get("/tmp/cap58_a"))
+                 .sorted(Comparator.reverseOrder())
+                 .forEach(p -> { try { Files.deleteIfExists(p); }
+                     catch (IOException e) {} });
+            System.out.println("Limpios.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 7. Files.walk
+        System.out.println("\n--- Files.walk ---");
+        try (Stream<Path> stream = Files.walk(Paths.get("/tmp"), 2)) {
+            stream.filter(p -> p.toString().contains("cap58"))
+                  .forEach(p -> System.out.println("  " + p));
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 8. walkFileTree
+        System.out.println("\n--- walkFileTree ---");
+        Path tmpDir = Paths.get("/tmp");
+        try {
+            Files.walkFileTree(tmpDir, new SimpleFileVisitor<Path>() {
+                int count = 0;
+                @Override
+                public FileVisitResult visitFile(Path file,
+                        BasicFileAttributes attrs) {
+                    if (count < 3) {
+                        System.out.println("  " + file.getFileName()
+                                + " (" + attrs.size() + " bytes)");
+                        count++;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            System.out.println("  (primeros 3 archivos)");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 9. Atributos
+        System.out.println("\n--- Atributos ---");
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(
+                    archivo, BasicFileAttributes.class);
+            System.out.println("Tamano: " + attrs.size() + " bytes");
+            System.out.println("Creacion: " + attrs.creationTime());
+            System.out.println("Modificacion: " + attrs.lastModifiedTime());
+            System.out.println("Directorio: " + attrs.isDirectory());
+            System.out.println("Regular: " + attrs.isRegularFile());
+            System.out.println("Enlace: " + attrs.isSymbolicLink());
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 10. Files.lines
+        System.out.println("\n--- Files.lines ---");
+        try (Stream<String> stream = Files.lines(archivo, StandardCharsets.UTF_8)) {
+            stream.map(String::toUpperCase)
+                  .forEach(l -> System.out.println("  " + l));
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 11. DirectoryStream
+        System.out.println("\n--- DirectoryStream (*.txt) ---");
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(
+                Paths.get("/tmp"), "*.txt")) {
+            for (Path entry : ds) {
+                System.out.println("  " + entry.getFileName());
+            }
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 12. Archivos temporales
+        System.out.println("\n--- Temporales ---");
+        try {
+            Path tf = Files.createTempFile("nio_", ".tmp");
+            System.out.println("Temp: " + tf);
+            Files.writeString(tf, "Temporal");
+            System.out.println("  Contenido: " + Files.readString(tf));
+            Files.delete(tf);
+            Path td = Files.createTempDirectory("nio_dir_");
+            System.out.println("TempDir: " + td);
+            Files.delete(td);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 13. resolveSibling y relativize
+        System.out.println("\n--- resolveSibling / relativize ---");
+        Path p = Paths.get("/tmp/cap58_nio.txt");
+        System.out.println("hermano: " + p.resolveSibling("otro.txt"));
+        Path base = Paths.get("/tmp/a/b");
+        Path target = Paths.get("/tmp/a/c/d.txt");
+        System.out.println("relativo: " + base.relativize(target));
+
+        // Limpieza
+        System.out.println("\n--- Limpieza ---");
+        try {
+            Files.deleteIfExists(Paths.get("/tmp/cap58_nio.txt"));
+            Files.deleteIfExists(Paths.get("/tmp/cap58_string.txt"));
+            Files.deleteIfExists(Paths.get("/tmp/cap58_demo.txt"));
+            Files.deleteIfExists(Paths.get("/tmp/cap58_copia.txt"));
+            Files.deleteIfExists(Paths.get("/tmp/cap58_movido.txt"));
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+        System.out.println("OK");
+
+        System.out.println("\n=== FIN CAPITULO 58 ===");
+    }
+}
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+• Path (java.nio.file.Path) es la representacion inmutable de rutas,
+  superior a java.io.File. Se crea con Paths.get() o Path.of() (Java 11+).
+
+• Files provee metodos estaticos: readAllLines, write, copy, move, delete,
+  createDirectories, createTempFile, etc.
+
+• Files.walk() recorre arboles con Stream<Path>.
+  Files.walkFileTree() con FileVisitor da mas control.
+
+• Files.lines() lee archivos como Stream<String> (eficiente para grandes).
+
+• Files.readAttributes() obtiene BasicFileAttributes (tamano, fechas).
+
+• DirectoryStream con filtros glob lista archivos con criterios.
+
+• WatchService monitorea cambios en directorios.
+
+• NIO maneja enlaces simbolicos y ofrece operaciones atomicas (ATOMIC_MOVE).
+
+• Las operaciones lanzan IOException en lugar de retornar boolean.
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Buscador recursivo: Usa Files.walk() para buscar archivos por nombre,
+   extension o contenido. Acepta ruta raiz y patron.
+
+2. Sincronizador de directorios: Implementa rsync-lite con
+   Files.walkFileTree() y Files.copy().
+
+3. Limpiador de archivos viejos: Elimina archivos con mas de N dias.
+   Usa Files.readAttributes() para lastModifiedTime.
+
+4. Generador de estructura: Crea estructura tipica de proyecto Java
+   (src/main/java, etc.) con Files.createDirectories().
+
+5. Duplicados por contenido: Encuentra duplicados comparando hash
+   SHA-256 con Files.walk() y MessageDigest.
+
+6. Renombrado masivo: Renombra archivos usando regex de busqueda y
+   reemplazo con Files.move().
+
+7. WatchService monitor: Monitorea un directorio y al crear un .txt
+   lo convierte a mayusculas automaticamente.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Debo migrar de java.io.File a java.nio.file.Path?
+R: Se recomienda. Path ofrece mas funcionalidad, mejor manejo de errores
+   y operaciones atomicas. Codigo nuevo deberia usar NIO.
+
+P: Files.readAllLines() carga todo el archivo en memoria?
+R: Si. Para archivos grandes usa Files.lines() que devuelve un Stream.
+
+P: Diferencia entre Files.walk() y Files.walkFileTree()?
+R: walk() devuelve Stream<Path> funcional. walkFileTree() usa FileVisitor
+   para mas control (errores, orden, decisiones).
+
+P: Files.copy() puede copiar directorios completos?
+R: No directamente. Usa Files.walk() combinado con Files.copy().
+
+P: Files.createDirectories() es atomico?
+R: No exactamente. Crea directorios secuencialmente.
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+  "SISTEMA DE ARCHIVOS VIRTUAL CON NIO"
+
+  Disena un sistema que cree una capa de abstraccion sobre el sistema
+  de archivos real implementando un FileSystem con
+  java.nio.file.spi.FileSystemProvider.
+
+  Requisitos:
+  1. FileSystem virtual que almacene archivos en un contenedor unico.
+  2. Operaciones: createFile, write, read, delete, copy.
+  3. Directorios jerarquicos dentro del contenedor.
+  4. Atributos extendidos (author, version, tags).
+  5. WatchService virtual que detecte cambios.
+  6. Encriptacion AES-256 de los datos almacenados.
+  7. Cache de bloques para mejorar rendimiento.
+
+  VALORACION:
+  3*: FS virtual basico (crear/leer/escribir).
+  4*: Directorios + atributos + walk.
+  5*: WatchService + encriptacion + cache.
+
+================================================================================
+  CIERRE DEL CAPITULO
+================================================================================
+
+Has explorado NIO.2 y sus poderosas capacidades. Ahora sabes usar Path,
+Files, walk, atributos, y WatchService. NIO es la forma moderna y
+recomendada de trabajar con archivos en Java.
+
+En el proximo capitulo trabajaremos con archivos de propiedades,
+aprendiendo a cargar y guardar configuraciones usando la clase
+java.util.Properties.
+
+Nos vemos en el Capitulo 59!
+
+================================================================================
+  CAPITULO 59: PROPIEDADES (PROPERTIES FILE)
+================================================================================
+
+En el Capitulo 59 exploraremos java.util.Properties, la clase que permite
+gestionar configuraciones en formato clave=valor. Es la forma mas simple
+de externalizar la configuracion de una aplicacion Java.
+
+Contenido previo:
+  • Creacion y carga de archivos .properties.
+  • Metodos load() y store().
+  • getProperty() y setProperty().
+  • list() para depuracion.
+  • Properties con XML: loadFromXML() y storeToXML().
+  • Orden de las propiedades (ordered properties).
+  • Valores por defecto y cadenas de propiedades.
+  • Uso en aplicaciones reales: base de datos, internacionalizacion.
+
+Nos vemos alli!
+================================================================================

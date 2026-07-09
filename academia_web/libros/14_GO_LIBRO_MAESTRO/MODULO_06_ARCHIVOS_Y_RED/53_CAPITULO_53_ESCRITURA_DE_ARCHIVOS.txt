@@ -1,0 +1,981 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 53: ESCRITURA DE ARCHIVOS
+================================================================================
+
+  "Escribir es persistir. En software, escribir correctamente es
+   la diferencia entre datos íntegros y corrupción silenciosa."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 53 de GO MASTER BOOK. Si el capítulo anterior
+  trataba sobre la lectura, este trata sobre su contraparte: la escritura.
+  Aprenderás a escribir datos en archivos de manera eficiente usando
+  os.WriteFile, bufio.Writer, fmt.Fprintf, y técnicas avanzadas como
+  escritura atómica, append seguro y buffering. La escritura de archivos
+  conlleva responsabilidades adicionales: integridad, consistencia y
+  rendimiento.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Escribir sin cuidado es sembrar corrupción. Toda escritura debe
+   ser atómica o transaccional."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Escribir archivos completos con os.WriteFile.
+  ✓ Usar bufio.Writer para escritura con buffer.
+  ✓ Formatear salida con fmt.Fprintf hacia archivos.
+  ✓ Implementar escritura por append (O_APPEND).
+  ✓ Realizar escrituras atómicas con archivos temporales.
+  ✓ Garantizar el flush de datos a disco.
+  ✓ Manejar errores de escritura correctamente.
+  ✓ Escribir archivos en formatos específicos (CSV, JSON, binario).
+  ✓ Implementar un sistema de logging con escritura concurrente.
+  ✓ Conocer las trampas comunes de la escritura de archivos.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. ESCRITURA BÁSICA CON os.WriteFile
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  os.WriteFile es la forma más simple de escribir datos en un archivo.
+  Crea el archivo si no existe, o lo trunca si existe.
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      contenido := []byte("Hola, Mundo desde Go Master Book!")
+      err := os.WriteFile("saludo.txt", contenido, 0644)
+      if err != nil {
+          fmt.Println("Error al escribir:", err)
+          return
+      }
+      fmt.Println("Archivo escrito exitosamente")
+  }
+  ```
+
+  Al usar os.WriteFile:
+  - El archivo se abre, escribe y cierra en una sola llamada.
+  - Es atómico desde la perspectiva del usuario (una syscall writev).
+  - No necesitas gestionar Close ni Flush.
+  - Ideal para archivos pequeños y operaciones simples.
+
+  2. ESCRITURA CON File.Write Y File.WriteString
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Cuando necesitas escribir en múltiples operaciones, usa los métodos
+  directos de File:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Create("datos.txt")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      // Escribir bytes
+      n, err := f.Write([]byte("Primera línea\n"))
+      if err != nil {
+          fmt.Println("Error al escribir:", err)
+          return
+      }
+      fmt.Printf("Escritos %d bytes\n", n)
+
+      // Escribir string
+      n, err = f.WriteString("Segunda línea\n")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      // Escribir con formato
+      fmt.Fprintf(f, "Valor: %d, Texto: %s\n", 42, "ejemplo")
+
+      fmt.Println("Escritura completada")
+  }
+  ```
+
+  3. bufio.Writer — ESCRITURA CON BUFFER
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  bufio.Writer envuelve un io.Writer y añade un buffer. Las escrituras
+  se acumulan en memoria y se vacían al archivo cuando el buffer se
+  llena o cuando se llama a Flush().
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Create("grande.txt")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      w := bufio.NewWriter(f)
+
+      for i := 0; i < 100000; i++ {
+          fmt.Fprintf(w, "Línea número %d\n", i)
+      }
+
+      // IMPORTANTE: Flush vacía el buffer al archivo
+      err = w.Flush()
+      if err != nil {
+          fmt.Println("Error al hacer flush:", err)
+          return
+      }
+      fmt.Println("Escritura completada con buffer")
+  }
+  ```
+
+  Métodos principales de bufio.Writer:
+
+  ```go
+  func NewWriter(w io.Writer) *Writer
+  func NewWriterSize(w io.Writer, size int) *Writer
+  func (b *Writer) Write(p []byte) (nn int, err error)
+  func (b *Writer) WriteString(s string) (int, error)
+  func (b *Writer) WriteByte(c byte) error
+  func (b *Writer) WriteRune(r rune) (int, error)
+  func (b *Writer) Flush() error
+  func (b *Writer) Available() int
+  func (b *Writer) Buffered() int
+  func (b *Writer) Reset(w io.Writer)
+  func (b *Writer) Size() int
+  ```
+
+  ¿Por qué usar buffer?
+  - Reduce las llamadas al sistema (syscalls).
+  - Mejora el rendimiento en escrituras pequeñas repetitivas.
+  - El buffer por defecto es de 4 KB.
+
+  4. TAMAÑO DE BUFFER PERSONALIZADO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  w := bufio.NewWriterSize(f, 64*1024) // 64 KB de buffer
+  ```
+
+  Un buffer más grande reduce las syscalls pero usa más memoria.
+  Para escrituras secuenciales grandes, 64 KB suele ser óptimo.
+
+  5. ESCRITURA CON FORMATO (fmt.Fprintf)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  fmt.Fprintf escribe texto formateado en cualquier io.Writer:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  type Producto struct {
+      ID    int
+      Nombre string
+      Precio float64
+  }
+
+  func main() {
+      f, _ := os.Create("productos.txt")
+      defer f.Close()
+
+      productos := []Producto{
+          {1, "Laptop", 1250.99},
+          {2, "Mouse", 25.50},
+          {3, "Teclado", 89.99},
+      }
+
+      for _, p := range productos {
+          fmt.Fprintf(f, "%d|%s|%.2f\n", p.ID, p.Nombre, p.Precio)
+      }
+
+      fmt.Println("Productos exportados")
+  }
+  ```
+
+  6. ESCRITURA POR APPEND (O_APPEND)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para agregar datos al final de un archivo existente:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "os"
+      "time"
+  )
+
+  func main() {
+      f, err := os.OpenFile("bitacora.log",
+          os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+      if err != nil {
+          log.Fatal(err)
+      }
+      defer f.Close()
+
+      entrada := fmt.Sprintf("[%s] %s\n",
+          time.Now().Format(time.RFC3339),
+          "Aplicación iniciada")
+
+      if _, err := f.WriteString(entrada); err != nil {
+          log.Fatal(err)
+      }
+      fmt.Println("Entrada agregada al log")
+  }
+  ```
+
+  O_APPEND es atómico: cada Write ocurre siempre al final del archivo,
+  incluso en operaciones concurrentes. Esto lo hace seguro para logging
+  desde múltiples goroutines.
+
+  7. ESCRITURA ATÓMICA CON ARCHIVO TEMPORAL
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para garantizar que un archivo nunca quede a medio escribir,
+  usamos el patrón "escribir a temporal, luego renombrar":
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "path/filepath"
+  )
+
+  func escribirAtomico(ruta string, datos []byte, perm os.FileMode) error {
+      // Crear archivo temporal en el mismo directorio
+      dir := filepath.Dir(ruta)
+      tmp, err := os.CreateTemp(dir, "*.tmp")
+      if err != nil {
+          return fmt.Errorf("crear temp: %w", err)
+      }
+
+      // Nombre del archivo temporal
+      tmpName := tmp.Name()
+
+      // Asegurar limpieza en caso de error
+      limpiar := true
+      defer func() {
+          tmp.Close()
+          if limpiar {
+              os.Remove(tmpName)
+          }
+      }()
+
+      // Escribir datos
+      if _, err := tmp.Write(datos); err != nil {
+          return fmt.Errorf("escribir: %w", err)
+      }
+
+      // Sincronizar a disco
+      if err := tmp.Sync(); err != nil {
+          return fmt.Errorf("sync: %w", err)
+      }
+
+      // Renombrar (atómico en el mismo filesystem)
+      if err := os.Rename(tmpName, ruta); err != nil {
+          return fmt.Errorf("rename: %w", err)
+      }
+
+      limpiar = false
+      return nil
+  }
+
+  func main() {
+      err := escribirAtomico("config.json",
+          []byte(`{"version": 1, "activo": true}`), 0644)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Archivo escrito atómicamente")
+  }
+  ```
+
+  Ventajas:
+  - El archivo destino nunca queda a medio escribir.
+  - Si el programa falla, solo queda un temporal (que podemos limpiar).
+  - os.Rename es atómico en el mismo sistema de archivos.
+
+  8. SINCRONIZACIÓN A DISCO (Sync)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  File.Sync() fuerza la escritura de los buffers del SO al disco:
+
+  ```go
+  f, _ := os.Create("importante.dat")
+  defer f.Close()
+
+  f.Write(datos)
+
+  // Garantizar que los datos están en disco
+  if err := f.Sync(); err != nil {
+      log.Fatal(err)
+  }
+  ```
+
+  Sync tiene un costo de rendimiento. Usar:
+  - Para datos críticos (bases de datos, logs de auditoría).
+  - Evitar para operaciones de alto rendimiento donde la pérdida
+    de unos segundos de datos es aceptable.
+
+  9. ESCRIBIENDO ARCHIVOS COMPRIMIDOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "compress/gzip"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Create("datos.txt.gz")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      gw := gzip.NewWriter(f)
+      defer gw.Close()
+
+      _, err = gw.Write([]byte("Contenido comprimido"))
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Archivo comprimido creado")
+  }
+  ```
+
+  10. ESCRIBIENDO ARCHIVOS BINARIOS CON encoding/binary
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/binary"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Create("datos.bin")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      // Escribir enteros en little endian
+      var numeros = []int32{1, 2, 3, 4, 5}
+      for _, n := range numeros {
+          err := binary.Write(f, binary.LittleEndian, n)
+          if err != nil {
+              fmt.Println("Error:", err)
+              return
+          }
+      }
+      fmt.Println("Datos binarios escritos")
+  }
+  ```
+
+  11. LOGGING CON CURRENTES (MULTIPLES ESCRITORES)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para logging seguro desde múltiples goroutines:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "sync"
+      "time"
+  )
+
+  type LoggerSeguro struct {
+      mu sync.Mutex
+      f  *os.File
+  }
+
+  func NewLoggerSeguro(ruta string) (*LoggerSeguro, error) {
+      f, err := os.OpenFile(ruta,
+          os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+      if err != nil {
+          return nil, err
+      }
+      return &LoggerSeguro{f: f}, nil
+  }
+
+  func (l *LoggerSeguro) Escribir(nivel, mensaje string) {
+      l.mu.Lock()
+      defer l.mu.Unlock()
+      entrada := fmt.Sprintf("[%s] %s: %s\n",
+          time.Now().Format(time.RFC3339), nivel, mensaje)
+      l.f.WriteString(entrada)
+  }
+
+  func (l *LoggerSeguro) Cerrar() {
+      l.mu.Lock()
+      defer l.mu.Unlock()
+      l.f.Close()
+  }
+
+  func main() {
+      logger, _ := NewLoggerSeguro("app.log")
+      defer logger.Cerrar()
+
+      var wg sync.WaitGroup
+      for i := 0; i < 10; i++ {
+          wg.Add(1)
+          go func(id int) {
+              defer wg.Done()
+              for j := 0; j < 100; j++ {
+                  logger.Escribir("INFO",
+                      fmt.Sprintf("Goroutine %d: mensaje %d", id, j))
+              }
+          }(i)
+      }
+      wg.Wait()
+      fmt.Println("Todos los logs escritos")
+  }
+  ```
+
+  Alternativa: usar un canal como buffer de escritura:
+
+  ```go
+  type LoggerConCanal struct {
+      entradas chan string
+      done     chan struct{}
+  }
+
+  func NewLoggerConCanal(ruta string) (*LoggerConCanal, error) {
+      f, err := os.OpenFile(ruta,
+          os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+      if err != nil {
+          return nil, err
+      }
+
+      l := &LoggerConCanal{
+          entradas: make(chan string, 1000),
+          done:     make(chan struct{}),
+      }
+
+      // Goroutine escritora
+      go func() {
+          for entrada := range l.entradas {
+              f.WriteString(entrada)
+          }
+          f.Close()
+          close(l.done)
+      }()
+
+      return l, nil
+  }
+
+  func (l *LoggerConCanal) Log(nivel, msg string) {
+      entrada := fmt.Sprintf("[%s] %s: %s\n",
+          time.Now().Format(time.RFC3339), nivel, msg)
+      l.entradas <- entrada
+  }
+
+  func (l *LoggerConCanal) Cerrar() {
+      close(l.entradas)
+      <-l.done
+  }
+  ```
+
+  12. ESCRIBIENDO CSV MANUALMENTE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Sin usar encoding/csv (para entender el proceso):
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "strings"
+  )
+
+  func escaparCSV(valor string) string {
+      if strings.ContainsAny(valor, ",\"\n") {
+          valor = strings.ReplaceAll(valor, "\"", "\"\"")
+          valor = "\"" + valor + "\""
+      }
+      return valor
+  }
+
+  func escribirCSV(ruta string, filas [][]string) error {
+      f, err := os.Create(ruta)
+      if err != nil {
+          return err
+      }
+      defer f.Close()
+
+      for _, fila := range filas {
+          campos := make([]string, len(fila))
+          for i, v := range fila {
+              campos[i] = escaparCSV(v)
+          }
+          linea := strings.Join(campos, ",") + "\n"
+          if _, err := f.WriteString(linea); err != nil {
+              return err
+          }
+      }
+      return nil
+  }
+
+  func main() {
+      datos := [][]string{
+          {"Nombre", "Edad", "Ciudad"},
+          {"Ana García", "30", "Madrid"},
+          {"Luis Pérez", "25", "Bogotá"},
+          {"María López", "28", "Buenos Aires"},
+      }
+
+      err := escribirCSV("personas.csv", datos)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("CSV generado manualmente")
+  }
+  ```
+
+  13. ROTACIÓN DE ARCHIVOS DE LOG
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "path/filepath"
+      "time"
+  )
+
+  type LogRotativo struct {
+      directorio string
+      prefijo    string
+      maxBytes   int64
+      archivo    *os.File
+      bytesHoy   int64
+      fechaHoy   string
+  }
+
+  func NewLogRotativo(dir, prefijo string, maxBytes int64) *LogRotativo {
+      return &LogRotativo{
+          directorio: dir,
+          prefijo:    prefijo,
+          maxBytes:   maxBytes,
+      }
+  }
+
+  func (lr *LogRotativo) Escribir(datos []byte) error {
+      hoy := time.Now().Format("2006-01-02")
+
+      // Rotar si cambió el día o se superó el tamaño
+      if hoy != lr.fechaHoy || lr.bytesHoy+int64(len(datos)) > lr.maxBytes {
+          if lr.archivo != nil {
+              lr.archivo.Close()
+          }
+          nombre := filepath.Join(lr.directorio,
+              fmt.Sprintf("%s-%s.log", lr.prefijo, hoy))
+          f, err := os.OpenFile(nombre,
+              os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+          if err != nil {
+              return err
+          }
+          lr.archivo = f
+          lr.fechaHoy = hoy
+          lr.bytesHoy = 0
+      }
+
+      n, err := lr.archivo.Write(datos)
+      if err != nil {
+          return err
+      }
+      lr.bytesHoy += int64(n)
+      return nil
+  }
+
+  func (lr *LogRotativo) Cerrar() {
+      if lr.archivo != nil {
+          lr.archivo.Close()
+      }
+  }
+
+  func main() {
+      logger := NewLogRotativo("/tmp/logs", "app", 1024)
+      defer logger.Cerrar()
+
+      for i := 0; i < 100; i++ {
+          logger.Escribir([]byte(fmt.Sprintf("Mensaje %d\n", i)))
+      }
+      fmt.Println("Logs rotativos escritos")
+  }
+  ```
+
+  14. PROGRAMA COMPLETO — GENERADOR DE REPORTES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+      "time"
+  )
+
+  type Venta struct {
+      Fecha     time.Time
+      Producto  string
+      Cantidad  int
+      Precio    float64
+  }
+
+  func main() {
+      ventas := []Venta{
+          {time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "Laptop", 5, 1250.99},
+          {time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "Mouse", 20, 25.50},
+          {time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC), "Teclado", 15, 89.99},
+          {time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC), "Monitor", 8, 450.00},
+          {time.Date(2026, 6, 3, 0, 0, 0, 0, time.UTC), "Laptop", 3, 1250.99},
+      }
+
+      // 1. Generar reporte CSV
+      generarCSV("ventas.csv", ventas)
+
+      // 2. Generar reporte de resumen
+      generarResumen("resumen.txt", ventas)
+
+      // 3. Generar reporte JSON
+      generarJSON("ventas.json", ventas)
+
+      fmt.Println("Reportes generados exitosamente")
+  }
+
+  func generarCSV(ruta string, ventas []Venta) {
+      f, err := os.Create(ruta)
+      if err != nil {
+          fmt.Println("Error CSV:", err)
+          return
+      }
+      defer f.Close()
+
+      w := bufio.NewWriter(f)
+      defer w.Flush()
+
+      fmt.Fprintf(w, "Fecha,Producto,Cantidad,Precio,Total\n")
+      for _, v := range ventas {
+          total := float64(v.Cantidad) * v.Precio
+          fmt.Fprintf(w, "%s,%s,%d,%.2f,%.2f\n",
+              v.Fecha.Format("2006-01-02"),
+              v.Producto,
+              v.Cantidad,
+              v.Precio,
+              total)
+      }
+  }
+
+  func generarResumen(ruta string, ventas []Venta) {
+      f, err := os.Create(ruta)
+      if err != nil {
+          fmt.Println("Error resumen:", err)
+          return
+      }
+      defer f.Close()
+
+      // Calcular totales
+      totalVentas := 0.0
+      totalProductos := 0
+      productos := make(map[string]int)
+
+      for _, v := range ventas {
+          totalVentas += float64(v.Cantidad) * v.Precio
+          totalProductos += v.Cantidad
+          productos[v.Producto] += v.Cantidad
+      }
+
+      w := bufio.NewWriter(f)
+      defer w.Flush()
+
+      fmt.Fprintf(w, "=== REPORTE DE VENTAS ===\n")
+      fmt.Fprintf(w, "Generado: %s\n\n", time.Now().Format(time.RFC1123))
+      fmt.Fprintf(w, "Total ventas: $%.2f\n", totalVentas)
+      fmt.Fprintf(w, "Total productos vendidos: %d\n\n", totalProductos)
+
+      fmt.Fprintf(w, "Productos más vendidos:\n")
+      for prod, cant := range productos {
+          fmt.Fprintf(w, "  - %s: %d unidades\n", prod, cant)
+      }
+  }
+
+  func generarJSON(ruta string, ventas []Venta) {
+      f, err := os.Create(ruta)
+      if err != nil {
+          fmt.Println("Error JSON:", err)
+          return
+      }
+      defer f.Close()
+
+      fmt.Fprintf(f, "[\n")
+      for i, v := range ventas {
+          total := float64(v.Cantidad) * v.Precio
+          fmt.Fprintf(f, `  {"fecha":"%s","producto":"%s","cantidad":%d,"precio":%.2f,"total":%.2f}`,
+              v.Fecha.Format("2006-01-02"),
+              v.Producto,
+              v.Cantidad,
+              v.Precio,
+              total)
+          if i < len(ventas)-1 {
+              fmt.Fprintf(f, ",")
+          }
+          fmt.Fprintf(f, "\n")
+      }
+      fmt.Fprintf(f, "]\n")
+  }
+  ```
+
+  Salida esperada (resumen.txt):
+  ```
+  === REPORTE DE VENTAS ===
+  Generado: Thu, 02 Jul 2026 12:00:00 UTC
+
+  Total ventas: $14594.40
+  Total productos vendidos: 51
+
+  Productos más vendidos:
+    - Laptop: 8 unidades
+    - Mouse: 20 unidades
+    - Teclado: 15 unidades
+    - Monitor: 8 unidades
+  ```
+
+  15. WRITE ATÓMICO VS NO ATÓMICO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Sin atomicidad (peligroso):
+  ```go
+  f.Write(datos)   // Si falla aquí, el archivo queda corrupto
+  f.Write(masDatos) // Si el proceso muere, datos parciales
+  ```
+
+  Con atomicidad:
+  ```go
+  tmp, _ := os.CreateTemp("", "*.tmp")
+  tmp.Write(datos)
+  tmp.Write(masDatos)
+  tmp.Sync()
+  os.Rename(tmp.Name(), destino) // atómico
+  ```
+
+  16. ERRORES COMUNES EN ESCRITURA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Olvidar Flush() en bufio.Writer — datos perdidos.
+  2. Ignorar error de Close — posible corrupción.
+  3. No verificar permisos — Permission denied.
+  4. Escribir en directorio que no existe — no se crea automáticamente.
+  5. Confiar en que Write escribe todos los bytes — puede escribir menos.
+  6. No sincronizar acceso concurrente — datos entremezclados.
+  7. Usar O_TRUNC cuando se necesita O_APPEND — borrar datos.
+
+  17. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Usa os.WriteFile para archivos completos pequeños.
+  2. Usa bufio.Writer para múltiples escrituras pequeñas.
+  3. Siempre haz Flush() antes de cerrar.
+  4. Usa el patrón de archivo temporal + Rename para atomicidad.
+  5. Usa O_APPEND para logs concurrentes.
+  6. Sincroniza con Sync() solo para datos críticos.
+  7. Verifica siempre el error de Write y Close.
+  8. Crea los directorios necesarios antes de escribir.
+  9. Usa filepath.Join para rutas seguras.
+  10. Implementa rotación para logs de largo plazo.
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • os.WriteFile escribe archivos completos de forma simple.
+  • bufio.Writer mejora el rendimiento con buffer en memoria.
+  • fmt.Fprintf permite escribir datos formateados.
+  • O_APPEND permite agregar al final de forma atómica.
+  • La escritura atómica (temp + rename) previene corrupción.
+  • File.Sync() garantiza persistencia a disco.
+  • Para concurrencia, usa mutex o canales.
+  • La rotación de logs evita archivos infinitos.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un programa que genere un archivo con la tabla de multiplicar
+    del 1 al 10, formateada en columnas.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Implementa una función que reciba un slice de strings y los
+    escriba en un archivo, uno por línea, usando bufio.Writer.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Crea un sistema de logging que escriba en un archivo rotativo
+    diario. Cada día crea un nuevo archivo con la fecha en el nombre.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Implementa un programa que lea un archivo JSON y lo convierta
+    a formato CSV, escribiendo el resultado con bufio.Writer.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Escribe una función "escribirSeguro" que use el patrón de archivo
+    temporal + Rename, pero que además maneje correctamente señales
+    del sistema (SIGINT, SIGTERM) para limpiar temporales.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Implementa un cli tipo "tee" que reciba datos por stdin y los
+    escriba simultáneamente en múltiples archivos y en stdout.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Crea un generador de archivos de prueba que produzca archivos
+    de tamaño exacto (1 MB, 10 MB, 100 MB) con datos pseudoaleatorios
+    para hacer benchmarks de lectura/escritura.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Implementa un sistema de backup que tome un directorio, lo
+    comprima en un archivo .tar.gz y lo escriba atómicamente.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Qué pasa si olvido hacer Flush() en bufio.Writer?
+  R: Los datos quedan en el buffer y se pierden al cerrar. Siempre
+  haz Flush() antes de que el Writer salga de ámbito.
+
+  ❓ ¿Es seguro escribir desde múltiples goroutines?
+  R: No sin sincronización. Usa sync.Mutex o un canal para serializar
+  las escrituras. O_APPEND ayuda pero no es suficiente solo.
+
+  ❓ ¿Cuándo debo usar Sync()?
+  R: Cuando los datos son críticos y no puedes permitirte perder
+  incluso unos segundos de escritura (bases de datos, logs de
+  auditoría financiera).
+
+  ❓ ¿Cuál es la diferencia entre Write y WriteString?
+  R: Write recibe []byte, WriteString recibe string. WriteString
+  evita la conversión a []byte si ya tienes un string.
+
+  ❓ ¿Puedo escribir en un archivo mientras otro proceso lo lee?
+  R: Sí, en Unix los archivos pueden ser leídos y escritos
+  concurrentemente. Las lecturas verán los datos escritos antes
+  del último Sync().
+
+  ❓ ¿Cómo evito que un archivo se corrompa si el programa falla?
+  R: Usa el patrón de escritura atómica: escribe a un archivo
+  temporal y renombra al final. Si el programa falla, el archivo
+  original permanece intacto.
+
+  ❓ ¿Qué tamaño de buffer debo usar?
+  R: Para la mayoría de casos, el default de bufio.Writer (4 KB)
+  es suficiente. Para transferencias grandes, 64 KB suele ser
+  óptimo. Prueba con benchmarks.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 SISTEMA DE ALMACENAMIENTO CLAVE-VALOR PERSISTENTE
+
+  Diseña e implementa un almacén clave-valor (key-value store)
+  persistente en disco con las siguientes características:
+
+  1. Operaciones: Set(key, value), Get(key), Delete(key), List().
+  2. Persistencia: escritura inmediata a un archivo de log (WAL).
+  3. Checkpoints: cada N operaciones, escribe un snapshot compacto.
+  4. Recuperación: al iniciar, reconstruye el estado desde el WAL.
+  5. Concurrente: soporta múltiples lectores y un escritor (sync.RWMutex).
+  6. Archivos de datos: segmentados por tamaño máximo (ej. 10 MB por segmento).
+  7. Atomicidad: las operaciones Set son atómicas.
+  8. Índice en memoria: mapa hash para búsqueda rápida.
+
+  Formato de almacenamiento:
+  - WAL: archivo de texto con operaciones secuenciales (SET/DEL).
+  - Snapshot: archivo binario con el estado completo compactado.
+  - Cada entrada incluye checksum para detectar corrupción.
+
+  Este desafío integra:
+  - Escritura eficiente con bufio.Writer
+  - Atomicidad y consistencia
+  - Concurrencia y sincronización
+  - Formatos binarios y de texto
+  - Recuperación ante fallos
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 53. Ahora sabes escribir archivos en Go
+  de forma eficiente, segura y profesional. Dominas el buffering,
+  la escritura atómica, el append concurrente y la generación de
+  reportes en múltiples formatos.
+
+  La escritura de archivos es una responsabilidad: los datos que
+  persistas hoy serán leídos mañana. Escribe con cuidado, verifica
+  siempre los errores, y usa patrones atómicos para datos críticos.
+
+  En el próximo capítulo, exploraremos el formato JSON, el estándar
+  universal para intercambio de datos, y cómo Go lo maneja con
+  encoding/json.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 54: JSON (encoding/json)
+    Aprenderás a serializar y deserializar datos en JSON usando
+    Marshal/Unmarshal, Encoder/Decoder, struct tags, y técnicas
+    avanzadas de personalización.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 53 — FIN DEL CAPÍTULO
+================================================================================

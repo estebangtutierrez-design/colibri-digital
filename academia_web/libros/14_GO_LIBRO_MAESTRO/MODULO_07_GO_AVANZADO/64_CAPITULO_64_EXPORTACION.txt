@@ -1,0 +1,763 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 64: EXPORTACIÓN E IMPORTACIÓN
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 64. Exportar e importar correctamente es el
+  arte de diseñar APIs Go que sean fáciles de usar y difíciles de usar
+  mal. Go tiene reglas simples (mayúsculas exportan, minúsculas no),
+  pero las implicaciones arquitectónicas son profundas.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "Una API bien diseñada es aquella que solo expone lo necesario y
+  oculta todo lo demás. La simplicidad es la máxima sofisticación."
+  — Adaptado de Leonardo da Vinci
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Dominar las reglas de nombres exportados vs no exportados.
+  2. Diseñar APIs de paquetes con visibilidad controlada.
+  3. Usar internal packages para encapsulación fuerte.
+  4. Aplicar convenciones de nomenclatura de paquetes.
+  5. Comprender y usar vendoring correctamente.
+  6. Manejar la exportación de tipos, funciones, variables y constantes.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. LA REGLA DE ORO: MAYÚSCULAS EXPORTAN ──
+
+  En Go, la visibilidad se determina por la primera letra del nombre:
+
+  package usuario
+
+  // Exportados (primera letra mayúscula)
+  var Nombre string         // Exportada
+  type Usuario struct {}    // Exportado
+  func Crear() {}           // Exportada
+  const MaxEdad = 150       // Exportada
+
+  // No exportados (primera letra minúscula)
+  var contador int           // Privado al paquete
+  type usuarioInterno struct {} // Privado
+  func validar() {}             // Privado
+  const claveSecreta = "xyz"   // Privado
+
+  Esta regla aplica a:
+  ● Variables y constantes de paquete.
+  ● Tipos (structs, interfaces, type aliases).
+  ● Funciones y métodos.
+  ● Campos de structs.
+  ● Métodos de interfaces.
+
+  ── 2. VISIBILIDAD DE CAMPOS EN STRUCTS ──
+
+  type Persona struct {
+      Nombre   string   // Exportado (visible fuera del paquete)
+      edad     int      // No exportado (solo visible dentro del paquete)
+      Documento string  // Exportado
+  }
+
+  // Fuera del paquete:
+  p := persona.Persona{
+      Nombre: "Alice",
+      // edad: 30,         // ❌ Error: campo no exportado
+      Documento: "123",
+  }
+
+  // fmt.Println(p.edad)  // ❌ Error
+  fmt.Println(p.Nombre)    // ✅
+
+  Para acceder a campos privados, proporciona métodos getter/setter:
+
+  func (p *Persona) SetEdad(e int) {
+      if e < 0 || e > 150 {
+          return
+      }
+      p.edad = e
+  }
+
+  func (p *Persona) Edad() int {
+      return p.edad
+  }
+
+  ── 3. VISIBILIDAD DE FUNCIONES ──
+
+  package matematica
+
+  // Exportada: puede ser llamada desde otros paquetes
+  func Sumar(a, b int) int {
+      return sumarInterno(a, b)
+  }
+
+  // No exportada: solo visible dentro del paquete
+  func sumarInterno(a, b int) int {
+      return a + b
+  }
+
+  // Uso externo:
+  // resultado := matematica.Sumar(3, 5)      // ✅
+  // resultado := matematica.sumarInterno(3, 5) // ❌
+
+  ── 4. VISIBILIDAD DE MÉTODOS ──
+
+  type CuentaBancaria struct {
+      titular string
+      saldo    float64
+  }
+
+  // Constructor exportado
+  func NuevaCuenta(titular string) *CuentaBancaria {
+      return &CuentaBancaria{
+          titular: titular,
+          saldo:   0,
+      }
+  }
+
+  // Métodos exportados
+  func (c *CuentaBancaria) Depositar(monto float64) {
+      if monto > 0 {
+          c.saldo += monto
+      }
+  }
+
+  func (c *CuentaBancaria) Saldo() float64 {
+      return c.saldo
+  }
+
+  // Método no exportado
+  func (c *CuentaBancaria) actualizarIntereses() {
+      c.saldo *= 1.01
+  }
+
+  func main() {
+      c := NuevaCuenta("Alice")
+      c.Depositar(1000)
+      fmt.Println(c.Saldo())      // 1000
+      // fmt.Println(c.saldo)     // ❌
+      // c.actualizarIntereses()  // ❌ (si está en otro paquete)
+  }
+
+  ── 5. VISIBILIDAD DE CONSTANTES ──
+
+  package config
+
+  const (
+      // Exportadas
+      MaxUsuarios    = 1000
+      VersionApp     = "2.0.0"
+
+      // No exportadas
+      puertoPorDefecto = 8080
+      timeoutDefault   = 30
+  )
+
+  // Acceso externo:
+  // fmt.Println(config.MaxUsuarios)   // ✅
+  // fmt.Println(config.puertoPorDefecto) // ❌
+
+  ── 6. VISIBILIDAD DE INTERFACES ──
+
+  // Exportada
+  type Logger interface {
+      Log(message string)
+  }
+
+  // No exportada (solo uso interno)
+  type loggerInterno struct {
+      nivel string
+  }
+
+  func (l *loggerInterno) Log(message string) {
+      fmt.Printf("[%s] %s\n", l.nivel, message)
+  }
+
+  // Función que devuelve la interfaz exportada
+  func NuevoLogger(nivel string) Logger {
+      return &loggerInterno{nivel: nivel}
+  }
+
+  El tipo concreto (`loggerInterno`) es invisible fuera del paquete.
+  Los usuarios solo interactúan con la interfaz `Logger`.
+
+  ── 7. INTERNAL PACKAGES ──
+
+  La restricción de `internal/` es única de Go: los paquetes dentro de
+  `internal/` solo pueden ser importados por paquetes que estén en el
+  mismo árbol de directorios (mismo módulo raíz).
+
+  proyecto/
+  ├── go.mod  // module github.com/user/proyecto
+  ├── internal/
+  │   ├── db/
+  │   │   └── conexion.go     // package db
+  │   └── auth/
+  │       └── jwt.go           // package auth
+  ├── cmd/
+  │   └── server/
+  │       └── main.go          // package main
+  └── pkg/
+      └── api/
+          └── handler.go       // package api
+
+  // ✅ main.go puede importar:
+  import "github.com/user/proyecto/internal/db"
+
+  // ✅ handler.go (mismo módulo) puede importar:
+  import "github.com/user/proyecto/internal/auth"
+
+  // ❌ Otro módulo externo NO puede importar internal/:
+  // import "github.com/user/proyecto/internal/db"  // Error
+
+  El compilador impone esta restricción. No hay manera de evitarla desde
+  fuera del módulo.
+
+  ── 8. ESTRUCTURA INTERNAL ANIDADA ──
+
+  internal/ puede tener subdirectorios, y la restricción aplica en
+  todos los niveles:
+
+  proyecto/
+  └── internal/
+      └── service/
+          ├── service.go
+          └── internal/
+              └── helpers.go  // Doblemente interno
+
+  // helpers.go solo es accesible desde service/ o más arriba
+  // dentro del mismo módulo, pero no desde fuera de service/.
+
+  ── 9. CONVENCIONES DE NOMENCLATURA ──
+
+  9.1 Nombres de paquetes
+
+  ● Minúscula, una sola palabra, sin guiones ni guiones bajos:
+    - ✅ `http`, `json`, `fmt`, `strings`
+    - ❌ `HTTP`, `my-package`, `mi_paquete`
+
+  ● Abreviaturas comunes en minúscula:
+    - `http`, `json`, `xml`, `yaml`, `csv`
+
+  ● El nombre del paquete debe ser relevante para su funcionalidad:
+    - ✅ `parser`, `auth`, `storage`, `crypto`
+    - ❌ `utils`, `common`, `helpers` (demasiado genérico)
+
+  ● Evita nombrar paquetes como nombres estándar:
+    - ❌ `fmt`, `http`, `io` (conflicto con stdlib)
+
+  9.2 Nombres de archivos
+
+  ● snake_case: `mi_archivo.go`
+  ● El nombre debe reflejar el contenido: `user_handler.go`, `auth_middleware.go`
+  ● Sufijos comunes: `_test.go`, `_windows.go`, `_linux.go`
+
+  9.3 Nombres de funciones exportadas
+
+  ● Verbos: `CreateUser`, `GetByID`, `ProcessPayment`
+  ● No uses prefijo del paquete:
+    - ✅ `user.New()`
+    - ❌ `user.NewUser()`
+
+  ── 10. EL PATRÓN DE CONSTRUCTOR ──
+
+  package user
+
+  type Config struct {
+      MaxRetries int    // Exportado
+      Timeout    int    // Exportado
+  }
+
+  type User struct {
+      ID       string
+      email    string   // Privado
+      config   Config   // Privado
+  }
+
+  // Constructor exportado que valida
+  func New(id string, email string) (*User, error) {
+      if id == "" || email == "" {
+          return nil, fmt.Errorf("id y email son requeridos")
+      }
+      return &User{
+          ID:    id,
+          email: email,
+          config: Config{
+              MaxRetries: 3,
+              Timeout:    30,
+          },
+      }, nil
+  }
+
+  // Getter para campo privado
+  func (u *User) Email() string {
+      return u.email
+  }
+
+  // Setter con validación
+  func (u *User) SetConfig(cfg Config) {
+      if cfg.MaxRetries < 0 {
+          cfg.MaxRetries = 0
+      }
+      u.config = cfg
+  }
+
+  ── 11. ERRORES EXPORTADOS VS NO EXPORTADOS ──
+
+  var ErrNotFound = errors.New("not found")           // Exportado
+  var errInternal = errors.New("error interno")        // No exportado
+
+  func FindByID(id string) (*User, error) {
+      if id == "" {
+          return nil, errInternal
+      }
+      // ...
+      return nil, ErrNotFound
+  }
+
+  // Los usuarios del paquete pueden comparar:
+  // if errors.Is(err, user.ErrNotFound) { ... }
+
+  // Pero no pueden comparar con errInternal:
+  // if errors.Is(err, user.errInternal) { ... } // ❌
+
+  ── 12. TYPES EXPORTADOS CON CAMPOS PRIVADOS ──
+
+  // El tipo es exportado, pero el constructor es la única forma
+  // de crear instancias válidas
+  type Database struct {
+      connString string   // Privado
+      poolSize   int      // Privado
+  }
+
+  // Constructor exportado
+  func NewDatabase(connString string) (*Database, error) {
+      if connString == "" {
+          return nil, fmt.Errorf("connString required")
+      }
+      return &Database{
+          connString: connString,
+          poolSize:   10,
+      }, nil
+  }
+
+  // Métodos exportados
+  func (db *Database) Query(q string) ([]Row, error) {
+      // usa db.connString internamente
+      return nil, nil
+  }
+
+  // Fuera del paquete:
+  // db, err := database.NewDatabase("postgres://...")
+  // rows, err := db.Query("SELECT ...")
+
+  ── 13. EMBEDDING Y VISIBILIDAD ──
+
+  type Base struct {
+      ValorSecreto string   // Exportado
+      valorInterno  int      // No exportado
+  }
+
+  func (b *Base) MetodoPublico() {}
+  func (b *Base) metodoPrivado() {}
+
+  type Derivado struct {
+      Base                    // Embedding
+      Nombre string
+  }
+
+  // Fuera del paquete:
+  d := Derivado{}
+  d.ValorSecreto = "abc"      // ✅
+  // d.valorInterno = 10        // ❌
+  d.MetodoPublico()            // ✅
+  // d.metodoPrivado()          // ❌
+
+  El embedding NO otorga acceso a campos/métodos privados del tipo
+  embebido. Las reglas de visibilidad se mantienen.
+
+  ── 14. VENDORING ──
+
+  Vendoring es la práctica de copiar las dependencias al directorio
+  `vendor/` del proyecto.
+
+  # Habilitar vendoring
+  go mod vendor
+
+  Estructura resultante:
+
+  proyecto/
+  ├── vendor/
+  │   ├── modules.txt          // Lista de módulos vendorizados
+  │   ├── github.com/
+  │   │   ├── gorilla/
+  │   │   │   └── mux/
+  │   │   └── ...
+  │   └── golang.org/
+  │       └── ...
+  ├── go.mod
+  ├── go.sum
+  └── main.go
+
+  # Compilar con vendor/ (sin descargar nada)
+  go build -mod=vendor ./...
+
+  # Verificar integridad
+  go mod verify
+
+  Ventajas:
+  ● Compilación offline.
+  ● Las dependencias están bajo control de versiones.
+  ● No dependes de la disponibilidad del repositorio remoto.
+
+  Desventajas:
+  ● El repositorio crece significativamente.
+  ● Las actualizaciones requieren regenerar vendor/.
+
+  ── 15. GO MOD VENDOR EN PROFUNDIDAD ──
+
+  modules.txt contiene el listado de módulos vendorizados y sus
+  versiones:
+
+  # github.com/gorilla/mux v1.8.1
+  ## explicit; go 1.20
+  github.com/gorilla/mux
+
+  Cada línea indica:
+  ● Módulo y versión
+  ● Si es explícito (importado directamente) o implícito
+  ● Versión mínima de Go requerida
+  ● Paquetes usados de ese módulo
+
+  Para actualizar vendor/ tras cambiar dependencias:
+  1. `go mod tidy`
+  2. `go mod vendor`
+  3. `go build -mod=vendor ./...`
+
+  ── 16. COMPILACIÓN CRUZADA Y BUILD TAGS ──
+
+  // archivo_linux.go
+  //go:build linux
+
+  package runtime
+
+  func obtenerInfo() string {
+      return "Linux"
+  }
+
+  // archivo_windows.go
+  //go:build windows
+
+  package runtime
+
+  func obtenerInfo() string {
+      return "Windows"
+  }
+
+  // archivo.go (sin build tag, siempre se compila)
+  package runtime
+
+  func Saludo() string {
+      return "Hola desde " + obtenerInfo()
+  }
+
+  Build tags comunes:
+  ● `//go:build linux` (o `darwin`, `windows`, `freebsd`)
+  ● `//go:build amd64` (o `arm64`, `386`)
+  ● `//go:build cgo` (CGO habilitado)
+  ● `//go:build !cgo` (CGO deshabilitado)
+  ● `//go:build ignore` (nunca se compila)
+  ● `//go:build integration` (personalizado)
+
+  Uso:
+  go test -tags=integration ./...
+
+  ── 17. BUILD CONSTRAINTS Y FILE SUFFIX ──
+
+  Go también reconoce sufijos en nombres de archivo:
+
+  * _linux.go   → solo en Linux
+  * _windows.go → solo en Windows
+  * _darwin.go  → solo en macOS
+  * _amd64.go   → solo en AMD64
+  * _arm64.go   → solo en ARM64
+  * _test.go    → solo en tests
+
+  Orden de evaluación: primero el sufijo, luego los build tags.
+
+  ── 18. EXPORTACIÓN DE VARIABLES DE PAQUETE ──
+
+  package config
+
+  var (
+      AppName    string // Exportada
+      Version    string // Exportada
+      apiKey     string // Privada
+  )
+
+  func Init(name, version, key string) {
+      AppName = name
+      Version = version
+      apiKey  = key
+  }
+
+  func GetAPIKey() string {
+      return apiKey
+  }
+
+  // Las variables exportadas pueden ser leídas y modificadas desde
+  // fuera del paquete. Si quieres inmutabilidad, no las exportes o
+  // proporciona solo getters.
+
+  ── 19. INICIALIZACIÓN DE PAQUETES ──
+
+  package db
+
+  var pool *sql.DB
+
+  // init se ejecuta automáticamente al importar el paquete
+  func init() {
+      // No exportado, no visible fuera
+  }
+
+  func Init(dsn string) error {
+      // Inicialización explícita (recomendada)
+      var err error
+      pool, err = sql.Open("postgres", dsn)
+      return err
+  }
+
+  func Pool() *sql.DB {
+      return pool
+  }
+
+  // Prefiere Init() explícito sobre init() automático.
+
+  ── 20. EJEMPLO COMPLETO: API REST EXPORTADA ──
+
+  // --- pkg/api/handler.go ---
+  package api
+
+  import (
+      "encoding/json"
+      "net/http"
+  )
+
+  // Tipos exportados
+  type Response struct {
+      Status  string      `json:"status"`
+      Data    interface{} `json:"data,omitempty"`
+      Error   string      `json:"error,omitempty"`
+  }
+
+  type Handler struct {
+      // Campos privados
+      db     Database
+      logger Logger
+  }
+
+  type Database interface {
+      Query(string) ([]byte, error)
+  }
+
+  type Logger interface {
+      Info(string)
+      Error(string)
+  }
+
+  // Constructor exportado
+  func NewHandler(db Database, logger Logger) *Handler {
+      return &Handler{
+          db:     db,
+          logger: logger,
+      }
+  }
+
+  // Métodos exportados (handlers HTTP)
+  func (h *Handler) GetData(w http.ResponseWriter, r *http.Request) {
+      data, err := h.db.Query("SELECT * FROM data")
+      if err != nil {
+          h.logger.Error(err.Error())
+          h.respondError(w, "internal_error", http.StatusInternalServerError)
+          return
+      }
+      h.respondJSON(w, Response{Status: "ok", Data: string(data)})
+  }
+
+  // Método privado
+  func (h *Handler) respondJSON(w http.ResponseWriter, resp Response) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(resp)
+  }
+
+  func (h *Handler) respondError(w http.ResponseWriter, msg string, code int) {
+      w.WriteHeader(code)
+      json.NewEncoder(w).Encode(Response{Status: "error", Error: msg})
+  }
+
+  // --- cmd/server/main.go ---
+  package main
+
+  import (
+      "net/http"
+      "github.com/user/proyecto/pkg/api"
+      "github.com/user/proyecto/internal/db"
+      "github.com/user/proyecto/internal/logger"
+  )
+
+  func main() {
+      database := db.New()
+      log := logger.New()
+      handler := api.NewHandler(database, log)
+
+      http.HandleFunc("/data", handler.GetData)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  ── 21. PATRÓN: FACHADA EXPORTADA ──
+
+  // El paquete exporta una fachada simple que oculta la complejidad
+  // interna de múltiples submódulos.
+
+  package email
+
+  // Exportado: interfaz pública
+  type Servicio interface {
+      Enviar(from, to, subject, body string) error
+  }
+
+  // Constructor exportado
+  func NuevoServicio(config Config) Servicio {
+      return &servicioImpl{
+          validador:  nuevoValidador(),
+          proveedor:  nuevoProveedor(config.APIKey),
+          plantillas: nuevoMotorPlantillas(),
+      }
+  }
+
+  // Interno: no exportado
+  type servicioImpl struct {
+      validador  *validador
+      proveedor  *proveedorSMTP
+      plantillas *motorPlantillas
+  }
+
+  func (s *servicioImpl) Enviar(from, to, subject, body string) error {
+      if err := s.validador.validarEmail(to); err != nil {
+          return err
+      }
+      cuerpoHTML, _ := s.plantillas.render(body)
+      return s.proveedor.enviar(from, to, subject, cuerpoHTML)
+  }
+
+  ── 22. BUENAS PRÁCTICAS DE EXPORTACIÓN ──
+
+  1. Mínima superficie de API: exporta solo lo necesario.
+  2. No exportes campos sin necesidad; usa getters/setters.
+  3. Prefiere devolver interfaces en lugar de tipos concretos.
+  4. Documenta todo identificador exportado con comentarios.
+  5. No exportes variables mutables globales.
+  6. Usa `New` o `NewXxx` para constructores exportados.
+  7. Los errores exportados deben tener prefijo `Err` o `ErrXxx`.
+  8. Usa `internal/` para código que no debería ser parte de la API.
+  9. No cambies un nombre exportado sin versionar (breaking change).
+  10. Mantén consistencia: si empiezas mayúscula, mantén la decisión.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● Los nombres que empiezan con mayúscula son exportados (visibles fuera
+    del paquete); minúscula son privados.
+  ● `internal/` es la herramienta de encapsulación más fuerte de Go: es
+    inaccesible desde fuera del módulo.
+  ● Las convenciones de nomenclatura son cruciales: paquetes en minúscula,
+    funciones con verbos, nombres descriptivos.
+  ● Vendoring copia las dependencias al directorio vendor/ para
+    compilación offline y reproducible.
+  ● Build tags y sufijos de archivo controlan la compilación por
+    plataforma y condiciones.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Crea un paquete `shape` con tipos exportados (Circle, Rectangle) y
+     un tipo no exportado (triangle). Implementa métodos de área.
+  2. Diseña un paquete `auth` con una interfaz exportada `AuthService`
+     y una implementación privada `jwtAuth`.
+  3. Crea un paquete `config` que use variables exportadas e init().
+     Luego refactoriza para usar inicialización explícita.
+  4. Implementa un paquete `database` con un tipo exportado `DB` que
+     tenga campos privados (connString, pool).
+  5. Usa build tags para tener implementaciones diferentes de una misma
+     función en Linux y Windows.
+  6. Crea un módulo con directorio `internal/` y demuestra que otro
+     módulo no puede importarlo.
+  7. Implementa vendoring en un proyecto, luego elimina el directorio
+     vendor/ y la conexión a internet, y compila con `-mod=vendor`.
+  8. Diseña un paquete `validator` que exporte una función `Validate`
+     y use internamente varios validadores privados.
+  9. Crea un constructor que devuelva un tipo con campos privados y
+     métodos getter/setter con validación.
+  10. Escribe un paquete `logger` con niveles (Info, Warn, Error) donde
+      el tipo Logger sea exportado pero su implementación sea privada.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Puedo exportar un campo después de haberlo declarado privado?
+  R: Sí, cambiando la primera letra a mayúscula. Pero es un breaking
+     change. Si ya hay consumidores, debes versionarlo.
+
+  P: ¿Un campo privado aparece en JSON o en la serialización?
+  R: Solo si usas struct tags como `json:"nombre"`, los campos privados
+     NO son serializados por encoding/json a menos que tengan tags.
+
+  P: ¿Puedo acceder a un campo privado usando reflection?
+  R: Sí, con reflect.Value.FieldByName y setting CanSet. Pero esto se
+     considera una violación de la encapsulación.
+
+  P: ¿Debo exportar errores como variables o constantes?
+  R: Como variables, usando errors.New() o fmt.Errorf(). Las constantes
+     no pueden ser errores directamente.
+
+  P: ¿Vendor/ se puede ignorar en .gitignore?
+  R: Depende del equipo. Sin vendor/ en el repo, no hay compilación
+     offline. Cada organización decide.
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Diseña un sistema de plugins con las siguientes reglas de exportación:
+
+  1. Define un paquete `plugin` que exporte:
+     - Una interfaz `Plugin` con métodos `Init(config any) error` y
+       `Execute(ctx context.Context, input any) (any, error)`.
+     - Un tipo `Registry` exportado con métodos `Register`, `Get`,
+       `List`.
+     - Un tipo `Config` exportado como estructura de configuración.
+  2. En el directorio `internal/plugins/`, implementa:
+     - `pluginA` (privado) que implementa Plugin.
+     - `pluginB` (privado) que implementa Plugin.
+  3. En un paquete `plugins` exportado, provee:
+     - Función `LoadAll() []plugin.Plugin` que carga los plugins
+       internos.
+  4. El desafío: el usuario final solo importa `plugin` y `plugins`,
+     ve las interfaces exportadas pero NO los tipos internos. La
+     implementación queda completamente oculta.
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has dominado el sistema de exportación e importación de Go. Sabes
+  diseñar APIs limpias, proteger implementaciones con internal/, usar
+  build tags, y gestionar vendor/. En el próximo capítulo entraremos
+  en el mundo del testing en Go.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 65: TESTING (GO TEST) → Archivos _test.go, TestXxx,
+  t.Error/Errorf/Fatal, table-driven tests, y go test -v.
+
+================================================================================
+  FIN DEL CAPÍTULO 64
+================================================================================

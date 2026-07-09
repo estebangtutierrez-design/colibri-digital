@@ -1,0 +1,991 @@
+================================================================================
+  MÓDULO V: ARCHIVOS Y SERIALIZACIÓN
+  CAPÍTULO 47: SERIALIZACIÓN JSON (SYSTEM.TEXT.JSON)
+  "C# MASTER BOOK"
+================================================================================
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 47! La serialización JSON es una de las habilidades
+más importantes en el desarrollo moderno. JSON (JavaScript Object Notation)
+es el formato estándar para intercambio de datos en APIs REST, configuración
+de aplicaciones, almacenamiento de datos y comunicación entre servicios.
+
+En este capítulo dominaremos System.Text.Json, el serializador JSON nativo
+de .NET, que ofrece alto rendimiento, bajo consumo de memoria y una API
+moderna y flexible. Aprenderás a serializar y deserializar objetos, controlar
+el formato de salida, manejar casos especiales y configurar opciones avanzadas.
+
+================================================================================
+  FRASE DEL DÍA
+================================================================================
+
+"JSON es el latín de la programación moderna: un lenguaje que todos entienden."
+
+--- Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  - Serializar objetos C# a JSON con JsonSerializer.Serialize.
+  - Deserializar JSON a objetos C# con JsonSerializer.Deserialize.
+  - Configurar opciones de formato (camelCase, indented, encoding).
+  - Usar atributos [JsonPropertyName] y otros.
+  - Manejar serialización de colecciones, diccionarios y objetos anidados.
+  - Implementar conversores personalizados.
+  - Trabajar con JsonDocument y JsonElement para JSON dinámico.
+  - Aplicar buenas prácticas de serialización.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+1. Introducción a System.Text.Json
+2. JsonSerializer.Serialize
+3. JsonSerializer.Deserialize
+4. JsonSerializerOptions
+5. Atributos de serialización
+6. Manejo de colecciones y diccionarios
+7. Serialización de objetos anidados
+8. JsonDocument y JsonElement (JSON dinámico)
+9. Conversores personalizados
+10. Polimorfismo y herencia
+11. Rendimiento y buenas prácticas
+
+----------------------------------------------------------------------
+1. INTRODUCCIÓN A SYSTEM.TEXT.JSON
+----------------------------------------------------------------------
+
+System.Text.Json es el serializador JSON incluido en .NET Core 3.0+ y
+disponible para .NET Framework vía paquete NuGet.
+
+Namespace: System.Text.Json
+
+Clases principales:
+  - JsonSerializer: métodos estáticos Serialize y Deserialize.
+  - JsonSerializerOptions: configuración del serializador.
+  - JsonDocument: parsea JSON sin mapear a objetos.
+  - JsonElement: representa un valor JSON dentro de JsonDocument.
+  - JsonNode: modelo JSON mutable (Nodo, Objeto, Arreglo, Valor).
+  - JsonConverter<T>: conversores personalizados.
+
+  ```csharp
+  using System.Text.Json;
+  using System.Text.Json.Serialization;
+  ```
+
+Ventajas sobre Newtonsoft.Json:
+  - Mayor rendimiento (hasta 2x más rápido).
+  - Menor asignación de memoria.
+  - API nativa de .NET (sin dependencias externas).
+  - Soporte para Span<T> y Utf8JsonReader/Writer.
+  - Seguridad por defecto (no llama a setters no públicos).
+
+----------------------------------------------------------------------
+2. JSONSERIALIZER.SERIALIZE
+----------------------------------------------------------------------
+
+Serializa un objeto C# a string JSON.
+
+  ```csharp
+  using System.Text.Json;
+
+  var persona = new Persona
+  {
+      Nombre = "Ana García",
+      Edad = 28,
+      Activo = true,
+      Salario = 45000.50m
+  };
+
+  string json = JsonSerializer.Serialize(persona);
+  Console.WriteLine(json);
+  // {"Nombre":"Ana García","Edad":28,"Activo":true,"Salario":45000.50}
+  ```
+
+Sobrecargas:
+  ```csharp
+  // A string
+  string json = JsonSerializer.Serialize(obj);
+
+  // A string con opciones
+  string json = JsonSerializer.Serialize(obj, options);
+
+  // A tipo específico
+  string json = JsonSerializer.Serialize(obj, typeof(Persona));
+
+  // A Stream (eficiente para archivos)
+  using FileStream fs = File.Create("persona.json");
+  await JsonSerializer.SerializeAsync(fs, persona);
+
+  // A Stream con opciones
+  await JsonSerializer.SerializeAsync(fs, persona, options);
+  ```
+
+Serialización a archivo:
+  ```csharp
+  var opciones = new JsonSerializerOptions { WriteIndented = true };
+  string json = JsonSerializer.Serialize(persona, opciones);
+  File.WriteAllText("persona.json", json);
+  ```
+
+Serialización asincrónica directa a archivo:
+  ```csharp
+  using FileStream fs = File.Create("personas.json");
+  await JsonSerializer.SerializeAsync(fs, listaPersonas,
+      new JsonSerializerOptions { WriteIndented = true });
+  ```
+
+----------------------------------------------------------------------
+3. JSONSERIALIZER.DESERIALIZE
+----------------------------------------------------------------------
+
+Deserializa string JSON a objeto C#.
+
+  ```csharp
+  string json = @"{
+      ""Nombre"": ""Ana García"",
+      ""Edad"": 28,
+      ""Activo"": true,
+      ""Salario"": 45000.50
+  }";
+
+  Persona? p = JsonSerializer.Deserialize<Persona>(json);
+  Console.WriteLine($"Nombre: {p?.Nombre}, Edad: {p?.Edad}");
+  ```
+
+Sobrecargas:
+  ```csharp
+  // Desde string
+  var obj = JsonSerializer.Deserialize<T>(json);
+  var obj2 = JsonSerializer.Deserialize(json, typeof(T));
+
+  // Desde Stream (eficiente para archivos grandes)
+  using FileStream fs = File.OpenRead("personas.json");
+  var personas = await JsonSerializer.DeserializeAsync<List<Persona>>(fs);
+
+  // Desde ReadOnlySpan<byte>
+  ReadOnlySpan<byte> utf8Json = File.ReadAllBytes("datos.json");
+  var obj3 = JsonSerializer.Deserialize<Persona>(utf8Json);
+  ```
+
+Deserialización desde archivo:
+  ```csharp
+  string json = File.ReadAllText("config.json");
+  Config? config = JsonSerializer.Deserialize<Config>(json);
+  ```
+
+Deserialización asincrónica:
+  ```csharp
+  using FileStream fs = File.OpenRead("productos.json");
+  List<Producto>? productos = await JsonSerializer.DeserializeAsync<List<Producto>>(fs);
+  ```
+
+Manejo de nullables:
+  ```csharp
+  // Si el JSON puede ser null
+  Persona? p = JsonSerializer.Deserialize<Persona>("null");
+
+  // Si una propiedad podría faltar en el JSON
+  public class Config
+  {
+      public string? Nombre { get; set; } // null si no está en JSON
+      public int Puerto { get; set; } = 8080; // valor por defecto
+  }
+  ```
+
+----------------------------------------------------------------------
+4. JSONSERIALIZEROPTIONS
+----------------------------------------------------------------------
+
+JsonSerializerOptions permite personalizar el comportamiento.
+
+  ```csharp
+  var options = new JsonSerializerOptions
+  {
+      WriteIndented = true,           // JSON formateado con saltos de línea
+      PropertyNamingPolicy = JsonNamingPolicy.CamelCase, // camelCase
+      PropertyNameCaseInsensitive = true, // Ignorar mayúsculas al deserializar
+      IncludeFields = true,           // Incluir campos (no solo propiedades)
+      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, // Ignorar null
+      IgnoreReadOnlyProperties = true,// Ignorar propiedades de solo lectura
+      Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+  };
+
+  string json = JsonSerializer.Serialize(persona, options);
+  ```
+
+PropiedadNamingPolicy:
+  ```csharp
+  // Sin política: mantiene nombres originales
+  // JsonNamingPolicy.CamelCase: "Nombre" → "nombre"
+  // JsonNamingPolicy.KebabCaseLower: "Nombre" → "nombre" (no en .NET 6-)
+  // JsonNamingPolicy.SnakeCaseLower: "Nombre" → "nombre" (a partir de .NET 8)
+  ```
+
+Ejemplo completo:
+  ```csharp
+  var options = new JsonSerializerOptions
+  {
+      PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+      WriteIndented = true,
+      PropertyNameCaseInsensitive = true
+  };
+
+  var producto = new Producto
+  {
+      NombreProducto = "Laptop",
+      PrecioUnitario = 1200.99m,
+      EnStock = true
+  };
+
+  string json = JsonSerializer.Serialize(producto, options);
+  Console.WriteLine(json);
+  // {
+  //   "nombreProducto": "Laptop",
+  //   "precioUnitario": 1200.99,
+  //   "enStock": true
+  // }
+
+  var deserializado = JsonSerializer.Deserialize<Producto>(json, options);
+  ```
+
+----------------------------------------------------------------------
+5. ATRIBUTOS DE SERIALIZACIÓN
+----------------------------------------------------------------------
+
+System.Text.Json proporciona atributos para controlar la serialización.
+
+[JsonPropertyName]: Especifica el nombre en JSON.
+  ```csharp
+  public class Usuario
+  {
+      [JsonPropertyName("id")]
+      public int Id { get; set; }
+
+      [JsonPropertyName("nombre_completo")]
+      public string NombreCompleto { get; set; }
+
+      [JsonPropertyName("es_admin")]
+      public bool EsAdmin { get; set; }
+  }
+
+  // Serializa: {"id":1,"nombre_completo":"Ana","es_admin":true}
+  ```
+
+[JsonIgnore]: Excluye una propiedad de la serialización.
+  ```csharp
+  public class Cuenta
+  {
+      public string Usuario { get; set; }
+
+      [JsonIgnore]
+      public string Contrasena { get; set; }
+
+      [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+      public string? Token { get; set; }
+  }
+  ```
+
+[JsonInclude]: Incluye campos o propiedades privadas.
+  ```csharp
+  public class Persona
+  {
+      [JsonInclude]
+      public string nombre; // campo público
+
+      [JsonInclude]
+      internal string _secreto; // campo internal
+  }
+  ```
+
+[JsonConverter]: Especifica un conversor personalizado.
+  ```csharp
+  [JsonConverter(typeof(DateTimeConverter))]
+  public class Evento
+  {
+      public string Nombre { get; set; }
+  }
+  ```
+
+[JsonExtensionData]: Captura propiedades adicionales del JSON.
+  ```csharp
+  public class Producto
+  {
+      public string Nombre { get; set; }
+
+      [JsonExtensionData]
+      public Dictionary<string, JsonElement>? DatosExtra { get; set; }
+  }
+
+  // JSON: {"nombre":"Laptop","color":"rojo","peso":2.5}
+  // DatosExtra contendrá "color" y "peso"
+  ```
+
+[JsonRequired]: La propiedad debe estar presente en JSON.
+  ```csharp
+  public class Pedido
+  {
+      [JsonRequired]
+      public int Id { get; set; }
+
+      public string? Observaciones { get; set; }
+  }
+  // Lanza JsonException si "id" falta en el JSON
+  ```
+
+----------------------------------------------------------------------
+6. MANEJO DE COLECCIONES Y DICCIONARIOS
+----------------------------------------------------------------------
+
+Listas y arrays:
+  ```csharp
+  var personas = new List<Persona>
+  {
+      new() { Nombre = "Ana", Edad = 28 },
+      new() { Nombre = "Luis", Edad = 35 }
+  };
+
+  string json = JsonSerializer.Serialize(personas);
+  // [{"Nombre":"Ana","Edad":28},{"Nombre":"Luis","Edad":35}]
+
+  var deserializadas = JsonSerializer.Deserialize<List<Persona>>(json);
+  ```
+
+Diccionarios:
+  ```csharp
+  var dict = new Dictionary<string, int>
+  {
+      ["Ana"] = 28,
+      ["Luis"] = 35
+  };
+
+  string json = JsonSerializer.Serialize(dict);
+  // {"Ana":28,"Luis":35}
+
+  var deserializado = JsonSerializer.Deserialize<Dictionary<string, int>>(json);
+  ```
+
+Diccionarios con objetos:
+  ```csharp
+  var config = new Dictionary<string, object>
+  {
+      ["timeout"] = 30,
+      ["host"] = "localhost",
+      ["puertos"] = new[] { 8080, 8081 }
+  };
+  // Al deserializar, los valores serán JsonElement
+  ```
+
+Arrays multidimensionales:
+  ```csharp
+  int[,] matriz = { { 1, 2 }, { 3, 4 } };
+  string json = JsonSerializer.Serialize(matriz);
+  // [[1,2],[3,4]]
+  ```
+
+----------------------------------------------------------------------
+7. SERIALIZACIÓN DE OBJETOS ANIDADOS
+----------------------------------------------------------------------
+
+Objetos complejos se serializan naturalmente:
+  ```csharp
+  public class Empresa
+  {
+      public string Nombre { get; set; }
+      public Direccion Direccion { get; set; }
+      public List<Empleado> Empleados { get; set; }
+  }
+
+  public class Direccion
+  {
+      public string Calle { get; set; }
+      public string Ciudad { get; set; }
+  }
+
+  public class Empleado
+  {
+      public string Nombre { get; set; }
+      public string Puesto { get; set; }
+  }
+
+  var empresa = new Empresa
+  {
+      Nombre = "TechCorp",
+      Direccion = new Direccion { Calle = "Av. Principal", Ciudad = "Madrid" },
+      Empleados = new List<Empleado>
+      {
+          new() { Nombre = "Ana", Puesto = "Dev" },
+          new() { Nombre = "Luis", Puesto = "QA" }
+      }
+  };
+
+  string json = JsonSerializer.Serialize(empresa, new JsonSerializerOptions
+  {
+      WriteIndented = true
+  });
+  // {
+  //   "Nombre": "TechCorp",
+  //   "Direccion": { "Calle": "Av. Principal", "Ciudad": "Madrid" },
+  //   "Empleados": [
+  //     { "Nombre": "Ana", "Puesto": "Dev" },
+  //     { "Nombre": "Luis", "Puesto": "QA" }
+  //   ]
+  // }
+  ```
+
+Referencias circulares: Lanza JsonException. Usa ReferenceHandler para
+manejarlas:
+  ```csharp
+  var options = new JsonSerializerOptions
+  {
+      ReferenceHandler = ReferenceHandler.IgnoreCycles // Ignora ciclos
+  };
+  ```
+
+----------------------------------------------------------------------
+8. JSONDOCUMENT Y JSONELEMENT (JSON DINÁMICO)
+----------------------------------------------------------------------
+
+Cuando no tienes una clase destino, usa JsonDocument para parsear JSON
+dinámicamente.
+
+  ```csharp
+  string json = @"{
+      ""nombre"": ""Ana"",
+      ""edad"": 28,
+      ""direccion"": { ""ciudad"": ""Madrid"" },
+      ""hobbies"": [""leer"", ""correr""]
+  }";
+
+  using JsonDocument doc = JsonDocument.Parse(json);
+  JsonElement root = doc.RootElement;
+
+  // Acceder a propiedades
+  string nombre = root.GetProperty("nombre").GetString();
+  int edad = root.GetProperty("edad").GetInt32();
+  string ciudad = root.GetProperty("direccion").GetProperty("ciudad").GetString();
+
+  // Array
+  JsonElement hobbies = root.GetProperty("hobbies");
+  foreach (JsonElement hobby in hobbies.EnumerateArray())
+      Console.WriteLine(hobby.GetString());
+
+  // Verificar tipo
+  if (root.TryGetProperty("telefono", out JsonElement telefono))
+      Console.WriteLine($"Teléfono: {telefono}");
+  ```
+
+Métodos de JsonElement:
+  - GetString(), GetInt32(), GetInt64(), GetDouble(), GetDecimal()
+  - GetBoolean(), GetGuid(), GetDateTime()
+  - GetRawText(): devuelve el JSON original para este elemento
+  - ValueKind: enum (Object, Array, String, Number, True, False, Null)
+  - EnumerateObject(), EnumerateArray()
+  - TryGetProperty(), TryGetValue()
+
+  ```csharp
+  JsonElement elem = root.GetProperty("edad");
+
+  switch (elem.ValueKind)
+  {
+      case JsonValueKind.String:
+          Console.WriteLine($"String: {elem.GetString()}");
+          break;
+      case JsonValueKind.Number:
+          Console.WriteLine($"Number: {elem.GetInt32()}");
+          break;
+      case JsonValueKind.True:
+      case JsonValueKind.False:
+          Console.WriteLine($"Bool: {elem.GetBoolean()}");
+          break;
+      case JsonValueKind.Null:
+          Console.WriteLine("Null");
+          break;
+  }
+  ```
+
+JsonNode (JSON mutable, .NET 6+):
+  ```csharp
+  using System.Text.Json.Nodes;
+
+  // Crear desde cero
+  var node = new JsonObject
+  {
+      ["nombre"] = "Ana",
+      ["edad"] = 28,
+      ["direccion"] = new JsonObject
+      {
+          ["ciudad"] = "Madrid"
+      }
+  };
+  node["edad"] = 29; // Modificar
+  node["activo"] = true; // Añadir
+  string json = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+
+  // Parsear desde string
+  JsonNode? parsed = JsonNode.Parse(json);
+  string nombre = parsed?["nombre"]?.GetValue<string>();
+  ```
+
+----------------------------------------------------------------------
+9. CONVERSORES PERSONALIZADOS
+----------------------------------------------------------------------
+
+Implementa JsonConverter<T> para controlar la serialización de tipos
+complejos o no soportados.
+
+  ```csharp
+  public class DateOnlyJsonConverter : JsonConverter<DateOnly>
+  {
+      private const string Formato = "yyyy-MM-dd";
+
+      public override DateOnly Read(ref Utf8JsonReader reader,
+          Type typeToConvert, JsonSerializerOptions options)
+      {
+          return DateOnly.Parse(reader.GetString()!);
+      }
+
+      public override void Write(Utf8JsonWriter writer,
+          DateOnly value, JsonSerializerOptions options)
+      {
+          writer.WriteStringValue(value.ToString(Formato));
+      }
+  }
+
+  // Uso
+  var options = new JsonSerializerOptions();
+  options.Converters.Add(new DateOnlyJsonConverter());
+
+  string json = JsonSerializer.Serialize(new { Fecha = DateOnly.FromDateTime(DateTime.Now) }, options);
+  ```
+
+Conversor para enum como string:
+  ```csharp
+  public class EnumStringConverter<T> : JsonConverter<T> where T : struct, Enum
+  {
+      public override T Read(ref Utf8JsonReader reader,
+          Type typeToConvert, JsonSerializerOptions options)
+      {
+          return Enum.Parse<T>(reader.GetString()!, ignoreCase: true);
+      }
+
+      public override void Write(Utf8JsonWriter writer,
+          T value, JsonSerializerOptions options)
+      {
+          writer.WriteStringValue(value.ToString());
+      }
+  }
+  ```
+
+Conversor con JsonConverterAttribute:
+  ```csharp
+  [JsonConverter(typeof(EnumStringConverter<Color>))]
+  public enum Color { Rojo, Verde, Azul }
+  ```
+
+----------------------------------------------------------------------
+10. POLIMORFISMO Y HERENCIA
+----------------------------------------------------------------------
+
+Serialización polimórfica con atributos:
+  ```csharp
+  [JsonDerivedType(typeof(Gato), "gato")]
+  [JsonDerivedType(typeof(Perro), "perro")]
+  public class Animal
+  {
+      public string Nombre { get; set; }
+  }
+
+  public class Gato : Animal
+  {
+      public bool LeGustaLaHierba { get; set; }
+  }
+
+  public class Perro : Animal
+  {
+      public bool SabeLadrar { get; set; }
+  }
+
+  // Serialización
+  Animal miMascota = new Gato { Nombre = "Garfield", LeGustaLaHierba = true };
+  string json = JsonSerializer.Serialize(miMascota);
+  // {"$type":"gato","Nombre":"Garfield","LeGustaLaHierba":true}
+
+  // Deserialización
+  var animal = JsonSerializer.Deserialize<Animal>(json);
+  Console.WriteLine(animal is Gato); // true
+  ```
+
+Polimorfismo con JsonPolymorphismOptions:
+  ```csharp
+  var options = new JsonSerializerOptions
+  {
+      PolymorphismOptions = new JsonPolymorphismOptions
+      {
+          TypeDiscriminatorPropertyName = "$tipo",
+          IgnoreUnrecognizedTypeDiscriminators = true,
+          UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization
+      }
+  };
+  ```
+
+----------------------------------------------------------------------
+11. RENDIMIENTO Y BUENAS PRÁCTICAS
+----------------------------------------------------------------------
+
+a) Cachea JsonSerializerOptions: crear opciones es costoso. Crea una
+   instancia estática o singleton.
+
+  ```csharp
+  private static readonly JsonSerializerOptions _jsonOptions = new()
+  {
+      PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+      WriteIndented = false
+  };
+  ```
+
+b) Usa serialización asincrónica con streams para archivos grandes.
+
+c) Para API REST, usa JsonSerializerOptions global en ASP.NET Core.
+
+d) Para rendimiento máximo, usa Utf8JsonReader y Utf8JsonWriter.
+
+e) No serialices propiedades que puedan exponer datos sensibles; usa
+   [JsonIgnore].
+
+f) Usa [JsonPropertyName] para nombres de propiedades no convencionales.
+
+g) Prefiere clases selladas para DTOs de serialización.
+
+h) Usa JsonSerializerDefaults.Web para opciones típicas de API web:
+  ```csharp
+  var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+  // camelCase, case-insensitive, etc.
+  ```
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using System.Text.Json;
+  using System.Text.Json.Serialization;
+  using System.Threading.Tasks;
+
+  namespace Capitulo47.SerializationJson
+  {
+      class Program
+      {
+          static async Task Main(string[] args)
+          {
+              string dir = "ejemplos_json";
+              Directory.CreateDirectory(dir);
+
+              Console.WriteLine("=== DEMO 1: SERIALIZE BÁSICO ===");
+              var persona = new Persona
+              {
+                  Id = 1,
+                  Nombre = "Ana García",
+                  Edad = 28,
+                  Salario = 45000.50m,
+                  Activo = true,
+                  FechaRegistro = DateTime.Now
+              };
+              string json1 = JsonSerializer.Serialize(persona);
+              Console.WriteLine($"  {json1}\n");
+
+              Console.WriteLine("=== DEMO 2: DESERIALIZE BÁSICO ===");
+              string json2 = @"{""Id"":2,""Nombre"":""Luis Pérez"",""Edad"":35,""Salario"":62000,""Activo"":false}";
+              Persona? p2 = JsonSerializer.Deserialize<Persona>(json2);
+              Console.WriteLine($"  {p2?.Nombre}, {p2?.Edad} años, Activo: {p2?.Activo}\n");
+
+              Console.WriteLine("=== DEMO 3: OPCIONES (CAMELCASE + INDENTED) ===");
+              var optionsIndented = new JsonSerializerOptions
+              {
+                  PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                  WriteIndented = true
+              };
+              string json3 = JsonSerializer.Serialize(persona, optionsIndented);
+              Console.WriteLine(json3 + "\n");
+
+              Console.WriteLine("=== DEMO 4: ATRIBUTOS JSONPROPERTYNAME ===");
+              var producto = new Producto
+              {
+                  Id = 100,
+                  NombreProducto = "Laptop Gamer",
+                  Precio = 1299.99m,
+                  Categoria = "Electrónica",
+                  CodigoInterno = "INT-001"
+              };
+              string json4 = JsonSerializer.Serialize(producto, optionsIndented);
+              Console.WriteLine(json4 + "\n");
+
+              Console.WriteLine("=== DEMO 5: COLECCIONES ===");
+              var personas = new List<Persona>
+              {
+                  new() { Id = 1, Nombre = "Ana", Edad = 28 },
+                  new() { Id = 2, Nombre = "Luis", Edad = 35 },
+                  new() { Id = 3, Nombre = "Carla", Edad = 22 }
+              };
+              string json5 = JsonSerializer.Serialize(personas, optionsIndented);
+              Console.WriteLine(json5 + "\n");
+
+              Console.WriteLine("=== DEMO 6: DESERIALIZE COLECCIÓN ===");
+              var deserializadas = JsonSerializer.Deserialize<List<Persona>>(json5);
+              Console.WriteLine($"  Deserializadas: {deserializadas?.Count} personas\n");
+
+              Console.WriteLine("=== DEMO 7: JSONDOCUMENT DINÁMICO ===");
+              string json7 = @"{
+                  ""usuario"": ""ana_dev"",
+                  ""roles"": [""admin"", ""editor""],
+                  ""preferencias"": { ""idioma"": ""es"", ""tema"": ""oscuro"" }
+              }";
+              using JsonDocument doc = JsonDocument.Parse(json7);
+              JsonElement root = doc.RootElement;
+              string usuario = root.GetProperty("usuario").GetString();
+              string idioma = root.GetProperty("preferencias").GetProperty("idioma").GetString();
+              Console.WriteLine($"  Usuario: {usuario}, Idioma: {idioma}");
+              Console.Write("  Roles:");
+              foreach (JsonElement rol in root.GetProperty("roles").EnumerateArray())
+                  Console.Write($" {rol.GetString()}");
+              Console.WriteLine("\n");
+
+              Console.WriteLine("=== DEMO 8: ARCHIVO (SERIALIZE ASYNC) ===");
+              string ruta8 = Path.Combine(dir, "productos.json");
+              var productos = new List<Producto>
+              {
+                  new() { Id = 1, NombreProducto = "Mouse", Precio = 29.99m },
+                  new() { Id = 2, NombreProducto = "Teclado", Precio = 89.99m }
+              };
+              using (FileStream fs = File.Create(ruta8))
+              {
+                  await JsonSerializer.SerializeAsync(fs, productos,
+                      new JsonSerializerOptions { WriteIndented = true });
+              }
+              Console.WriteLine($"  Archivo escrito: {ruta8}\n");
+
+              Console.WriteLine("=== DEMO 9: DESERIALIZE ASYNC ===");
+              using (FileStream fs = File.OpenRead(ruta8))
+              {
+                  var leidos = await JsonSerializer.DeserializeAsync<List<Producto>>(fs);
+                  Console.WriteLine($"  Leídos {leidos?.Count} productos del archivo\n");
+              }
+
+              Console.WriteLine("=== DEMO 10: DICCIONARIOS ===");
+              var dict = new Dictionary<string, object>
+              {
+                  ["nombre"] = "Config",
+                  ["version"] = 2.1,
+                  ["activo"] = true,
+                  ["puertos"] = new[] { 80, 443 }
+              };
+              string json10 = JsonSerializer.Serialize(dict, optionsIndented);
+              Console.WriteLine(json10 + "\n");
+
+              Console.WriteLine("=== DEMO 11: JSONIGNORE ===");
+              var cuenta = new Cuenta
+              {
+                  Usuario = "ana",
+                  Email = "ana@email.com",
+                  Contrasena = "supersecreto"
+              };
+              string json11 = JsonSerializer.Serialize(cuenta, optionsIndented);
+              Console.WriteLine(json11 + " (contraseña omitida)\n");
+
+              Console.WriteLine("=== DEMO 12: CAMBIAR NOMBRE CON JSONEXTENSIONDATA ===");
+              string jsonExtra = @"{""nombre"":""Laptop"",""color"":""rojo"",""peso"":2.5}";
+              var prodExtra = JsonSerializer.Deserialize<ProductoConExtra>(jsonExtra);
+              Console.WriteLine($"  Producto: {prodExtra?.Nombre}");
+              if (prodExtra?.Extra != null)
+                  foreach (var kv in prodExtra.Extra)
+                      Console.WriteLine($"  Extra [{kv.Key}]: {kv.Value}");
+              Console.WriteLine();
+
+              // Limpieza
+              Directory.Delete(dir, true);
+              Console.WriteLine("¡Todas las demostraciones completadas!");
+          }
+      }
+
+      public class Persona
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; }
+          public int Edad { get; set; }
+          public decimal Salario { get; set; }
+          public bool Activo { get; set; }
+          public DateTime FechaRegistro { get; set; }
+      }
+
+      public class Producto
+      {
+          [JsonPropertyName("id")]
+          public int Id { get; set; }
+
+          [JsonPropertyName("nombre_producto")]
+          public string NombreProducto { get; set; }
+
+          [JsonPropertyName("precio")]
+          public decimal Precio { get; set; }
+
+          [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+          public string? Categoria { get; set; }
+
+          [JsonIgnore]
+          public string CodigoInterno { get; set; }
+      }
+
+      public class Cuenta
+      {
+          public string Usuario { get; set; }
+          public string Email { get; set; }
+
+          [JsonIgnore]
+          public string Contrasena { get; set; }
+      }
+
+      public class ProductoConExtra
+      {
+          public string Nombre { get; set; }
+
+          [JsonExtensionData]
+          public Dictionary<string, JsonElement>? Extra { get; set; }
+      }
+  }
+  ```
+
+======================================================================
+  EJERCICIOS PROPUESTOS
+======================================================================
+
+1. Crea un gestor de configuración en JSON que serialice/deserialice un
+   objeto Config con propiedades de diferentes tipos (string, int, bool,
+   array, objeto anidado).
+
+2. Implementa un serializador para un tipo DateTime personalizado que
+   use el formato ISO 8601 completo con zona horaria.
+
+3. Escribe un programa que lea un archivo JSON grande (línea por línea
+   usando StreamReader) y deserialice cada línea como un objeto individual
+   (JSON Lines format).
+
+4. Crea un conversor personalizado para un tipo Enum que lo serialice como
+   su valor numérico en lugar de su nombre.
+
+5. Implementa un "patch" JSON que lea un archivo JSON, modifique propiedades
+   usando JsonDocument/JsonNode, y lo guarde de vuelta.
+
+======================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+======================================================================
+
+P: ¿System.Text.Json reemplaza a Newtonsoft.Json?
+R: Sí, es el serializador oficial de .NET. Newtonsoft.Json sigue siendo
+   válido, pero System.Text.Json es más rápido y nativo.
+
+P: ¿Cómo manejo fechas en un formato específico?
+R: Usa un JsonConverter personalizado. Por defecto usa ISO 8601.
+
+P: ¿Por qué mi propiedad no se serializa?
+R: Debe tener getter público. Si es un campo, usa [JsonInclude]
+   o options.IncludeFields = true.
+
+P: ¿Cómo ignoro propiedades null al serializar?
+R: options.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull.
+
+P: ¿System.Text.Json soporta JSON5 o comentarios?
+R: Sí, con JsonDocumentOptions o JsonSerializerOptions:
+   options.ReadCommentHandling = JsonCommentHandling.Skip.
+
+======================================================================
+  DESAFÍO DEL ARQUITECTO
+======================================================================
+
+Implementa un "Motor de Serialización JSON Universal" que:
+
+  - Serialice cualquier objeto a JSON con control granular:
+    - Incluir/excluir propiedades por nombre o tipo.
+    - Transformar nombres (camelCase, snake_case, kebab-case).
+    - Controlar profundidad máxima.
+    - Enmascarar valores sensibles (contraseñas, tokens).
+  - Deserialice JSON a objetos con validación:
+    - Tipos requeridos, rangos numéricos, longitudes de string.
+    - Valores por defecto para propiedades faltantes.
+    - Reporte de errores detallado (qué propiedad falló y por qué).
+  - Use expresiones lambda para configurar reglas:
+
+  ```csharp
+  var config = new SerializationConfig<Persona>()
+      .Include(p => p.Nombre)
+      .Include(p => p.Edad, max: 120)
+      .Exclude(p => p.Salario)
+      .TransformNames(NamingPolicy.SnakeCase)
+      .MaskSensitive(p => p.Contrasena, "***");
+  ```
+
+Pistas:
+  - Usa Expression<Func<T, object?>> para las reglas.
+  - JsonSerializerOptions con JsonConverter personalizado.
+  - Dictionary<string, JsonConverter> para mapeo de propiedades.
+  - Reflection para construir el plan de serialización.
+  - IValidatableObject o validación personalizada.
+
+Criterios de éxito:
+  - Configuración declarativa y fluida.
+  - Validación en deserialización con mensajes de error claros.
+  - Enmascaramiento de datos sensibles.
+  - Soporte para herencia y polimorfismo.
+  - Buen rendimiento (cachear el plan de serialización).
+
+======================================================================
+  RESUMEN DEL CAPÍTULO
+======================================================================
+
+Hemos aprendido:
+
+  - JsonSerializer.Serialize: objeto → string JSON.
+  - JsonSerializer.Deserialize: string JSON → objeto.
+  - JsonSerializerOptions: WriteIndented, PropertyNamingPolicy, etc.
+  - Atributos: [JsonPropertyName], [JsonIgnore], [JsonInclude], [JsonRequired].
+  - Colecciones: listas, diccionarios, arrays.
+  - JsonDocument/JsonElement: JSON dinámico sin clases.
+  - JsonNode: JSON mutable (crear/modificar desde cero).
+  - Conversores personalizados: JsonConverter<T>.
+  - Polimorfismo: [JsonDerivedType] con discriminador.
+  - Buenas prácticas: cachear opciones, async para archivos, ignorar datos
+    sensibles.
+
+======================================================================
+  CIERRE
+======================================================================
+
+¡Felicidades! Ahora eres un experto en serialización JSON con
+System.Text.Json. Dominas desde lo básico hasta conversores personalizados,
+polimorfismo y JSON dinámico.
+
+En el Capítulo 48: Serialización XML, exploraremos el formato XML y las
+herramientas de .NET (XmlSerializer, DataContractSerializer) para serializar
+objetos a XML y viceversa. También compararemos XML vs JSON para ayudarte a
+elegir el formato adecuado.
+
+======================================================================
+  PREPARACIÓN PARA EL PRÓXIMO CAPÍTULO
+======================================================================
+
+En el Capítulo 48 exploraremos:
+  - XmlSerializer y DataContractSerializer
+  - Atributos [XmlElement], [XmlAttribute], [XmlIgnore]
+  - Serialización y deserialización XML
+  - XML vs JSON: cuándo usar cada uno
+  - Buenas prácticas con XML
+
+======================================================================
+  FIN DEL CAPÍTULO 47
+======================================================================

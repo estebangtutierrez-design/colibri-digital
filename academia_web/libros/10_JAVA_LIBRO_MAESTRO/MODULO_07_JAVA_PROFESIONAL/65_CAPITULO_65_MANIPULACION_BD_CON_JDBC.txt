@@ -1,0 +1,1184 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     JAVA MASTER BOOK
+##
+##                         MÓDULO VII
+##                   JAVA PROFESIONAL
+##
+##                     CAPÍTULO 65
+##
+##               MANIPULACIÓN BD CON JDBC
+##
+################################################################################
+################################################################################
+
+"El verdadero poder de JDBC no está en consultar datos, sino en
+manipularlos con precisión, seguridad y eficiencia."
+— Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, maestro de los datos! En el capítulo anterior aprendiste los
+fundamentos de JDBC: conexiones, consultas básicas y ResultSet. Ahora es
+momento de profundizar en la manipulación profesional de bases de datos.
+
+En este capítulo dominarás PreparedStatement para operaciones CRUD seguras
+y eficientes. Aprenderás a manejar transacciones para garantizar la
+integridad de los datos. Y descubrirás los pools de conexiones, una técnica
+esencial para aplicaciones en producción que manejan cientos de conexiones
+simultáneas.
+
+Estos son los temas que separan a un desarrollador que "sabe JDBC" de uno
+que realmente domina la persistencia de datos en Java.
+
+¡Prepárate para manipular datos como un profesional!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Las transacciones son el pegamento que mantiene la integridad de tus datos.
+Un buen desarrollador no solo guarda datos: los guarda correctamente."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Utilizar PreparedStatement para consultas parametrizadas.
+✓ Implementar operaciones CRUD completas (Create, Read, Update, Delete).
+✓ Obtener claves generadas automáticamente (generated keys).
+✓ Manejar transacciones con commit y rollback.
+✓ Conocer los niveles de aislamiento de transacciones.
+✓ Implementar un pool de conexiones con HikariCP.
+✓ Realizar operaciones batch para inserciones masivas.
+✓ Manejar excepciones y recursos correctamente.
+
+===============================================================================
+1. PREPAREDSTATEMENT EN PROFUNDIDAD
+===============================================================================
+
+PreparedStatement es la evolución de Statement que permite consultas
+parametrizadas, previniendo inyección SQL y mejorando el rendimiento.
+
+```java
+import java.sql.*;
+import java.math.BigDecimal;
+
+public class PreparedStatementProfundo {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/tienda";
+        String user = "root";
+        String password = "password";
+
+        String sql = "INSERT INTO productos (nombre, descripcion, precio, " +
+            "stock, categoria, activo, fecha_creacion) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+        try (Connection con = DriverManager.getConnection(url, user, password);
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            // Tipos de datos soportados por PreparedStatement
+            ps.setString(1, "Laptop Gamer");        // VARCHAR
+            ps.setString(2, "Laptop de alto rendimiento");
+            ps.setBigDecimal(3, new BigDecimal("1500.00")); // DECIMAL
+            ps.setInt(4, 10);                        // INT
+            ps.setString(5, "Electrónica");          // VARCHAR
+            ps.setBoolean(6, true);                  // BOOLEAN/TINYINT
+            ps.setDate(7, Date.valueOf(java.time.LocalDate.now())); // DATE
+
+            int filas = ps.executeUpdate();
+            System.out.println("Insertadas: " + filas + " filas");
+
+        } catch (SQLException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+}
+```
+
+Métodos set más importantes de PreparedStatement:
+- setString, setInt, setLong, setDouble, setBigDecimal
+- setBoolean, setDate, setTime, setTimestamp
+- setObject (para cualquier tipo)
+- setNull(int, int) para valores NULL
+- setBytes, setBinaryStream para datos binarios
+
+```java
+public class PreparedStatementTipos {
+    public static void main(String[] args) throws SQLException {
+        String sql = "INSERT INTO variedades " +
+            "(texto, entero, decimal, fecha, hora, booleano, bytes) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+        try (Connection con = DriverManager.getConnection("...");
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, "Texto de ejemplo");
+            ps.setInt(2, 42);
+            ps.setDouble(3, 3.14159);
+            ps.setDate(4, Date.valueOf("2024-01-15"));
+            ps.setTime(5, Time.valueOf("10:30:00"));
+            ps.setBoolean(6, true);
+            ps.setBytes(7, "datos binarios".getBytes());
+
+            ps.executeUpdate();
+        }
+    }
+}
+```
+
+===============================================================================
+2. CRUD COMPLETO CON PREPAREDSTATEMENT
+===============================================================================
+
+Un ejemplo completo de las cuatro operaciones fundamentales:
+
+```java
+import java.sql.*;
+import java.util.*;
+
+public class CRUDCompleto {
+    private static final String URL = "jdbc:mysql://localhost:3306/tienda";
+    private static final String USER = "root";
+    private static final String PASS = "password";
+
+    // CREATE
+    public int crearProducto(Producto p) {
+        String sql = "INSERT INTO productos (nombre, precio, stock, categoria) " +
+            "VALUES (?, ?, ?, ?)";
+
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS);
+             PreparedStatement ps = con.prepareStatement(sql,
+                 Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setString(1, p.getNombre());
+            ps.setDouble(2, p.getPrecio());
+            ps.setInt(3, p.getStock());
+            ps.setString(4, p.getCategoria());
+            ps.executeUpdate();
+
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    return keys.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Error creando producto", e);
+        }
+        return -1;
+    }
+
+    // READ
+    public Optional<Producto> buscarProducto(int id) {
+        String sql = "SELECT * FROM productos WHERE id = ?";
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS);
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setInt(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapearProducto(rs));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Error buscando producto", e);
+        }
+        return Optional.empty();
+    }
+
+    // READ ALL
+    public List<Producto> listarProductos() {
+        List<Producto> lista = new ArrayList<>();
+        String sql = "SELECT * FROM productos ORDER BY nombre";
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS);
+             Statement stmt = con.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                lista.add(mapearProducto(rs));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Error listando productos", e);
+        }
+        return lista;
+    }
+
+    // UPDATE
+    public boolean actualizarProducto(Producto p) {
+        String sql = "UPDATE productos SET nombre=?, precio=?, " +
+            "stock=?, categoria=? WHERE id=?";
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS);
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, p.getNombre());
+            ps.setDouble(2, p.getPrecio());
+            ps.setInt(3, p.getStock());
+            ps.setString(4, p.getCategoria());
+            ps.setInt(5, p.getId());
+
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Error actualizando producto", e);
+        }
+    }
+
+    // DELETE
+    public boolean eliminarProducto(int id) {
+        String sql = "DELETE FROM productos WHERE id = ?";
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS);
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setInt(1, id);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new RuntimeException("Error eliminando producto", e);
+        }
+    }
+
+    private Producto mapearProducto(ResultSet rs) throws SQLException {
+        return new Producto(
+            rs.getInt("id"),
+            rs.getString("nombre"),
+            rs.getDouble("precio"),
+            rs.getInt("stock"),
+            rs.getString("categoria")
+        );
+    }
+
+    // Modelo interno
+    static class Producto {
+        private int id;
+        private String nombre;
+        private double precio;
+        private int stock;
+        private String categoria;
+
+        public Producto(int id, String nombre, double precio,
+                        int stock, String categoria) {
+            this.id = id;
+            this.nombre = nombre;
+            this.precio = precio;
+            this.stock = stock;
+            this.categoria = categoria;
+        }
+
+        public Producto(String nombre, double precio,
+                        int stock, String categoria) {
+            this.nombre = nombre;
+            this.precio = precio;
+            this.stock = stock;
+            this.categoria = categoria;
+        }
+
+        public int getId() { return id; }
+        public String getNombre() { return nombre; }
+        public double getPrecio() { return precio; }
+        public int getStock() { return stock; }
+        public String getCategoria() { return categoria; }
+
+        @Override
+        public String toString() {
+            return String.format("Producto[%d] %s - $%.2f (%s) stock=%d",
+                id, nombre, precio, categoria, stock);
+        }
+    }
+
+    public static void main(String[] args) {
+        CRUDCompleto crud = new CRUDCompleto();
+
+        Producto p = new Producto("Teclado Mecánico", 89.99, 25, "Periféricos");
+        int id = crud.crearProducto(p);
+        System.out.println("Creado ID: " + id);
+
+        crud.buscarProducto(id).ifPresent(System.out::println);
+
+        Producto actualizado = new Producto(id, "Teclado RGB", 99.99, 30, "Periféricos");
+        crud.actualizarProducto(actualizado);
+        crud.buscarProducto(id).ifPresent(System.out::println);
+
+        System.out.println("\nTodos los productos:");
+        crud.listarProductos().forEach(System.out::println);
+
+        crud.eliminarProducto(id);
+        System.out.println("\nEliminado producto " + id);
+    }
+}
+```
+
+===============================================================================
+3. OBTENER CLAVES GENERADAS
+===============================================================================
+
+Cuando insertas un registro con AUTO_INCREMENT, puedes recuperar el ID
+generado automáticamente.
+
+```java
+public class GeneratedKeysDemo {
+    public static void main(String[] args) {
+        String sql = "INSERT INTO usuarios (nombre, email) VALUES (?, ?)";
+
+        try (Connection con = DriverManager.getConnection("...");
+             PreparedStatement ps = con.prepareStatement(sql,
+                 Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setString(1, "María García");
+            ps.setString(2, "maria@email.com");
+            ps.executeUpdate();
+
+            // Recuperar la clave generada
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    int nuevoId = rs.getInt(1);
+                    System.out.println("Nuevo usuario ID: " + nuevoId);
+                }
+            }
+
+            // También puedes especificar qué columna(es) devolver
+            String sql2 = "INSERT INTO pedidos (cliente_id, total) VALUES (?, ?)";
+            try (PreparedStatement ps2 = con.prepareStatement(sql2,
+                    new String[]{"id", "fecha_creacion"})) {
+                ps2.setInt(1, 1);
+                ps2.setDouble(2, 250.00);
+                ps2.executeUpdate();
+
+                try (ResultSet rs = ps2.getGeneratedKeys()) {
+                    if (rs.next()) {
+                        int pedidoId = rs.getInt("id");
+                        Date fecha = rs.getDate("fecha_creacion");
+                        System.out.println("Pedido " + pedidoId +
+                            " creado el " + fecha);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+}
+```
+
+===============================================================================
+4. TRANSACCIONES
+===============================================================================
+
+Una transacción agrupa múltiples operaciones en una unidad atómica: todas
+se ejecutan o ninguna. Si algo falla, se hace rollback.
+
+```java
+public class TransaccionDemo {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/banco";
+        String user = "root";
+        String password = "password";
+
+        // Transferencia: restar 100 de cuenta A, sumar 100 a cuenta B
+        String restar = "UPDATE cuentas SET saldo = saldo - ? WHERE id = ?";
+        String sumar = "UPDATE cuentas SET saldo = saldo + ? WHERE id = ?";
+
+        Connection con = null;
+        try {
+            con = DriverManager.getConnection(url, user, password);
+            con.setAutoCommit(false); // Inicia transacción manual
+
+            try (PreparedStatement psRestar = con.prepareStatement(restar);
+                 PreparedStatement psSumar = con.prepareStatement(sumar)) {
+
+                // Primera operación
+                psRestar.setDouble(1, 100.0);
+                psRestar.setInt(2, 1);
+                int afectadas = psRestar.executeUpdate();
+
+                if (afectadas != 1) {
+                    throw new SQLException("Cuenta origen no encontrada");
+                }
+
+                // Simular un error (por ejemplo, la cuenta destino no existe)
+                // Esto haría rollback y la primera operación se desharía
+                if (Math.random() > 0.5) {
+                    throw new SQLException("Error simulado en transferencia");
+                }
+
+                // Segunda operación
+                psSumar.setDouble(1, 100.0);
+                psSumar.setInt(2, 2);
+                afectadas = psSumar.executeUpdate();
+
+                if (afectadas != 1) {
+                    throw new SQLException("Cuenta destino no encontrada");
+                }
+
+                con.commit(); // Confirma ambas operaciones
+                System.out.println("Transferencia exitosa!");
+
+            } catch (SQLException e) {
+                con.rollback(); // Deshace ambas operaciones
+                System.err.println("Transferencia fallida. Rollback ejecutado.");
+                System.err.println("Error: " + e.getMessage());
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error de conexión: " + e.getMessage());
+        } finally {
+            if (con != null) {
+                try {
+                    con.setAutoCommit(true); // Restaurar modo por defecto
+                    con.close();
+                } catch (SQLException e) {
+                    System.err.println("Error cerrando: " + e.getMessage());
+                }
+            }
+        }
+    }
+}
+```
+
+Puntos clave de transacciones:
+1. setAutoCommit(false) desactiva el modo autocommit (cada sentencia es
+   una transacción independiente).
+2. commit() confirma todas las operaciones desde el último commit/rollback.
+3. rollback() deshace todas las operaciones desde el último commit/rollback.
+4. Los savepoints permiten rollback parcial (rollback a un punto específico).
+
+```java
+public class SavepointDemo {
+    public static void main(String[] args) throws SQLException {
+        try (Connection con = DriverManager.getConnection("...")) {
+            con.setAutoCommit(false);
+
+            try (Statement stmt = con.createStatement()) {
+                stmt.executeUpdate("INSERT INTO log (msg) VALUES ('Inicio proceso')");
+                Savepoint sp1 = con.setSavepoint("paso1");
+
+                stmt.executeUpdate("INSERT INTO log (msg) VALUES ('Paso 2 completado')");
+
+                if (hayError()) {
+                    con.rollback(sp1); // Vuelve al savepoint, mantiene el paso 1
+                    System.out.println("Rollback al savepoint. Paso 1 preservado.");
+                }
+
+                stmt.executeUpdate("INSERT INTO log (msg) VALUES ('Proceso finalizado')");
+                con.commit();
+            } catch (SQLException e) {
+                con.rollback();
+            }
+        }
+    }
+
+    static boolean hayError() {
+        return Math.random() > 0.5;
+    }
+}
+```
+
+===============================================================================
+5. NIVELES DE AISLAMIENTO
+===============================================================================
+
+El nivel de aislamiento define cómo las transacciones ven los cambios de
+otras transacciones concurrentes.
+
+```java
+public class NivelesAislamiento {
+    public static void main(String[] args) throws SQLException {
+        try (Connection con = DriverManager.getConnection("...")) {
+
+            // Mostrar nivel actual
+            System.out.println("Nivel actual: " +
+                nivelToString(con.getTransactionIsolation()));
+
+            // Niveles disponibles:
+            // Connection.TRANSACTION_READ_UNCOMMITTED   (1)
+            // Connection.TRANSACTION_READ_COMMITTED     (2) - Default en la mayoría
+            // Connection.TRANSACTION_REPEATABLE_READ    (4) - Default MySQL
+            // Connection.TRANSACTION_SERIALIZABLE       (8)
+
+            // Configurar nivel
+            con.setTransactionIsolation(
+                Connection.TRANSACTION_REPEATABLE_READ);
+
+            // Problemas de concurrencia que cada nivel previene:
+            // Dirty Read:    leer datos no commiteados de otra transacción
+            // Non-repeatable Read: misma consulta devuelve diferentes datos
+            // Phantom Read:  nueva fila aparece en consultas repetidas
+
+            System.out.println("READ_UNCOMMITTED: permite dirty reads");
+            System.out.println("READ_COMMITTED:   previene dirty reads");
+            System.out.println("REPEATABLE_READ:  previene dirty + non-repeatable");
+            System.out.println("SERIALIZABLE:     previene todos (menos rendimiento)");
+        }
+    }
+
+    static String nivelToString(int nivel) {
+        return switch (nivel) {
+            case Connection.TRANSACTION_READ_UNCOMMITTED -> "READ_UNCOMMITTED";
+            case Connection.TRANSACTION_READ_COMMITTED -> "READ_COMMITTED";
+            case Connection.TRANSACTION_REPEATABLE_READ -> "REPEATABLE_READ";
+            case Connection.TRANSACTION_SERIALIZABLE -> "SERIALIZABLE";
+            default -> "NIVEL_DESCONOCIDO";
+        };
+    }
+}
+```
+
+===============================================================================
+6. POOL DE CONEXIONES CON HIKARICP
+===============================================================================
+
+Crear una conexión por cada operación es ineficiente. Un pool de conexiones
+mantiene un conjunto de conexiones listas para usar, mejorando drásticamente
+el rendimiento.
+
+HikariCP es el pool de conexiones más rápido y popular en Java.
+
+```xml
+<!-- Dependencia Maven -->
+<dependency>
+    <groupId>com.zaxxer</groupId>
+    <artifactId>HikariCP</artifactId>
+    <version>5.1.0</version>
+</dependency>
+```
+
+```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import javax.sql.DataSource;
+import java.sql.*;
+
+public class HikariCPDemo {
+    private static HikariDataSource dataSource;
+
+    public static void inicializarPool() {
+        HikariConfig config = new HikariConfig();
+
+        config.setJdbcUrl("jdbc:mysql://localhost:3306/tienda");
+        config.setUsername("root");
+        config.setPassword("password");
+
+        // Configuración del pool
+        config.setMaximumPoolSize(10);       // Máximo de conexiones
+        config.setMinimumIdle(5);            // Conexiones inactivas mínimas
+        config.setConnectionTimeout(30000);  // Timeout para obtener conexión (ms)
+        config.setIdleTimeout(600000);       // Timeout de inactividad (ms)
+        config.setMaxLifetime(1800000);      // Vida máxima de conexión (ms)
+
+        // Opciones de rendimiento
+        config.addDataSourceProperty("cachePrepStmts", "true");
+        config.addDataSourceProperty("prepStmtCacheSize", "250");
+        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+        config.addDataSourceProperty("useServerPrepStmts", "true");
+
+        // Pool name para debugging
+        config.setPoolName("TiendaPool");
+
+        dataSource = new HikariDataSource(config);
+        System.out.println("Pool HikariCP inicializado: " +
+            dataSource.getMaximumPoolSize() + " conexiones máx.");
+    }
+
+    public static Connection getConnection() throws SQLException {
+        if (dataSource == null) {
+            inicializarPool();
+        }
+        return dataSource.getConnection();
+    }
+
+    public static void cerrarPool() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+            System.out.println("Pool cerrado.");
+        }
+    }
+
+    public static void main(String[] args) {
+        inicializarPool();
+
+        // Usar el pool
+        try (Connection con = getConnection();
+             Statement stmt = con.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM productos")) {
+
+            if (rs.next()) {
+                System.out.println("Total productos: " + rs.getInt(1));
+            }
+
+            // Estadísticas del pool
+            System.out.println("Conexiones activas: " +
+                dataSource.getHikariPoolMXBean().getActiveConnections());
+            System.out.println("Conexiones inactivas: " +
+                dataSource.getHikariPoolMXBean().getIdleConnections());
+            System.out.println("Pendientes: " +
+                dataSource.getHikariPoolMXBean().getThreadsAwaitingConnection());
+
+        } catch (SQLException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        cerrarPool();
+    }
+}
+
+// Versión con Singleton del DataSource
+class DatabasePool {
+    private static final HikariDataSource dataSource;
+
+    static {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:mysql://localhost:3306/tienda");
+        config.setUsername("root");
+        config.setPassword("password");
+        config.setMaximumPoolSize(20);
+        config.setMinimumIdle(5);
+        config.setConnectionTimeout(5000);
+        config.setPoolName("AppPool");
+        dataSource = new HikariDataSource(config);
+    }
+
+    private DatabasePool() {} // Evitar instanciación
+
+    public static Connection getConnection() throws SQLException {
+        return dataSource.getConnection();
+    }
+
+    public static void shutdown() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+        }
+    }
+}
+
+// Uso profesional del pool
+class RepositorioProducto {
+    public List<Producto> buscarPorCategoria(String categoria) {
+        String sql = "SELECT * FROM productos WHERE categoria = ?";
+        List<Producto> resultado = new java.util.ArrayList<>();
+
+        try (Connection con = DatabasePool.getConnection();
+             PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, categoria);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    resultado.add(new Producto(
+                        rs.getInt("id"),
+                        rs.getString("nombre"),
+                        rs.getDouble("precio"),
+                        rs.getInt("stock"),
+                        rs.getString("categoria")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Error buscando por categoría", e);
+        }
+        return resultado;
+    }
+}
+```
+
+===============================================================================
+7. OPERACIONES BATCH
+===============================================================================
+
+Cuando necesitas insertar o actualizar muchos registros, las operaciones
+batch son mucho más eficientes que ejecutar sentencias individuales.
+
+```java
+public class BatchDemo {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/tienda";
+        String user = "root";
+        String pass = "password";
+
+        // Batch con Statement
+        try (Connection con = DriverManager.getConnection(url, user, pass);
+             Statement stmt = con.createStatement()) {
+
+            con.setAutoCommit(false); // Desactivar autocommit para batch
+
+            stmt.addBatch("INSERT INTO log (mensaje) VALUES ('Inicio')");
+            stmt.addBatch("INSERT INTO log (mensaje) VALUES ('Procesando')");
+            stmt.addBatch("INSERT INTO log (mensaje) VALUES ('Finalizado')");
+            stmt.addBatch("UPDATE contadores SET valor = valor + 1 WHERE id = 1");
+
+            int[] resultados = stmt.executeBatch();
+            con.commit();
+
+            System.out.println("Batch ejecutado: " + resultados.length +
+                " sentencias");
+            for (int r : resultados) {
+                System.out.println("  Filas afectadas: " + r);
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error en batch: " + e.getMessage());
+        }
+    }
+}
+```
+
+Batch con PreparedStatement (mucho más eficiente):
+
+```java
+public class PreparedStatementBatch {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/tienda";
+        String user = "root";
+        String pass = "password";
+
+        long inicio = System.currentTimeMillis();
+
+        try (Connection con = DriverManager.getConnection(url, user, pass);
+             PreparedStatement ps = con.prepareStatement(
+                 "INSERT INTO productos (nombre, precio, stock) VALUES (?, ?, ?)")) {
+
+            con.setAutoCommit(false);
+
+            // Agregar 1000 productos en batch
+            int batchSize = 100;
+            int total = 1000;
+
+            for (int i = 1; i <= total; i++) {
+                ps.setString(1, "Producto-" + i);
+                ps.setDouble(2, Math.random() * 1000);
+                ps.setInt(3, (int)(Math.random() * 100));
+                ps.addBatch();
+
+                if (i % batchSize == 0) {
+                    ps.executeBatch();
+                    System.out.println("Batch " + (i / batchSize) +
+                        " ejecutado (" + i + " registros)");
+                }
+            }
+
+            ps.executeBatch(); // Último batch (si no es múltiplo exacto)
+            con.commit();
+
+            long fin = System.currentTimeMillis();
+            System.out.println("Insertados " + total +
+                " registros en " + (fin - inicio) + " ms");
+
+        } catch (SQLException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+}
+```
+
+===============================================================================
+8. MANEJO DE BLOBS Y CLBOS
+===============================================================================
+
+Para almacenar archivos binarios (imágenes, PDFs) y texto largo.
+
+```java
+import java.io.*;
+
+public class BlobClobDemo {
+    public static void main(String[] args) throws Exception {
+        String url = "jdbc:mysql://localhost:3306/tienda";
+        String user = "root";
+        String pass = "password";
+
+        // Insertar BLOB (archivo binario)
+        String sqlInsert = "INSERT INTO archivos (nombre, contenido, tipo) " +
+            "VALUES (?, ?, ?)";
+
+        try (Connection con = DriverManager.getConnection(url, user, pass);
+             PreparedStatement ps = con.prepareStatement(sqlInsert)) {
+
+            ps.setString(1, "imagen.png");
+            ps.setBlob(2, new FileInputStream("/ruta/imagen.png"));
+            ps.setString(3, "image/png");
+            ps.executeUpdate();
+            System.out.println("BLOB insertado");
+        }
+
+        // Leer BLOB
+        String sqlSelect = "SELECT nombre, contenido FROM archivos WHERE id = ?";
+        try (Connection con = DriverManager.getConnection(url, user, pass);
+             PreparedStatement ps = con.prepareStatement(sqlSelect)) {
+
+            ps.setInt(1, 1);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    String nombre = rs.getString("nombre");
+                    Blob blob = rs.getBlob("contenido");
+
+                    // Guardar a archivo
+                    try (InputStream is = blob.getBinaryStream();
+                         FileOutputStream fos =
+                             new FileOutputStream("descarga_" + nombre)) {
+                        byte[] buffer = new byte[4096];
+                        int leidos;
+                        while ((leidos = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, leidos);
+                        }
+                    }
+                    System.out.println("BLOB descargado: " + nombre);
+                }
+            }
+        }
+    }
+}
+```
+
+===============================================================================
+9. EJEMPLO PRÁCTICO: SISTEMA DE PEDIDOS CON TRANSACCIONES
+===============================================================================
+
+Un caso real que combina transacciones, PreparedStatement y batch.
+
+```java
+import java.sql.*;
+import java.time.LocalDateTime;
+
+public class SistemaPedidos {
+    private static final String URL = "jdbc:mysql://localhost:3306/tienda";
+    private static final String USER = "root";
+    private static final String PASS = "password";
+
+    public static class PedidoException extends RuntimeException {
+        public PedidoException(String msg) { super(msg); }
+    }
+
+    public void crearPedido(int clienteId, java.util.Map<Integer, Integer> items) {
+        String sqlPedido = "INSERT INTO pedidos (cliente_id, fecha, total) " +
+            "VALUES (?, ?, ?)";
+        String sqlDetalle = "INSERT INTO detalle_pedido " +
+            "(pedido_id, producto_id, cantidad, precio_unitario) VALUES (?, ?, ?, ?)";
+        String sqlActualizarStock = "UPDATE productos SET stock = stock - ? " +
+            "WHERE id = ? AND stock >= ?";
+
+        try (Connection con = DriverManager.getConnection(URL, USER, PASS)) {
+            con.setAutoCommit(false);
+            con.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+
+            try {
+                double total = 0.0;
+
+                // Calcular total y verificar stock
+                for (var entry : items.entrySet()) {
+                    int productoId = entry.getKey();
+                    int cantidad = entry.getValue();
+
+                    String sqlVerificar = "SELECT precio, stock FROM productos " +
+                        "WHERE id = ? FOR UPDATE";
+                    // FOR UPDATE bloquea la fila hasta que la transacción termine
+
+                    try (PreparedStatement psVerificar =
+                             con.prepareStatement(sqlVerificar)) {
+                        psVerificar.setInt(1, productoId);
+                        try (ResultSet rs = psVerificar.executeQuery()) {
+                            if (!rs.next()) {
+                                throw new PedidoException(
+                                    "Producto " + productoId + " no encontrado");
+                            }
+                            double precio = rs.getDouble("precio");
+                            int stock = rs.getInt("stock");
+
+                            if (stock < cantidad) {
+                                throw new PedidoException(
+                                    "Stock insuficiente para producto " +
+                                    productoId + ": disponible " +
+                                    stock + ", solicitado " + cantidad);
+                            }
+                            total += precio * cantidad;
+                        }
+                    }
+                }
+
+                // Crear pedido
+                int pedidoId;
+                try (PreparedStatement psPedido =
+                         con.prepareStatement(sqlPedido,
+                             Statement.RETURN_GENERATED_KEYS)) {
+                    psPedido.setInt(1, clienteId);
+                    psPedido.setTimestamp(2, Timestamp.valueOf(LocalDateTime.now()));
+                    psPedido.setDouble(3, total);
+                    psPedido.executeUpdate();
+
+                    try (ResultSet rs = psPedido.getGeneratedKeys()) {
+                        if (!rs.next()) {
+                            throw new PedidoException("No se pudo crear el pedido");
+                        }
+                        pedidoId = rs.getInt(1);
+                    }
+                }
+
+                // Insertar detalle y actualizar stock
+                try (PreparedStatement psDetalle =
+                         con.prepareStatement(sqlDetalle);
+                     PreparedStatement psStock =
+                         con.prepareStatement(sqlActualizarStock)) {
+
+                    for (var entry : items.entrySet()) {
+                        int productoId = entry.getKey();
+                        int cantidad = entry.getValue();
+
+                        // Obtener precio
+                        double precio = obtenerPrecio(con, productoId);
+
+                        psDetalle.setInt(1, pedidoId);
+                        psDetalle.setInt(2, productoId);
+                        psDetalle.setInt(3, cantidad);
+                        psDetalle.setDouble(4, precio);
+                        psDetalle.addBatch();
+
+                        psStock.setInt(1, cantidad);
+                        psStock.setInt(2, productoId);
+                        psStock.setInt(3, cantidad);
+                        psStock.addBatch();
+                    }
+
+                    psDetalle.executeBatch();
+                    int[] stocks = psStock.executeBatch();
+
+                    // Verificar que todas las actualizaciones de stock funcionaron
+                    for (int s : stocks) {
+                        if (s == 0) {
+                            throw new PedidoException(
+                                "Error actualizando stock");
+                        }
+                    }
+                }
+
+                con.commit();
+                System.out.println("Pedido " + pedidoId +
+                    " creado exitosamente. Total: $" + total);
+
+            } catch (Exception e) {
+                con.rollback();
+                throw new PedidoException(
+                    "Pedido cancelado: " + e.getMessage());
+            }
+
+        } catch (SQLException e) {
+            throw new PedidoException(
+                "Error de base de datos: " + e.getMessage());
+        }
+    }
+
+    private double obtenerPrecio(Connection con, int productoId)
+            throws SQLException {
+        String sql = "SELECT precio FROM productos WHERE id = ?";
+        try (PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setInt(1, productoId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getDouble("precio");
+                }
+            }
+        }
+        throw new PedidoException(
+            "Producto " + productoId + " no encontrado");
+    }
+
+    public static void main(String[] args) {
+        SistemaPedidos sistema = new SistemaPedidos();
+
+        java.util.Map<Integer, Integer> items = new java.util.HashMap<>();
+        items.put(1, 2); // Producto 1, cantidad 2
+        items.put(3, 1); // Producto 3, cantidad 1
+
+        try {
+            sistema.crearPedido(1, items);
+        } catch (PedidoException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+}
+```
+
+===============================================================================
+10. SCROLLABLE Y UPDATABLE RESULTSET
+===============================================================================
+
+Por defecto ResultSet solo avanza. Con opciones adicionales puedes hacerlo
+scrollable y actualizable.
+
+```java
+public class ScrollableResultSet {
+    public static void main(String[] args) throws SQLException {
+        String url = "jdbc:mysql://localhost:3306/tienda";
+        String user = "root";
+        String pass = "password";
+
+        try (Connection con = DriverManager.getConnection(url, user, pass);
+             Statement stmt = con.createStatement(
+                 ResultSet.TYPE_SCROLL_INSENSITIVE,
+                 ResultSet.CONCUR_READ_ONLY)) {
+
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT id, nombre, precio FROM productos ORDER BY id")) {
+
+                // Movimiento absoluto y relativo
+                System.out.println("Primer registro:");
+                rs.first();
+                System.out.println("  " + rs.getInt("id") +
+                    ": " + rs.getString("nombre"));
+
+                System.out.println("Último registro:");
+                rs.last();
+                System.out.println("  " + rs.getInt("id") +
+                    ": " + rs.getString("nombre"));
+
+                System.out.println("Total filas: " + rs.getRow());
+
+                System.out.println("Tercer registro:");
+                rs.absolute(3);
+                System.out.println("  " + rs.getInt("id") +
+                    ": " + rs.getString("nombre"));
+
+                System.out.println("Atrás:");
+                rs.previous();
+                System.out.println("  " + rs.getInt("id") +
+                    ": " + rs.getString("nombre"));
+
+                System.out.println("Recorrido inverso:");
+                rs.afterLast();
+                while (rs.previous()) {
+                    System.out.println("  " + rs.getInt("id") +
+                        ": " + rs.getString("nombre"));
+                }
+            }
+        }
+    }
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+En este capítulo hemos aprendido:
+
+• PreparedStatement es la herramienta principal para operaciones CRUD
+  seguras y eficientes. Previene inyección SQL y permite tipos de datos
+  específicos.
+
+• Statement.RETURN_GENERATED_KEYS permite recuperar IDs auto-generados
+  después de una inserción.
+
+• Las transacciones (setAutoCommit(false)) agrupan operaciones en unidades
+  atómicas con commit() y rollback().
+
+• Los niveles de aislamiento controlan la visibilidad de cambios entre
+  transacciones concurrentes.
+
+• Los pools de conexiones (HikariCP) reciclan conexiones, mejorando
+  drásticamente el rendimiento en aplicaciones con muchas operaciones.
+
+• Las operaciones batch (addBatch, executeBatch) permiten enviar múltiples
+  sentencias en un solo viaje a la BD, mejorando el rendimiento.
+
+• Se pueden almacenar y recuperar BLOBs (binarios) y CLOBs (texto largo).
+
+• ResultSet puede ser scrollable (navegar en ambas direcciones) y
+  actualizable.
+
+===============================================================================
+EJERCICIOS DEL CAPÍTULO
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa un método que inserte 10000 registros de
+prueba en una tabla en el menor tiempo posible. Compara inserción uno a
+uno vs batch (tamaño de batch: 100, 500, 1000).
+
+🧩 **Ejercicio 2:** Crea un sistema de transferencia bancaria que maneje
+correctamente: saldo insuficiente, cuenta inexistente, y rollback completo
+si algo falla. Usa transacciones con savepoints.
+
+🧩 **Ejercicio 3:** Configura un pool HikariCP desde un archivo de
+propiedades externo (hikari.properties). Implementa un repositorio que
+use el pool.
+
+🧩 **Ejercicio 4:** Implementa un sistema que importe datos desde un
+archivo CSV a una base de datos usando batch y transacciones. El archivo
+tiene 5000 registros.
+
+🧩 **Ejercicio 5:** Crea una aplicación que permita subir y descargar
+archivos a la base de datos usando BLOBs. La aplicación debe funcionar
+como un mini gestor de archivos.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿PreparedStatement realmente mejora el rendimiento?**
+Sí, especialmente cuando ejecutas la misma consulta múltiples veces con
+diferentes parámetros. La BD precompila la consulta y reutiliza el plan
+de ejecución.
+
+❓ **¿Qué es FOR UPDATE en SQL?**
+Bloquea las filas seleccionadas para escritura hasta que la transacción
+termine. Previene que otra transacción modifique las mismas filas.
+
+❓ **¿Cuándo debo usar un pool de conexiones?**
+Siempre en aplicaciones reales. Nunca uses DriverManager directamente en
+producción. El pool gestiona la creación, reciclaje y cierre de conexiones.
+
+❓ **¿Qué tamaño de pool es adecuado?**
+Depende de la BD y el hardware. Una regla general: empieza con 10-20
+conexiones y ajusta midiendo. Demasiadas conexiones saturan la BD.
+
+❓ **¿Cómo manejar excepciones en transacciones?**
+Siempre envuelve la lógica en try-catch. Si catch captura SQLException,
+haz rollback(). En finally, restaura autoCommit y cierra recursos.
+
+❓ **¿Qué es un deadlock en BD?**
+Similar a los deadlocks de hilos: dos transacciones esperan que la otra
+libere un recurso. La BD detecta el deadlock y mata una de ellas.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Procesamiento de Pedidos con Transacciones y Pool**
+
+Diseña e implementa un sistema completo de procesamiento de pedidos para
+una tienda online que maneje concurrencia real de múltiples clientes.
+
+Requisitos:
+1. Pool de conexiones HikariCP (máx. 10 conexiones).
+2. El sistema debe soportar múltiples clientes simultáneos (simulado con
+   ExecutorService).
+3. Cada pedido debe ser una transacción atómica que incluya:
+   a) Verificar stock de cada producto.
+   b) Bloquear filas con FOR UPDATE para evitar condiciones de carrera.
+   c) Crear el pedido en tabla pedidos.
+   d) Insertar detalles en tabla detalle_pedido.
+   e) Actualizar stock.
+   f) Si algo falla, rollback completo.
+4. Si dos clientes piden el último producto, solo uno debe obtenerlo.
+5. Reporte de pedidos procesados y rechazados.
+
+Implementa:
+- Pool HikariCP singleton.
+- Repositorio con métodos CRUD.
+- Servicio de pedidos con lógica transaccional.
+- Simulación de 20 clientes con ExecutorService.
+- Logs detallados de cada operación.
+
+Este desafío integra todos los temas del capítulo y simula un escenario
+real de comercio electrónico.
+
+===============================================================================
+FIN DEL CAPÍTULO 65
+===============================================================================
+
+"La manipulación profesional de bases de datos es un arte que combina
+precisión, seguridad y rendimiento. Domínalo y construirás sistemas
+imposibles de derribar."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+66_CAPITULO_66_MANEJO_DE_FECHAS.txt → FECHAS (LOCALDATE, LOCALDATETIME)
+===============================================================================

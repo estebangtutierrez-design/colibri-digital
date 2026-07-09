@@ -1,0 +1,989 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MÓDULO IV
+##
+##                       CAPÍTULO 40
+##
+##                     PROYECTO: POO
+##
+################################################################################
+################################################################################
+
+"El verdadero aprendizaje no está en escuchar, sino en hacer.
+Construye, equivócate, aprende, repite."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante,
+
+¡Has llegado al final del Módulo IV! Has recorrido un camino increíble
+desde las clases básicas hasta las clases abstractas, pasando por
+herencia, encapsulación, polimorfismo, interfaces y modificadores de
+acceso.
+
+Pero todo ese conocimiento necesita ser puesto a prueba. La teoría sin
+práctica es como un mapa sin camino: sabes dónde estás, pero no cómo
+llegar a donde quieres.
+
+En este capítulo final, construirás un proyecto completo que integre
+todos los conceptos del módulo. No será un ejercicio más: será una
+aplicación real con arquitectura orientada a objetos, donde cada
+decisión de diseño tenga un propósito.
+
+Prepárate para construir. Este es tu momento de brillar. 🚀
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"No es el conocimiento, sino la acción, lo que transforma
+un estudiante en un maestro."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Diseñar una arquitectura POO desde cero
+✓ Integrar clases, interfaces, herencia y genéricos
+✓ Aplicar encapsulación con getters/setters y validación
+✓ Implementar polimorfismo con interfaces y clases abstractas
+✓ Utilizar composición sobre herencia cuando sea apropiado
+✓ Estructurar un proyecto con múltiples archivos
+✓ Crear un sistema extensible y mantenible
+
+===============================================================================
+1. VISIÓN GENERAL DEL PROYECTO
+===============================================================================
+
+Vamos a construir un **Sistema de Gestión de Biblioteca** (Library
+Management System) que permita:
+
+- Gestionar diferentes tipos de materiales (libros, revistas, DVDs).
+- Administrar usuarios (estudiantes, profesores).
+- Controlar préstamos y devoluciones.
+- Aplicar multas por retrasos.
+- Generar reportes.
+
+La arquitectura estará dividida en capas:
+1. **Modelos/Dominio**: Interfaces y clases que representan entidades.
+2. **Repositorios**: Almacenamiento y recuperación de datos.
+3. **Servicios**: Lógica de negocio.
+4. **Utilidades**: Funciones auxiliares.
+
+===============================================================================
+2. ESTRUCTURA DEL PROYECTO
+===============================================================================
+
+```
+src/
+├── interfaces/       (tipos.ts, materiales.ts, usuarios.ts, prestamos.ts)
+├── clases/
+│   ├── materiales/   (Material.ts, Libro.ts, Revista.ts, DVD.ts)
+│   ├── usuarios/     (Usuario.ts, Estudiante.ts, Profesor.ts)
+│   └── prestamos/    (Prestamo.ts)
+├── repositorios/     (RepositorioBiblioteca.ts)
+├── servicios/        (ServicioBiblioteca.ts, ServicioMultas.ts)
+└── index.ts
+```
+
+===============================================================================
+3. INTERFACES Y TIPOS BASE
+===============================================================================
+
+Comenzamos definiendo las interfaces que servirán como contratos en
+todo el sistema.
+
+```typescript
+// ==========================================
+// interfaces/tipos.ts
+// ==========================================
+
+export type ID = string;
+
+export interface Identificable {
+  readonly id: ID;
+}
+
+export type EstadoMaterial =
+  | "disponible"
+  | "prestado"
+  | "en_mantenimiento"
+  | "extraviado";
+
+export type TipoUsuario =
+  | "estudiante"
+  | "profesor"
+  | "administrativo";
+
+export type GeneroLibro =
+  | "ficcion" | "no_ficcion" | "ciencia"
+  | "tecnologia" | "historia" | "filosofia"
+  | "arte" | "infantil";
+
+export interface ResultadoOperacion<T = void> {
+  exito: boolean;
+  datos?: T;
+  error?: string;
+}
+```
+
+```typescript
+// interfaces/materiales.ts
+export interface InfoMaterial {
+  readonly id: string; readonly titulo: string; readonly autor: string;
+  readonly anioPublicacion: number; readonly tipo: string;
+  estado: EstadoMaterial; obtenerInfoCompleta(): string;
+}
+export interface Prestable {
+  prestar(): ResultadoOperacion; devolver(): ResultadoOperacion;
+  renovar(): ResultadoOperacion; estaDisponible(): boolean;
+}
+
+// interfaces/usuarios.ts
+export interface InfoUsuario {
+  readonly id: string; readonly nombre: string; readonly email: string;
+  readonly tipo: TipoUsuario; readonly maxPrestamosSimultaneos: number;
+  readonly diasPrestamo: number; activo: boolean;
+  prestamosActuales: number; multasPendientes: number;
+}
+export interface Multable {
+  calcularMulta(diasRetraso: number): number;
+  pagarMulta(monto: number): ResultadoOperacion;
+  obtenerTotalMultas(): number;
+}
+
+// interfaces/prestamos.ts
+export interface EstadoPrestamo {
+  readonly id: string; readonly materialId: string; readonly usuarioId: string;
+  readonly fechaPrestamo: Date; readonly fechaDevolucionEsperada: Date;
+  fechaDevolucionReal?: Date; estaActivo: boolean;
+  estaVencido(): boolean; diasRetraso(): number;
+  calcularMulta(tasaPorDia: number): number; cerrar(): ResultadoOperacion;
+}
+```
+
+===============================================================================
+4. CLASES DE MATERIALES
+===============================================================================
+
+La clase abstracta base `Material` implementa las interfaces `InfoMaterial`
+y `Prestable`, proporcionando la lógica compartida para todos los tipos
+de materiales.
+
+```typescript
+// clases/materiales/Material.ts
+export abstract class Material implements InfoMaterial, Prestable {
+  public estado: EstadoMaterial = "disponible";
+  constructor(
+    public readonly id: string, public readonly titulo: string,
+    public readonly autor: string, public readonly anioPublicacion: number,
+    public readonly tipo: string
+  ) {}
+  abstract obtenerInfoCompleta(): string;
+  prestar(): ResultadoOperacion {
+    if (this.estado !== "disponible") return { exito: false, error: `"${this.titulo}" no disponible` };
+    this.estado = "prestado"; return { exito: true };
+  }
+  devolver(): ResultadoOperacion {
+    if (this.estado !== "prestado") return { exito: false, error: "No está prestado" };
+    this.estado = "disponible"; return { exito: true };
+  }
+  renovar(): ResultadoOperacion {
+    if (this.estado !== "prestado") return { exito: false, error: "Solo renovar prestados" };
+    return { exito: true };
+  }
+  estaDisponible(): boolean { return this.estado === "disponible"; }
+}
+
+// clases/materiales/Libro.ts
+export class Libro extends Material {
+  constructor(id: string, titulo: string, autor: string, anio: number,
+    public readonly isbn: string, public readonly genero: GeneroLibro,
+    public readonly editorial: string, public readonly paginas: number) {
+    super(id, titulo, autor, anio, "Libro");
+  }
+  obtenerInfoCompleta(): string {
+    return `📖 ${this.titulo} - ${this.autor} (${this.anioPublicacion}) ISBN: ${this.isbn} [${this.estado}]`;
+  }
+}
+
+// clases/materiales/Revista.ts
+export class Revista extends Material {
+  constructor(id: string, titulo: string, autor: string, anio: number,
+    public readonly edicion: number, public readonly issn: string) {
+    super(id, titulo, autor, anio, "Revista");
+  }
+  obtenerInfoCompleta(): string {
+    return `📰 ${this.titulo} #${this.edicion} - ${this.autor} (${this.anioPublicacion}) [${this.estado}]`;
+  }
+}
+
+// clases/materiales/DVD.ts
+export class DVD extends Material {
+  constructor(id: string, titulo: string, autor: string, anio: number,
+    public readonly duracion: number, public readonly estudio: string) {
+    super(id, titulo, autor, anio, "DVD");
+  }
+  obtenerInfoCompleta(): string {
+    return `🎬 ${this.titulo} - ${this.autor} (${this.duracion}min) [${this.estado}]`;
+  }
+}
+```
+
+===============================================================================
+5. CLASES DE USUARIOS
+===============================================================================
+
+La jerarquía de usuarios refleja diferentes tipos con distintos permisos
+y reglas de préstamo. Demostramos herencia, encapsulación y polimorfismo.
+
+```typescript
+// clases/usuarios/Usuario.ts
+export abstract class Usuario implements InfoUsuario, Multable {
+  private _multasPendientes: number = 0;
+  private _prestamosActuales: number = 0;
+  public activo: boolean = true;
+
+  constructor(
+    public readonly id: string, public readonly nombre: string,
+    private _email: string, public readonly tipo: TipoUsuario,
+    public readonly maxPrestamosSimultaneos: number,
+    public readonly diasPrestamo: number
+  ) {}
+
+  get email(): string { return this._email; }
+  set email(valor: string) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valor)) throw new Error("Email inválido");
+    this._email = valor;
+  }
+  get prestamosActuales(): number { return this._prestamosActuales; }
+  set prestamosActuales(valor: number) { this._prestamosActuales = Math.max(0, valor); }
+  get multasPendientes(): number { return this._multasPendientes; }
+  set multasPendientes(valor: number) { this._multasPendientes = Math.max(0, valor); }
+
+  puedePrestar(): boolean {
+    return this.activo && this._prestamosActuales < this.maxPrestamosSimultaneos && this._multasPendientes <= 0;
+  }
+  abstract calcularMulta(diasRetraso: number): number;
+  pagarMulta(monto: number): ResultadoOperacion {
+    if (monto <= 0) return { exito: false, error: "Monto debe ser positivo" };
+    if (monto > this._multasPendientes) return { exito: false, error: "Excede multa pendiente" };
+    this._multasPendientes -= monto;
+    return { exito: true, datos: `Pagado: $${monto}` };
+  }
+  obtenerTotalMultas(): number { return this._multasPendientes; }
+}
+
+// clases/usuarios/Estudiante.ts
+export class Estudiante extends Usuario {
+  constructor(id: string, nombre: string, email: string,
+    public readonly carrera: string, public readonly semestre: number) {
+    super(id, nombre, email, "estudiante", 3, 7);
+  }
+  calcularMulta(diasRetraso: number): number { return diasRetraso * 1.0; }
+}
+
+// clases/usuarios/Profesor.ts
+export class Profesor extends Usuario {
+  constructor(id: string, nombre: string, email: string,
+    public readonly departamento: string, public readonly especialidad: string) {
+    super(id, nombre, email, "profesor", 5, 14);
+  }
+  calcularMulta(diasRetraso: number): number { return diasRetraso * 0.5; }
+}
+```
+
+===============================================================================
+6. CLASE PRÉSTAMO
+===============================================================================
+
+La clase `Prestamo` gestiona la relación entre un material y un usuario,
+demostrando composición (tiene un material y un usuario).
+
+```typescript
+// clases/prestamos/Prestamo.ts
+export class Prestamo implements EstadoPrestamo {
+  public readonly id: string;
+  public readonly fechaPrestamo: Date;
+  public readonly fechaDevolucionEsperada: Date;
+  public fechaDevolucionReal?: Date;
+  public estaActivo: boolean = true;
+
+  constructor(public readonly materialId: string, public readonly usuarioId: string, diasPrestamo: number) {
+    this.id = crypto.randomUUID();
+    this.fechaPrestamo = new Date();
+    this.fechaDevolucionEsperada = new Date(this.fechaPrestamo.getTime() + diasPrestamo * 86400000);
+  }
+
+  estaVencido(): boolean { return this.estaActivo && new Date() > this.fechaDevolucionEsperada; }
+
+  diasRetraso(): number {
+    if (!this.estaActivo && this.fechaDevolucionReal) {
+      const diff = this.fechaDevolucionReal.getTime() - this.fechaDevolucionEsperada.getTime();
+      return Math.max(0, Math.ceil(diff / 86400000));
+    }
+    if (!this.estaVencido()) return 0;
+    return Math.ceil((Date.now() - this.fechaDevolucionEsperada.getTime()) / 86400000);
+  }
+
+  calcularMulta(tasaPorDia: number): number { return this.diasRetraso() * tasaPorDia; }
+
+  cerrar(): ResultadoOperacion {
+    if (!this.estaActivo) return { exito: false, error: "Préstamo ya cerrado" };
+    this.fechaDevolucionReal = new Date();
+    this.estaActivo = false;
+    return { exito: true };
+  }
+}
+```
+
+===============================================================================
+7. REPOSITORIO GENÉRICO
+===============================================================================
+
+El repositorio demuestra el uso de genéricos con clases abstractas y
+encapsulación de datos.
+
+```typescript
+// ==========================================
+// repositorios/RepositorioBiblioteca.ts
+// ==========================================
+
+import { ID, ResultadoOperacion } from "../interfaces/tipos.js";
+
+export interface Repositorio<T extends { id: ID }> {
+  obtenerPorId(id: ID): T | undefined;
+  obtenerTodos(): T[];
+  guardar(item: T): ResultadoOperacion;
+  eliminar(id: ID): ResultadoOperacion;
+  contar(): number;
+  buscar(criterio: (item: T) => boolean): T[];
+}
+
+export class RepositorioBiblioteca<T extends { id: ID }>
+  implements Repositorio<T> {
+
+  private readonly _items: Map<ID, T> = new Map();
+
+  obtenerPorId(id: ID): T | undefined {
+    return this._items.get(id);
+  }
+
+  obtenerTodos(): T[] {
+    return Array.from(this._items.values());
+  }
+
+  guardar(item: T): ResultadoOperacion {
+    if (this._items.has(item.id)) {
+      return { exito: false, error: `Item ${item.id} ya existe` };
+    }
+    this._items.set(item.id, item);
+    return { exito: true, datos: item.id };
+  }
+
+  actualizar(item: T): ResultadoOperacion {
+    if (!this._items.has(item.id)) {
+      return { exito: false, error: `Item ${item.id} no encontrado` };
+    }
+    this._items.set(item.id, item);
+    return { exito: true };
+  }
+
+  eliminar(id: ID): ResultadoOperacion {
+    if (!this._items.has(id)) {
+      return { exito: false, error: `Item ${id} no encontrado` };
+    }
+    this._items.delete(id);
+    return { exito: true };
+  }
+
+  contar(): number {
+    return this._items.size;
+  }
+
+  buscar(criterio: (item: T) => boolean): T[] {
+    return Array.from(this._items.values()).filter(criterio);
+  }
+
+  obtenerTodosOrdenados(
+    comparador: (a: T, b: T) => number
+  ): T[] {
+    return Array.from(this._items.values()).sort(comparador);
+  }
+}
+```
+
+===============================================================================
+8. SERVICIOS DE NEGOCIO
+===============================================================================
+
+Los servicios encapsulan la lógica de negocio, demostrando composición
+y uso de interfaces.
+
+```typescript
+// ==========================================
+// servicios/ServicioMultas.ts
+// ==========================================
+
+import { Prestamo } from "../clases/prestamos/Prestamo.js";
+import { Usuario } from "../clases/usuarios/Usuario.js";
+import { ResultadoOperacion } from "../interfaces/tipos.js";
+
+export class ServicioMultas {
+  calcularMultaPrestamo(
+    prestamo: Prestamo,
+    usuario: Usuario
+  ): number {
+    if (!prestamo.estaVencido()) return 0;
+    return usuario.calcularMulta(prestamo.diasRetraso());
+  }
+
+  aplicarMulta(
+    prestamo: Prestamo,
+    usuario: Usuario
+  ): ResultadoOperacion {
+    const multa = this.calcularMultaPrestamo(prestamo, usuario);
+    if (multa <= 0) {
+      return { exito: true, datos: "Sin multa" };
+    }
+    usuario.multasPendientes += multa;
+    return {
+      exito: true,
+      datos: `Multa de $${multa.toFixed(2)} aplicada a ${usuario.nombre}`
+    };
+  }
+
+  procesarPagoMulta(
+    usuario: Usuario,
+    monto: number
+  ): ResultadoOperacion {
+    return usuario.pagarMulta(monto);
+  }
+}
+```
+
+```typescript
+// ==========================================
+// servicios/ServicioBiblioteca.ts
+// ==========================================
+
+import { RepositorioBiblioteca } from "../repositorios/RepositorioBiblioteca.js";
+import { Material } from "../clases/materiales/Material.js";
+import { Usuario } from "../clases/usuarios/Usuario.js";
+import { Prestamo } from "../clases/prestamos/Prestamo.js";
+import { ServicioMultas } from "./ServicioMultas.js";
+import { ResultadoOperacion } from "../interfaces/tipos.js";
+
+export class ServicioBiblioteca {
+  private readonly materialesRepo: RepositorioBiblioteca<Material>;
+  private readonly usuariosRepo: RepositorioBiblioteca<Usuario>;
+  private readonly prestamosRepo: RepositorioBiblioteca<Prestamo>;
+  private readonly servicioMultas: ServicioMultas;
+
+  constructor() {
+    this.materialesRepo = new RepositorioBiblioteca<Material>();
+    this.usuariosRepo = new RepositorioBiblioteca<Usuario>();
+    this.prestamosRepo = new RepositorioBiblioteca<Prestamo>();
+    this.servicioMultas = new ServicioMultas();
+  }
+
+  // --- Gestión de materiales ---
+
+  registrarMaterial(material: Material): ResultadoOperacion {
+    return this.materialesRepo.guardar(material);
+  }
+
+  buscarMaterial(id: string): Material | undefined {
+    return this.materialesRepo.obtenerPorId(id);
+  }
+
+  listarMateriales(): Material[] {
+    return this.materialesRepo.obtenerTodos();
+  }
+
+  buscarMaterialesPorTitulo(texto: string): Material[] {
+    const busqueda = texto.toLowerCase();
+    return this.materialesRepo.buscar(
+      m => m.titulo.toLowerCase().includes(busqueda)
+    );
+  }
+
+  buscarDisponibles(): Material[] {
+    return this.materialesRepo.buscar(m => m.estaDisponible());
+  }
+
+  // --- Gestión de usuarios ---
+
+  registrarUsuario(usuario: Usuario): ResultadoOperacion {
+    return this.usuariosRepo.guardar(usuario);
+  }
+
+  buscarUsuario(id: string): Usuario | undefined {
+    return this.usuariosRepo.obtenerPorId(id);
+  }
+
+  listarUsuarios(): Usuario[] {
+    return this.usuariosRepo.obtenerTodos();
+  }
+
+  // --- Gestión de préstamos ---
+
+  prestarMaterial(
+    materialId: string,
+    usuarioId: string
+  ): ResultadoOperacion<Prestamo> {
+    const material = this.materialesRepo.obtenerPorId(materialId);
+    if (!material) {
+      return { exito: false, error: "Material no encontrado" };
+    }
+
+    const usuario = this.usuariosRepo.obtenerPorId(usuarioId);
+    if (!usuario) {
+      return { exito: false, error: "Usuario no encontrado" };
+    }
+
+    if (!usuario.puedePrestar()) {
+      if (!usuario.activo) {
+        return { exito: false, error: "Usuario inactivo" };
+      }
+      if (usuario.prestamosActuales >= usuario.maxPrestamosSimultaneos) {
+        return {
+          exito: false,
+          error: `Límite de préstamos alcanzado (${usuario.maxPrestamosSimultaneos})`
+        };
+      }
+      return { exito: false, error: "Usuario tiene multas pendientes" };
+    }
+
+    const prestarResult = material.prestar();
+    if (!prestarResult.exito) {
+      return prestarResult as ResultadoOperacion<Prestamo>;
+    }
+
+    const prestamo = new Prestamo(
+      materialId, usuarioId, usuario.diasPrestamo
+    );
+
+    const guardarResult = this.prestamosRepo.guardar(prestamo);
+    if (!guardarResult.exito) {
+      material.devolver(); // Rollback
+      return guardarResult as ResultadoOperacion<Prestamo>;
+    }
+
+    usuario.prestamosActuales++;
+    return { exito: true, datos: prestamo };
+  }
+
+  devolverMaterial(
+    prestamoId: string
+  ): ResultadoOperacion {
+    const prestamo = this.prestamosRepo.obtenerPorId(prestamoId);
+    if (!prestamo) {
+      return { exito: false, error: "Préstamo no encontrado" };
+    }
+
+    if (!prestamo.estaActivo) {
+      return { exito: false, error: "Préstamo ya está cerrado" };
+    }
+
+    const material = this.materialesRepo.obtenerPorId(prestamo.materialId);
+    const usuario = this.usuariosRepo.obtenerPorId(prestamo.usuarioId);
+
+    if (material) {
+      material.devolver();
+    }
+
+    prestamo.cerrar();
+
+    if (usuario) {
+      usuario.prestamosActuales--;
+      if (prestamo.estaVencido()) {
+        this.servicioMultas.aplicarMulta(prestamo, usuario);
+        return {
+          exito: true,
+          datos: `Material devuelto con retraso. Multa aplicada.`
+        };
+      }
+    }
+
+    return { exito: true, datos: "Material devuelto exitosamente" };
+  }
+
+  listarPrestamosActivos(): Prestamo[] {
+    return this.prestamosRepo.buscar(p => p.estaActivo);
+  }
+
+  listarPrestamosVencidos(): Prestamo[] {
+    return this.prestamosRepo.buscar(p => p.estaActivo && p.estaVencido());
+  }
+
+  // --- Reportes ---
+
+  generarReporteGeneral(): string {
+    const materiales = this.materialesRepo.contar();
+    const usuarios = this.usuariosRepo.contar();
+    const prestamosActivos = this.listarPrestamosActivos().length;
+    const prestamosVencidos = this.listarPrestamosVencidos().length;
+    const disponibles = this.buscarDisponibles().length;
+
+    return [
+      "═══════════════════════════════════════",
+      "    REPORTE GENERAL DE BIBLIOTECA",
+      "═══════════════════════════════════════",
+      `Materiales registrados: ${materiales}`,
+      `Materiales disponibles: ${disponibles}`,
+      `Usuarios registrados: ${usuarios}`,
+      `Préstamos activos: ${prestamosActivos}`,
+      `Préstamos vencidos: ${prestamosVencidos}`,
+      "═══════════════════════════════════════"
+    ].join("\n");
+  }
+
+  generarReporteMateriales(): string {
+    const materiales = this.materialesRepo.obtenerTodos();
+    const lineas = materiales.map(m => m.obtenerInfoCompleta());
+    return [
+      "═══════════════════════════════════════",
+      "    CATÁLOGO DE MATERIALES",
+      "═══════════════════════════════════════",
+      ...lineas,
+      `Total: ${materiales.length} materiales`
+    ].join("\n\n");
+  }
+}
+```
+
+===============================================================================
+9. PUNTO DE ENTRADA (INDEX)
+===============================================================================
+
+El archivo principal demuestra el uso completo del sistema, integrando
+todos los componentes en un flujo de trabajo real.
+
+```typescript
+// ==========================================
+// index.ts
+// ==========================================
+
+import { ServicioBiblioteca } from "./servicios/ServicioBiblioteca.js";
+import { Libro } from "./clases/materiales/Libro.js";
+import { Revista } from "./clases/materiales/Revista.js";
+import { DVD } from "./clases/materiales/DVD.js";
+import { Estudiante } from "./clases/usuarios/Estudiante.js";
+import { Profesor } from "./clases/usuarios/Profesor.js";
+
+function main(): void {
+  const biblioteca = new ServicioBiblioteca();
+
+  // 1. Registrar materiales
+  console.log("--- REGISTRANDO MATERIALES ---");
+
+  const libro1 = new Libro(
+    "LIB-001", "Cien Años de Soledad",
+    "Gabriel García Márquez", 1967,
+    "978-0060883287", "ficcion",
+    "Editorial Sudamericana", 417
+  );
+
+  const libro2 = new Libro(
+    "LIB-002", "El Principito",
+    "Antoine de Saint-Exupéry", 1943,
+    "978-0156012195", "infantil",
+    "Reynal & Hitchcock", 96
+  );
+
+  const revista = new Revista(
+    "REV-001", "National Geographic",
+    "Varios Autores", 2024,
+    3, 245, "0027-9358"
+  );
+
+  const dvd = new DVD(
+    "DVD-001", "Inception",
+    "Christopher Nolan", 2010,
+    148, "PG-13", "Warner Bros"
+  );
+
+  biblioteca.registrarMaterial(libro1);
+  biblioteca.registrarMaterial(libro2);
+  biblioteca.registrarMaterial(revista);
+  biblioteca.registrarMaterial(dvd);
+
+  // 2. Registrar usuarios
+  console.log("\n--- REGISTRANDO USUARIOS ---");
+
+  const estudiante = new Estudiante(
+    "USR-001", "María García",
+    "maria@email.com", "Ingeniería", 5
+  );
+
+  const profesor = new Profesor(
+    "USR-002", "Dr. Carlos López",
+    "carlos@email.com", "Ciencias", "Física"
+  );
+
+  biblioteca.registrarUsuario(estudiante);
+  biblioteca.registrarUsuario(profesor);
+
+  // 3. Realizar préstamos
+  console.log("\n--- REALIZANDO PRÉSTAMOS ---");
+
+  const prestamo1 = biblioteca.prestarMaterial("LIB-001", "USR-001");
+  console.log("Préstamo 1:", prestamo1.exito ? "✅" : "❌", prestamo1.datos ?? prestamo1.error);
+
+  const prestamo2 = biblioteca.prestarMaterial("DVD-001", "USR-002");
+  console.log("Préstamo 2:", prestamo2.exito ? "✅" : "❌", prestamo2.datos ?? prestamo2.error);
+
+  // Intentar prestar un material no disponible
+  const prestamo3 = biblioteca.prestarMaterial("LIB-001", "USR-002");
+  console.log("Préstamo 3 (debería fallar):", prestamo3.exito ? "✅" : "❌", prestamo3.error);
+
+  // 4. Consultar disponibilidad
+  console.log("\n--- MATERIALES DISPONIBLES ---");
+  const disponibles = biblioteca.buscarDisponibles();
+  disponibles.forEach(m =>
+    console.log(`   ${m.titulo} [${m.estado}]`)
+  );
+
+  // 5. Devolver material
+  console.log("\n--- DEVOLVIENDO MATERIAL ---");
+  if (prestamo1.exito && prestamo1.datos) {
+    const resultado = biblioteca.devolverMaterial(prestamo1.datos.id);
+    console.log("Devolución:", resultado.exito ? "✅" : "❌", resultado.datos ?? resultado.error);
+  }
+
+  // 6. Generar reportes
+  console.log("\n");
+  console.log(biblioteca.generarReporteGeneral());
+
+  console.log("\n");
+  console.log(biblioteca.generarReporteMateriales());
+
+  // 7. Buscar materiales
+  console.log("\n--- BÚSQUEDA: 'Cien' ---");
+  const resultados = biblioteca.buscarMaterialesPorTitulo("Cien");
+  resultados.forEach(m => console.log(`   ${m.obtenerInfoCompleta()}`));
+
+  // 8. Verificar préstamos vencidos
+  console.log("\n--- PRÉSTAMOS VENCIDOS ---");
+  const vencidos = biblioteca.listarPrestamosVencidos();
+  console.log(`   ${vencidos.length} préstamos vencidos`);
+}
+
+main();
+```
+
+===============================================================================
+10. EJECUTAR EL PROYECTO
+===============================================================================
+
+Para ejecutar el proyecto, necesitas tener Node.js y TypeScript instalados.
+
+```bash
+# 1. Inicializar proyecto TypeScript
+npm init -y
+npm install typescript @types/node --save-dev
+npx tsc --init
+
+# 2. Configurar tsconfig.json (opciones clave)
+# {
+#   "compilerOptions": {
+#     "target": "ES2022",
+#     "module": "NodeNext",
+#     "moduleResolution": "NodeNext",
+#     "outDir": "./dist",
+#     "rootDir": "./src",
+#     "strict": true,
+#     "esModuleInterop": true
+#   }
+# }
+
+# 3. Compilar y ejecutar
+npx tsc
+node dist/index.js
+```
+
+===============================================================================
+11. EXTENSIONES DEL PROYECTO
+===============================================================================
+
+El sistema es extensible. Aquí hay algunas ideas para ampliarlo:
+
+**1. Nuevos tipos de materiales:**
+```typescript
+export class AudioLibro extends Material {
+  constructor(
+    id: string, titulo: string, autor: string,
+    anioPublicacion: number,
+    public readonly narrador: string,
+    public readonly duracionHoras: number
+  ) {
+    super(id, titulo, autor, anioPublicacion, "AudioLibro");
+  }
+
+  obtenerInfoCompleta(): string {
+    return `🎧 ${this.titulo} - Narrado por ${this.narrador} (${this.duracionHoras}h)`;
+  }
+}
+```
+
+**2. Nuevos tipos de usuarios:**
+```typescript
+export class Administrativo extends Usuario {
+  constructor(id: string, nombre: string, email: string, public cargo: string) {
+    super(id, nombre, email, "administrativo", 2, 5);
+  }
+
+  calcularMulta(diasRetraso: number): number {
+    return diasRetraso * 0.75;
+  }
+}
+```
+
+**3. Persistencia con archivos:**
+Puedes crear un `RepositorioArchivo<T>` que guarde los datos en JSON.
+
+**4. Sistema de reservas:**
+Añade una interfaz `Reservable` y lógica para reservar materiales
+que están prestados.
+
+**5. Notificaciones:**
+Implementa un sistema de notificaciones por email cuando un préstamo
+esté próximo a vencer.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El proyecto integra todos los conceptos del Módulo IV en un sistema
+  funcional de gestión de biblioteca.
+- Las **interfaces** definen contratos claros entre componentes.
+- La **clase abstracta Material** comparte lógica de préstamos mientras
+  delega la información específica a cada subclase.
+- La **herencia** crea jerarquías naturales (Libro/Revista/DVD extienden
+  Material; Estudiante/Profesor extienden Usuario).
+- La **encapsulación** protege el estado interno mediante propiedades
+  privadas y getters/setters con validación.
+- El **polimorfismo** permite tratar todos los materiales y usuarios
+  de forma uniforme mediante sus interfaces.
+- Los **modificadores de acceso** (public, private, protected, readonly)
+  controlan la visibilidad en cada nivel.
+- La **composición** se usa en el ServicioBiblioteca (tiene repositorios
+  y servicio de multas) y en Prestamo (tiene referencias a material y
+  usuario).
+- El **repositorio genérico** demuestra el poder de los genéricos.
+- El sistema es **extensible**: nuevos tipos de materiales o usuarios
+  se añaden sin modificar el código existente (OCP).
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1: Nuevo Material - Videojuego**
+Crea una clase `Videojuego` que extienda `Material` con propiedades
+`plataforma`, `genero` y `requisitos`. Implementa `obtenerInfoCompleta`.
+
+🧩 **Ejercicio 2: Nuevo Usuario - Investigador**
+Crea una clase `Investigador` que extienda `Usuario` con 7 préstamos
+simultáneos y 21 días por préstamo. La multa es $0.25 por día.
+
+🧩 **Ejercicio 3: Servicio de Reservas**
+Implementa un `ServicioReservas` que permita reservar materiales que
+están prestados. Usa una interfaz `Reservable` y una cola de reservas.
+
+🧩 **Ejercicio 4: Persistencia en Archivo**
+Crea una clase `RepositorioArchivo<T>` que implemente `Repositorio<T>`
+y guarde/cargue datos desde un archivo JSON en disco.
+
+🧩 **Ejercicio 5: Sistema de Notificaciones**
+Implementa un sistema de notificaciones con una interfaz `Notificable`
+y clases `NotificacionEmail`, `NotificacionSMS`. El servicio debe
+notificar cuando un préstamo está por vencer.
+
+🧩 **Ejercicio 6: Estadísticas Avanzadas**
+Añade al ServicioBiblioteca métodos para obtener:
+- Material más prestado
+- Usuario con más préstamos
+- Días promedio de préstamo
+- Ganancias por multas
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usaste composición en lugar de herencia para el ServicioBiblioteca?**
+El servicio "tiene" repositorios y servicios de multas, no "es" un
+repositorio. La composición es más flexible y permite cambiar
+implementaciones sin afectar al servicio.
+
+❓ **¿Por qué el repositorio es genérico?**
+Para reutilizar la misma lógica de almacenamiento para materiales,
+usuarios y préstamos, manteniendo el tipado fuerte en cada caso.
+
+❓ **¿Cómo manejarías la concurrencia en un entorno real?**
+Usarías bases de datos con transacciones y bloqueos. En TypeScript,
+podrías usar async/await y colas de operaciones.
+
+❓ **¿El sistema soporta múltiples bibliotecas?**
+Actualmente no, pero podrías crear una clase `Biblioteca` que contenga
+sus propios repositorios y servicios. Luego una clase `SistemaRed` que
+gestione múltiples bibliotecas.
+
+❓ **¿Cómo pruebo el sistema sin la implementación real?**
+Las interfaces permiten crear mocks fácilmente. Por ejemplo, un
+`RepositorioMock` que devuelva datos predecibles para pruebas.
+
+===============================================================================
+CONCLUSIÓN DEL MÓDULO IV
+===============================================================================
+
+¡Felicidades, maestro! Has completado el Módulo IV de Programación
+Orientada a Objetos con TypeScript.
+
+En este viaje has aprendido:
+
+🔹 **Capítulo 31**: Clases - La sintaxis fundamental de la POO en TS.
+🔹 **Capítulo 32**: Constructores - Desde parámetros hasta factories.
+🔹 **Capítulo 33**: Herencia - Jerarquías y reutilización de código.
+🔹 **Capítulo 34**: Encapsulación - Protegiendo el estado interno.
+🔹 **Capítulo 35**: Polimorfismo - Un mismo mensaje, múltiples formas.
+🔹 **Capítulo 36**: Abstracción - Simplificando la complejidad.
+🔹 **Capítulo 37**: Interfaces vs Clases - La herramienta correcta.
+🔹 **Capítulo 38**: Modificadores de Acceso - El sistema de permisos.
+🔹 **Capítulo 39**: Clases Abstractas - Planos para arquitecturas.
+🔹 **Capítulo 40**: Proyecto POO - Integrando todo en un sistema real.
+
+Has pasado de escribir scripts simples a diseñar arquitecturas
+completas con capas, contratos y comportamientos polimórficos.
+Ahora piensas en términos de objetos que colaboran entre sí,
+cada uno con su responsabilidad bien definida.
+
+Esto no es solo programación: es ingeniería de software.
+
+El Módulo V te espera con temas avanzados: decoradores, reflexión,
+patrones de diseño y más. Pero antes, asegúrate de practicar con
+el proyecto y los ejercicios. La POO se domina haciendo.
+
+===============================================================================
+FIN DEL CAPÍTULO 40
+===============================================================================
+
+"El viaje de mil líneas de código comienza con una sola clase.
+Has construido las bases; ahora construye el mundo."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+¿Te entrego el **Capítulo 41** ahora mismo? Dime "**Sí**" y continuamos. 🦉📘🚀
+===============================================================================

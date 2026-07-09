@@ -1,0 +1,757 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 76
+##
+##                  PREPARACIÓN PARA SQL
+##
+################################################################################
+################################################################################
+
+"Los datos son el nuevo petróleo. SQL es la refinería. Sin ella, los datos
+son solo un recurso sin explotar."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante de datos, has llegado a un punto de inflexión en tu
+carrera. Has trabajado con bases de datos a lo largo de todo el PHP Master
+Book, pero ahora es momento de profundizar en el corazón mismo de la
+gestión de datos: SQL.
+
+SQL (Structured Query Language) es el lenguaje universal de las bases de
+datos relacionales. No importa si usas MySQL, PostgreSQL, SQL Server o
+SQLite; SQL es el denominador común que debes dominar para ser un
+desarrollador backend completo.
+
+Este capítulo es un puente entre el PHP Master Book y el próximo gran hito
+en tu formación: el **SQL Master Book**. Aquí sentaremos las bases de
+conceptos avanzados de bases de datos relacionales: normalización, índices,
+transacciones, joins complejos, subconsultas, funciones de ventana y
+optimización.
+
+Prepárate para ver los datos con nuevos ojos. Deja de ser un simple usuario
+de bases de datos y conviértete en un arquitecto de datos.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"SQL no es un lenguaje de programación; es un lenguaje de pensamiento.
+Cuando piensas en conjuntos, no en registros, el poder de SQL se revela."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Comprender los principios del modelo relacional y la normalización.
+✓ Diseñar esquemas de base de datos normalizados hasta 3FN.
+✓ Implementar relaciones uno a uno, uno a muchos y muchos a muchos.
+✓ Utilizar joins complejos (INNER, LEFT, RIGHT, CROSS, SELF).
+✓ Escribir subconsultas correlacionadas y no correlacionadas.
+✓ Implementar transacciones con control de concurrencia.
+✓ Reconocer cuándo y cómo usar vistas, procedimientos y funciones.
+
+===============================================================================
+1. MODELO RELACIONAL Y NORMALIZACIÓN
+===============================================================================
+
+El modelo relacional organiza los datos en tablas (relaciones) con filas
+(tuplas) y columnas (atributos). La normalización es el proceso de diseñar
+tablas para minimizar la redundancia y dependencias.
+
+```sql
+-- PRIMERA FORMA NORMAL (1FN)
+-- Cada celda contiene un solo valor atómico
+
+-- MAL (viola 1FN):
+CREATE TABLE productos_mal (
+    id INT PRIMARY KEY,
+    nombre VARCHAR(100),
+    telefonos VARCHAR(255) -- Múltiples teléfonos separados por comas
+);
+
+-- BIEN (1FN):
+CREATE TABLE productos (
+    id INT PRIMARY KEY,
+    nombre VARCHAR(100)
+);
+
+CREATE TABLE telefonos_producto (
+    id INT PRIMARY KEY,
+    producto_id INT NOT NULL,
+    telefono VARCHAR(20) NOT NULL,
+    FOREIGN KEY (producto_id) REFERENCES productos(id)
+);
+
+-- SEGUNDA FORMA NORMAL (2FN)
+-- Está en 1FN y todos los atributos no clave dependen completamente
+-- de la clave primaria
+
+-- MAL (viola 2FN):
+CREATE TABLE ordenes_detalles_mal (
+    orden_id INT,
+    producto_id INT,
+    producto_nombre VARCHAR(200), -- Depende solo de producto_id, no de (orden_id, producto_id)
+    cantidad INT,
+    precio DECIMAL(10,2),
+    PRIMARY KEY (orden_id, producto_id)
+);
+
+-- BIEN (2FN):
+CREATE TABLE ordenes_detalles (
+    orden_id INT,
+    producto_id INT,
+    cantidad INT,
+    precio_unitario DECIMAL(10,2),
+    PRIMARY KEY (orden_id, producto_id),
+    FOREIGN KEY (producto_id) REFERENCES productos(id)
+);
+
+-- TERCERA FORMA NORMAL (3FN)
+-- Está en 2FN y no hay dependencias transitivas
+
+-- MAL (viola 3FN):
+CREATE TABLE ordenes_mal (
+    id INT PRIMARY KEY,
+    cliente_id INT,
+    cliente_nombre VARCHAR(200), -- Depende de cliente_id, no de id
+    cliente_email VARCHAR(255),  -- Depende de cliente_id, no de id
+    total DECIMAL(10,2),
+    fecha DATE
+);
+
+-- BIEN (3FN):
+CREATE TABLE clientes (
+    id INT PRIMARY KEY,
+    nombre VARCHAR(200),
+    email VARCHAR(255)
+);
+
+CREATE TABLE ordenes (
+    id INT PRIMARY KEY,
+    cliente_id INT,
+    total DECIMAL(10,2),
+    fecha DATE,
+    FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+);
+```
+
+Para la mayoría de aplicaciones web, la **Tercera Forma Normal (3FN)** es
+suficiente. Formas normales superiores (BCNF, 4FN, 5FN) se usan en
+escenarios académicos o sistemas con requisitos muy específicos.
+
+```php
+<?php
+// Helper para verificar si un diseño está normalizado
+declare(strict_types=1);
+
+namespace App\Helpers;
+
+class SchemaAnalyzer
+{
+    public static function checkFirstNormalForm(array $columns): array
+    {
+        $issues = [];
+        foreach ($columns as $col) {
+            // Detectar columnas que podrían contener múltiples valores
+            if (str_contains($col['type'], 'text') && $col['nullable'] === 'YES') {
+                $issues[] = "Columna {$col['name']} es TEXT nullable. Verificar atomicidad.";
+            }
+        }
+        return $issues;
+    }
+
+    public static function checkSecondNormalForm(array $primaryKey, array $columns): array
+    {
+        $issues = [];
+        if (count($primaryKey) <= 1) return []; // No aplica
+
+        $nonKeyColumns = array_filter($columns, fn($c) => !in_array($c['name'], $primaryKey));
+        foreach ($nonKeyColumns as $col) {
+            // Verificar si la columna podría depender de solo parte de la PK
+            if (str_contains($col['name'], 'nombre') || str_contains($col['name'], 'descripcion')) {
+                $issues[] = "Columna {$col['name']}: Verificar dependencia parcial de la clave compuesta.";
+            }
+        }
+        return $issues;
+    }
+
+    public static function checkThirdNormalForm(array $columns): array
+    {
+        $issues = [];
+        $descriptiveColumns = ['nombre', 'email', 'telefono', 'direccion', 'descripcion'];
+
+        foreach ($columns as $col) {
+            $isDescriptive = false;
+            foreach ($descriptiveColumns as $desc) {
+                if (str_contains($col['name'], $desc)) {
+                    $isDescriptive = true;
+                    break;
+                }
+            }
+
+            if ($isDescriptive && !str_contains($col['name'], 'id')) {
+                $foreignKeyExists = false;
+                foreach ($columns as $c) {
+                    if ($c['name'] === $col['name'] . '_id' ||
+                        str_contains($c['name'], '_id')) {
+                        $foreignKeyExists = true;
+                        break;
+                    }
+                }
+
+                if (!$foreignKeyExists) {
+                    $issues[] = "Columna {$col['name']}: Posible dependencia transitiva. "
+                              . "¿Debería estar en otra tabla?";
+                }
+            }
+        }
+        return $issues;
+    }
+}
+?>
+```
+
+===============================================================================
+2. RELACIONES AVANZADAS
+===============================================================================
+
+```sql
+-- RELACIÓN UNO A UNO
+-- Un usuario tiene un perfil (1:1)
+CREATE TABLE usuarios (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    email VARCHAR(255) UNIQUE NOT NULL
+);
+
+CREATE TABLE perfiles (
+    id INT PRIMARY KEY,
+    bio TEXT,
+    avatar VARCHAR(255),
+    fecha_nacimiento DATE,
+    FOREIGN KEY (id) REFERENCES usuarios(id) -- Misma PK = 1:1
+);
+
+-- RELACIÓN UNO A MUCHOS
+-- Una categoría tiene muchos productos (1:N)
+CREATE TABLE categorias (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nombre VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE productos (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nombre VARCHAR(200) NOT NULL,
+    categoria_id INT NOT NULL,
+    FOREIGN KEY (categoria_id) REFERENCES categorias(id)
+);
+
+-- RELACIÓN MUCHOS A MUCHOS
+-- Un producto puede tener muchos proveedores y viceversa (N:M)
+CREATE TABLE productos_proveedores (
+    producto_id INT NOT NULL,
+    proveedor_id INT NOT NULL,
+    precio_compra DECIMAL(10,2),
+    es_principal TINYINT(1) DEFAULT 0,
+    PRIMARY KEY (producto_id, proveedor_id),
+    FOREIGN KEY (producto_id) REFERENCES productos(id),
+    FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+);
+
+-- RELACIÓN RECURSIVA (SELF-JOIN)
+-- Un empleado tiene un jefe que también es empleado
+CREATE TABLE empleados (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nombre VARCHAR(200) NOT NULL,
+    jefe_id INT NULL,
+    FOREIGN KEY (jefe_id) REFERENCES empleados(id)
+);
+```
+
+```php
+<?php
+// Consultas con relaciones en PHP
+declare(strict_types=1);
+
+// 1:N - Obtener productos con su categoría
+$sql = "SELECT p.*, c.nombre as categoria_nombre
+        FROM productos p
+        INNER JOIN categorias c ON p.categoria_id = c.id
+        WHERE p.activo = 1
+        ORDER BY c.nombre, p.nombre";
+
+// N:M - Obtener productos con sus proveedores
+$sql = "SELECT p.nombre as producto, pr.nombre as proveedor, pp.precio_compra
+        FROM productos p
+        INNER JOIN productos_proveedores pp ON p.id = pp.producto_id
+        INNER JOIN proveedores pr ON pp.proveedor_id = pr.id
+        WHERE p.activo = 1
+        ORDER BY p.nombre, pr.nombre";
+
+// Self-Join: Obtener empleados con su jefe
+$sql = "SELECT e.nombre as empleado, j.nombre as jefe
+        FROM empleados e
+        LEFT JOIN empleados j ON e.jefe_id = j.id
+        ORDER BY e.nombre";
+?>
+```
+
+===============================================================================
+3. JOINS COMPLEJOS
+===============================================================================
+
+```sql
+-- INNER JOIN: Solo registros que coinciden en ambas tablas
+SELECT p.id, p.nombre, c.nombre as categoria
+FROM productos p
+INNER JOIN categorias c ON p.categoria_id = c.id;
+
+-- LEFT JOIN: Todos de izquierda, coincidentes de derecha (NULL si no hay match)
+SELECT p.id, p.nombre, pr.nombre as proveedor
+FROM productos p
+LEFT JOIN proveedores pr ON p.proveedor_id = pr.id;
+
+-- RIGHT JOIN: Todos de derecha, coincidentes de izquierda
+SELECT p.id, p.nombre, c.nombre as categoria
+FROM productos p
+RIGHT JOIN categorias c ON p.categoria_id = c.id;
+
+-- CROSS JOIN: Producto cartesiano (todas las combinaciones)
+SELECT p.nombre, c.nombre as categoria
+FROM productos p
+CROSS JOIN categorias c;
+
+-- SELF JOIN: Tabla unida consigo misma
+SELECT e1.nombre as empleado, e2.nombre as companero
+FROM empleados e1
+INNER JOIN empleados e2 ON e1.jefe_id = e2.jefe_id
+WHERE e1.id <> e2.id;
+
+-- JOIN con múltiples condiciones
+SELECT p.nombre, c.nombre as categoria, pr.nombre as proveedor
+FROM productos p
+INNER JOIN categorias c ON p.categoria_id = c.id AND c.activo = 1
+LEFT JOIN proveedores pr ON p.proveedor_id = pr.id AND pr.activo = 1
+WHERE p.precio > 100;
+```
+
+===============================================================================
+4. SUBCONSULTAS
+===============================================================================
+
+```sql
+-- SUBCONSULTA EN WHERE (no correlacionada)
+SELECT * FROM productos
+WHERE precio > (
+    SELECT AVG(precio) FROM productos
+);
+
+-- SUBCONSULTA EN WHERE (correlacionada)
+SELECT p.*, (
+    SELECT COUNT(*) FROM ordenes_detalles od
+    WHERE od.producto_id = p.id
+) as total_vendido
+FROM productos p;
+
+-- SUBCONSULTA EN FROM (tabla derivada)
+SELECT categoria, AVG(precio) as precio_promedio
+FROM (
+    SELECT c.nombre as categoria, p.precio
+    FROM productos p
+    INNER JOIN categorias c ON p.categoria_id = c.id
+    WHERE p.activo = 1
+) as datos
+GROUP BY categoria
+HAVING precio_promedio > 500;
+
+-- SUBCONSULTA EN SELECT
+SELECT
+    p.nombre,
+    p.precio,
+    (SELECT MAX(precio) FROM productos) as precio_maximo,
+    (p.precio / (SELECT MAX(precio) FROM productos) * 100) as porcentaje_del_maximo
+FROM productos p;
+
+-- EXISTS vs IN
+-- IN (puede ser lento con muchos datos)
+SELECT * FROM categorias c
+WHERE c.id IN (SELECT DISTINCT categoria_id FROM productos WHERE activo = 1);
+
+-- EXISTS (más rápido, corta al encontrar el primero)
+SELECT * FROM categorias c
+WHERE EXISTS (
+    SELECT 1 FROM productos p
+    WHERE p.categoria_id = c.id AND p.activo = 1
+);
+```
+
+===============================================================================
+5. FUNCIONES DE VENTANA (WINDOW FUNCTIONS)
+===============================================================================
+
+Las funciones de ventana son una de las características más poderosas de
+SQL moderno (MySQL 8+, PostgreSQL, SQL Server).
+
+```sql
+-- ROW_NUMBER(): Numerar filas dentro de un grupo
+SELECT
+    id, nombre, precio, categoria_id,
+    ROW_NUMBER() OVER (PARTITION BY categoria_id ORDER BY precio DESC) as ranking
+FROM productos
+WHERE activo = 1;
+
+-- RANK() Y DENSE_RANK(): Ranking con empates
+SELECT
+    id, nombre, precio,
+    RANK() OVER (ORDER BY precio DESC) as rank,
+    DENSE_RANK() OVER (ORDER BY precio DESC) as dense_rank
+FROM productos
+WHERE activo = 1;
+
+-- LAG() Y LEAD(): Acceder a filas anteriores/siguientes
+SELECT
+    id, nombre, precio,
+    LAG(precio, 1) OVER (ORDER BY created_at) as precio_anterior,
+    LEAD(precio, 1) OVER (ORDER BY created_at) as precio_siguiente
+FROM productos
+WHERE activo = 1;
+
+-- SUM() acumulado: Running total
+SELECT
+    id, created_at, total,
+    SUM(total) OVER (ORDER BY created_at) as total_acumulado
+FROM ordenes;
+
+-- AVG() móvil: Promedio de últimos 7 días
+SELECT
+    fecha, total_ventas,
+    AVG(total_ventas) OVER (
+        ORDER BY fecha
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) as media_movil_7dias
+FROM ventas_diarias;
+```
+
+===============================================================================
+6. TRANSACCIONES Y CONTROL DE CONCURRENCIA
+===============================================================================
+
+```sql
+-- Transacción básica
+START TRANSACTION;
+
+UPDATE cuentas SET saldo = saldo - 100 WHERE id = 1;
+UPDATE cuentas SET saldo = saldo + 100 WHERE id = 2;
+
+COMMIT;
+-- ROLLBACK si algo sale mal
+
+-- Niveles de aislamiento
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+-- READ UNCOMMITTED: Menor aislamiento, permite dirty reads
+-- READ COMMITTED: Evita dirty reads (default en PostgreSQL)
+-- REPEATABLE READ: Evita dirty reads y non-repeatable reads (default en MySQL)
+-- SERIALIZABLE: Máximo aislamiento, evita phantom reads
+
+-- Control de concurrencia optimista con versión
+CREATE TABLE productos (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    nombre VARCHAR(200),
+    stock INT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 1
+);
+
+-- Actualización segura con verificación de versión
+UPDATE productos
+SET stock = stock - 5, version = version + 1
+WHERE id = 1 AND version = 3;
+
+-- Si version cambió (otro usuario actualizó), row_count será 0
+-- y debemos reintentar la operación
+
+-- Lock de fila explícito (SELECT ... FOR UPDATE)
+START TRANSACTION;
+
+SELECT stock FROM productos WHERE id = 1 FOR UPDATE;
+-- Esta fila está bloqueada para otras transacciones
+
+UPDATE productos SET stock = stock - 5 WHERE id = 1;
+
+COMMIT;
+-- El lock se libera al hacer COMMIT o ROLLBACK
+```
+
+```php
+<?php
+// Transacciones con control de concurrencia en PHP
+declare(strict_types=1);
+
+use App\Core\Database;
+
+class InventarioService
+{
+    private PDO $db;
+
+    public function __construct()
+    {
+        $this->db = Database::getInstance()->getConnection();
+    }
+
+    public function descontarStock(int $productoId, int $cantidad, int $maxReintentos = 5): bool
+    {
+        $intento = 0;
+
+        while ($intento < $maxReintentos) {
+            try {
+                $this->db->beginTransaction();
+
+                // Lock optimista: leer versión actual
+                $stmt = $this->db->prepare(
+                    "SELECT id, stock, version FROM productos
+                     WHERE id = :id AND activo = 1 FOR UPDATE"
+                );
+                $stmt->execute(['id' => $productoId]);
+                $producto = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$producto) {
+                    throw new \Exception('Producto no encontrado');
+                }
+
+                if ($producto['stock'] < $cantidad) {
+                    throw new \Exception('Stock insuficiente');
+                }
+
+                // Actualizar con verificación de versión (optimistic lock)
+                $stmt = $this->db->prepare(
+                    "UPDATE productos
+                     SET stock = stock - :cantidad,
+                         version = version + 1
+                     WHERE id = :id
+                     AND version = :version_esperada
+                     AND stock >= :cantidad2"
+                );
+
+                $stmt->execute([
+                    'cantidad' => $cantidad,
+                    'id' => $productoId,
+                    'version_esperada' => $producto['version'],
+                    'cantidad2' => $cantidad,
+                ]);
+
+                if ($stmt->rowCount() === 0) {
+                    // Conflicto de concurrencia, reintentar
+                    $this->db->rollBack();
+                    $intento++;
+                    usleep(100000); // Esperar 100ms antes de reintentar
+                    continue;
+                }
+
+                $this->db->commit();
+                return true;
+
+            } catch (\Exception $e) {
+                $this->db->rollBack();
+                if ($intento >= $maxReintentos - 1) {
+                    throw $e;
+                }
+                $intento++;
+                usleep(100000);
+            }
+        }
+
+        return false;
+    }
+}
+?>
+```
+
+===============================================================================
+7. VISTAS, PROCEDIMIENTOS Y FUNCIONES
+===============================================================================
+
+```sql
+-- VISTA: Consulta almacenada como tabla virtual
+CREATE VIEW vista_productos_categoria AS
+SELECT
+    p.id, p.nombre, p.precio, p.stock,
+    c.nombre as categoria,
+    COALESCE(AVG(od.precio_unitario), 0) as precio_promedio_venta
+FROM productos p
+INNER JOIN categorias c ON p.categoria_id = c.id
+LEFT JOIN ordenes_detalles od ON p.id = od.producto_id
+WHERE p.activo = 1
+GROUP BY p.id, p.nombre, p.precio, p.stock, c.nombre;
+
+-- Usar la vista como si fuera una tabla
+SELECT * FROM vista_productos_categoria WHERE precio > 100;
+
+-- PROCEDIMIENTO ALMACENADO
+DELIMITER //
+CREATE PROCEDURE sp_transferir_producto(
+    IN p_producto_id INT,
+    IN p_cantidad INT,
+    IN p_origen_id INT,
+    IN p_destino_id INT,
+    OUT p_resultado VARCHAR(255)
+)
+BEGIN
+    DECLARE stock_origen INT;
+
+    START TRANSACTION;
+
+    -- Verificar stock en origen
+    SELECT stock INTO stock_origen
+    FROM inventario
+    WHERE producto_id = p_producto_id AND almacen_id = p_origen_id
+    FOR UPDATE;
+
+    IF stock_origen < p_cantidad THEN
+        SET p_resultado = 'Stock insuficiente';
+        ROLLBACK;
+    ELSE
+        -- Descontar de origen
+        UPDATE inventario
+        SET stock = stock - p_cantidad
+        WHERE producto_id = p_producto_id AND almacen_id = p_origen_id;
+
+        -- Agregar a destino
+        INSERT INTO inventario (producto_id, almacen_id, stock)
+        VALUES (p_producto_id, p_destino_id, p_cantidad)
+        ON DUPLICATE KEY UPDATE stock = stock + p_cantidad;
+
+        SET p_resultado = 'Transferencia exitosa';
+        COMMIT;
+    END IF;
+END //
+DELIMITER ;
+
+-- Llamar al procedimiento
+CALL sp_transferir_producto(1, 10, 1, 2, @resultado);
+SELECT @resultado;
+
+-- FUNCIÓN
+DELIMITER //
+CREATE FUNCTION fn_calcular_iva(precio DECIMAL(10,2), tasa DECIMAL(5,2))
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    RETURN precio * (tasa / 100);
+END //
+DELIMITER ;
+
+-- Usar la función
+SELECT
+    nombre, precio,
+    fn_calcular_iva(precio, 16.00) as iva,
+    precio + fn_calcular_iva(precio, 16.00) as total
+FROM productos;
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- La normalización (1FN, 2FN, 3FN) elimina redundancia y dependencias en
+  el diseño de bases de datos. 3FN es suficiente para la mayoría de apps.
+- Las relaciones 1:1, 1:N y N:M se implementan con claves foráneas y tablas
+  pivote (para N:M).
+- Los joins (INNER, LEFT, RIGHT, CROSS, SELF) combinan datos de múltiples
+  tablas según las relaciones definidas.
+- Las subconsultas permiten consultas anidadas. EXISTS es más eficiente que
+  IN en la mayoría de casos.
+- Las funciones de ventana (ROW_NUMBER, RANK, LAG, LEAD) permiten análisis
+  avanzados sin agrupar datos.
+- Las transacciones garantizan atomicidad. SELECT FOR UPDATE proporciona
+  bloqueo pesimista. Optimistic locking con versión evita bloqueos en
+  escenarios de baja contención.
+- Vistas simplifican consultas complejas. Procedimientos y funciones
+  encapsulan lógica SQL reutilizable.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Toma una tabla de tu aplicación actual y verifica si
+está normalizada hasta 3FN. Si no, refactorízala.
+
+🧩 **Ejercicio 2:** Crea una consulta que use JOIN de 4 tablas, funciones
+de ventana y subconsultas. Por ejemplo: ranking de productos más vendidos
+por categoría en el último mes.
+
+🧩 **Ejercicio 3:** Implementa un sistema de transferencia de inventario
+entre almacenes usando transacciones y SELECT FOR UPDATE.
+
+🧩 **Ejercicio 4:** Crea una vista que muestre el historial completo de
+órdenes con: cliente, productos, cantidades, totales y estado.
+
+🧩 **Ejercicio 5:** Escribe un procedimiento almacenado que genere un
+reporte de ventas por período con desglose por categoría y método de pago.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo normalizar siempre hasta 3FN?**
+En la mayoría de casos sí. Sin embargo, para aplicaciones con requisitos
+extremos de lectura (data warehouses), la desnormalización controlada puede
+mejorar el rendimiento.
+
+❓ **¿Cuándo usar vista, procedimiento o función?**
+Vistas para consultas reutilizables. Procedimientos para operaciones que
+modifican datos. Funciones para cálculos que devuelven un valor escalar.
+
+❓ **¿MySQL es suficiente para aplicaciones profesionales?**
+Sí. MySQL 8+ es usado por empresas como Facebook, Twitter y Netflix.
+PostgreSQL ofrece más características avanzadas, pero MySQL es más que
+suficiente para la mayoría de aplicaciones.
+
+❓ **¿Qué es mejor, JOIN o subconsulta?**
+Depende del caso. JOIN suele ser más eficiente para relacionar tablas.
+EXISTS es mejor que IN para verificar existencia. Las subconsultas
+correlacionadas pueden ser lentas en tablas grandes.
+
+❓ **¿Cómo depuro consultas lentas?**
+Usa EXPLAIN para ver el plan de ejecución. Identifica full table scans y
+falta de índices. El slow query log de MySQL captura consultas que superan
+un umbral de tiempo.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto de Datos** — Diseña el esquema de base de datos completo
+para una plataforma de streaming de video similar a Netflix. Debes
+modelar: usuarios con perfiles múltiples, catálogo de contenido (películas,
+series, temporadas, episodios), historial de reproducción, listas de
+deseos, recomendaciones personalizadas, planes de suscripción, facturación,
+calificaciones y reseñas. El sistema debe manejar 10 millones de usuarios
+activos y 5,000 títulos. Normaliza hasta 3FN, define índices para las
+consultas más frecuentes, y propón una estrategia de particionamiento
+(sharding) para escalar horizontalmente. ¿Cómo manejarías la consistencia
+de datos cuando un usuario ve contenido en múltiples dispositivos
+simultáneamente?
+
+===============================================================================
+FIN DEL CAPÍTULO 76
+===============================================================================
+
+"SQL no es solo un lenguaje de consulta; es la gramática de los datos.
+Apréndela bien y podrás conversar con cualquier base de datos del mundo."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+77_CAPITULO_77_EXAMEN_PROFESIONAL_PHP.txt
+===============================================================================

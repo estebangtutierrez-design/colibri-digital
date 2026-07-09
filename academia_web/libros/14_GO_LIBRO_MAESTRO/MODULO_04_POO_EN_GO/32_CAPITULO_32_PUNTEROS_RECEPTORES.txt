@@ -1,0 +1,887 @@
+===============================================================================
+  GO MASTER BOOK — MÓDULO IV: POO EN GO
+  CAPÍTULO 32: PUNTEROS RECEPTORES (VALUE VS POINTER)
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capítulo 32. En el capítulo anterior aprendiste que los
+métodos se declaran con un receptor, y que el receptor por valor crea
+una copia del original.
+
+Ahora toca el otro lado de la moneda: el receptor por puntero.
+
+Con el receptor por puntero podrás mutar el estado interno de tus
+estructuras, trabajar con tipos grandes de forma eficiente, manejar
+casos de nil, y comprender a fondo las reglas del method set que
+determinan qué implementa una interfaz.
+
+Es en este punto donde muchos estudiantes se confunden, pero con los
+ejemplos claros y las reglas precisas que te daré aquí, saldrás
+dominando el tema.
+
+¡Adelante!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"El puntero no es para complicar: es para mutar, compartir y
+ahorrar memoria. Usa punteros con intención, no por costumbre."
+
+  — E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+  • Comprender la sintaxis func (t *Tipo) Metodo().
+  • Distinguir cuándo un método debe modificar el receptor.
+  • Evaluar la eficiencia según el tamaño del tipo.
+  • Manejar el caso del receptor nil.
+  • Conocer las reglas del method set para valor vs puntero.
+  • Decidir en la práctica: value vs pointer receiver.
+  • Evitar errores comunes con punteros y métodos.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+--- 1. SINTAXIS DEL RECEPTOR POR PUNTERO -------------------------------------
+
+La sintaxis es idéntica al value receiver, pero el tipo del receptor
+es un puntero al tipo:
+
+    func (t *Tipo) NombreMetodo() {
+        // t es un puntero a Tipo
+    }
+
+Ejemplo básico:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Contador struct {
+    Valor int
+}
+
+func (c *Contador) Incrementar() {
+    c.Valor++ // modifica el original
+}
+
+func (c Contador) ObtenerValor() int {
+    return c.Valor
+}
+
+func main() {
+    c := Contador{Valor: 10}
+    c.Incrementar()
+    fmt.Println(c.ObtenerValor()) // 11
+}
+--------------------------------------------------------------------------------
+
+Observa que en main llamamos a c.Incrementar() aunque c no es un puntero.
+Go automáticamente toma la dirección (&c) cuando el método tiene receptor
+por puntero. Esto se llama "addressable value".
+
+--- 2. MODIFICANDO EL RECEPTOR -----------------------------------------------
+
+La razón principal para usar puntero receptor es mutar el estado:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Cuenta struct {
+    Titular string
+    Saldo   float64
+}
+
+func (c *Cuenta) Depositar(monto float64) {
+    if monto > 0 {
+        c.Saldo += monto
+    }
+}
+
+func (c *Cuenta) Retirar(monto float64) error {
+    if monto > c.Saldo {
+        return fmt.Errorf("saldo insuficiente: %.2f < %.2f", c.Saldo, monto)
+    }
+    c.Saldo -= monto
+    return nil
+}
+
+func (c Cuenta) Resumen() string {
+    return fmt.Sprintf("%s: $%.2f", c.Titular, c.Saldo)
+}
+
+func main() {
+    c := Cuenta{Titular: "Lucas", Saldo: 1000}
+    c.Depositar(500)
+    fmt.Println(c.Resumen()) // Lucas: $1500.00
+
+    err := c.Retirar(2000)
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 3. EFICIENCIA: PUNTERO VS VALOR ------------------------------------------
+
+Cuando pasas un valor grande por copia, cada llamada al método copia
+todo el struct. Con puntero, solo copias 8 bytes (la dirección de
+memoria).
+
+Benchmark conceptual:
+
+    type Perfil struct {
+        ID        int
+        Nombre    string
+        Email     string
+        Avatar    [1024]byte // 1 KB
+        Preferencias map[string]bool
+        Historial  []int
+    }
+
+    // Cada llamada copia ~1KB+ (lento)
+    func (p Perfil) Mostrar() { ... }
+
+    // Cada llamada copia 8 bytes (rápido)
+    func (p *Perfil) Mostrar() { ... }
+
+Regla práctica:
+
+  • Si el struct tiene más de 64 bytes (unas 4-5 fields medianos), usa
+    puntero receiver por eficiencia.
+  • Si no estás seguro, mide con benchmarks.
+
+--- 4. TABLA: VALUE VS POINTER RECEIVER --------------------------------------
+
++----------------------------------+--------------------------+--------------------------+
+| Aspecto                          | Value Receiver           | Pointer Receiver         |
++----------------------------------+--------------------------+--------------------------+
+| Modifica el original             | No                       | Sí                       |
+| Eficiencia en tipos grandes      | Mala (copia completa)    | Buena (solo dirección)   |
+| Puede ser nil                    | No aplica                | Sí (debe manejarse)      |
+| Method set de T                  | Incluido                 | No incluido              |
+| Method set de *T                 | Incluido                 | Incluido                 |
+| Consistencia de API              | Inmutable                | Mutable                  |
+| Usabilidad con literales         | Sí                       | Sí (Go auto-direcciona)  |
++----------------------------------+--------------------------+--------------------------+
+
+--- 5. NIL RECEIVER (RECEPTOR NULO) ------------------------------------------
+
+Una característica única de Go: puedes llamar un método sobre un
+receptor nil y el método debe manejarlo.
+
+Esto es especialmente útil para listas enlazadas, árboles y patrones
+donde nil representa el "valor cero" válido.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Nodo struct {
+    Valor int
+    Siguiente *Nodo
+}
+
+func (n *Nodo) Longitud() int {
+    if n == nil {
+        return 0
+    }
+    return 1 + n.Siguiente.Longitud()
+}
+
+func (n *Nodo) Insertar(valor int) *Nodo {
+    if n == nil {
+        return &Nodo{Valor: valor}
+    }
+    if valor < n.Valor {
+        return &Nodo{Valor: valor, Siguiente: n}
+    }
+    n.Siguiente = n.Siguiente.Insertar(valor)
+    return n
+}
+
+func (n *Nodo) Listar() {
+    if n == nil {
+        fmt.Println()
+        return
+    }
+    fmt.Printf("%d ", n.Valor)
+    n.Siguiente.Listar()
+}
+
+func main() {
+    var lista *Nodo // nil
+
+    lista = lista.Insertar(5)
+    lista = lista.Insertar(3)
+    lista = lista.Insertar(7)
+    lista = lista.Insertar(1)
+
+    fmt.Print("Lista ordenada: ")
+    lista.Listar() // 1 3 5 7
+    fmt.Println("Longitud:", lista.Longitud()) // 4
+}
+--------------------------------------------------------------------------------
+
+Otro ejemplo clásico con nil receiver:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type PunteroInt struct {
+    Valor int
+}
+
+func (p *PunteroInt) Obtener() int {
+    if p == nil {
+        return 0
+    }
+    return p.Valor
+}
+
+func (p *PunteroInt) Establecer(valor int) {
+    if p == nil {
+        fmt.Println("Error: puntero nil, no se puede establecer")
+        return
+    }
+    p.Valor = valor
+}
+
+func main() {
+    var p *PunteroInt
+    fmt.Println("Valor con nil:", p.Obtener()) // 0
+    p.Establecer(42) // mensaje de error
+
+    p = &PunteroInt{Valor: 10}
+    p.Establecer(42)
+    fmt.Println("Valor actualizado:", p.Obtener()) // 42
+}
+--------------------------------------------------------------------------------
+
+--- 6. METHOD SET REGLAS DETALLADAS ------------------------------------------
+
+Regla fundamental:
+
+  +---------------------+-----------------+-----------------+
+  | Método definido en  | Method set de T | Method set de *T |
+  +---------------------+-----------------+-----------------+
+  | func (t T) M()      | M               | M               |
+  | func (t *T) M()     | —               | M               |
+  +---------------------+-----------------+-----------------+
+
+Es decir:
+
+  • Si un método tiene receptor por valor (T), aparece en ambos method
+    sets: T y *T.
+  • Si un método tiene receptor por puntero (*T), solo aparece en *T.
+
+Ejemplo práctico:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Persona struct {
+    Nombre string
+}
+
+func (p Persona) Hablar() string {
+    return "Hola, soy " + p.Nombre
+}
+
+func (p *Persona) Renombrar(n string) {
+    p.Nombre = n
+}
+
+func main() {
+    p := Persona{Nombre: "Ana"}
+
+    // Persona tiene method set: {Hablar}
+    // *Persona tiene method set: {Hablar, Renombrar}
+
+    fmt.Println(p.Hablar()) // OK
+
+    // p.Renombrar("Bety") // ERROR si p no fuera addressable
+    // Go automáticamente toma &p, así que funciona
+
+    (&p).Renombrar("Bety")
+    fmt.Println(p.Hablar()) // Hola, soy Bety
+}
+--------------------------------------------------------------------------------
+
+¿Por qué es importante esto? Porque para satisfacer una interfaz, el
+type assert de Go verifica el method set completo.
+
+Si una interfaz exige Renombrar, solo *Persona la satisface, no Persona.
+
+--- 7. CONSISTENCIA: NO MEZCLES ----------------------------------------------
+
+Una regla de oro en Go: si un tipo tiene algún método con puntero
+receiver, todos los métodos deberían usar puntero receiver (por
+consistencia). Y viceversa.
+
+Esto no es obligatorio por el compilador, pero es la práctica
+recomendada por la comunidad y por el propio equipo de Go.
+
+Mal ejemplo (inconsistente):
+
+    type Usuario struct { ... }
+    func (u Usuario) Nombre() string { ... }
+    func (u *Usuario) SetNombre(n string) { ... }
+
+Mejor (consistente):
+
+    type Usuario struct { ... }
+    func (u *Usuario) Nombre() string { ... }
+    func (u *Usuario) SetNombre(n string) { ... }
+
+O si es inmutable:
+
+    type Usuario struct { ... }
+    func (u Usuario) Nombre() string { ... }
+    func (u Usuario) ConNombre(n string) Usuario { ... }
+
+--- 8. MÉTODOS QUE MODIFICAN Y RETORNAN --------------------------------------
+
+Un patrón muy común es que un método con puntero receptor modifique el
+estado Y retorne el puntero para permitir encadenamiento (builder pattern):
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Builder struct {
+    resultado string
+}
+
+func (b *Builder) Append(texto string) *Builder {
+    b.resultado += texto
+    return b
+}
+
+func (b *Builder) SaltarLinea() *Builder {
+    b.resultado += "\n"
+    return b
+}
+
+func (b *Builder) Resultado() string {
+    return b.resultado
+}
+
+func main() {
+    sb := &Builder{}
+    sb.Append("Hola").
+        SaltarLinea().
+        Append("Mundo").
+        SaltarLinea().
+        Append("Go!")
+
+    fmt.Println(sb.Resultado())
+    // Hola
+    // Mundo
+    // Go!
+}
+--------------------------------------------------------------------------------
+
+--- 9. MÉTODOS SOBRE TIPOS QUE SON PUNTEROS ----------------------------------
+
+Puedes tener un tipo que sea un puntero, y definir métodos sobre él:
+
+    type PunteroEntero *int
+
+    func (p PunteroEntero) Obtener() int { return *p }
+
+Pero esto tiene limitaciones: no puedes definir métodos con receptor
+de puntero sobre un tipo que ya es un puntero (Go no lo permite):
+
+    // Error: tipo inválido para método
+    func (p *PunteroEntero) Set(v int) { *p = v }
+
+Los tipos que son punteros no pueden tener métodos con puntero receiver.
+
+--- 10. REBINNING Y COPIA DE VALORES ADDRESSABLE -----------------------------
+
+Para que Go pueda auto-direccionar (tomar & automáticamente), el valor
+debe ser addressable. Las variables son addressables; los resultados de
+funciones o llamadas a métodos que retornan valores no siempre lo son.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Punto struct {
+    X, Y int
+}
+
+func (p *Punto) Mover(dx, dy int) {
+    p.X += dx
+    p.Y += dy
+}
+
+func crearPunto() Punto {
+    return Punto{5, 5}
+}
+
+func main() {
+    // Esto NO compila:
+    // crearPunto().Mover(1, 1)
+    // porque crearPunto() retorna un valor no addressable
+
+    // Esto SÍ funciona:
+    p := crearPunto()
+    p.Mover(1, 1)
+    fmt.Println(p)
+}
+--------------------------------------------------------------------------------
+
+--- 11. RECEPTOR POR PUNTERO Y GORUTINAS -------------------------------------
+
+Ten cuidado al usar punteros receptores con gorutinas. Si pasas un
+puntero a una gorutina, puedes tener race conditions.
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+type ContadorSeguro struct {
+    mu    sync.Mutex
+    valor int
+}
+
+func (c *ContadorSeguro) Incrementar() {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.valor++
+}
+
+func (c *ContadorSeguro) Obtener() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.valor
+}
+
+func main() {
+    var wg sync.WaitGroup
+    c := &ContadorSeguro{}
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            c.Incrementar()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Println("Contador final:", c.Obtener()) // 1000
+}
+--------------------------------------------------------------------------------
+
+--- 12. CASOS DE USO EN LA BIBLIOTECA ESTÁNDAR --------------------------------
+
+La stdlib de Go usa pointer receivers extensivamente:
+
+  • *bytes.Buffer: Write, Read, Reset, etc.
+  • *http.Client: Get, Post, Do, etc.
+  • *os.File: Read, Write, Close, etc.
+  • *json.Encoder: Encode
+  • *sql.DB: Query, Exec, etc.
+
+Practicamente cualquier tipo que mantenga estado mutable usa puntero
+receiver.
+
+--- 13. ERROR COMÚN: ASIGNAR A PUNTERO EN LUGAR DE DEREFERENCIAR -------------
+
+Cuando tienes un puntero a un struct, NO necesitas dereferenciarlo
+explícitamente para acceder a sus campos. Go lo hace automáticamente:
+
+    p := &Persona{Nombre: "Ana"}
+    fmt.Println(p.Nombre) // OK, Go hace (*p).Nombre
+
+Pero si el método espera un value receiver y tienes un puntero:
+
+    func (p Persona) Saludar() { ... }
+
+    p := &Persona{Nombre: "Ana"}
+    p.Saludar() // OK, Go auto-dereferencia
+
+Y si el método espera un pointer receiver y tienes un valor:
+
+    func (p *Persona) Renombrar(n string) { ... }
+
+    p := Persona{Nombre: "Ana"}
+    p.Renombrar("Bety") // OK, Go auto-direcciona
+
+--- 14. DECISIÓN: ¿VALUE O POINTER RECEIVER? ---------------------------------
+
+Guía de decisión paso a paso:
+
+  PASO 1: ¿El método necesita modificar el receptor?
+    Sí  → Pointer receiver
+    No  → Ve al paso 2
+
+  PASO 2: ¿El tipo es grande (>64 bytes o slice/mapa/struct con muchos campos)?
+    Sí  → Pointer receiver (eficiencia)
+    No  → Ve al paso 3
+
+  PASO 3: ¿El tipo necesita ser nil?
+    Sí  → Pointer receiver
+    No  → Ve al paso 4
+
+  PASO 4: ¿El tipo contiene campos mutables (mutex, mapa, slice) que se
+          comparten?
+    Sí  → Pointer receiver
+    No  → Value receiver (inmutable, predecible)
+
+  PASO 5: Si llegaste aquí y todas las respuestas fueron NO:
+    → Value receiver
+
+--- 15. EJEMPLO REAL: SISTEMA DE ARCHIVOS ------------------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "strings"
+)
+
+type Archivo struct {
+    Nombre    string
+    Tamano    int64
+    Contenido []byte
+    Permisos  string
+}
+
+func (a *Archivo) Escribir(contenido []byte) {
+    a.Contenido = append(a.Contenido, contenido...)
+    a.Tamano = int64(len(a.Contenido))
+}
+
+func (a *Archivo) AgregarLinea(linea string) {
+    contenido := linea + "\n"
+    a.Escribir([]byte(contenido))
+}
+
+func (a *Archivo) Info() string {
+    return fmt.Sprintf("%s (%d bytes) - permisos: %s",
+        a.Nombre, a.Tamano, a.Permisos)
+}
+
+type Directorio struct {
+    Nombre    string
+    Archivos  []*Archivo
+}
+
+func (d *Directorio) AgregarArchivo(a *Archivo) {
+    d.Archivos = append(d.Archivos, a)
+}
+
+func (d *Directorio) Buscar(nombre string) *Archivo {
+    for _, a := range d.Archivos {
+        if a.Nombre == nombre {
+            return a
+        }
+    }
+    return nil
+}
+
+func (d *Directorio) Listar() string {
+    var b strings.Builder
+    b.WriteString(fmt.Sprintf("Directorio: %s\n", d.Nombre))
+    for _, a := range d.Archivos {
+        b.WriteString(fmt.Sprintf("  %s\n", a.Info()))
+    }
+    return b.String()
+}
+
+func (d *Directorio) TamanoTotal() int64 {
+    var total int64
+    for _, a := range d.Archivos {
+        total += a.Tamano
+    }
+    return total
+}
+
+func main() {
+    dir := &Directorio{Nombre: "/home/lucas"}
+
+    arch1 := &Archivo{
+        Nombre:   "notas.txt",
+        Permisos: "0644",
+    }
+    arch1.AgregarLinea("Comprar leche")
+    arch1.AgregarLinea("Estudiar Go")
+
+    arch2 := &Archivo{
+        Nombre:   "codigo.go",
+        Permisos: "0644",
+    }
+    arch2.Escribir([]byte("package main\nfunc main() {}\n"))
+
+    dir.AgregarArchivo(arch1)
+    dir.AgregarArchivo(arch2)
+
+    fmt.Println(dir.Listar())
+    fmt.Printf("Tamaño total: %d bytes\n", dir.TamanoTotal())
+
+    encontrado := dir.Buscar("notas.txt")
+    if encontrado != nil {
+        fmt.Printf("Encontrado: %s\n", encontrado.Info())
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 16. PRUEBA DE MUTABILIDAD -------------------------------------------------
+
+Te dejo este ejemplo para que pruebes y veas la diferencia:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Valor struct {
+    N int
+}
+
+func (v Valor) SumarValor(x int) {
+    v.N += x // solo modifica copia
+}
+
+func (v *Valor) SumarPuntero(x int) {
+    v.N += x // modifica original
+}
+
+func main() {
+    v := Valor{N: 10}
+
+    v.SumarValor(5)
+    fmt.Println("Después de SumarValor:", v.N) // 10
+
+    v.SumarPuntero(5)
+    fmt.Println("Después de SumarPuntero:", v.N) // 15
+}
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+  • Pointer receiver: func (t *Tipo) Metodo() — recibe dirección de memoria.
+  • Permite modificar el estado interno del receptor.
+  • Más eficiente para tipos grandes (evita copia).
+  • El receptor puede ser nil y el método debe manejarlo.
+  • Go auto-direcciona (&) y auto-dereferencia (*) cuando es necesario.
+  • Method set: métodos en *T se excluyen del method set de T.
+  • Consistencia: si un método usa puntero, todos deberían usarlo.
+  • Usa value receiver para tipos inmutables, pequeños y simples.
+  • Usa pointer receiver para mutación, eficiencia, y tipos compartidos.
+
+--------------------------------------------------------------------------------
+  EJERCICIOS
+--------------------------------------------------------------------------------
+
+--- Ejercicio 1: Pointer receiver básico ---
+
+Crea un tipo Persona con campos Nombre y Edad.
+Define un método CumplirAnios() con puntero receiver que incremente Edad.
+Define un método Mostrar() con value receiver que imprima los datos.
+Demuestra que CumplirAnios realmente modifica el original.
+
+--- Ejercicio 2: Nil receiver en lista enlazada ---
+
+Crea un tipo NodoLista con Valor int y Siguiente *NodoLista.
+Define un método Insertar(valor int) *NodoLista que maneje nil.
+Define un método Recorrer() que imprima todos los valores.
+Define un método Buscar(valor int) bool que maneje nil.
+
+--- Ejercicio 3: Encadenamiento de métodos ---
+
+Crea un tipo Pedido con campos Producto string, Cantidad int, Precio float64.
+Define métodos:
+  - ConProducto(p string) *Pedido
+  - ConCantidad(c int) *Pedido
+  - ConPrecio(p float64) *Pedido
+  - Total() float64
+Todos deben retornar *Pedido para encadenamiento.
+
+--- Ejercicio 4: Method set experimento ---
+
+Crea una interfaz Mutador con método Mutar().
+Crea un tipo Dato con campo Valor int.
+Define Mutar() con puntero receiver.
+Intenta asignar Dato a una variable Mutador (debe fallar).
+Asigna *Dato a Mutador (debe funcionar).
+Explica por qué.
+
+--- Ejercicio 5: Eficiencia con benchmark simulado ---
+
+Crea dos tipos: GrandeValue y GrandePointer, ambos con un campo
+grande [1024]byte.
+Define un método Procesar() para cada uno (value y pointer).
+Escribe un main que llame a cada método 100000 veces y mida el
+tiempo aproximado (usa time.Now().Sub()).
+
+--- Ejercicio 6: Contador seguro con gorutinas ---
+
+Usando el ejemplo de ContadorSeguro, agrega un método Decrementar().
+Lanza 500 gorutinas que incrementen y 500 que decrementen.
+Al final, muestra el valor (debe ser 0).
+
+--- Ejercicio 7: Cache con nil receiver ---
+
+Crea un tipo Cache map[string]string (alias de mapa).
+Define un método Obtener(clave string) string que maneje nil.
+Define un método Establecer(clave, valor string) que maneje nil.
+Define un método Inicializar() que cree el mapa si es nil.
+
+--- Ejercicio 8: Setter con validación ---
+
+Crea un tipo Usuario con campos email string (privado).
+Define métodos:
+  - Email() string (getter, value receiver)
+  - SetEmail(e string) error (pointer receiver, valida formato con
+    strings.Contains(e, "@"))
+Demuestra que el setter valida y solo actualiza si es válido.
+
+--- Ejercicio 9: Pool de workers ---
+
+Crea un tipo Pool con campo workers int y activo bool.
+Define:
+  - Iniciar() *Pool (pone activo = true)
+  - Detener() *Pool (pone activo = false)
+  - Status() string (retorna "activo" o "detenido")
+  - Ejecutar(tarea func()) que solo ejecute si está activo
+Usa encadenamiento.
+
+--- Ejercicio 10: Árbol binario con nil receiver ---
+
+Crea un tipo Arbol con campos Valor int, Izq *Arbol, Der *Arbol.
+Define:
+  - Insertar(v int) *Arbol (maneja nil)
+  - Contiene(v int) bool (maneja nil)
+  - EnOrden() []int (maneja nil)
+  - Suma() int (maneja nil)
+
+--------------------------------------------------------------------------------
+  FAQ — PREGUNTAS FRECUENTES
+--------------------------------------------------------------------------------
+
+P: ¿Por qué Go no permite mezclar value y pointer receivers en un mismo tipo?
+R: Sí lo permite técnicamente, pero es mala práctica. Causa confusión
+   sobre si el tipo es mutable o inmutable. La consistencia mejora la
+   legibilidad.
+
+P: ¿Puedo tener un método con pointer receiver sobre un tipo definido como
+   map o slice?
+R: Sí, porque map y slice son tipos referencia. Pero definir métodos con
+   pointer receiver sobre tipos map/slice es poco común; normalmente usas
+   value receiver que ya contiene la referencia interna.
+
+P: ¿Qué pasa si llamo a un método con pointer receiver sobre un valor no
+   addressable?
+R: El compilador da error. Ejemplo: metodoRetornaStruct().MetodoPuntero().
+
+P: ¿Debo usar siempre pointer receiver para ser eficiente?
+R: No. Para tipos pequeños (int, string, structs de 1-3 campos), el value
+   receiver es igual de eficiente y más seguro (no hay mutación accidental).
+
+P: ¿Nil receiver es una buena práctica?
+R: Sí, para tipos como listas, árboles, y cachés donde nil representa el
+   valor cero. Pero en la mayoría de casos, evita nil y usa valores
+   inicializados.
+
+P: ¿Cómo decido entre puntero y valor para un método que solo lee?
+R: Si el tipo es pequeño (< 64 bytes) y no tiene mutex ni campos mutables,
+   usa value receiver. Si es grande o tiene campos compartidos, usa puntero.
+
+--------------------------------------------------------------------------------
+  DESAFÍO DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+Sistema de Base de Datos en Memoria:
+
+Construye un motor de base de datos simple en memoria usando punteros
+receptores, nil receivers y métodos encadenados.
+
+  Tipo DB:
+    - datos map[string]string
+    - activo bool
+    - transacciones int
+
+  Métodos de DB:
+    - func (db *DB) Abrir() *DB
+    - func (db *DB) Cerrar()
+    - func (db *DB) Set(clave, valor string) *DB
+    - func (db *DB) Get(clave string) (string, bool)
+    - func (db *DB) Delete(clave string) *DB
+    - func (db *DB) Stats() DBStats (struct con claves, activo, transacciones)
+
+  Tipo DBStats:
+    - Claves int
+    - Activo bool
+    - Transacciones int
+    - Metodo String() string
+
+  Requisitos:
+    1. Abrir() activa la BD (crea el mapa si es nil).
+    2. Todos los métodos que retornan *DB deben ser encadenables.
+    3. Si la BD no está abierta, Get y Set deben devolver error controlado.
+    4. DB debe manejar receiver nil (abrir automáticamente).
+    5. Cada operación incrementa transacciones.
+    6. Cerrar() pone activo = false pero conserva datos.
+
+  Extra: crea un tipo Transaccion que embeba *DB y añada Commit/Rollback.
+
+Este desafío integra todos los conceptos del capítulo: pointer receivers,
+nil handling, encadenamiento y diseño de APIs en Go.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+Has dominado el capítulo 32. Ahora sabes cuándo usar cada tipo de
+receptor. Esta decisión —value vs pointer— es una de las más
+importantes en el diseño de APIs en Go.
+
+Recuerda: value receiver para inmutabilidad y tipos pequeños; pointer
+receiver para mutación, tipos grandes y nil semantics.
+
+En el próximo capítulo darás el salto a las interfaces, el corazón
+del polimorfismo en Go. Con los method sets claros, entender las
+interfaces será pan comido.
+
+Nos vemos en el capítulo 33: INTERFACES.
+
+--------------------------------------------------------------------------------
+  PRÓXIMO CAPÍTULO
+--------------------------------------------------------------------------------
+
+  CAPÍTULO 33: INTERFACES
+    → Definición de interfaces, implementación implícita (duck typing),
+      io.Reader/Writer, y el patrón de diseño con interfaces.
+
+===============================================================================
+  FIN DEL CAPÍTULO 32 — PUNTEROS RECEPTORES
+===============================================================================

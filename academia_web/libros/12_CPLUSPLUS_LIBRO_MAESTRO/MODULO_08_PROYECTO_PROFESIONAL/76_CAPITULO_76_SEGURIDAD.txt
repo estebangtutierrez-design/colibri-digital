@@ -1,0 +1,1005 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 76: SEGURIDAD EN C++
+================================================================================
+
+  "En C++ tú tienes el poder. Y con gran poder viene una gran
+   responsabilidad de no romper la memoria."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido, Arquitecto!
+
+  Hemos explorado arquitectura, patrones, debugging, análisis
+  estático y optimización. Pero hay un tema que lo atraviesa todo:
+  la seguridad.
+
+  C++ es un lenguaje que confía en el programador. Esa confianza
+  mal ubicada puede llevar a vulnerabilidades: buffer overflows,
+  format string attacks, integer overflows, use-after-free.
+
+  En este capítulo aprenderás a escribir código C++ que no solo
+  funciona, sino que resiste ataques.
+
+  FRASE DEL DÍA
+  -------------
+  "Los hackers no rompen tu código; tu código se rompe solo.
+   Ellos solo se aprovechan."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Comprender las vulnerabilidades clásicas de C y C++.
+  2. Prevenir buffer overflows con técnicas modernas.
+  3. Evitar format string attacks usando type safety.
+  4. Detectar y prevenir integer overflows.
+  5. Usar smart pointers en lugar de raw pointers.
+  6. Implementar bounds checking en contenedores.
+  7. Conocer las mejores prácticas de seguridad en C++ moderno.
+  8. Aplicar el principio de mínimos privilegios y sanitización.
+
+================================================================================
+
+  SEGURIDAD EN C++ — CONTENIDO COMPLETO
+================================================================================
+
+► 1. EL PANORAMA DE SEGURIDAD EN C++
+
+  C++ ocupa un lugar especial en seguridad: da control total sobre
+  la memoria, pero también total responsabilidad. Vulnerabilidades
+  comunes:
+
+  • Buffer Overflow: Escribir más allá de los límites de un array.
+  • Format String: Usar entrada del usuario como formato de printf.
+  • Integer Overflow: Operaciones aritméticas que desbordan.
+  • Use-After-Free: Usar memoria ya liberada.
+  • Double Free: Liberar la misma memoria dos veces.
+  • Null Pointer Dereference: Acceder a memoria nullptr.
+  • Type Confusion: Tratar un tipo como si fuera otro.
+  • Race Conditions: Acceso concurrente sin sincronización.
+
+  C++ moderno mitiga muchas de estas con:
+  • RAII y smart pointers (eliminan use-after-free y leaks).
+  • std::array y std::vector (bounds checking en debug).
+  • std::string (sin buffer overflow).
+  • static_cast/dynamic_cast (type safety).
+  • constexpr (validación en compilación).
+
+*/
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <memory>
+#include <cstring>
+#include <cstdio>
+#include <stdexcept>
+#include <array>
+#include <span>
+#include <cstdint>
+#include <limits>
+#include <cctype>
+#include <format>
+#include <source_location>
+
+//==============================================================================
+// EJEMPLO 1: BUFFER OVERFLOW — EL CLÁSICO
+//==============================================================================
+
+/*
+  Un buffer overflow ocurre cuando se escriben más datos de los
+  que el buffer puede contener. En C clásico, esto no se detecta.
+  En C++ moderno, usamos contenedores seguros.
+*/
+
+// VULNERABLE: En C, este código puede ser explotado
+void vulnerable_gets() {
+    char buffer[16];
+    // gets(buffer);  // ¡NUNCA USAR! No hay límite
+
+    // fgets es más seguro, pero hay que calcular el tamaño
+    // fgets(buffer, sizeof(buffer), stdin);
+
+    // En C++ moderno: std::string directamente
+    std::string input;
+    std::getline(std::cin, input);
+}
+
+// VULNERABLE: strcpy sin verificar tamaño
+void vulnerable_strcpy(const char* entrada) {
+    char buffer[32];
+    // strcpy(buffer, entrada);  // Si entrada > 32, overflow!
+
+    // Seguro:
+    strncpy(buffer, entrada, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+}
+
+// VULNERABLE: sprintf sin límite
+void vulnerable_sprintf(const char* nombre, int edad) {
+    char buffer[64];
+    // sprintf(buffer, "Nombre: %s, Edad: %d", nombre, edad);
+
+    // Seguro:
+    snprintf(buffer, sizeof(buffer), "Nombre: %s, Edad: %d",
+             nombre, edad);
+
+    // En C++:
+    std::string seguro = std::format("Nombre: {}, Edad: {}",
+                                      nombre, edad);
+}
+
+// VULNERABLE: acceso a array sin límite
+int vulnerable_array_access(const std::vector<int>& v, int idx) {
+    // return v[idx];  // Si idx < 0 o >= v.size(), undefined behavior
+
+    // Seguro:
+    if (idx < 0 || static_cast<size_t>(idx) >= v.size()) {
+        throw std::out_of_range("Índice fuera de rango");
+    }
+    return v[idx];
+
+    // O usar v.at(idx) que lanza excepción
+}
+
+//==============================================================================
+// EJEMPLO 2: FORMAT STRING ATTACK
+//==============================================================================
+
+/*
+  Un format string attack ocurre cuando el usuario controla el
+  string de formato de printf-family. El atacante puede leer
+  la pila o escribir en ella.
+
+  Vulnerable:
+  printf(entrada_del_usuario);  // ¡Si entrada tiene %x, lee la pila!
+
+  Seguro:
+  printf("%s", entrada_del_usuario);  // Solo imprime como string
+*/
+
+void vulnerable_format_string(const char* user_input) {
+    // VULNERABLE: El usuario puede poner "%x %x %x" para leer la pila
+    // printf(user_input);
+
+    // También peligroso:
+    // fprintf(stderr, user_input);
+    // syslog(LOG_ERR, user_input);
+
+    // SEGURO: Usar %s
+    printf("%s", user_input);
+
+    // En C++:
+    std::cout << user_input;  // No hay formato, es seguro
+}
+
+// Los atacantes también pueden escribir con %n
+void peligro_porcentaje_n() {
+    int valor = 0;
+    // printf("abcd%n", &valor);  // valor = 4 (cuántos chars antes de %n)
+    // Si el usuario controla el formato, puede escribir en memoria
+}
+
+//==============================================================================
+// EJEMPLO 3: INTEGER OVERFLOW
+//==============================================================================
+
+/*
+  Los enteros con signo tienen UB al desbordar. Los unsigned
+  wraparound, pero el resultado puede ser inesperado.
+*/
+
+void integer_overflow_ejemplos() {
+    // Caso 1: Signed overflow (UB)
+    int max_int = std::numeric_limits<int>::max();
+    // int resultado = max_int + 1;  // UB!
+
+    // Caso 2: Unsigned wraparound (definido pero peligroso)
+    unsigned int u_max = std::numeric_limits<unsigned int>::max();
+    unsigned int u_result = u_max + 1;  // u_result = 0
+
+    // Caso 3: En cálculos de tamaño
+    size_t tamano = 0;
+    // size_t buffer_size = tamano - 1;  // wraparound: número enorme!
+
+    // Caso 4: Asignación a tipo más pequeño
+    int grande = 100000;
+    short chico = static_cast<short>(grande);  // Pérdida de datos
+}
+
+// Función segura para sumar con detección de overflow
+template<typename T>
+bool sumar_seguro(T a, T b, T& resultado) {
+    if constexpr (std::is_signed_v<T>) {
+        if ((b > 0) && (a > std::numeric_limits<T>::max() - b)) {
+            return false; // Overflow positivo
+        }
+        if ((b < 0) && (a < std::numeric_limits<T>::min() - b)) {
+            return false; // Overflow negativo
+        }
+    } else {
+        if (a > std::numeric_limits<T>::max() - b) {
+            return false; // Overflow unsigned
+        }
+    }
+    resultado = a + b;
+    return true;
+}
+
+void ejemplo_sumar_seguro() {
+    int a = 2'000'000'000;
+    int b = 500'000'000;
+    int resultado;
+
+    if (sumar_seguro(a, b, resultado)) {
+        std::cout << "Suma: " << resultado << "\n";
+    } else {
+        std::cout << "Overflow detectado!\n";
+    }
+
+    // C++20: std::add_sat, std::add overflow checking
+    // #include <numeric>
+    // int sat = std::add_sat(a, b);  // satura en lugar de overflow
+}
+
+//==============================================================================
+// EJEMPLO 4: SMART POINTERS vs RAW POINTERS
+//==============================================================================
+
+/*
+  Los smart pointers son la defensa principal contra:
+  • Memory leaks (olvidar delete)
+  • Double free (dos delete)
+  • Use-after-free (usar tras delete)
+  • Excepciones que saltan el delete
+
+  REGLA: No uses new/delete explícitos. Usa:
+  • std::unique_ptr: Propiedad exclusiva (no copiable, movible).
+  • std::shared_ptr: Propiedad compartida (reference counting).
+  • std::weak_ptr: Observador sin propiedad (rompe ciclos).
+*/
+
+// MAL: Raw pointers
+class GestorRaw {
+    int* datos_;
+    int* buffer_;
+public:
+    GestorRaw() {
+        datos_ = new int[100];
+        buffer_ = new int[500];
+        // Si new int[500] lanza, datos_ se fuga
+    }
+
+    ~GestorRaw() {
+        delete[] datos_;
+        delete[] buffer_;
+    }
+
+    // Regla de 3/5 violada: si se copia, doble delete!
+};
+
+// BIEN: Smart pointers
+class GestorSmart {
+    std::unique_ptr<int[]> datos_;
+    std::unique_ptr<int[]> buffer_;
+public:
+    GestorSmart()
+        : datos_(std::make_unique<int[]>(100))
+        , buffer_(std::make_unique<int[]>(500))
+    {}
+    // Destructor automático, move semantics, sin fugas
+};
+
+// shared_ptr vs unique_ptr
+class Recurso {
+public:
+    explicit Recurso(int id) : id_(id) {
+        std::cout << "Recurso " << id << " creado\n";
+    }
+    ~Recurso() {
+        std::cout << "Recurso " << id_ << " destruido\n";
+    }
+    int id() const { return id_; }
+private:
+    int id_;
+};
+
+void ejemplo_smart_pointers() {
+    // unique_ptr: propiedad única
+    auto ptr1 = std::make_unique<Recurso>(1);
+    // auto ptr2 = ptr1;  // Error: no copiable
+    auto ptr2 = std::move(ptr1);  // Transferencia de propiedad
+
+    // shared_ptr: propiedad compartida
+    auto sp1 = std::make_shared<Recurso>(2);
+    {
+        auto sp2 = sp1;  // Referencia contada
+        std::cout << "Usos: " << sp1.use_count() << "\n";  // 2
+    }
+    std::cout << "Usos: " << sp1.use_count() << "\n";  // 1
+
+    // weak_ptr: observador
+    std::weak_ptr<Recurso> wp = sp1;
+    if (auto locked = wp.lock()) {
+        std::cout << "Recurso aún vivo: " << locked->id() << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 5: BOUNDS CHECKING — ACCESO SEGURO A CONTENEDORES
+//==============================================================================
+
+void bounds_checking() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+
+    // operator[] sin check (rápido, peligroso si no verificas)
+    int x = v[2];  // OK si sabes que 2 está en rango
+
+    // at() con check (lanza std::out_of_range)
+    try {
+        int y = v.at(10);  // Lanza excepción
+    } catch (const std::out_of_range& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    // Iteradores seguros
+    for (auto it = v.begin(); it != v.end(); ++it) {
+        // *it es seguro
+    }
+
+    // Range-for: siempre seguro
+    for (int val : v) {
+        std::cout << val;
+    }
+
+    // C++20: std::span con bounds checking
+    std::span<int> s(v);
+    // s[10];  // undefined behavior sin checks
+    // s.at(10);  // Esto no existe en span
+
+    // std::array: tamaño fijo en compilación
+    std::array<int, 5> arr = {1, 2, 3, 4, 5};
+    // arr.at(10);  // Lanza out_of_range
+}
+
+//==============================================================================
+// EJEMPLO 6: STRING SEGURO
+//==============================================================================
+
+/*
+  std::string elimina los problemas de C strings:
+  • No hay riesgo de buffer overflow (crece automáticamente)
+  • No hay problemas con null terminators (aunque puede contenerlos)
+  • Bounds checking con at()
+*/
+
+void string_seguro() {
+    // C strings: peligrosos
+    const char* c_str = "Hola";
+    char buffer[10];
+    strcpy(buffer, c_str);  // Si c_str > 9, overflow
+
+    // C++ strings: seguros
+    std::string cpp_str = "Hola";
+    cpp_str += " mundo";  // Crece automáticamente
+
+    // Concatenación segura
+    std::string a = "Hello ";
+    std::string b = "World";
+    std::string c = a + b;  // Sin riesgo de overflow
+
+    // Substring con check
+    try {
+        std::string sub = cpp_str.substr(0, 100);  // Trunca al tamaño real
+    } catch (const std::out_of_range& e) {
+        // Esto no pasa porque substr trunca, no lanza
+    }
+}
+
+//==============================================================================
+// EJEMPLO 7: CWE (COMMON WEAKNESS ENUMERATION) TOP VULNERABILIDADES
+//==============================================================================
+
+/*
+  CWE-119: Buffer Overflow
+  CWE-120: Buffer Copy without Checking Size
+  CWE-121: Stack-based Buffer Overflow
+  CWE-122: Heap-based Buffer Overflow
+  CWE-190: Integer Overflow
+  CWE-134: Format String
+  CWE-415: Double Free
+  CWE-416: Use After Free
+  CWE-476: NULL Pointer Dereference
+  CWE-787: Out-of-bounds Write
+  CWE-789: Uncontrolled Memory Allocation
+
+  MITIGACIONES C++ MODERNO:
+  CWE-119 → std::vector, std::string, std::array
+  CWE-190 → checked math, std::add_sat
+  CWE-134 → std::cout en lugar de printf
+  CWE-415 → unique_ptr (no copiable)
+  CWE-416 → shared_ptr/weak_ptr
+  CWE-476 → std::optional, assertions
+  CWE-787 → .at() en lugar de operator[]
+*/
+
+//==============================================================================
+// EJEMPLO 8: PRÁCTICAS SEGURAS CON ARCHIVOS
+//==============================================================================
+
+#include <fstream>
+
+class GestorArchivoSeguro {
+public:
+    void escribir(const std::string& ruta,
+                  const std::vector<char>& datos) {
+        // Validar la ruta (path traversal)
+        if (ruta.find("..") != std::string::npos) {
+            throw std::runtime_error("Path traversal detectado");
+        }
+
+        // Validar tamaño máximo
+        if (datos.size() > MAX_TAMANO) {
+            throw std::runtime_error("Archivo demasiado grande");
+        }
+
+        std::ofstream archivo(ruta, std::ios::binary);
+        if (!archivo) {
+            throw std::runtime_error(
+                "No se pudo abrir el archivo");
+        }
+
+        archivo.write(datos.data(), datos.size());
+        if (!archivo) {
+            throw std::runtime_error(
+                "Error al escribir en el archivo");
+        }
+    }
+
+    std::vector<char> leer(const std::string& ruta) {
+        // Validar ruta
+        if (ruta.find("..") != std::string::npos) {
+            throw std::runtime_error("Path traversal detectado");
+        }
+
+        std::ifstream archivo(ruta, std::ios::binary | std::ios::ate);
+        if (!archivo) {
+            throw std::runtime_error("Archivo no encontrado");
+        }
+
+        auto tamano = archivo.tellg();
+        if (tamano > MAX_TAMANO) {
+            throw std::runtime_error("Archivo demasiado grande");
+        }
+
+        archivo.seekg(0);
+        std::vector<char> buffer(tamano);
+        archivo.read(buffer.data(), tamano);
+
+        if (!archivo) {
+            throw std::runtime_error("Error de lectura");
+        }
+
+        return buffer;
+    }
+
+private:
+    static constexpr size_t MAX_TAMANO = 10 * 1024 * 1024; // 10MB
+};
+
+//==============================================================================
+// EJEMPLO 9: SANITIZACIÓN DE ENTRADA
+//==============================================================================
+
+/*
+  Nunca confíes en la entrada del usuario. Valida y sanitiza.
+*/
+
+class Sanitizador {
+public:
+    // Eliminar caracteres peligrosos para HTML
+    static std::string sanitizar_html(const std::string& input) {
+        std::string resultado;
+        resultado.reserve(input.size());
+
+        for (char c : input) {
+            switch (c) {
+                case '<': resultado += "&lt;"; break;
+                case '>': resultado += "&gt;"; break;
+                case '&': resultado += "&amp;"; break;
+                case '"': resultado += "&quot;"; break;
+                case '\'': resultado += "&#39;"; break;
+                default: resultado += c;
+            }
+        }
+        return resultado;
+    }
+
+    // Validar que sea un correo electrónico válido
+    static bool validar_email(const std::string& email) {
+        // Verificar @
+        auto arroba = email.find('@');
+        if (arroba == std::string::npos || arroba == 0
+            || arroba == email.size() - 1) {
+            return false;
+        }
+
+        // Verificar punto después de @
+        auto punto = email.find('.', arroba);
+        if (punto == std::string::npos
+            || punto == arroba + 1
+            || punto == email.size() - 1) {
+            return false;
+        }
+
+        // Verificar caracteres válidos
+        for (char c : email) {
+            if (!std::isalnum(c) && c != '@' && c != '.'
+                && c != '_' && c != '-') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Validar que un entero esté en rango
+    template<typename T>
+    static bool validar_rango(T valor, T min, T max) {
+        return valor >= min && valor <= max;
+    }
+};
+
+//==============================================================================
+// EJEMPLO 10: EXCEPCIONES Y SEGURIDAD
+//==============================================================================
+
+/*
+  RAII + Excepciones = Código seguro por construcción.
+  Si una función lanza, los destructores se ejecutan (stack unwinding).
+*/
+
+void ejemplo_excepciones_seguras() {
+    // Si el constructor de Recurso lanza, no hay leak
+    try {
+        auto r1 = std::make_unique<Recurso>(1);
+        auto r2 = std::make_unique<Recurso>(2);
+
+        // Si algo aquí lanza, r1 y r2 se destruyen automáticamente
+
+        throw std::runtime_error("Algo salió mal");
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+    // r1 y r2 ya se liberaron durante el stack unwinding
+}
+
+//==============================================================================
+// EJEMPLO 11: CASTING SEGURO
+//==============================================================================
+
+/*
+  C++ ofrece 4 casts, cada uno con un propósito específico.
+  Evita los C-style casts (type*)expr.
+*/
+
+void casting_seguro() {
+    double d = 3.14;
+
+    // static_cast: conversiones relacionadas (seguro en compilación)
+    int i = static_cast<int>(d);  // Trunca, pero es explícito
+
+    // dynamic_cast: downcasting polimórfico (seguro en runtime)
+    class Base { virtual void f() {} };
+    class Derivada : public Base { void f() override {} };
+
+    Base* b = new Derivada();
+    Derivada* d_ptr = dynamic_cast<Derivada*>(b);
+    if (d_ptr) {
+        // Cast exitoso
+    } else {
+        // Cast falló (b no apuntaba a Derivada)
+    }
+
+    // const_cast: quitar const (peligroso, usado para APIs legacy)
+    const int constante = 42;
+    int& ref = const_cast<int&>(constante);  // No modificar!
+
+    // reinterpret_cast: convertir entre tipos no relacionados
+    uintptr_t dir = reinterpret_cast<uintptr_t>(b);  // Puntero a entero
+}
+
+//==============================================================================
+// EJEMPLO 12: ATOMIC Y CONCURRENCIA SEGURA
+//==============================================================================
+
+#include <atomic>
+#include <thread>
+#include <mutex>
+
+// Contador thread-safe con atomic
+class ContadorSeguro {
+public:
+    void incrementar() {
+        contador_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    int valor() const {
+        return contador_.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<int> contador_{0};
+};
+
+// Recurso protegido por mutex
+class RecursoProtegido {
+public:
+    void escribir(int valor) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        datos_ = valor;
+    }
+
+    int leer() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return datos_;
+    }
+
+private:
+    int datos_ = 0;
+    std::mutex mutex_;
+};
+
+//==============================================================================
+// EJEMPLO 13: EVITAR CICLOS DE REFERENCIA
+//==============================================================================
+
+/*
+  shared_ptr puede crear ciclos de referencia que nunca se liberan.
+  weak_ptr rompe estos ciclos.
+*/
+
+// MAL: Ciclo de shared_ptr
+struct NodeMal {
+    std::shared_ptr<NodeMal> next;
+    ~NodeMal() { std::cout << "Node destruido\n"; }
+};
+
+// BIEN: weak_ptr para evitar ciclo
+struct NodeBien {
+    std::shared_ptr<NodeBien> next;
+    std::weak_ptr<NodeBien> prev;  // Observa, no propietario
+    ~NodeBien() { std::cout << "NodeBien destruido\n"; }
+};
+
+void ejemplo_ciclos() {
+    // Ciclo MAL:
+    auto a = std::make_shared<NodeMal>();
+    auto b = std::make_shared<NodeMal>();
+    a->next = b;
+    b->next = a;  // Ciclo: nunca se destruyen!
+    // Fuga de memoria silenciosa
+
+    // Ciclo BIEN:
+    auto c = std::make_shared<NodeBien>();
+    auto d = std::make_shared<NodeBien>();
+    c->next = d;
+    d->prev = c;  // weak_ptr, no hay ciclo
+}
+
+//==============================================================================
+// EJEMPLO 14: CODIFICACIÓN SEGURA DE STRINGS
+//==============================================================================
+
+/*
+  Los strings en C++ no tienen terminación nula garantizada.
+  Al interactuar con C APIs, usa .c_str() que SÍ tiene null terminator.
+*/
+
+void c_string_interop() {
+    std::string cpp = "Hola";
+
+    // Seguro: c_str() añade null terminator
+    const char* c_ptr = cpp.c_str();
+
+    // PELIGRO: data() en C++17 es equivalente a c_str()
+    // pero en C++98/03 data() no tenía null terminator
+    const char* data_ptr = cpp.data();
+}
+
+//==============================================================================
+// EJEMPLO 15: PRINCIPIO DE MÍNIMOS PRIVILEGIOS
+//==============================================================================
+
+/*
+  Aplica a nivel de código:
+
+  • Funciones: const si no modifican.
+  • Parámetros: const& si solo lectura.
+  • Miembros: private por defecto.
+  • Métodos: noexcept si no lanzan.
+  • Variables: constexpr si conocido en compilación.
+*/
+
+class Usuario {
+public:
+    Usuario(int id, std::string nombre)
+        : id_(id), nombre_(std::move(nombre)) {}
+
+    // Getter const (no modifica)
+    int id() const { return id_; }
+    const std::string& nombre() const { return nombre_; }
+
+    // Setter con validación
+    void set_nombre(const std::string& nombre) {
+        if (nombre.empty()) {
+            throw std::invalid_argument(
+                "El nombre no puede estar vacío");
+        }
+        if (nombre.size() > 100) {
+            throw std::invalid_argument(
+                "Nombre demasiado largo");
+        }
+        nombre_ = nombre;
+    }
+
+private:
+    int id_;
+    std::string nombre_;
+    // Los miembros privados no son accesibles desde fuera
+};
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 76:
+
+  1. Buffer Overflow: Usa std::string, std::vector, std::array.
+     strncpy en lugar de strcpy. snprintf en lugar de sprintf.
+
+  2. Format String: printf("%s", input), no printf(input).
+     En C++ moderno, std::cout es seguro por diseño.
+
+  3. Integer Overflow: Revisa operaciones aritméticas.
+     Usa funciones de suma segura o std::add_sat.
+     Cuidado con asignaciones a tipos más pequeños.
+
+  4. Smart Pointers: unique_ptr para propiedad exclusiva,
+     shared_ptr para compartida, weak_ptr para observación.
+     NO uses new/delete explícitos.
+
+  5. Bounds Checking: .at() en lugar de operator[] cuando
+     no estés seguro del índice. Range-for para iteración.
+
+  6. RAII: Los destructores se ejecutan en stack unwinding.
+     No hay fugas aunque haya excepciones.
+
+  7. Casting: static_cast (relacionados), dynamic_cast
+     (downcasting), const_cast (quitar const), reinterpret_cast
+     (no relacionados). Evita casts estilo C.
+
+  8. Concurrencia: atomic para operaciones simples, mutex
+     para regiones críticas. scoped_lock para múltiples mutex.
+
+  9. Ciclos de shared_ptr: Usa weak_ptr para referencias
+     que no deben mantener vivo el objeto.
+
+  10. Sanitización: Valida y sanitiza toda entrada del usuario.
+      Principio de mínimos privilegios.
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Encontrar vulnerabilidades
+  ----------------------------------------
+  Identifica TODAS las vulnerabilidades en este código:
+
+  void procesar(const char* input) {
+      char buffer[64];
+      char output[256];
+
+      sprintf(output, "Entrada del usuario: %s", input);
+
+      if (strlen(input) > 0) {
+          strcpy(buffer, input);
+      }
+
+      printf(input);
+
+      int* datos = new int[100];
+      if (input[0] == 'A') {
+          return;  // leak!
+      }
+      delete[] datos;
+  }
+
+  EJERCICIO 2: Refactorizar a smart pointers
+  -------------------------------------------
+  Refactoriza este código para eliminar todos los raw pointers
+  y fugas de memoria:
+
+  class Nodo {
+  public:
+      Nodo* izquierdo;
+      Nodo* derecho;
+      int valor;
+  };
+
+  Nodo* crear_arbol() { /* ... */ }
+  void liberar_arbol(Nodo* raiz) { /* ... */ }
+
+  EJERCICIO 3: Integer overflow
+  ------------------------------
+  Implementa una función segura que multiplica dos enteros y
+  detecta overflow. Bonus: implementa también saturación.
+
+  template<typename T>
+  std::optional<T> multiplicar_seguro(T a, T b);
+
+  EJERCICIO 4: Sandbox de archivos
+  ---------------------------------
+  Crea una clase SandboxArchivo que:
+  • Solo permita acceso a archivos en un directorio específico.
+  • Prevenga path traversal (../).
+  • Limite el tamaño de archivo a 1MB.
+  • Use RAII para cerrar archivos automáticamente.
+
+  EJERCICIO 5: Thread-safe logger
+  --------------------------------
+  Implementa un Logger thread-safe que:
+  • Use std::mutex para proteger la salida.
+  • Use std::atomic para un contador de líneas.
+  • Use RAII para el lock.
+  • No tenga vulnerabilidades de formato.
+
+  EJERCICIO 6: Ciclo de shared_ptr
+  ---------------------------------
+  Crea una estructura de grafo donde los nodos se referencian
+  entre sí. Usa weak_ptr para evitar ciclos. Demuestra que los
+  nodos se destruyen correctamente.
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿C++ es inseguro por naturaleza?
+  R: C++ da herramientas para ser seguro (RAII, smart pointers,
+     contenedores). El peligro está en usar APIs de C y raw
+     pointers. C++ moderno es tan seguro como cualquier lenguaje.
+
+  P: ¿Debo evitar completamente los raw pointers?
+  R: En la medida de lo posible. Úsalos solo para observar
+     (non-owning) y en interfaces de C legacy. unique_ptr/shared_ptr
+     para ownership.
+
+  P: ¿std::string es siempre seguro contra buffer overflow?
+  R: Sí, std::string crece automáticamente. Sin embargo, ten
+     cuidado al usar .data() con APIs de C que esperan buffers
+     de tamaño fijo.
+
+  P: ¿Los smart pointers tienen overhead?
+  R: unique_ptr tiene CERO overhead vs raw pointer. shared_ptr
+     tiene overhead por el reference count (generalmente 2 palabras
+     adicionales). Es mínimo para la seguridad que ofrece.
+
+  P: ¿Cómo protejo mi código de inyección SQL?
+  R: Usando prepared statements (parámetros, nunca concatenar
+     strings). En C++, librerías como sqlpp11, SOCI, o el driver
+     de PostgreSQL/MySQL con parametrización.
+
+  P: ¿Qué es ASLR y cómo me ayuda?
+  R: Address Space Layout Randomization. Aleatoriza las direcciones
+     de memoria para dificultar exploits de buffer overflow.
+     El sistema operativo lo maneja, no el código.
+
+  P: ¿Debo usar std::optional para evitar nullptr?
+  R: Sí. std::optional<T> indica claramente que un valor puede
+     estar ausente, evitando la necesidad de punteros nulos.
+
+  P: ¿Qué herramientas de seguridad debo usar?
+  R: Además del análisis estático (capítulo 74):
+     • -fstack-protector-strong (protección contra stack smashing)
+     • -D_FORTIFY_SOURCE=2 (fortificación de funciones)
+     • -fsanitize=address (detección de memory errors)
+     • Valgrind (análisis dinámico)
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 76                ║
+  ║        "EL GUARDIÁN DEL SISTEMA"                           ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Eres el oficial de seguridad de una empresa que desarrolla un
+  servidor web embebido en C++. El código base tiene 10 años y
+  está lleno de prácticas inseguras de C.
+
+  Te han pedido un "security audit" completo y una propuesta de
+  migración a C++ moderno seguro.
+
+  El código legacy (simplificado):
+
+  struct HttpRequest {
+      char method[8];
+      char path[256];
+      char body[4096];
+      int content_length;
+  };
+
+  void handle_request(char* raw_request) {
+      HttpRequest req;
+      char log_msg[512];
+
+      sscanf(raw_request, "%s %s", req.method, req.path);
+      sprintf(log_msg, "Request: %s %s", req.method, req.path);
+      printf(log_msg);  // format string vuln!
+
+      char response[1024];
+      sprintf(response,
+              "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s",
+              req.content_length, req.body);
+      send_response(response);
+  }
+
+  Tu misión:
+  1. Identifica TODAS las vulnerabilidades (mínimo 8).
+  2. Para cada una, explica: CWE, impacto, exploitabilidad.
+  3. Reescribe handle_request en C++ moderno seguro.
+  4. Implementa una clase HttpRequest segura con validación.
+  5. Añade límites de tamaño, sanitización de path, etc.
+  6. Escribe tests que demuestren que las vulnerabilidades
+     están corregidas.
+
+  Criterios:
+  • Vulnerabilidades identificadas (30 pts)
+  • Correcciones correctas y completas (40 pts)
+  • Tests de seguridad (30 pts)
+
+  ¡La seguridad de millones de usuarios depende de ti!
+
+  Bonus: Intenta explotar una de las vulnerabilidades para
+  demostrar el impacto (en un entorno controlado).
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 76: Seguridad en C++.
+
+  Ahora entiendes que la seguridad no es una característica que se
+  añade al final, sino una propiedad que se diseña desde el inicio.
+  C++ moderno te da las herramientas: RAII, smart pointers,
+  contenedores seguros, type safety.
+
+  Úsalas. El código inseguro no es solo un bug, es una promesa
+  de problemas futuros.
+
+  En el próximo capítulo enfrentarás el Examen Profesional —
+  una evaluación integral de todo lo aprendido en los 8 módulos.
+
+  "La seguridad no es un producto, es un proceso."
+
+  ¡Nos vemos en el Capítulo 77!
+
+================================================================================
+  FIN DEL CAPÍTULO 76 — SEGURIDAD EN C++
+  PRÓXIMO CAPÍTULO: EXAMEN PROFESIONAL (Capítulo 77)
+================================================================================

@@ -1,0 +1,1500 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO I
+##
+##                       CAPÍTULO 10
+##
+##                PROYECTO DEL MÓDULO I
+##
+################################################################################
+################################################################################
+
+"Un proyecto no es solo código: es la materialización de todo lo que
+has aprendido. Este es tu primer vuelo sin redes."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante, hemos llegado al final del Módulo I. Has recorrido
+un camino extraordinario: empezaste sin saber qué era PHP y hoy
+conoces su sintaxis, variables, tipos de datos, operadores y buenas
+prácticas. Has instalado tu entorno, escrito decenas de programas y
+resuelto ejercicios prácticos.
+
+Ahora llega el momento de la verdad: el **Proyecto del Módulo I**.
+
+Este proyecto integrador pondrá a prueba todo lo que has aprendido.
+Construirás una aplicación web funcional desde cero: un **Sistema de
+Gestión de Tareas (Task Manager)** que incluya autenticación simulada,
+CRUD de tareas, búsqueda y filtros.
+
+No se trata solo de hacer que funcione; se trata de hacerlo bien:
+código limpio, buenas prácticas, seguridad básica y documentación.
+Este proyecto será tu carta de presentación al mundo PHP.
+
+¿Estás listo? ¡Manos a la obra!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"No temas al proyecto grande. Todo proyecto grande es solo una
+colección de pequeños pasos bien ejecutados."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Diseñar la arquitectura de una aplicación web PHP completa.
+✓ Implementar un sistema de autenticación simulada con sesiones.
+✓ Crear un CRUD (Crear, Leer, Actualizar, Eliminar) de tareas.
+✓ Usar archivos JSON como almacenamiento persistente.
+✓ Aplicar seguridad básica: XSS prevention, validación, sanitización.
+✓ Organizar el código siguiendo PSR-12 y buenas prácticas.
+✓ Documentar todas las funciones con PHPDoc.
+✓ Desplegar la aplicación en tu servidor local XAMPP/Laragon.
+
+===============================================================================
+1. DESCRIPCIÓN DEL PROYECTO
+===============================================================================
+
+Construiremos un **Task Manager** (Gestor de Tareas) con las siguientes
+características:
+
+- **Autenticación simulada**: Login/logout con usuarios predefinidos.
+- **Dashboard**: Resumen de tareas (total, completadas, pendientes).
+- **CRUD de tareas**: Crear, listar, editar, eliminar y marcar como
+  completada.
+- **Categorías**: Las tareas pueden tener categorías (Trabajo, Personal,
+  Estudio).
+- **Búsqueda y filtros**: Filtrar por categoría, estado y búsqueda por
+  texto.
+- **Persistencia**: Los datos se almacenan en un archivo JSON.
+- **Interfaz limpia**: HTML + CSS básico (sin frameworks).
+
+**Estructura del proyecto:**
+
+```
+task-manager/
+├── public/
+│   └── index.php          # Punto de entrada único (front controller)
+├── src/
+│   ├── auth.php           # Funciones de autenticación
+│   ├── tasks.php          # Funciones de gestión de tareas
+│   ├── storage.php        # Funciones de almacenamiento JSON
+│   └── helpers.php        # Funciones de utilería
+├── views/
+│   ├── login.view.php     # Pantalla de login
+│   ├── dashboard.view.php # Panel principal
+│   └── layout.view.php    # Plantilla base (header/footer)
+├── data/
+│   └── tasks.json         # Archivo de almacenamiento
+└── assets/
+    └── style.css          # Estilos CSS
+```
+
+===============================================================================
+2. PASO 1: ESTRUCTURA DEL PROYECTO Y CONFIGURACIÓN
+===============================================================================
+
+**2.1. Crear la estructura**
+
+```bash
+# Crea la estructura de directorios
+mkdir -p task-manager/{public,src,views,data,assets}
+touch task-manager/public/index.php
+touch task-manager/src/{auth.php,tasks.php,storage.php,helpers.php}
+touch task-manager/views/{login.view.php,dashboard.view.php,layout.view.php}
+touch task-manager/assets/style.css
+touch task-manager/data/tasks.json
+```
+
+**2.2. Inicializar el archivo JSON**
+
+```bash
+echo '{"users":[],"tasks":[]}' > task-manager/data/tasks.json
+```
+
+**2.3. Configuración inicial del proyecto**
+
+```php
+<?php
+// src/helpers.php
+declare(strict_types=1);
+
+/**
+ * Redirige a una URL y termina la ejecución.
+ *
+ * @param string $url URL de destino
+ */
+function redirect(string $url): never
+{
+    header("Location: $url");
+    exit;
+}
+
+/**
+ * Obtiene un valor seguro de $_GET o $_POST.
+ *
+ * @param string $key     Clave a buscar
+ * @param mixed  $default Valor por defecto si no existe
+ *
+ * @return mixed Valor sanitizado o default
+ */
+function input(string $key, mixed $default = null): mixed
+{
+    return $_GET[$key] ?? $_POST[$key] ?? $default;
+}
+
+/**
+ * Escapa HTML para prevenir XSS.
+ *
+ * @param string $value Texto a escapar
+ *
+ * @return string Texto escapado
+ */
+function esc(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+```
+
+===============================================================================
+3. PASO 2: SISTEMA DE ALMACENAMIENTO (JSON)
+===============================================================================
+
+**3.1. Funciones de almacenamiento**
+
+```php
+<?php
+// src/storage.php
+declare(strict_types=1);
+
+/**
+ * Lee el archivo JSON y retorna su contenido como array.
+ *
+ * @return array<string, mixed> Datos del archivo
+ */
+function leerDatos(): array
+{
+    $archivo = __DIR__ . '/../data/tasks.json';
+    if (!file_exists($archivo)) {
+        return ['users' => [], 'tasks' => []];
+    }
+    $contenido = file_get_contents($archivo);
+    if ($contenido === false) {
+        throw new RuntimeException("No se pudo leer el archivo de datos");
+    }
+    return json_decode($contenido, true) ?? ['users' => [], 'tasks' => []];
+}
+
+/**
+ * Guarda los datos en el archivo JSON.
+ *
+ * @param array<string, mixed> $datos Datos a guardar
+ */
+function guardarDatos(array $datos): void
+{
+    $archivo = __DIR__ . '/../data/tasks.json';
+    $json = json_encode(
+        $datos,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+    );
+    $bytes = file_put_contents($archivo, $json, LOCK_EX);
+    if ($bytes === false) {
+        throw new RuntimeException("No se pudo guardar el archivo de datos");
+    }
+}
+```
+
+**3.2. Inicialización de datos de prueba**
+
+```php
+<?php
+// Dentro de storage.php o un script de instalación
+
+/**
+ * Inicializa los datos de prueba si el archivo está vacío.
+ */
+function inicializarDatos(): void
+{
+    $datos = leerDatos();
+    if (!empty($datos['users'])) {
+        return; // Ya hay datos
+    }
+
+    $datos['users'] = [
+        [
+            'id' => 1,
+            'username' => 'admin',
+            'password' => password_hash('admin123', PASSWORD_BCRYPT),
+            'nombre' => 'Administrador',
+        ],
+        [
+            'id' => 2,
+            'username' => 'estudiante',
+            'password' => password_hash('php2024', PASSWORD_BCRYPT),
+            'nombre' => 'Estudiante PHP',
+        ],
+    ];
+
+    $datos['tasks'] = [
+        [
+            'id' => 1,
+            'user_id' => 1,
+            'titulo' => 'Completar el Módulo I',
+            'descripcion' => 'Terminar todos los capítulos y el proyecto',
+            'categoria' => 'Estudio',
+            'completada' => false,
+            'created_at' => date('Y-m-d H:i:s'),
+        ],
+    ];
+
+    guardarDatos($datos);
+}
+```
+
+===============================================================================
+4. PASO 3: SISTEMA DE AUTENTICACIÓN
+===============================================================================
+
+**4.1. Funciones de autenticación**
+
+```php
+<?php
+// src/auth.php
+declare(strict_types=1);
+
+require_once __DIR__ . '/storage.php';
+
+/**
+ * Inicia la sesión si no está activa.
+ */
+function iniciarSesion(): void
+{
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+}
+
+/**
+ * Verifica las credenciales del usuario.
+ *
+ * @param string $username Nombre de usuario
+ * @param string $password Contraseña sin encriptar
+ *
+ * @return array|null Datos del usuario o null si falla
+ */
+function login(string $username, string $password): ?array
+{
+    $datos = leerDatos();
+
+    foreach ($datos['users'] as $user) {
+        if (
+            $user['username'] === $username
+            && password_verify($password, $user['password'])
+        ) {
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['user_nombre'] = $user['nombre'];
+            return $user;
+        }
+    }
+    return null;
+}
+
+/**
+ * Cierra la sesión del usuario.
+ */
+function logout(): void
+{
+    iniciarSesion();
+    session_destroy();
+    setcookie(session_name(), '', time() - 3600, '/');
+}
+
+/**
+ * Verifica si el usuario está autenticado.
+ *
+ * @return bool True si está autenticado
+ */
+function estaAutenticado(): bool
+{
+    iniciarSesion();
+    return isset($_SESSION['user_id']);
+}
+
+/**
+ * Obtiene el ID del usuario autenticado.
+ *
+ * @return int|null ID del usuario o null si no está autenticado
+ */
+function usuarioId(): ?int
+{
+    iniciarSesion();
+    return $_SESSION['user_id'] ?? null;
+}
+```
+
+===============================================================================
+5. PASO 4: GESTIÓN DE TAREAS (CRUD)
+===============================================================================
+
+**5.1. Funciones del CRUD**
+
+```php
+<?php
+// src/tasks.php
+declare(strict_types=1);
+
+require_once __DIR__ . '/storage.php';
+
+/**
+ * Obtiene todas las tareas de un usuario.
+ *
+ * @param int      $userId    ID del usuario
+ * @param ?string  $categoria Filtro por categoría (opcional)
+ * @param ?bool    $completada Filtro por estado (opcional)
+ * @param ?string  $busqueda  Búsqueda por texto (opcional)
+ *
+ * @return array<int, array<string, mixed>> Lista de tareas
+ */
+function obtenerTareas(
+    int $userId,
+    ?string $categoria = null,
+    ?bool $completada = null,
+    ?string $busqueda = null
+): array {
+    $datos = leerDatos();
+    $tareas = array_filter(
+        $datos['tasks'],
+        fn(array $t): bool => $t['user_id'] === $userId
+    );
+
+    // Aplicar filtros
+    if ($categoria !== null && $categoria !== '') {
+        $tareas = array_filter(
+            $tareas,
+            fn(array $t): bool => $t['categoria'] === $categoria
+        );
+    }
+
+    if ($completada !== null) {
+        $tareas = array_filter(
+            $tareas,
+            fn(array $t): bool => $t['completada'] === $completada
+        );
+    }
+
+    if ($busqueda !== null && $busqueda !== '') {
+        $busqueda = mb_strtolower($busqueda);
+        $tareas = array_filter(
+            $tareas,
+            fn(array $t): bool =>
+                str_contains(mb_strtolower($t['titulo']), $busqueda)
+                || str_contains(mb_strtolower($t['descripcion']), $busqueda)
+        );
+    }
+
+    // Ordenar por fecha (más reciente primero)
+    usort(
+        $tareas,
+        fn(array $a, array $b): int => strtotime($b['created_at'])
+            <=> strtotime($a['created_at'])
+    );
+
+    return $tareas;
+}
+
+/**
+ * Crea una nueva tarea.
+ *
+ * @param int    $userId      ID del usuario
+ * @param string $titulo      Título de la tarea
+ * @param string $descripcion Descripción
+ * @param string $categoria   Categoría
+ *
+ * @return array<string, mixed> Tarea creada
+ */
+function crearTarea(
+    int $userId,
+    string $titulo,
+    string $descripcion,
+    string $categoria
+): array {
+    $datos = leerDatos();
+
+    $maxId = 0;
+    foreach ($datos['tasks'] as $tarea) {
+        if ($tarea['id'] > $maxId) {
+            $maxId = $tarea['id'];
+        }
+    }
+
+    $tarea = [
+        'id' => $maxId + 1,
+        'user_id' => $userId,
+        'titulo' => trim($titulo),
+        'descripcion' => trim($descripcion),
+        'categoria' => $categoria,
+        'completada' => false,
+        'created_at' => date('Y-m-d H:i:s'),
+    ];
+
+    $datos['tasks'][] = $tarea;
+    guardarDatos($datos);
+
+    return $tarea;
+}
+
+/**
+ * Actualiza una tarea existente.
+ *
+ * @param int    $tareaId     ID de la tarea
+ * @param int    $userId      ID del usuario (propietario)
+ * @param string $titulo      Nuevo título
+ * @param string $descripcion Nueva descripción
+ * @param string $categoria   Nueva categoría
+ *
+ * @return bool True si se actualizó correctamente
+ */
+function actualizarTarea(
+    int $tareaId,
+    int $userId,
+    string $titulo,
+    string $descripcion,
+    string $categoria
+): bool {
+    $datos = leerDatos();
+
+    foreach ($datos['tasks'] as &$tarea) {
+        if ($tarea['id'] === $tareaId && $tarea['user_id'] === $userId) {
+            $tarea['titulo'] = trim($titulo);
+            $tarea['descripcion'] = trim($descripcion);
+            $tarea['categoria'] = $categoria;
+            guardarDatos($datos);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Marca una tarea como completada o pendiente.
+ *
+ * @param int  $tareaId    ID de la tarea
+ * @param int  $userId     ID del usuario
+ * @param bool $completada Nuevo estado
+ *
+ * @return bool True si se actualizó correctamente
+ */
+function toggleTarea(int $tareaId, int $userId, bool $completada): bool
+{
+    $datos = leerDatos();
+
+    foreach ($datos['tasks'] as &$tarea) {
+        if ($tarea['id'] === $tareaId && $tarea['user_id'] === $userId) {
+            $tarea['completada'] = $completada;
+            guardarDatos($datos);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Elimina una tarea.
+ *
+ * @param int $tareaId ID de la tarea
+ * @param int $userId  ID del usuario
+ *
+ * @return bool True si se eliminó correctamente
+ */
+function eliminarTarea(int $tareaId, int $userId): bool
+{
+    $datos = leerDatos();
+
+    $indice = -1;
+    foreach ($datos['tasks'] as $i => $tarea) {
+        if ($tarea['id'] === $tareaId && $tarea['user_id'] === $userId) {
+            $indice = $i;
+            break;
+        }
+    }
+
+    if ($indice >= 0) {
+        array_splice($datos['tasks'], $indice, 1);
+        guardarDatos($datos);
+        return true;
+    }
+    return false;
+}
+```
+
+===============================================================================
+6. PASO 5: PUNTO DE ENTRADA ÚNICO (FRONT CONTROLLER)
+===============================================================================
+
+**6.1. index.php — El cerebro de la aplicación**
+
+```php
+<?php
+// public/index.php — Front Controller
+declare(strict_types=1);
+
+// Cargar archivos fuente
+require_once __DIR__ . '/../src/helpers.php';
+require_once __DIR__ . '/../src/auth.php';
+require_once __DIR__ . '/../src/storage.php';
+require_once __DIR__ . '/../src/tasks.php';
+
+// Iniciar sesión y datos
+iniciarSesion();
+inicializarDatos();
+
+// Determinar la acción solicitada
+$accion = input('accion', 'dashboard');
+
+// Enrutamiento básico
+match ($accion) {
+    'login' => manejarLogin(),
+    'logout' => manejarLogout(),
+    'crear' => manejarCrear(),
+    'editar' => manejarEditar(),
+    'toggle' => manejarToggle(),
+    'eliminar' => manejarEliminar(),
+    default => manejarDashboard(),
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// MANEJADORES DE ACCIONES
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Muestra el formulario de login o procesa el inicio de sesión.
+ */
+function manejarLogin(): void
+{
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $username = trim(input('username', ''));
+        $password = input('password', '');
+
+        if ($username === '' || $password === '') {
+            $error = 'Todos los campos son obligatorios';
+            renderizarVista('login', ['error' => $error]);
+            return;
+        }
+
+        $usuario = login($username, $password);
+        if ($usuario !== null) {
+            redirect('index.php?accion=dashboard');
+        }
+
+        renderizarVista('login', [
+            'error' => 'Usuario o contraseña incorrectos',
+            'username' => $username,
+        ]);
+        return;
+    }
+
+    renderizarVista('login');
+}
+
+/**
+ * Cierra la sesión y redirige al login.
+ */
+function manejarLogout(): void
+{
+    logout();
+    redirect('index.php?accion=login');
+}
+
+/**
+ * Muestra el dashboard con las tareas del usuario.
+ */
+function manejarDashboard(): void
+{
+    if (!estaAutenticado()) {
+        redirect('index.php?accion=login');
+    }
+
+    $userId = usuarioId();
+    $categoria = input('categoria');
+    $estado = input('estado');
+    $busqueda = input('busqueda');
+
+    $completada = match ($estado) {
+        'completadas' => true,
+        'pendientes' => false,
+        default => null,
+    };
+
+    $tareas = obtenerTareas($userId, $categoria, $completada, $busqueda);
+    $todasTareas = obtenerTareas($userId);
+
+    $total = count($todasTareas);
+    $completadas = count(array_filter(
+        $todasTareas,
+        fn(array $t): bool => $t['completada']
+    ));
+    $pendientes = $total - $completadas;
+
+    // Obtener categorías únicas
+    $categorias = array_unique(array_map(
+        fn(array $t): string => $t['categoria'],
+        $todasTareas
+    ));
+    sort($categorias);
+
+    renderizarVista('dashboard', [
+        'tareas' => $tareas,
+        'total' => $total,
+        'completadas' => $completadas,
+        'pendientes' => $pendientes,
+        'categorias' => $categorias,
+        'filtroCategoria' => $categoria,
+        'filtroEstado' => $estado,
+        'busqueda' => $busqueda,
+    ]);
+}
+
+/**
+ * Procesa la creación de una nueva tarea.
+ */
+function manejarCrear(): void
+{
+    if (!estaAutenticado()) {
+        redirect('index.php?accion=login');
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        redirect('index.php?accion=dashboard');
+    }
+
+    $userId = usuarioId();
+    $titulo = trim(input('titulo', ''));
+    $descripcion = trim(input('descripcion', ''));
+    $categoria = input('categoria', 'Personal');
+
+    if ($titulo === '') {
+        $_SESSION['error'] = 'El título es obligatorio';
+        redirect('index.php?accion=dashboard');
+    }
+
+    crearTarea($userId, $titulo, $descripcion, $categoria);
+    $_SESSION['exito'] = 'Tarea creada exitosamente';
+    redirect('index.php?accion=dashboard');
+}
+
+/**
+ * Procesa la edición de una tarea.
+ */
+function manejarEditar(): void
+{
+    if (!estaAutenticado()) {
+        redirect('index.php?accion=login');
+    }
+
+    $userId = usuarioId();
+    $tareaId = (int) input('id', 0);
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $titulo = trim(input('titulo', ''));
+        $descripcion = trim(input('descripcion', ''));
+        $categoria = input('categoria', 'Personal');
+
+        if ($titulo === '') {
+            $_SESSION['error'] = 'El título es obligatorio';
+            redirect("index.php?accion=editar&id=$tareaId");
+        }
+
+        if (actualizarTarea($tareaId, $userId, $titulo, $descripcion, $categoria)) {
+            $_SESSION['exito'] = 'Tarea actualizada';
+        } else {
+            $_SESSION['error'] = 'No se pudo actualizar la tarea';
+        }
+        redirect('index.php?accion=dashboard');
+    }
+
+    // Mostrar formulario de edición
+    $tareas = obtenerTareas($userId);
+    $tarea = null;
+    foreach ($tareas as $t) {
+        if ($t['id'] === $tareaId) {
+            $tarea = $t;
+            break;
+        }
+    }
+
+    if ($tarea === null) {
+        $_SESSION['error'] = 'Tarea no encontrada';
+        redirect('index.php?accion=dashboard');
+    }
+
+    renderizarVista('editar', ['tarea' => $tarea]);
+}
+
+/**
+ * Marca/desmarca una tarea como completada.
+ */
+function manejarToggle(): void
+{
+    if (!estaAutenticado()) {
+        redirect('index.php?accion=login');
+    }
+
+    $userId = usuarioId();
+    $tareaId = (int) input('id', 0);
+    $completada = input('estado') === '1';
+
+    toggleTarea($tareaId, $userId, $completada);
+    redirect('index.php?accion=dashboard');
+}
+
+/**
+ * Elimina una tarea.
+ */
+function manejarEliminar(): void
+{
+    if (!estaAutenticado()) {
+        redirect('index.php?accion=login');
+    }
+
+    $userId = usuarioId();
+    $tareaId = (int) input('id', 0);
+
+    if (eliminarTarea($tareaId, $userId)) {
+        $_SESSION['exito'] = 'Tarea eliminada';
+    } else {
+        $_SESSION['error'] = 'No se pudo eliminar la tarea';
+    }
+    redirect('index.php?accion=dashboard');
+}
+
+/**
+ * Renderiza una vista dentro del layout base.
+ *
+ * @param string $nombre Nombre del archivo de vista
+ * @param array  $datos  Datos para pasar a la vista
+ */
+function renderizarVista(string $nombre, array $datos = []): void
+{
+    extract($datos);
+    include __DIR__ . '/../views/layout.view.php';
+}
+```
+
+===============================================================================
+7. PASO 6: VISTAS (LAYOUT, LOGIN, DASHBOARD)
+===============================================================================
+
+**7.1. Layout base (layout.view.php)**
+
+```php
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager — PHP Master Book</title>
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <h1 class="site-title">📋 Task Manager</h1>
+            <p class="site-subtitle">Proyecto del Módulo I — PHP Master Book</p>
+        </div>
+    </header>
+
+    <main class="container">
+        <?php if (isset($_SESSION['exito'])): ?>
+            <div class="alert alert-success">
+                <?= esc($_SESSION['exito']) ?>
+            </div>
+            <?php unset($_SESSION['exito']); ?>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger">
+                <?= esc($_SESSION['error']) ?>
+            </div>
+            <?php unset($_SESSION['error']); ?>
+        <?php endif; ?>
+
+        <?php
+        $archivoVista = __DIR__ . "/$nombre.view.php";
+        if (file_exists($archivoVista)) {
+            include $archivoVista;
+        } else {
+            echo "<p class='error'>Vista '$nombre' no encontrada.</p>";
+        }
+        ?>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <p>&copy; <?= date('Y') ?> — PHP Master Book | Lucas EGA Academy</p>
+        </div>
+    </footer>
+</body>
+</html>
+```
+
+**7.2. Vista de Login (login.view.php)**
+
+```php
+<div class="login-form">
+    <h2>Iniciar Sesión</h2>
+
+    <?php if (isset($error)): ?>
+        <div class="alert alert-danger"><?= esc($error) ?></div>
+    <?php endif; ?>
+
+    <form method="POST" action="index.php?accion=login">
+        <div class="form-group">
+            <label for="username">Usuario:</label>
+            <input
+                type="text"
+                id="username"
+                name="username"
+                value="<?= esc($username ?? '') ?>"
+                required
+                autofocus
+            >
+        </div>
+        <div class="form-group">
+            <label for="password">Contraseña:</label>
+            <input
+                type="password"
+                id="password"
+                name="password"
+                required
+            >
+        </div>
+        <button type="submit" class="btn btn-primary">Ingresar</button>
+    </form>
+
+    <div class="login-hint">
+        <p><strong>Usuarios de prueba:</strong></p>
+        <p>admin / admin123</p>
+        <p>estudiante / php2024</p>
+    </div>
+</div>
+```
+
+**7.3. Vista de Dashboard (dashboard.view.php)**
+
+```php
+<?php if (estaAutenticado()): ?>
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h2>Bienvenido, <?= esc($_SESSION['user_nombre'] ?? 'Usuario') ?></h2>
+        <a href="index.php?accion=logout" class="btn btn-secondary">Cerrar Sesión</a>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <span class="stat-number"><?= $total ?></span>
+            <span class="stat-label">Total</span>
+        </div>
+        <div class="stat-card stat-completed">
+            <span class="stat-number"><?= $completadas ?></span>
+            <span class="stat-label">Completadas</span>
+        </div>
+        <div class="stat-card stat-pending">
+            <span class="stat-number"><?= $pendientes ?></span>
+            <span class="stat-label">Pendientes</span>
+        </div>
+    </div>
+
+    <div class="actions-bar">
+        <button class="btn btn-primary" onclick="toggleForm()">+ Nueva Tarea</button>
+    </div>
+
+    <form method="POST" action="index.php?accion=crear" class="task-form" id="taskForm" style="display:none">
+        <h3>Crear Nueva Tarea</h3>
+        <div class="form-group">
+            <label for="titulo">Título:</label>
+            <input type="text" id="titulo" name="titulo" required>
+        </div>
+        <div class="form-group">
+            <label for="descripcion">Descripción:</label>
+            <textarea id="descripcion" name="descripcion" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="categoria">Categoría:</label>
+            <select id="categoria" name="categoria">
+                <option value="Trabajo">Trabajo</option>
+                <option value="Personal" selected>Personal</option>
+                <option value="Estudio">Estudio</option>
+                <option value="Salud">Salud</option>
+                <option value="Finanzas">Finanzas</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-success">Guardar Tarea</button>
+        <button type="button" class="btn btn-secondary" onclick="toggleForm()">Cancelar</button>
+    </form>
+
+    <div class="filters">
+        <form method="GET" action="index.php" class="filter-form">
+            <input type="hidden" name="accion" value="dashboard">
+            <div class="filter-group">
+                <label for="busqueda">Buscar:</label>
+                <input type="text" id="busqueda" name="busqueda"
+                       value="<?= esc($busqueda ?? '') ?>"
+                       placeholder="Buscar tareas...">
+            </div>
+            <div class="filter-group">
+                <label for="categoria">Categoría:</label>
+                <select id="categoria" name="categoria">
+                    <option value="">Todas</option>
+                    <?php foreach ($categorias as $cat): ?>
+                        <option value="<?= esc($cat) ?>"
+                            <?= ($filtroCategoria ?? '') === $cat ? 'selected' : '' ?>>
+                            <?= esc($cat) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="estado">Estado:</label>
+                <select id="estado" name="estado">
+                    <option value="">Todos</option>
+                    <option value="pendientes" <?= ($filtroEstado ?? '') === 'pendientes' ? 'selected' : '' ?>>
+                        Pendientes
+                    </option>
+                    <option value="completadas" <?= ($filtroEstado ?? '') === 'completadas' ? 'selected' : '' ?>>
+                        Completadas
+                    </option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-filter">Filtrar</button>
+            <a href="index.php?accion=dashboard" class="btn btn-clear">Limpiar</a>
+        </form>
+    </div>
+
+    <div class="task-list">
+        <?php if (empty($tareas)): ?>
+            <p class="empty-state">
+                🎉 No hay tareas que mostrar.
+                ¡Crea tu primera tarea!
+            </p>
+        <?php else: ?>
+            <?php foreach ($tareas as $tarea): ?>
+                <div class="task-item <?= $tarea['completada'] ? 'completed' : '' ?>">
+                    <div class="task-content">
+                        <h4>
+                            <a href="index.php?accion=toggle&id=<?= $tarea['id'] ?>&estado=<?= $tarea['completada'] ? '0' : '1' ?>"
+                               class="toggle-btn"
+                               title="Marcar como <?= $tarea['completada'] ? 'pendiente' : 'completada' ?>">
+                                <?= $tarea['completada'] ? '✅' : '⬜' ?>
+                            </a>
+                            <?= esc($tarea['titulo']) ?>
+                        </h4>
+                        <p class="task-desc"><?= esc($tarea['descripcion']) ?></p>
+                        <div class="task-meta">
+                            <span class="badge badge-<?= esc($tarea['categoria']) ?>">
+                                <?= esc($tarea['categoria']) ?>
+                            </span>
+                            <span class="task-date">
+                                <?= date('d/m/Y H:i', strtotime($tarea['created_at'])) ?>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="task-actions">
+                        <a href="index.php?accion=editar&id=<?= $tarea['id'] ?>"
+                           class="btn btn-small btn-edit">✏️</a>
+                        <a href="index.php?accion=eliminar&id=<?= $tarea['id'] ?>"
+                           class="btn btn-small btn-delete"
+                           onclick="return confirm('¿Eliminar esta tarea?')">🗑️</a>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
+    </div>
+</div>
+
+<script>
+function toggleForm() {
+    const form = document.getElementById('taskForm');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+<?php endif; ?>
+```
+
+**7.4. Vista de Edición (editar.view.php)**
+
+```php
+<div class="edit-form">
+    <h2>Editar Tarea</h2>
+    <form method="POST" action="index.php?accion=editar&id=<?= $tarea['id'] ?>">
+        <div class="form-group">
+            <label for="titulo">Título:</label>
+            <input
+                type="text"
+                id="titulo"
+                name="titulo"
+                value="<?= esc($tarea['titulo']) ?>"
+                required
+            >
+        </div>
+        <div class="form-group">
+            <label for="descripcion">Descripción:</label>
+            <textarea id="descripcion" name="descripcion" rows="4"><?= esc($tarea['descripcion']) ?></textarea>
+        </div>
+        <div class="form-group">
+            <label for="categoria">Categoría:</label>
+            <select id="categoria" name="categoria">
+                <option value="Trabajo" <?= $tarea['categoria'] === 'Trabajo' ? 'selected' : '' ?>>Trabajo</option>
+                <option value="Personal" <?= $tarea['categoria'] === 'Personal' ? 'selected' : '' ?>>Personal</option>
+                <option value="Estudio" <?= $tarea['categoria'] === 'Estudio' ? 'selected' : '' ?>>Estudio</option>
+                <option value="Salud" <?= $tarea['categoria'] === 'Salud' ? 'selected' : '' ?>>Salud</option>
+                <option value="Finanzas" <?= $tarea['categoria'] === 'Finanzas' ? 'selected' : '' ?>>Finanzas</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Actualizar</button>
+        <a href="index.php?accion=dashboard" class="btn btn-secondary">Cancelar</a>
+    </form>
+</div>
+```
+
+===============================================================================
+8. PASO 7: ESTILOS CSS (style.css)
+===============================================================================
+
+```css
+/* assets/style.css — Estilos del Task Manager */
+
+:root {
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --success: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --text: #1e293b;
+    --text-light: #64748b;
+    --border: #e2e8f0;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.container { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+/* Header */
+.site-header {
+    background: linear-gradient(135deg, var(--primary), #7c3aed);
+    color: white;
+    text-align: center;
+    padding: 30px 0;
+}
+.site-title { font-size: 2em; margin-bottom: 5px; }
+.site-subtitle { opacity: 0.9; font-size: 1em; }
+
+/* Footer */
+.site-footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-light);
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+}
+
+/* Alerts */
+.alert {
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+}
+.alert-success { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+.alert-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+
+/* Forms */
+.form-group { margin-bottom: 15px; }
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    font-size: 0.9em;
+}
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 1em;
+    transition: border-color 0.2s;
+}
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+/* Buttons */
+.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9em;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s, transform 0.1s;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-secondary { background: #e2e8f0; color: var(--text); }
+.btn-secondary:hover { background: #cbd5e1; }
+.btn-success { background: var(--success); color: white; }
+.btn-success:hover { background: #059669; }
+.btn-filter { background: var(--primary); color: white; }
+.btn-clear { background: #f1f5f9; color: var(--text); }
+.btn-small { padding: 5px 10px; font-size: 0.8em; }
+.btn-edit { background: var(--warning); color: white; }
+.btn-delete { background: var(--danger); color: white; }
+
+/* Login */
+.login-form {
+    max-width: 400px;
+    margin: 40px auto;
+    padding: 30px;
+    background: var(--card);
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+.login-form h2 { margin-bottom: 20px; text-align: center; }
+.login-hint {
+    margin-top: 20px;
+    padding: 12px;
+    background: #f1f5f9;
+    border-radius: 6px;
+    font-size: 0.85em;
+}
+
+/* Dashboard */
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+.stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 25px;
+}
+.stat-card {
+    background: var(--card);
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.stat-number { font-size: 2em; font-weight: 700; display: block; }
+.stat-label { font-size: 0.85em; color: var(--text-light); }
+.stat-completed .stat-number { color: var(--success); }
+.stat-pending .stat-number { color: var(--warning); }
+
+.actions-bar { margin-bottom: 20px; }
+
+.task-form {
+    background: var(--card);
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.task-form h3 { margin-bottom: 15px; }
+
+/* Filters */
+.filters {
+    background: var(--card);
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.filter-form {
+    display: flex;
+    gap: 15px;
+    align-items: end;
+    flex-wrap: wrap;
+}
+.filter-group { flex: 1; min-width: 150px; }
+.filter-group label {
+    font-size: 0.8em;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 3px;
+}
+.filter-group input,
+.filter-group select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9em;
+}
+
+/* Task List */
+.task-list { margin-top: 10px; }
+.task-item {
+    background: var(--card);
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    transition: box-shadow 0.2s;
+}
+.task-item:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+.task-item.completed {
+    opacity: 0.7;
+}
+.task-item.completed h4 { text-decoration: line-through; }
+.task-content { flex: 1; }
+.task-content h4 { margin-bottom: 5px; font-size: 1.1em; }
+.task-desc { color: var(--text-light); font-size: 0.9em; margin-bottom: 8px; }
+.task-meta { display: flex; gap: 10px; align-items: center; }
+.task-date { font-size: 0.8em; color: var(--text-light); }
+.task-actions { display: flex; gap: 5px; margin-left: 15px; }
+
+.toggle-btn { text-decoration: none; margin-right: 8px; }
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75em;
+    font-weight: 600;
+}
+.badge-Trabajo { background: #dbeafe; color: #1e40af; }
+.badge-Personal { background: #fce7f3; color: #9d174d; }
+.badge-Estudio { background: #d1fae5; color: #065f46; }
+.badge-Salud { background: #dcfce7; color: #166534; }
+.badge-Finanzas { background: #fef3c7; color: #92400e; }
+
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-light);
+    font-size: 1.1em;
+}
+
+/* Edit form */
+.edit-form {
+    max-width: 600px;
+    margin: 20px auto;
+    background: var(--card);
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+.edit-form h2 { margin-bottom: 20px; }
+
+/* Responsive */
+@media (max-width: 600px) {
+    .stats { grid-template-columns: 1fr; }
+    .filter-form { flex-direction: column; }
+    .filter-group { min-width: 100%; }
+    .task-item { flex-direction: column; }
+    .task-actions { margin-left: 0; margin-top: 10px; }
+}
+```
+
+===============================================================================
+9. CÓMO EJECUTAR EL PROYECTO
+===============================================================================
+
+Sigue estos pasos para poner en marcha tu Task Manager:
+
+**9.1. Copiar los archivos**
+
+Copia la carpeta `task-manager` dentro de `htdocs` (XAMPP) o `www`
+(Laragon):
+
+```bash
+# En XAMPP (Linux)
+sudo cp -r task-manager /opt/lampp/htdocs/
+
+# En XAMPP (Windows)
+# Copia la carpeta a C:\xampp\htdocs\task-manager\
+```
+
+**9.2. Dar permisos al archivo de datos**
+
+```bash
+chmod 666 task-manager/data/tasks.json
+```
+
+**9.3. Acceder desde el navegador**
+
+Abre tu navegador y visita:
+```
+http://localhost/task-manager/public/index.php
+```
+
+**9.4. Iniciar sesión**
+
+Usa las credenciales de prueba:
+- **admin** / admin123
+- **estudiante** / php2024
+
+**9.5. Probar funcionalidades**
+
+- Crear tareas con título, descripción y categoría.
+- Filtrar por categoría y estado.
+- Buscar tareas por texto.
+- Marcar tareas como completadas/pendientes.
+- Editar y eliminar tareas.
+- Cerrar sesión y volver a iniciar.
+
+===============================================================================
+10. CRITERIOS DE EVALUACIÓN DEL PROYECTO
+===============================================================================
+
+Antes de dar por terminado el proyecto, verifica que cumples con:
+
+| Criterio | Descripción |
+|----------|-------------|
+| Funcionalidad | CRUD completo, login/logout, filtros y búsqueda |
+| Código limpio | PSR-12, indentación consistente, sin código muerto |
+| Seguridad | htmlspecialchars(), password_hash(), LOCK_EX |
+| PHPDoc | Todas las funciones documentadas |
+| Sin extract/global/eval | No usar estas malas prácticas |
+| Sin números mágicos | Constantes o variables descriptivas |
+| Manejo de errores | Alertas visuales para errores y éxito |
+| UX | Formularios con feedback, confirmación para eliminar |
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El proyecto integrador consolida todos los temas del Módulo I.
+- Se construyó un Task Manager con autenticación simulada y CRUD completo.
+- El almacenamiento en JSON es una alternativa ligera a bases de datos.
+- El Front Controller es el patrón de entrada único para toda la app.
+- Las vistas se separaron de la lógica (MVC básico).
+- Se aplicaron buenas prácticas: PSR-12, PHPDoc, seguridad y validación.
+- El proyecto está listo para ejecutarse en XAMPP o Laragon.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Agrega una nueva categoría "Viajes" y crea al menos
+3 tareas de ejemplo en ella.
+
+🧩 **Ejercicio 2:** Implementa la funcionalidad de "prioridad" para las
+tareas (baja, media, alta). Las tareas de alta prioridad deben
+mostrarse primero en la lista.
+
+🧩 **Ejercicio 3:** Agrega paginación al listado de tareas (5 tareas
+por página). El front controller debe manejar el parámetro `pagina`.
+
+🧩 **Ejercicio 4:** Crea un archivo `install.php` que verifique los
+requisitos mínimos (PHP 8.0+, extensiones json, fileinfo) y cree la
+estructura de directorios si no existe.
+
+🧩 **Ejercicio 5:** Escribe 5 pruebas unitarias con PHPUnit para las
+funciones del CRUD (puedes simular el almacenamiento con un array en
+memoria).
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usamos JSON en lugar de MySQL?**
+Para mantener el proyecto autónomo y no requerir instalación de base de
+datos. En el Módulo III migraremos a MySQL.
+
+❓ **¿Es seguro almacenar contraseñas con password_hash()?**
+Sí, bcrypt (el algoritmo por defecto) es seguro y resistente a ataques
+de fuerza bruta.
+
+❓ **¿Por qué el Front Controller redirige siempre a index.php?**
+Es el patrón de diseño que centraliza todas las peticiones, facilitando
+el mantenimiento y la seguridad.
+
+❓ **¿Puedo agregar más funcionalidades al proyecto?**
+¡Claro! Este proyecto es tu base. Puedes agregar usuarios registrados,
+comentarios, fechas límite, etc.
+
+❓ **¿Debo borrar el proyecto después de la evaluación?**
+No. Este proyecto crecerá contigo a lo largo del libro. En módulos
+posteriores lo migraremos a Laravel y le agregaremos funcionalidades.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto de Sistemas** — El proyecto actual almacena datos en
+JSON, lo cual no escala. Diseña una arquitectura para migrar Task
+Manager a una base de datos MySQL con las siguientes características:
+
+1. **Modelo de datos**: Diseña el diagrama entidad-relación (ER) con
+   tablas: users, tasks, categories, task_tags.
+2. **Capa de abstracción**: Diseña una interfaz `TaskRepositoryInterface`
+   que permita cambiar entre almacenamiento JSON y MySQL sin modificar
+   la lógica de negocio.
+3. **Migración**: Escribe el script SQL para crear las tablas y las
+   consultas para las operaciones CRUD.
+4. **Seguridad**: Diseña cómo implementarías prepared statements para
+   prevenir SQL injection.
+5. **Rendimiento**: Propón índices, caché con Redis y cómo manejarías
+   100,000 tareas concurrentes.
+
+Este desafío te prepara para los módulos avanzados donde
+implementaremos esta migración.
+
+===============================================================================
+CIERRE DEL MÓDULO I
+===============================================================================
+
+"Has completado el Módulo I. No es solo un logro técnico; es la
+demostración de que puedes aprender, construir y crear. El camino
+recién comienza."
+
+"Un maestro no nace sabiendo; se forja línea a línea, error a error,
+proyecto a proyecto. Tú ya estás en ese camino."
+                              — Profesor Búho AI
+
+===============================================================================
+FIN DEL CAPÍTULO 10
+===============================================================================
+
+¿Te entrego el **Capítulo 11** ahora mismo? Dime "**Sí**" y continuamos. 🦉📘🚀
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+Continuará con el MÓDULO II — ESTRUCTURAS DE CONTROL Y FUNCIONES
+===============================================================================

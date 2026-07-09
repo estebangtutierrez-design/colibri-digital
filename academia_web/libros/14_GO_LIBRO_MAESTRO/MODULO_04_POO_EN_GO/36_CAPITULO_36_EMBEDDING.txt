@@ -1,0 +1,1091 @@
+===============================================================================
+  GO MASTER BOOK — MODULO IV: POO EN GO
+  CAPITULO 36: EMBEDDING (COMPOSICION)
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capitulo 36. Hasta ahora hemos visto metodos, interfaces
+y type assertion. Pero Go no tiene herencia de clases como Java o C++.
+
+Entonces, como reutilizamos codigo?
+
+La respuesta es EMBEDDING (incrustacion o composicion). En lugar de
+"es un" (herencia), Go usa "tiene un" (composicion).
+
+Con embedding puedes incrustar un tipo dentro de otro, y los campos
+y metodos del tipo incrustado se "promocionan" al tipo contenedor.
+
+Esto permite reutilizar comportamiento sin crear jerarquias rigidas.
+Es mas flexible, mas seguro y mas facil de mantener que la herencia.
+
+Vamos a descubrir por que la composicion es superior.
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"La herencia te dice que eres. La composicion te dice que tienes.
+Y en Go, tener es mejor que ser."
+
+  - E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Entender el concepto de embedding de structs en Go.
+  * Dominar la promocion de campos y metodos.
+  * Diferenciar embedding de herencia.
+  * Usar embedding de interfaces.
+  * Resolver conflictos de nombres en embedding.
+  * Aplicar composicion para disenar jerarquias planas.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPITULO
+--------------------------------------------------------------------------------
+
+--- 1. QUE ES EMBEDDING? -----------------------------------------------------
+
+Embedding es la accion de incrustar un tipo dentro de otro SIN darle
+un nombre de campo.
+
+Sintaxis:
+
+    type Contenedor struct {
+        Incrustado  // sin nombre de campo
+        Propio string
+    }
+
+El tipo Incrustado "asciende" sus campos y metodos a Contenedor.
+
+--- 2. PRIMER EJEMPLO: EMBEDDING DE STRUCT -----------------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Direccion struct {
+    Calle    string
+    Numero   int
+    Ciudad   string
+}
+
+func (d Direccion) Completa() string {
+    return fmt.Sprintf("%s %d, %s", d.Calle, d.Numero, d.Ciudad)
+}
+
+// Persona embebe Direccion
+type Persona struct {
+    Nombre    string
+    Direccion // embedding
+}
+
+func main() {
+    p := Persona{
+        Nombre: "Lucas",
+        Direccion: Direccion{
+            Calle:  "Av. Siempre Viva",
+            Numero: 742,
+            Ciudad: "Springfield",
+        },
+    }
+
+    // Acceso directo a campos promocionados
+    fmt.Println("Calle:", p.Calle)       // promocionado
+    fmt.Println("Ciudad:", p.Ciudad)     // promocionado
+
+    // Acceso explicito
+    fmt.Println("Dir:", p.Direccion.Completa())
+
+    // Metodo promocionado
+    fmt.Println("Completa:", p.Completa())
+}
+--------------------------------------------------------------------------------
+
+--- 3. PROMOCION DE CAMPOS ---------------------------------------------------
+
+Los campos del tipo embebido se promocionan al tipo contenedor.
+Puedes acceder a ellos directamente:
+
+    p.Calle       // en lugar de p.Direccion.Calle
+    p.Numero      // en lugar de p.Direccion.Numero
+
+La promocion es transitiva: si A embebe B y B embebe C, los campos
+de C se promocionan a A.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Color struct {
+    Hex string
+}
+
+type Rueda struct {
+    Color
+    Diametro int
+}
+
+type Coche struct {
+    Rueda
+    Marca string
+}
+
+func main() {
+    c := Coche{
+        Marca: "Tesla",
+        Rueda: Rueda{
+            Diametro: 18,
+            Color:    Color{Hex: "#FF0000"},
+        },
+    }
+
+    // Acceso transitivo
+    fmt.Println("Marca:", c.Marca)
+    fmt.Println("Diametro:", c.Diametro)
+    fmt.Println("Color Hex:", c.Hex)
+}
+--------------------------------------------------------------------------------
+
+--- 4. PROMOCION DE METODOS --------------------------------------------------
+
+Los metodos del tipo embebido tambien se promocionan:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Animal struct {
+    Nombre string
+}
+
+func (a Animal) Saludar() string {
+    return "Soy " + a.Nombre
+}
+
+type Perro struct {
+    Animal
+    Raza string
+}
+
+func main() {
+    p := Perro{
+        Animal: Animal{Nombre: "Rex"},
+        Raza:   "Pastor Aleman",
+    }
+
+    // Metodo promocionado desde Animal
+    fmt.Println(p.Saludar())
+
+    // Tambien funciona con puntero
+    p2 := &Perro{Animal: Animal{Nombre: "Bobby"}, Raza: "Chihuahua"}
+    fmt.Println(p2.Saludar())
+}
+--------------------------------------------------------------------------------
+
+--- 5. EMBEDDING VS HERENCIA: DIFERENCIAS CLAVE ------------------------------
+
++---------------------------+----------------------------+----------------------------+
+| Caracteristica            | Herencia (Java, C++)       | Embedding (Go)             |
++---------------------------+----------------------------+----------------------------+
+| Relacion                  | "es un"                    | "tiene un"                 |
+| Acceso a metodos          | Automatico (override)      | Promocion (puede ocultar)  |
+| Polimorfismo              | Virtual dispatch           | Interfaces                |
+| Constructor               | Cadena de super()          | Inicializacion explicita   |
+| Multiple                  | No (diamond problem)       | Si (sin conflicto usual)   |
+| Acoplamiento              | Fuerte (jerarquia rigida)  | Debil (composicion)        |
+| Facilidad de testing      | Dificil (herencia profunda)| Facil (inyeccion)          |
++---------------------------+----------------------------+----------------------------+
+
+--- 6. OCULTAR (SHADOWING) CAMPOS Y METODOS ----------------------------------
+
+Si el tipo contenedor tiene un campo o metodo con el mismo nombre que
+el tipo embebido, el campo/metodo del contenedor OCULTA al embebido.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Base struct {
+    Valor int
+}
+
+func (b Base) Mostrar() string {
+    return fmt.Sprintf("Base.Valor=%d", b.Valor)
+}
+
+type Derivado struct {
+    Base
+    Valor int // oculta Base.Valor
+}
+
+func (d Derivado) Mostrar() string {
+    return fmt.Sprintf("Derivado.Valor=%d, Base.Valor=%d", d.Valor, d.Base.Valor)
+}
+
+func main() {
+    d := Derivado{
+        Base:  Base{Valor: 100},
+        Valor: 200,
+    }
+
+    fmt.Println(d.Mostrar())
+    fmt.Println(d.Base.Mostrar())
+    fmt.Println("d.Valor:", d.Valor)
+    fmt.Println("d.Base.Valor:", d.Base.Valor)
+}
+--------------------------------------------------------------------------------
+
+--- 7. EMBEDDING CON PUNTEROS ------------------------------------------------
+
+Puedes embeber punteros a tipos:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Logger struct {
+    prefijo string
+}
+
+func (l *Logger) Log(mensaje string) {
+    if l != nil {
+        fmt.Printf("[%s] %s\n", l.prefijo, mensaje)
+    }
+}
+
+type Servicio struct {
+    *Logger // embedding de puntero
+    Nombre  string
+}
+
+func main() {
+    svc := Servicio{
+        Logger: &Logger{prefijo: "API"},
+        Nombre: "Usuarios",
+    }
+
+    svc.Log("Servicio iniciado")   // [API] Servicio iniciado
+    svc.Log("Conexion establecida")
+
+    // Servicio con Logger nil
+    svc2 := Servicio{Nombre: "Test"}
+    svc2.Log("Esto no falla") // Logger es nil, pero el metodo lo maneja
+}
+--------------------------------------------------------------------------------
+
+--- 8. EMBEDDING DE INTERFACES -----------------------------------------------
+
+Las interfaces tambien soportan embedding. Una interfaz puede embeber
+otra interfaz:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "io"
+)
+
+type LectorEscritor interface {
+    io.Reader
+    io.Writer
+}
+
+type Buffer struct {
+    datos []byte
+    pos   int
+}
+
+func (b *Buffer) Read(p []byte) (int, error) {
+    if b.pos >= len(b.datos) {
+        return 0, io.EOF
+    }
+    n := copy(p, b.datos[b.pos:])
+    b.pos += n
+    return n, nil
+}
+
+func (b *Buffer) Write(p []byte) (int, error) {
+    b.datos = append(b.datos, p...)
+    return len(p), nil
+}
+
+func main() {
+    var rw LectorEscritor = &Buffer{}
+
+    rw.Write([]byte("Hola mundo"))
+    rw.Write([]byte(" desde Go"))
+
+    datos := make([]byte, 20)
+    n, _ := rw.Read(datos)
+    fmt.Printf("Leido: %s\n", string(datos[:n]))
+}
+--------------------------------------------------------------------------------
+
+--- 9. EMBEDDING MULTIPLE ----------------------------------------------------
+
+Go permite embeber MULTIPLES tipos al mismo tiempo:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Camara struct{}
+
+func (c Camara) Fotografiar() string {
+    return "Foto tomada"
+}
+
+type GPS struct{}
+
+func (g GPS) Localizar() string {
+    return "Coordenadas: 40.4168, -3.7038"
+}
+
+type Telefono struct {
+    Camara
+    GPS
+    Marca string
+}
+
+func main() {
+    t := Telefono{Marca: "iPhone"}
+
+    // Metodos de ambos tipos embebidos
+    fmt.Println(t.Fotografiar())
+    fmt.Println(t.Localizar())
+    fmt.Println("Marca:", t.Marca)
+}
+--------------------------------------------------------------------------------
+
+--- 10. CONFLICTOS CON EMBEDDING MULTIPLE ------------------------------------
+
+Si dos tipos embebidos tienen un campo o metodo con el mismo nombre,
+hay conflicto y debes usar el acceso explicito.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type A struct {
+    Valor int
+}
+
+func (a A) Mostrar() string { return "A" }
+
+type B struct {
+    Valor int
+}
+
+func (b B) Mostrar() string { return "B" }
+
+type C struct {
+    A
+    B
+}
+
+func main() {
+    c := C{}
+    c.A.Valor = 1
+    c.B.Valor = 2
+
+    // fmt.Println(c.Valor)  // AMBIGUO: no compila
+    fmt.Println("A.Valor:", c.A.Valor)
+    fmt.Println("B.Valor:", c.B.Valor)
+    fmt.Println("A.Mostrar:", c.A.Mostrar())
+    fmt.Println("B.Mostrar:", c.B.Mostrar())
+}
+--------------------------------------------------------------------------------
+
+--- 11. EMBEDDING PARA EXTENDER TIPOS DE STDLIB ------------------------------
+
+Puedes usar embedding para extender tipos existentes:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "bytes"
+    "fmt"
+)
+
+type BufferMayusculas struct {
+    bytes.Buffer
+}
+
+func (b *BufferMayusculas) Write(p []byte) (int, error) {
+    // Convertir a mayusculas antes de escribir
+    mayus := make([]byte, len(p))
+    for i, c := range p {
+        if c >= 'a' && c <= 'z' {
+            mayus[i] = c - 32
+        } else {
+            mayus[i] = c
+        }
+    }
+    return b.Buffer.Write(mayus)
+}
+
+func (b *BufferMayusculas) EscribirTexto(texto string) {
+    b.WriteString(texto) // metodo promocionado de bytes.Buffer
+}
+
+func main() {
+    buf := &BufferMayusculas{}
+    buf.EscribirTexto("Hola Mundo")
+    fmt.Println(buf.String())
+}
+--------------------------------------------------------------------------------
+
+--- 12. EMBEDDING PARA DELEGACION --------------------------------------------
+
+Embedding permite delegar responsabilidades:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Notificador interface {
+    Enviar(mensaje string) error
+}
+
+type EmailNotificador struct {
+    Email string
+}
+
+func (e *EmailNotificador) Enviar(mensaje string) error {
+    fmt.Printf("Email a %s: %s\n", e.Email, mensaje)
+    return nil
+}
+
+type SMSNotificador struct {
+    Telefono string
+}
+
+func (s *SMSNotificador) Enviar(mensaje string) error {
+    fmt.Printf("SMS a %s: %s\n", s.Telefono, mensaje)
+    return nil
+}
+
+// Usuario embebe un Notificador
+type Usuario struct {
+    Nombre      string
+    Notificador // interfaz embebida
+}
+
+func (u Usuario) Alertar(mensaje string) {
+    u.Enviar(fmt.Sprintf("%s: %s", u.Nombre, mensaje))
+}
+
+func main() {
+    emailUser := Usuario{
+        Nombre:      "Lucas",
+        Notificador: &EmailNotificador{Email: "lucas@example.com"},
+    }
+    emailUser.Alertar("Bienvenido al sistema")
+
+    smsUser := Usuario{
+        Nombre:      "Ana",
+        Notificador: &SMSNotificador{Telefono: "+123456789"},
+    }
+    smsUser.Alertar("Tu codigo es 1234")
+}
+--------------------------------------------------------------------------------
+
+--- 13. PATRON: EMBEDDING PARA WRAPPER/ DECORATOR -----------------------------
+
+El patron decorator con embedding:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "io"
+    "os"
+)
+
+type ContadorBytes struct {
+    io.Writer       // interfaz embebida
+    total    int64
+}
+
+func (c *ContadorBytes) Write(p []byte) (int, error) {
+    n, err := c.Writer.Write(p)
+    c.total += int64(n)
+    return n, err
+}
+
+func (c *ContadorBytes) Total() int64 {
+    return c.total
+}
+
+func main() {
+    contador := &ContadorBytes{Writer: os.Stdout}
+
+    fmt.Fprintln(contador, "Hola mundo")
+    fmt.Fprintln(contador, "Linea dos")
+
+    fmt.Printf("Total bytes escritos: %d\n", contador.Total())
+}
+--------------------------------------------------------------------------------
+
+--- 14. EMBEDDING VS COMPOSICION TRADICIONAL ---------------------------------
+
+Embedding:
+
+    type Coche struct {
+        Motor  // campos y metodos promocionados
+    }
+
+Composicion tradicional (campo nombrado):
+
+    type Coche struct {
+        motor Motor  // acceso explicito: c.motor.Encender()
+    }
+
+Cual usar?
+
+  * Embedding: cuando quieres promocionar comportamiento (el coche
+    "tiene" comportamiento de motor).
+
+  * Campo nombrado: cuando el comportamiento es interno y no debe
+    exponerse (encapsulamiento).
+
+--- 15. EMBEDDING CON CONSTRUCTORES ------------------------------------------
+
+Como inicializar tipos embebidos:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Coordenada struct {
+    X, Y float64
+}
+
+type Punto struct {
+    Coordenada
+    Nombre string
+}
+
+func NuevoPunto(nombre string, x, y float64) Punto {
+    return Punto{
+        Coordenada: Coordenada{X: x, Y: y},
+        Nombre:     nombre,
+    }
+}
+
+func main() {
+    p := NuevoPunto("Origen", 0, 0)
+    fmt.Printf("%s: (%.1f, %.1f)\n", p.Nombre, p.X, p.Y)
+}
+--------------------------------------------------------------------------------
+
+--- 16. EMBEDDING Y JSON -----------------------------------------------------
+
+El embedding afecta la serializacion JSON:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+type Direccion struct {
+    Calle  string `json:"calle"`
+    Ciudad string `json:"ciudad"`
+}
+
+type Persona struct {
+    Nombre    string `json:"nombre"`
+    Direccion        `json:"direccion"` // se aplana o anida segun la etiqueta
+}
+
+type PersonaAplanada struct {
+    Nombre string `json:"nombre"`
+    Direccion      // sin etiqueta: se aplana
+}
+
+func main() {
+    p := Persona{
+        Nombre: "Lucas",
+        Direccion: Direccion{Calle: "Av. Principal", Ciudad: "Madrid"},
+    }
+
+    jsonBytes, _ := json.MarshalIndent(p, "", "  ")
+    fmt.Println("Con tag json:")
+    fmt.Println(string(jsonBytes))
+
+    pa := PersonaAplanada{
+        Nombre: "Lucas",
+        Direccion: Direccion{Calle: "Av. Principal", Ciudad: "Madrid"},
+    }
+    jsonBytes2, _ := json.MarshalIndent(pa, "", "  ")
+    fmt.Println("\nSin tag (aplanado):")
+    fmt.Println(string(jsonBytes2))
+}
+--------------------------------------------------------------------------------
+
+--- 17. EMBEDDING PARA COMPARTIR ESTADO --------------------------------------
+
+Puedes usar embedding para compartir estado entre tipos:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+type BaseDatos struct {
+    mu    sync.Mutex
+    datos map[string]string
+}
+
+func (db *BaseDatos) Set(clave, valor string) {
+    db.mu.Lock()
+    defer db.mu.Unlock()
+    db.datos[clave] = valor
+}
+
+func (db *BaseDatos) Get(clave string) (string, bool) {
+    db.mu.Lock()
+    defer db.mu.Unlock()
+    v, ok := db.datos[clave]
+    return v, ok
+}
+
+type UsuarioRepo struct {
+    *BaseDatos // embedding de puntero
+    prefijo    string
+}
+
+func (r *UsuarioRepo) GuardarUsuario(id int, nombre string) {
+    clave := fmt.Sprintf("%s:%d", r.prefijo, id)
+    r.Set(clave, nombre)
+}
+
+func (r *UsuarioRepo) ObtenerUsuario(id int) (string, bool) {
+    clave := fmt.Sprintf("%s:%d", r.prefijo, id)
+    return r.Get(clave)
+}
+
+type ProductoRepo struct {
+    *BaseDatos
+    prefijo string
+}
+
+func main() {
+    db := &BaseDatos{datos: make(map[string]string)}
+
+    userRepo := &UsuarioRepo{BaseDatos: db, prefijo: "user"}
+    prodRepo := &ProductoRepo{BaseDatos: db, prefijo: "prod"}
+
+    userRepo.GuardarUsuario(1, "Lucas")
+    prodRepo.GuardarUsuario(100, "Laptop") // comparten el mismo db
+
+    nombre, _ := userRepo.ObtenerUsuario(1)
+    fmt.Println("Usuario:", nombre)
+}
+--------------------------------------------------------------------------------
+
+--- 18. EJEMPLO COMPLETO: SISTEMA DE VEHICULOS --------------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "strings"
+)
+
+type Motor struct {
+    Tipo      string
+    Caballos  int
+    Encendido bool
+}
+
+func (m *Motor) Encender() {
+    m.Encendido = true
+    fmt.Printf("Motor %s encendido (%d HP)\n", m.Tipo, m.Caballos)
+}
+
+func (m *Motor) Apagar() {
+    m.Encendido = false
+    fmt.Println("Motor apagado")
+}
+
+type Chasis struct {
+    Material string
+    Peso     float64
+}
+
+func (c Chasis) Descripcion() string {
+    return fmt.Sprintf("Chasis de %s (%.1f kg)", c.Material, c.Peso)
+}
+
+type Rueda struct {
+    Diametro int
+    Marca    string
+}
+
+func (r Rueda) Rodar() string {
+    return fmt.Sprintf("Rueda %s rodando (%d pulgadas)", r.Marca, r.Diametro)
+}
+
+type Vehiculo struct {
+    Motor
+    Chasis
+    Marca  string
+    Modelo string
+}
+
+func (v *Vehiculo) Acelerar() {
+    if !v.Encendido {
+        fmt.Println("Primero enciende el motor")
+        return
+    }
+    fmt.Printf("%s %s acelerando...\n", v.Marca, v.Modelo)
+}
+
+type Coche struct {
+    Vehiculo
+    Ruedas [4]Rueda
+}
+
+func (c *Coche) InformacionCompleta() string {
+    var sb strings.Builder
+    sb.WriteString(fmt.Sprintf("Coche: %s %s\n", c.Marca, c.Modelo))
+    sb.WriteString(fmt.Sprintf("%s\n", c.Chasis.Descripcion()))
+    sb.WriteString(fmt.Sprintf("Motor: %s %d HP\n", c.Motor.Tipo, c.Motor.Caballos))
+    for i, r := range c.Ruedas {
+        sb.WriteString(fmt.Sprintf("  Rueda %d: %s\n", i+1, r.Rodar()))
+    }
+    return sb.String()
+}
+
+type Moto struct {
+    Vehiculo
+    Ruedas [2]Rueda
+    TieneSidecar bool
+}
+
+func (m *Moto) HacerCaballito() {
+    if !m.Encendido {
+        fmt.Println("Enciende la moto primero")
+        return
+    }
+    fmt.Println("Haciendo caballito!")
+}
+
+func main() {
+    coche := &Coche{
+        Vehiculo: Vehiculo{
+            Motor:  Motor{Tipo: "V8", Caballos: 400},
+            Chasis: Chasis{Material: "Acero", Peso: 1500},
+            Marca:  "Ford",
+            Modelo: "Mustang",
+        },
+        Ruedas: [4]Rueda{
+            {Diametro: 18, Marca: "Michelin"},
+            {Diametro: 18, Marca: "Michelin"},
+            {Diametro: 18, Marca: "Michelin"},
+            {Diametro: 18, Marca: "Michelin"},
+        },
+    }
+
+    coche.Encender()
+    coche.Acelerar()
+    fmt.Println(coche.InformacionCompleta())
+
+    fmt.Println("================================")
+
+    moto := &Moto{
+        Vehiculo: Vehiculo{
+            Motor:  Motor{Tipo: "2 cilindros", Caballos: 150},
+            Chasis: Chasis{Material: "Aluminio", Peso: 200},
+            Marca:  "Harley",
+            Modelo: "Davidson",
+        },
+        Ruedas: [2]Rueda{
+            {Diametro: 17, Marca: "Pirelli"},
+            {Diametro: 17, Marca: "Pirelli"},
+        },
+    }
+
+    moto.Encender()
+    moto.Acelerar()
+    moto.HacerCaballito()
+}
+--------------------------------------------------------------------------------
+
+--- 19. BUENAS PRACTICAS CON EMBEDDING ---------------------------------------
+
+1. Embedding NO es herencia. No lo trates como tal.
+
+2. Usa embedding para "tiene un" con promocion de comportamiento.
+
+3. Si necesitas acceso privado, usa campo nombrado, no embedding.
+
+4. Prefiere embedding sobre herencia para reutilizacion.
+
+5. En interfaces, embedding permite componer contratos.
+
+6. Los conflictos de nombres se resuelven con acceso explicito.
+
+7. El embedding es mas util para decorators y middleware.
+
+8. No abuses: embedding multiple excesivo puede confundir.
+
+--- 20. PATRON: EMBEDDING DE INTERFAZ PARA MOCKS -----------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Repositorio interface {
+    Guardar(id string, valor any) error
+    Obtener(id string) (any, error)
+    Eliminar(id string) error
+}
+
+// Mock embebe la interfaz y solo implementa lo necesario
+type MockRepositorio struct {
+    Repositorio
+    datos map[string]any
+}
+
+func (m *MockRepositorio) Guardar(id string, valor any) error {
+    if m.datos == nil {
+        m.datos = make(map[string]any)
+    }
+    m.datos[id] = valor
+    return nil
+}
+
+func (m *MockRepositorio) Obtener(id string) (any, error) {
+    v, ok := m.datos[id]
+    if !ok {
+        return nil, fmt.Errorf("no encontrado: %s", id)
+    }
+    return v, nil
+}
+
+func main() {
+    mock := &MockRepositorio{}
+    mock.Guardar("1", "Lucas")
+
+    v, _ := mock.Obtener("1")
+    fmt.Println("Obtenido:", v)
+}
+--------------------------------------------------------------------------------
+
+--- 21. LIMITACIONES DEL EMBEDDING -------------------------------------------
+
+  * No hay polimorfismo de herencia (no puedes override).
+  * Los conflictos requieren acceso explicito.
+  * No puedes embeber tipos de otro paquete si son privados.
+  * El embedding no crea subtipos: un Perro no es un Animal en
+    terminos de tipos.
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Embedding: incrustar un tipo sin nombre de campo.
+  * Los campos y metodos se promocionan al contenedor.
+  * No es herencia: es composicion con promocion.
+  * Los metodos del contenedor ocultan a los del embebido.
+  * Se pueden embeber structs, punteros e interfaces.
+  * Embedding multiple puede causar conflictos de nombres.
+  * Es ideal para decorators, middleware y reutilizacion.
+  * Prefiere embedding sobre herencia: "composicion sobre herencia".
+
+--------------------------------------------------------------------------------
+  EJERCICIOS
+--------------------------------------------------------------------------------
+
+--- Ejercicio 1: Embedding basico ---
+
+Crea un tipo Tiempo con campos Hora, Minuto, Segundo.
+Crea un tipo Evento que embeba Tiempo y anada Nombre string.
+Instancia un Evento y accede a los campos de Tiempo directamente.
+
+--- Ejercicio 2: Promocion de metodos ---
+
+Crea un tipo Mensaje con campo Texto string y metodo Longitud() int.
+Crea un tipo MensajeConPrefijo que embeba Mensaje y anada Prefijo string.
+Demuestra que puedes llamar Longitud() desde MensajeConPrefijo.
+
+--- Ejercicio 3: Shadowing de metodos ---
+
+Crea un tipo Empleado con metodo CalcularSalario() float64.
+Crea un tipo Gerente que embeba Empleado y sobrescriba CalcularSalario().
+Demuestra ambos metodos (el original y el que oculta).
+
+--- Ejercicio 4: Embedding multiple ---
+
+Crea los tipos Volador (volar), Nadador (nadar), Corredor (correr).
+Crea un tipo Pato que embeba los tres.
+Crea un tipo Pez Volador que embeba Volador y Nadador.
+
+--- Ejercicio 5: Decorador con embedding ---
+
+Crea un tipo LectorLineas que embeba io.Reader y anada un metodo
+LeerLinea() string que lea hasta \n.
+
+--- Ejercicio 6: Embedding con inicializacion ---
+
+Crea un tipo BaseDatos con campo Conexion string.
+Crea un tipo Servicio que embeba *BaseDatos.
+Implementa un constructor NewServicio(conexion string) *Servicio.
+
+--- Ejercicio 7: Interfaz embebida ---
+
+Define una interfaz Imprimible con metodo Imprimir() string.
+Define una interfaz Exportable que embeba Imprimible y anada Exportar() string.
+Crea un tipo Documento que implemente Exportable.
+
+--- Ejercicio 8: JSON con embedding ---
+
+Crea un struct ProductoSimple con campos Nombre, Precio.
+Crea un struct ProductoConDescuento que embeba ProductoSimple
+y anada Descuento float64.
+Serializa a JSON y observa el resultado.
+
+--- Ejercicio 9: Resolver conflicto ---
+
+Crea tipos A y B, ambos con campo ID int y metodo ObtenerID() int.
+Crea tipo C que embeba A y B.
+Demuestra como resolver el conflicto.
+
+--- Ejercicio 10: Middleware HTTP ---
+
+Simula http.Handler.
+Crea un tipo LoggerMiddleware que embeba http.Handler y
+anade logging antes de llamar al handler original.
+
+--------------------------------------------------------------------------------
+  FAQ - PREGUNTAS FRECUENTES
+--------------------------------------------------------------------------------
+
+P: Es embedding lo mismo que herencia?
+R: No. Embedding es composicion con promocion de campos/metodos.
+   No hay polimorfismo, no hay super(), no hay virtual dispatch.
+
+P: Puedo embeber tipos primitivos como int o string?
+R: No. Solo puedes embeber tipos con nombre (structs, interfaces).
+
+P: Que pasa si dos campos embebidos tienen el mismo nombre?
+R: Hay conflicto de compilacion. Debes usar acceso explicito:
+   c.A.Valor y c.B.Valor.
+
+P: Se puede embeber un tipo de otro paquete?
+R: Si, si es exportado (mayuscula).
+
+P: El embedding afecta el rendimiento?
+R: No. Todo se resuelve en compilacion. No hay overhead en runtime.
+
+P: Puedo cambiar el tipo embebido en runtime?
+R: Si el campo embebido es un puntero o interfaz, puedes reasignarlo.
+
+P: Por que no hay herencia en Go?
+R: Porque la herencia crea acoplamiento fuerte y jerarquias rigidas.
+   La composicion es mas flexible, testeable y mantenible.
+
+P: Como simulo polimorfismo si no hay herencia?
+R: Con interfaces. Embedding + interfaces = el poder de la herencia
+   sin sus desventajas.
+
+--------------------------------------------------------------------------------
+  DESAFIO DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+Sistema de Composicion de Personajes RPG:
+
+Construye un sistema de creacion de personajes para un juego RPG
+usando exclusivamente embedding y composicion.
+
+  Componentes base:
+    type Stats struct { Fuerza, Destreza, Inteligencia, Constitucion int }
+    type Equipo struct { Cabeza, Cuerpo, Manos, Piernas string }
+    type Habilidad struct { Nombre string, Danio int, CosteMP int }
+    type Inventario struct { Items []string, Oro int }
+
+  Clases de personajes (embedding):
+    - Guerrero:   Stats {F:10, D:5, I:3, C:9}, Habilidad especial "Golpe Poderoso"
+    - Mago:       Stats {F:3, D:4, I:10, C:5}, Habilidad especial "Bola de Fuego"
+    - Picaro:     Stats {F:5, D:10, I:5, C:4}, Habilidad especial "Ataque Sigiloso"
+
+  type Personaje struct {
+      Stats
+      Equipo
+      Inventario
+      Habilidad
+      Nombre string
+      Nivel  int
+  }
+
+  Requisitos:
+    1. Cada clase tiene un constructor diferente.
+    2. Personaje tiene metodos promocionados de Stats (FuerzaTotal(), etc.).
+    3. Equipo afecta Stats (por ejemplo, armadura da +2 Constitucion).
+    4. Habilidad tiene metodo Usar() string.
+    5. Personaje tiene metodo Atacar() que use Stats y equipo.
+    6. Crea una funcion SimularCombate(p1, p2 *Personaje) que use
+       los metodos promocionados.
+    7. Implementa subir de nivel: SubirNivel() mejora Stats.
+
+  Extra:
+    - Crea un tipo Mascota que se pueda embeber opcionalmente.
+    - Crea un tipo Buff temporal que se embebera durante el combate.
+    - Implementa la interfaz Stringer para Personaje.
+
+Este desafio integra embedding, composicion, promocion de metodos,
+y diseno de sistemas modulares.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL CAPITULO
+--------------------------------------------------------------------------------
+
+Has dominado el embedding en Go. Ahora sabes que la composicion es
+mas poderosa que la herencia: te da reutilizacion sin acoplamiento,
+flexibilidad sin jerarquias.
+
+Recuerda: prefiere "tiene un" sobre "es un". Tus disenos seran
+mas modulares, testeables y faciles de mantener.
+
+En el proximo capitulo veremos los Stringers, el metodo String()
+que permite que tus tipos se representen como texto de forma natural.
+
+Nos vemos en el capitulo 37: STRINGERS (STRING()).
+
+--------------------------------------------------------------------------------
+  PROXIMO CAPITULO
+--------------------------------------------------------------------------------
+
+  CAPITULO 37: STRINGERS (STRING())
+    -> Metodo String(), representacion personalizada,
+      interfaz fmt.Stringer, formato %s y %v.
+
+===============================================================================
+  FIN DEL CAPITULO 36 - EMBEDDING (COMPOSICION)
+===============================================================================

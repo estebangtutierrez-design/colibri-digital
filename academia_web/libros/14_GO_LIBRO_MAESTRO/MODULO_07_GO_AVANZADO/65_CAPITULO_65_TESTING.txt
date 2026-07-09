@@ -1,0 +1,876 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 65: TESTING (GO TEST)
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 65. El testing no es un accesorio en Go: es
+  parte central de la cultura del lenguaje. El comando `go test` está
+  integrado en la herramienta, y la biblioteca `testing` es simple pero
+  increíblemente efectiva. Este capítulo te enseñará desde los tests
+  básicos hasta patrones avanzados como table-driven tests y subtests.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "El código sin tests es código legacy. Los tests no son una opción, son
+  parte del diseño." — Adaptado de Michael Feathers
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Escribir archivos _test.go y funciones TestXxx correctamente.
+  2. Usar t.Error, t.Errorf, t.Fatal, t.Fatalf para reportar fallos.
+  3. Implementar table-driven tests para cubrir múltiples casos.
+  4. Usar subtests con t.Run para organizar tests jerárquicamente.
+  5. Escribir tests de paquetes con cobertura y ejemplos.
+  6. Usar test helpers y setup/teardown patterns.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. EL ARCHIVO _test.go ──
+
+  Los tests en Go se identifican por el sufijo `_test.go` en el nombre
+  del archivo:
+
+  main.go          → código fuente
+  main_test.go     → tests
+
+  // main_test.go
+  package main
+
+  import "testing"
+
+  func TestSuma(t *testing.T) {
+      resultado := Suma(2, 3)
+      esperado := 5
+      if resultado != esperado {
+          t.Errorf("Suma(2, 3) = %d; esperado %d", resultado, esperado)
+      }
+  }
+
+  Reglas:
+  ● El archivo debe terminar en `_test.go`.
+  ● Las funciones test deben empezar con `Test`.
+  ● El parámetro es `*testing.T`.
+  ● El test se ejecuta con `go test` o `go test -v`.
+
+  ── 2. EL COMANDO go test ──
+
+  # Tests básicos
+  go test                          # Tests del paquete actual
+  go test ./...                    # Tests de todos los paquetes
+  go test -v                       # Verbose (muestra nombre de tests)
+  go test -run TestSuma            # Ejecutar un test específico
+  go test -run "TestSuma|TestResta" # Ejecutar múltiples tests
+  go test -count=1                 # Sin caché (útil para repetir)
+  go test -failfast                # Parar en el primer fallo
+  go test -timeout 30s             # Timeout
+
+  # Cobertura
+  go test -cover                   # Mostrar cobertura
+  go test -coverprofile=coverage.out  # Guardar perfil de cobertura
+  go test -covermode=atomic        # Modo de cobertura (set, count, atomic)
+
+  # Más opciones
+  go test -v -race                 # Tests con race detector
+  go test -bench=.                 # Ejecutar benchmarks
+  go test -parallel 4              # Tests en paralelo
+
+  ── 3. t.Error VS t.Fatal ──
+
+  t.Error / t.Errorf:
+  ● Reporta el fallo pero CONTINÚA la ejecución del test.
+  ● Útil cuando quieres reportar múltiples errores en un solo test.
+
+  t.Fatal / t.Fatalf:
+  ● Reporta el fallo y DETIENE la ejecución del test inmediatamente.
+  ● Útil cuando continuar no tiene sentido (ej. setup fallido).
+
+  func TestDivide(t *testing.T) {
+      // Setup
+      calc := NewCalculator()
+      if calc == nil {
+          t.Fatal("NewCalculator() devolvió nil")
+      }
+
+      // Tests
+      result, err := calc.Divide(10, 2)
+      if err != nil {
+          t.Errorf("Divide(10, 2) error inesperado: %v", err)
+      }
+      if result != 5 {
+          t.Errorf("Divide(10, 2) = %d; esperado 5", result)
+      }
+
+      result, err = calc.Divide(10, 0)
+      if err == nil {
+          t.Error("Divide(10, 0) debería haber devuelto error")
+      }
+  }
+
+  ── 4. TABLE-DRIVEN TESTS ──
+
+  Es el patrón más común y recomendado en Go. Un slice de casos de
+  prueba con datos de entrada y salida esperada:
+
+  func TestSuma(t *testing.T) {
+      tests := []struct {
+          nombre   string
+          a, b     int
+          esperado int
+      }{
+          {nombre: "positivos", a: 2, b: 3, esperado: 5},
+          {nombre: "negativos", a: -2, b: -3, esperado: -5},
+          {nombre: "cero", a: 0, b: 5, esperado: 5},
+          {nombre: "mixto", a: -2, b: 5, esperado: 3},
+      }
+
+      for _, tt := range tests {
+          t.Run(tt.nombre, func(t *testing.T) {
+              resultado := Suma(tt.a, tt.b)
+              if resultado != tt.esperado {
+                  t.Errorf("Suma(%d, %d) = %d; esperado %d",
+                      tt.a, tt.b, resultado, tt.esperado)
+              }
+          })
+      }
+  }
+
+  Ventajas:
+  ● Fácil de leer y mantener.
+  ● Agregar un nuevo caso es solo añadir una fila.
+  ● Cada caso se ejecuta como subtest independiente.
+
+  ── 5. SUBTESTS CON t.Run ──
+
+  t.Run permite ejecutar subtests con su propio nombre y contexto:
+
+  func TestCalculadora(t *testing.T) {
+      t.Run("Suma", func(t *testing.T) {
+          if Suma(2, 3) != 5 {
+              t.Error("Suma falló")
+          }
+      })
+
+      t.Run("Resta", func(t *testing.T) {
+          if Resta(5, 3) != 2 {
+              t.Error("Resta falló")
+          }
+      })
+
+      t.Run("Multiplicacion", func(t *testing.T) {
+          if Multiplica(4, 3) != 12 {
+              t.Error("Multiplicación falló")
+          }
+      })
+  }
+
+  Los subtests pueden ejecutarse selectivamente:
+
+  go test -run "TestCalculadora/Suma"
+  go test -run "TestCalculadora/Resta"
+
+  Además, los subtests pueden ejecutarse en paralelo:
+
+  t.Run("paralelo", func(t *testing.T) {
+      t.Parallel()
+      // Este test se ejecuta en paralelo con otros t.Parallel()
+  })
+
+  ── 6. TEST HELPERS ──
+
+  Las funciones helper encapsulan lógica repetitiva de tests:
+
+  func TestUserValidation(t *testing.T) {
+      user := User{Name: "Alice", Email: "alice@example.com"}
+
+      err := user.Validate()
+      if err != nil {
+          t.Fatalf("user.Validate() error: %v", err)
+      }
+
+      err = user.Save()
+      if err != nil {
+          t.Fatalf("user.Save() error: %v", err)
+      }
+  }
+
+  Marcar helpers con t.Helper() para que los mensajes de error muestren
+  la línea del llamante, no la línea del helper:
+
+  func assertEqual(t *testing.T, got, want interface{}) {
+      t.Helper()
+      if got != want {
+          t.Errorf("got %v, want %v", got, want)
+      }
+  }
+
+  func TestSuma(t *testing.T) {
+      assertEqual(t, Suma(2, 3), 5)
+      assertEqual(t, Suma(-1, 1), 0)
+      assertEqual(t, Suma(0, 0), 0)
+  }
+
+  Patrón común: `assert` package o test helpers:
+
+  type Asserter struct {
+      *testing.T
+  }
+
+  func NewAsserter(t *testing.T) *Asserter {
+      return &Asserter{T: t}
+  }
+
+  func (a *Asserter) Equal(got, want interface{}) {
+      a.Helper()
+      if got != want {
+          a.Errorf("got %v, want %v", got, want)
+      }
+  }
+
+  func (a *Asserter) NoError(err error) {
+      a.Helper()
+      if err != nil {
+          a.Errorf("unexpected error: %v", err)
+      }
+  }
+
+  ── 7. SETUP Y TEARDOWN ──
+
+  Go no tiene setup/teardown automático, pero puedes implementarlo
+  fácilmente:
+
+  func TestDatabase(t *testing.T) {
+      db := setupDatabase(t)
+      defer teardownDatabase(t, db)
+
+      t.Run("Insert", func(t *testing.T) {
+          err := db.Insert("key", "value")
+          if err != nil {
+              t.Fatalf("Insert falló: %v", err)
+          }
+      })
+
+      t.Run("Get", func(t *testing.T) {
+          val, err := db.Get("key")
+          if err != nil || val != "value" {
+              t.Errorf("Get falló: got %v, err %v", val, err)
+          }
+      })
+  }
+
+  func setupDatabase(t *testing.T) *Database {
+      // Crear DB temporal
+      db, err := NewDatabase(":memory:")
+      if err != nil {
+          t.Fatalf("setup falló: %v", err)
+      }
+      return db
+  }
+
+  func teardownDatabase(t *testing.T, db *Database) {
+      db.Close()
+  }
+
+  ── 8. TEST MAIN ──
+
+  TestMain permite ejecutar setup/teardown a nivel de paquete:
+
+  func TestMain(m *testing.M) {
+      // Setup global
+      fmt.Println("=== Iniciando tests del paquete ===")
+
+      // Ejecutar todos los tests
+      code := m.Run()
+
+      // Teardown global
+      fmt.Println("=== Finalizando tests del paquete ===")
+
+      os.Exit(code)
+  }
+
+  Solo puede haber UNA función TestMain por paquete. Si la defines,
+  debes llamar a m.Run() explícitamente.
+
+  ── 9. PAQUETE TESTEXTERNO (BLACK-BOX TESTING) ──
+
+  Cuando el archivo _test.go pertenece al mismo paquete, tienes acceso
+  a los identificadores no exportados. Si quieres testear solo la API
+  pública, usa un paquete externo:
+
+  // archivo: matematica_test.go (paquete externo)
+  package matematica_test
+
+  import (
+      "testing"
+      "github.com/user/proyecto/matematica"
+  )
+
+  func TestSuma(t *testing.T) {
+      result := matematica.Suma(2, 3)
+      if result != 5 {
+          t.Errorf("Suma(2, 3) = %d; want 5", result)
+      }
+  }
+
+  // Solo puedo acceder a identificadores exportados (mayúscula).
+  // No puedo probar funciones privadas directamente.
+
+  Para elegir entre paquete interno o externo:
+
+  package paquete       // Testing interno (acceso a privados)
+  package paquete_test  // Testing externo (solo API pública)
+
+  La convención es usar el paquete externo para tests de integración
+  y el interno para unitarios.
+
+  ── 10. EJEMPLO COMPLETO: TEST DE SERVICIO ──
+
+  // --- service.go ---
+  package service
+
+  type UserService struct {
+      repo Repository
+  }
+
+  type Repository interface {
+      Save(u User) error
+      FindByID(id string) (User, error)
+  }
+
+  type User struct {
+      ID    string
+      Name  string
+      Email string
+  }
+
+  func NewUserService(repo Repository) *UserService {
+      return &UserService{repo: repo}
+  }
+
+  func (s *UserService) Register(name, email string) (*User, error) {
+      if name == "" || email == "" {
+          return nil, ErrInvalidInput
+      }
+      user := User{
+          ID:    generateID(),
+          Name:  name,
+          Email: email,
+      }
+      if err := s.repo.Save(user); err != nil {
+          return nil, err
+      }
+      return &user, nil
+  }
+
+  // --- service_test.go ---
+  package service_test
+
+  import (
+      "errors"
+      "testing"
+      "github.com/user/proyecto/service"
+  )
+
+  // Mock del repositorio
+  type mockRepo struct {
+      users map[string]service.User
+  }
+
+  func (m *mockRepo) Save(u service.User) error {
+      if m.users == nil {
+          m.users = make(map[string]service.User)
+      }
+      m.users[u.ID] = u
+      return nil
+  }
+
+  func (m *mockRepo) FindByID(id string) (service.User, error) {
+      u, ok := m.users[id]
+      if !ok {
+          return service.User{}, errors.New("not found")
+      }
+      return u, nil
+  }
+
+  func TestRegister(t *testing.T) {
+      repo := &mockRepo{}
+      svc := service.NewUserService(repo)
+
+      tests := []struct {
+          name      string
+          userName  string
+          email     string
+          wantErr   bool
+      }{
+          {name: "usuario valido", userName: "Alice", email: "alice@test.com", wantErr: false},
+          {name: "nombre vacio", userName: "", email: "bob@test.com", wantErr: true},
+          {name: "email vacio", userName: "Charlie", email: "", wantErr: true},
+          {name: "ambos vacios", userName: "", email: "", wantErr: true},
+      }
+
+      for _, tt := range tests {
+          t.Run(tt.name, func(t *testing.T) {
+              user, err := svc.Register(tt.userName, tt.email)
+              if tt.wantErr {
+                  if err == nil {
+                      t.Error("expected error, got nil")
+                  }
+                  return
+              }
+              if err != nil {
+                  t.Errorf("unexpected error: %v", err)
+              }
+              if user.Name != tt.userName {
+                  t.Errorf("got name %s, want %s", user.Name, tt.userName)
+              }
+              if user.Email != tt.email {
+                  t.Errorf("got email %s, want %s", user.Email, tt.email)
+              }
+              if user.ID == "" {
+                  t.Error("user ID should not be empty")
+              }
+          })
+      }
+  }
+
+  ── 11. COBERTURA DE CÓDIGO ──
+
+  La cobertura mide qué porcentaje de tu código es ejecutado por los
+  tests:
+
+  go test -cover
+  go test -coverprofile=coverage.out
+  go tool cover -html=coverage.out   # Abrir en navegador
+
+  Modos de cobertura:
+  ● set (default): booleano (cada línea se ejecuta o no).
+  ● count: entero (cuántas veces se ejecuta cada línea).
+  ● atomic: count + seguro para paralelismo.
+
+  La cobertura es una guía, NO un objetivo. 100% de cobertura no
+  significa 100% de corrección.
+
+  ── 12. EJEMPLO CON COBERTURA ──
+
+  func EsPar(n int) bool {
+      return n%2 == 0
+  }
+
+  func TestEsPar(t *testing.T) {
+      tests := []struct {
+          input    int
+          esperado bool
+      }{
+          {input: 2, esperado: true},
+          {input: 3, esperado: false},
+          {input: 0, esperado: true},
+          {input: -1, esperado: false},
+      }
+
+      for _, tt := range tests {
+          t.Run(fmt.Sprintf("%d", tt.input), func(t *testing.T) {
+              if got := EsPar(tt.input); got != tt.esperado {
+                  t.Errorf("EsPar(%d) = %v; want %v", tt.input, got, tt.esperado)
+              }
+          })
+      }
+  }
+
+  // Para ver cobertura:
+  // go test -cover
+  // go test -coverprofile=c.out && go tool cover -html=c.out
+
+  ── 13. FIUPTURE / TEARDOWN CON CLEANUP ──
+
+  testing.T.Cleanup (Go 1.14+) registra funciones para ejecutar al
+  finalizar el test:
+
+  func TestFileOps(t *testing.T) {
+      file, err := os.CreateTemp("", "test-*")
+      if err != nil {
+          t.Fatalf("error creating temp file: %v", err)
+      }
+      defer file.Close()
+
+      t.Cleanup(func() {
+          os.Remove(file.Name())
+      })
+
+      // Usar el archivo...
+      _, err = file.WriteString("test data")
+      if err != nil {
+          t.Fatal(err)
+      }
+      // Cleanup se ejecuta automáticamente al final
+  }
+
+  Cleanup es más limpio que defer porque:
+  ● Se ejecuta aunque haya panic.
+  ● Se ejecuta en orden inverso al de registro.
+  ● Funciona correctamente con subtests y paralelismo.
+
+  ── 14. RACE DETECTOR ──
+
+  Go incluye un detector de carreras de datos (data race) integrado:
+
+  go test -race ./...
+
+  Si hay una carrera, el test falla con un informe detallado:
+
+  WARNING: DATA RACE
+  Read at 0x... by goroutine X:
+    ...
+
+  Previous write at 0x... by goroutine Y:
+    ...
+
+  Usa `-race` en CI y en desarrollo. Es una herramienta invaluable para
+  código concurrente.
+
+  ── 15. FUZZING ──
+
+  Desde Go 1.18, Go tiene fuzzing integrado:
+
+  func FuzzHex(f *testing.F) {
+      // Semillas (entradas iniciales)
+      f.Add([]byte("hello"))
+      f.Add([]byte("world"))
+
+      f.Fuzz(func(t *testing.T, data []byte) {
+          encoded := hex.EncodeToString(data)
+          decoded, err := hex.DecodeString(encoded)
+          if err != nil {
+              t.Errorf("Decode error: %v", err)
+          }
+          if !bytes.Equal(data, decoded) {
+              t.Errorf("roundtrip failed: got %v, want %v", decoded, data)
+          }
+      })
+  }
+
+  Ejecutar:
+
+  go test -fuzz=FuzzHex -fuzztime=10s
+
+  El fuzzer genera entradas aleatorias buscando casos que rompan el
+  código. Cuando encuentra uno, lo guarda en testdata/fuzz/.
+
+  ── 16. SKIP Y SUBTESTS CONDICIONALES ──
+
+  func TestSensitive(t *testing.T) {
+      if os.Getenv("CI") == "" {
+          t.Skip("Saltando: no estamos en CI")
+      }
+      // Test que requiere CI
+  }
+
+  func TestSlowDatabase(t *testing.T) {
+      if testing.Short() {
+          t.Skip("Saltando en modo short")
+      }
+      // Test lento
+  }
+
+  Ejecutar en modo short:
+
+  go test -short ./...
+
+  También puedes omitir subtests específicos:
+
+  func TestAll(t *testing.T) {
+      t.Run("fast", func(t *testing.T) {
+          if testing.Short() {
+              t.Skip("modo short")
+          }
+          // Test rápido
+      })
+      t.Run("slow", func(t *testing.T) {
+          // Este siempre se ejecuta
+      })
+  }
+
+  ── 17. TESTING DE PANICS ──
+
+  func TestPanic(t *testing.T) {
+      defer func() {
+          if r := recover(); r == nil {
+              t.Error("expected panic, but none occurred")
+          }
+      }()
+
+      // Código que debe panic
+      _ = dangerousFunction()
+  }
+
+  O mejor, usando la función auxiliar:
+
+  func assertPanic(t *testing.T, fn func()) {
+      t.Helper()
+      defer func() {
+          if r := recover(); r == nil {
+              t.Error("expected panic")
+          }
+      }()
+      fn()
+  }
+
+  func TestDangerous(t *testing.T) {
+      assertPanic(t, func() {
+          dangerousFunction()
+      })
+  }
+
+  ── 18. GOLDEN FILES ──
+
+  Golden files son archivos con la salida esperada de un test:
+
+  func TestRender(t *testing.T) {
+      result := renderTemplate("testdata/input.txt")
+      golden := filepath.Join("testdata", "output.golden")
+
+      // Actualizar golden files (cuando cambia el output esperado)
+      if *updateGolden {
+          os.WriteFile(golden, []byte(result), 0644)
+      }
+
+      expected, err := os.ReadFile(golden)
+      if err != nil {
+          t.Fatalf("error reading golden file: %v", err)
+      }
+
+      if result != string(expected) {
+          t.Errorf("result doesn't match golden file.\ngot:\n%s\nwant:\n%s",
+              result, expected)
+      }
+  }
+
+  var updateGolden = flag.Bool("update", false, "update golden files")
+
+  func init() {
+      flag.Parse()
+  }
+
+  Ejecutar: go test -update
+
+  ── 19. EJEMPLO COMPLETO: CALCULADORA CON TESTS ──
+
+  // --- calc.go ---
+  package calc
+
+  import "errors"
+
+  var ErrDivByZero = errors.New("division by zero")
+
+  func Sum(a, b int) int {
+      return a + b
+  }
+
+  func Sub(a, b int) int {
+      return a - b
+  }
+
+  func Mul(a, b int) int {
+      return a * b
+  }
+
+  func Div(a, b int) (int, error) {
+      if b == 0 {
+          return 0, ErrDivByZero
+      }
+      return a / b, nil
+  }
+
+  // --- calc_test.go ---
+  package calc_test
+
+  import (
+      "testing"
+      "github.com/user/proyecto/calc"
+  )
+
+  func TestSum(t *testing.T) {
+      tests := []struct {
+          name string
+          a, b int
+          want int
+      }{
+          {name: "positive", a: 2, b: 3, want: 5},
+          {name: "negative", a: -2, b: -3, want: -5},
+          {name: "zero", a: 0, b: 5, want: 5},
+          {name: "mixed", a: -2, b: 3, want: 1},
+      }
+      for _, tt := range tests {
+          t.Run(tt.name, func(t *testing.T) {
+              if got := calc.Sum(tt.a, tt.b); got != tt.want {
+                  t.Errorf("Sum(%d, %d) = %d; want %d", tt.a, tt.b, got, tt.want)
+              }
+          })
+      }
+  }
+
+  func TestDiv(t *testing.T) {
+      t.Run("normal division", func(t *testing.T) {
+          got, err := calc.Div(10, 2)
+          if err != nil {
+              t.Fatalf("unexpected error: %v", err)
+          }
+          if got != 5 {
+              t.Errorf("Div(10, 2) = %d; want 5", got)
+          }
+      })
+
+      t.Run("division by zero", func(t *testing.T) {
+          _, err := calc.Div(10, 0)
+          if err != calc.ErrDivByZero {
+              t.Errorf("expected ErrDivByZero, got %v", err)
+          }
+      })
+  }
+
+  ── 20. EJEMPLOS (TESTABLE EXAMPLES) ──
+
+  Los ejemplos son tests que también sirven como documentación:
+
+  // --- calc.go ---
+  func Sum(a, b int) int {
+      return a + b
+  }
+
+  // --- calc_test.go ---
+  func ExampleSum() {
+      fmt.Println(Sum(2, 3))
+      fmt.Println(Sum(-1, 1))
+      // Output:
+      // 5
+      // 0
+  }
+
+  // Salida incorrecta:
+  // Output:
+  // 7   // ❌ Error de compilación en el test
+
+  Los ejemplos se ejecutan con `go test` y aparecen en la documentación
+  generada por `go doc` o pkg.go.dev.
+
+  ── 21. ORGANIZACIÓN DE TESTS ──
+
+  Para proyectos grandes, organiza los tests en directorios:
+
+  proyecto/
+  ├── pkg/
+  │   ├── auth/
+  │   │   ├── auth.go
+  │   │   ├── auth_test.go
+  │   │   └── testdata/
+  │   │       └── keys/
+  │   └── api/
+  │       ├── handler.go
+  │       ├── handler_test.go
+  │       └── testdata/
+  │           └── golden/
+  ├── internal/
+  │   └── db/
+  │       ├── db.go
+  │       └── db_test.go
+  └── tests/
+      └── integration/
+          └── integration_test.go
+
+  testdata/ es un directorio especial: Go lo ignora al compilar, pero
+  los tests pueden leerlo.
+
+  ── 22. BUENAS PRÁCTICAS DE TESTING ──
+
+  1. Usa table-driven tests para cubrir múltiples casos.
+  2. Nombra los tests descriptivamente: TestFuncName_Condition.
+  3. Cada test debe ser independiente (no compartir estado mutable).
+  4. Usa t.Helper() en funciones auxiliares.
+  5. Prefiere t.Errorf sobre t.Fatal para reportar múltiples fallos.
+  6. Usa t.Cleanup para teardown en lugar de defer.
+  7. Ejecuta go test -race regularmente.
+  8. Mantén los tests rápidos (segundos, no minutos).
+  9. Escribe tests antes del código (TDD) cuando sea práctico.
+  10. No te obsesiones con la cobertura; prueba lógica, no líneas.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● Los tests en Go usan archivos _test.go y funciones TestXxx(t *testing.T).
+  ● t.Error/Errorf reportan fallos y continúan; t.Fatal/Fatalf detienen.
+  ● Table-driven tests son el patrón estándar para cubrir casos múltiples.
+  ● Subtests con t.Run permiten organización jerárquica y ejecución
+    selectiva.
+  ● TestMain permite setup/teardown global del paquete.
+  ● El race detector (-race) es esencial para código concurrente.
+  ● Fuzzing (1.18+) genera entradas aleatorias para encontrar bugs.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Escribe tests table-driven para una función `Factorial(n int) int`.
+  2. Crea un test con subtests para un `Stack` con Push, Pop, Peek.
+  3. Implementa un mock y úsalo en un test de servicio.
+  4. Escribe un test con setup/teardown usando t.Cleanup.
+  5. Crea un ejemplo testable (ExampleXxx) para una función.
+  6. Usa go test -cover y analiza la cobertura de tu código.
+  7. Escribe un test que verifique que una función hace panic.
+  8. Implementa un golden file test para una función de renderizado.
+  9. Usa go test -race en un programa concurrente con canales.
+  10. Escribe un fuzz test para una función de parsing.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Puedo tener múltiples TestMain en un paquete?
+  R: No. Solo una función TestMain por paquete.
+
+  P: ¿Cómo testeo código que usa time.Sleep o time.After?
+  R: Usa relojes mockeables. Define una interfaz Clock con Now() y After().
+     En tests usa un reloj controlado.
+
+  P: ¿Los subtests se ejecutan en serie o en paralelo?
+  R: Por defecto en serie. Usa t.Parallel() dentro del subtest para
+     habilitar paralelismo.
+
+  P: ¿Cómo mockeo una base de datos en tests?
+  R: Define una interfaz Repository, implementa un mock en memoria en el
+     archivo _test.go, e inyecta el mock.
+
+  P: ¿go test compila los paquetes dependientes?
+  R: Sí, pero no ejecuta sus tests a menos que uses ./... y
+     especifiques que quieres tests de dependencias.
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Diseña un sistema de testing para un servidor HTTP completo:
+
+  1. Define interfaces para Database, Cache, Logger, EmailSender.
+  2. Implementa mocks para cada interfaz usando solo testing.T.
+  3. Escribe tests para handlers HTTP usando httptest.NewRecorder y
+     httptest.NewRequest.
+  4. Implementa test helpers: assertStatus, assertJSON, assertHeader.
+  5. Cubre casos: éxito, error de validación, error de BD, timeout.
+  6. Implementa un middleware de logging y pruébalo.
+  7. Usa subtests para organizar: TestCreateUser, TestGetUser, etc.
+  8. Mide cobertura: debe ser > 80%.
+  9. Usa t.Cleanup para cerrar recursos.
+  10. El desafío: escribir los tests ANTES que la implementación (TDD).
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has aprendido el ecosistema de testing de Go, desde tests unitarios
+  hasta fuzzing, pasando por table-driven tests, subtests, mocks,
+  cobertura, y golden files. Ahora puedes escribir tests profesionales
+  que garanticen la calidad de tu código. En el próximo capítulo
+  exploraremos benchmarks en Go.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 66: BENCHMARKS → BenchmarkXxx, b.N, benchmem, benchtime,
+  profiling, y comparación de rendimiento.
+
+================================================================================
+  FIN DEL CAPÍTULO 65
+================================================================================

@@ -1,0 +1,878 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 68: CONTEXT (CONTEXT.CONTEXT)
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 68. El paquete `context` es uno de los más
+  importantes en Go moderno. Proporciona una forma estándar de propagar
+  plazos, señales de cancelación y valores a través de los límites de
+  API, entre goroutines y en peticiones HTTP. Sin context, la gestión
+  de timeouts y cancelaciones sería caótica.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "El context es como el aire que respira un programa Go: invisible pero
+  esencial, llevando consigo el tiempo y la intención." — Jaana B. Dogan
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Crear contextos raíz con Background y TODO.
+  2. Crear contextos cancelables con WithCancel.
+  3. Crear contextos con timeout y deadline.
+  4. Usar ctx.Done() y ctx.Err() para manejar cancelaciones.
+  5. Propagar valores con context.WithValue.
+  6. Implementar servidores HTTP que respeten contextos.
+  7. Escribir operaciones que soporten cancelación.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. ¿QUÉ ES CONTEXT? ──
+
+  context.Context es una interfaz con cuatro métodos:
+
+  type Context interface {
+      Deadline() (deadline time.Time, ok bool)
+      Done() <-chan struct{}
+      Err() error
+      Value(key any) any
+  }
+
+  Propósitos principales:
+  1. Cancelación propagada: si un contexto padre se cancela, todos los
+     hijos se cancelan automáticamente.
+  2. Timeouts y deadlines: el contexto sabe cuándo debe expirar.
+  3. Valores request-scoped: datos que viajan con la petición (tracing
+     IDs, auth tokens).
+
+  Regla de oro: pasa context como primer parámetro.
+
+  ── 2. CONTEXTOS RAÍZ ──
+
+  context.Background():
+  ● Raíz de todos los contextos.
+  ● Nunca se cancela, nunca expira, no tiene valores.
+  ● Se usa en main(), init(), y en el nivel superior de las peticiones.
+
+  context.TODO():
+  ● También raíz, pero indica que aún no sabes qué contexto usar.
+  ● Es un placeholder que deberías reemplazar antes de producción.
+
+  func main() {
+      ctx := context.Background()
+      // Usar ctx en operaciones...
+
+      // TODO: refactorizar para pasar contexto adecuado
+      ctx2 := context.TODO()
+      _ = ctx2
+  }
+
+  ── 3. CONTEXTOS CANCELABLES: WithCancel ──
+
+  WithCancel crea un contexto hijo que puede cancelarse explícitamente:
+
+  func operation(ctx context.Context) error {
+      // Simular trabajo
+      select {
+      case <-time.After(2 * time.Second):
+          return nil
+      case <-ctx.Done():
+          return ctx.Err()
+      }
+  }
+
+  func main() {
+      ctx, cancel := context.WithCancel(context.Background())
+
+      // Ejecutar operación en goroutine
+      go func() {
+          err := operation(ctx)
+          fmt.Println("Operación terminó:", err)
+      }()
+
+      // Cancelar después de 100ms
+      time.Sleep(100 * time.Millisecond)
+      cancel()
+
+      time.Sleep(500 * time.Millisecond)
+  }
+
+  Siempre llama a cancel() para liberar recursos:
+
+  ctx, cancel := context.WithCancel(parent)
+  defer cancel() // Liberar recursos al salir
+
+  ── 4. CONTEXTOS CON TIMEOUT: WithTimeout ──
+
+  WithTimeout cancela automáticamente después de un tiempo:
+
+  func main() {
+      ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+      defer cancel()
+
+      result, err := slowOperation(ctx)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Resultado:", result)
+  }
+
+  func slowOperation(ctx context.Context) (string, error) {
+      select {
+      case <-time.After(5 * time.Second):
+          return "completado", nil
+      case <-ctx.Done():
+          return "", ctx.Err() // context deadline exceeded
+      }
+  }
+
+  ── 5. CONTEXTOS CON DEADLINE: WithDeadline ──
+
+  WithDeadline cancela en un momento específico:
+
+  func main() {
+      deadline := time.Now().Add(3 * time.Second)
+      ctx, cancel := context.WithDeadline(context.Background(), deadline)
+      defer cancel()
+
+      err := processWithinDeadline(ctx)
+      if err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+
+  func processWithinDeadline(ctx context.Context) error {
+      for {
+          select {
+          case <-ctx.Done():
+              return ctx.Err()
+          default:
+              // Procesar...
+              time.Sleep(500 * time.Millisecond)
+              fmt.Println("Procesando...")
+              if time.Now().After(ctx.Deadline()) {
+                  return ctx.Err()
+              }
+          }
+      }
+  }
+
+  ── 6. DETECTAR CANCELACIÓN ──
+
+  El canal ctx.Done() se cierra cuando el contexto se cancela o expira:
+
+  func worker(ctx context.Context) error {
+      for {
+          select {
+          case <-ctx.Done():
+              fmt.Println("Worker cancelado:", ctx.Err())
+              return ctx.Err()
+          default:
+              // Trabajar...
+              fmt.Println("Trabajando...")
+              time.Sleep(500 * time.Millisecond)
+          }
+      }
+  }
+
+  func main() {
+      ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+      defer cancel()
+
+      go worker(ctx)
+      time.Sleep(3 * time.Second)
+  }
+
+  ctx.Err() devuelve:
+  ● nil si el contexto sigue activo.
+  ● Canceled si fue cancelado con cancel().
+  ● DeadlineExceeded si expiró el timeout/deadline.
+
+  ── 7. PROPAGAR VALORES: WithValue ──
+
+  WithValue asocia un valor a un contexto. Útil para datos de ámbito
+  de petición (tracing, auth):
+
+  type contextKey string
+
+  const (
+      UserIDKey    contextKey = "user_id"
+      RequestIDKey contextKey = "request_id"
+  )
+
+  func main() {
+      ctx := context.Background()
+      ctx = context.WithValue(ctx, UserIDKey, "user-123")
+      ctx = context.WithValue(ctx, RequestIDKey, "req-456")
+
+      handleRequest(ctx)
+  }
+
+  func handleRequest(ctx context.Context) {
+      userID := ctx.Value(UserIDKey).(string)
+      reqID := ctx.Value(RequestIDKey).(string)
+      fmt.Printf("Procesando request %s del usuario %s\n", reqID, userID)
+  }
+
+  Buenas prácticas con valores:
+  ● Usa tipos específicos para las claves (no strings).
+  ● No uses context para pasar parámetros opcionales.
+  ● Limita los valores a tracing, auth, y metadata similar.
+
+  ── 8. CADENA DE CONTEXTOS ──
+
+  Los contextos forman una cadena (similar a un árbol):
+
+  ctxRoot := context.Background()
+  ctxTimeout, _ := context.WithTimeout(ctxRoot, 5*time.Second)
+  ctxCancel, cancel := context.WithCancel(ctxTimeout)
+  ctxValue := context.WithValue(ctxCancel, "key", "val")
+  defer cancel()
+
+  // Si ctxRoot se cancela → todos se cancelan.
+  // Si ctxTimeout expira → ctxCancel y ctxValue se cancelan.
+  // Si cancel() se llama → solo ctxCancel y ctxValue se cancelan.
+
+  ── 9. CONTEXT EN SERVIDORES HTTP ──
+
+  net/http usa context automáticamente:
+
+  func handler(w http.ResponseWriter, r *http.Request) {
+      ctx := r.Context()
+      // ctx se cancela cuando el cliente desconecta
+      // o cuando el servidor tiene timeout
+
+      select {
+      case <-time.After(10 * time.Second):
+          fmt.Fprintf(w, "Respuesta tardía")
+      case <-ctx.Done():
+          // Cliente desconectó o timeout
+          http.Error(w, "request cancelled", http.StatusGatewayTimeout)
+      }
+  }
+
+  Middleware que agrega valores al context:
+
+  type ContextKey string
+
+  const AuthKey ContextKey = "auth"
+
+  func AuthMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          token := r.Header.Get("Authorization")
+          if token == "" {
+              http.Error(w, "unauthorized", http.StatusUnauthorized)
+              return
+          }
+          ctx := context.WithValue(r.Context(), AuthKey, token)
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func protectedHandler(w http.ResponseWriter, r *http.Request) {
+      auth := r.Context().Value(AuthKey).(string)
+      fmt.Fprintf(w, "Autenticado con: %s", auth)
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.Handle("/protected", AuthMiddleware(http.HandlerFunc(protectedHandler)))
+      http.ListenAndServe(":8080", mux)
+  }
+
+  ── 10. CONTEXT CON TIMEZOUT EN HTTP ──
+
+  http.TimeoutHandler envuelve un handler con timeout:
+
+  func slowHandler(w http.ResponseWriter, r *http.Request) {
+      time.Sleep(10 * time.Second)
+      fmt.Fprintf(w, "Completado")
+  }
+
+  func main() {
+      handler := http.TimeoutHandler(
+          http.HandlerFunc(slowHandler),
+          2*time.Second,
+          "La petición tardó demasiado",
+      )
+      http.Handle("/slow", handler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  O configura timeout global en el servidor:
+
+  srv := &http.Server{
+      Addr:         ":8080",
+      ReadTimeout:  5 * time.Second,
+      WriteTimeout: 10 * time.Second,
+      IdleTimeout:  120 * time.Second,
+  }
+  srv.ListenAndServe()
+
+  ── 11. EJEMPLO COMPLETO: SERVIDOR CON CANCELACIÓN ──
+
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "log"
+      "net/http"
+      "os"
+      "os/signal"
+      "syscall"
+      "time"
+  )
+
+  func main() {
+      srv := &http.Server{
+          Addr:         ":8080",
+          Handler:      router(),
+          ReadTimeout:  5 * time.Second,
+          WriteTimeout: 10 * time.Second,
+      }
+
+      // Canal para señales del sistema
+      quit := make(chan os.Signal, 1)
+      signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+      // Iniciar servidor en goroutine
+      go func() {
+          fmt.Println("Servidor iniciado en :8080")
+          if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+              log.Fatalf("Error: %v", err)
+          }
+      }()
+
+      // Esperar señal
+      <-quit
+      fmt.Println("Apagando servidor...")
+
+      // Graceful shutdown con timeout
+      ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+      defer cancel()
+
+      if err := srv.Shutdown(ctx); err != nil {
+          log.Fatalf("Error en shutdown: %v", err)
+      }
+      fmt.Println("Servidor apagado correctamente")
+  }
+
+  func router() http.Handler {
+      mux := http.NewServeMux()
+      mux.HandleFunc("/", homeHandler)
+      mux.HandleFunc("/long", longHandler)
+      return mux
+  }
+
+  func homeHandler(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "OK")
+  }
+
+  func longHandler(w http.ResponseWriter, r *http.Request) {
+      ctx := r.Context()
+      log.Println("Iniciando petición larga")
+
+      select {
+      case <-time.After(5 * time.Second):
+          fmt.Fprintf(w, "Operación completada")
+      case <-ctx.Done():
+          log.Println("Petición cancelada:", ctx.Err())
+          http.Error(w, "cancelada", http.StatusGatewayTimeout)
+      }
+  }
+
+  ── 12. CONTEXT EN OPERACIONES CON BD ──
+
+  database/sql soporta contextos nativamente:
+
+  func FetchUser(ctx context.Context, db *sql.DB, id int) (*User, error) {
+      ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+      defer cancel()
+
+      row := db.QueryRowContext(ctx, "SELECT id, name FROM users WHERE id = ?", id)
+
+      var u User
+      err := row.Scan(&u.ID, &u.Name)
+      if err != nil {
+          if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+              return nil, fmt.Errorf("timeout al buscar usuario %d", id)
+          }
+          return nil, err
+      }
+      return &u, nil
+  }
+
+  También en transacciones:
+
+  func Transfer(ctx context.Context, db *sql.DB, from, to int, amount float64) error {
+      tx, err := db.BeginTx(ctx, nil)
+      if err != nil {
+          return err
+      }
+      defer tx.Rollback()
+
+      _, err = tx.ExecContext(ctx,
+          "UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, from)
+      if err != nil {
+          return err
+      }
+
+      _, err = tx.ExecContext(ctx,
+          "UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, to)
+      if err != nil {
+          return err
+      }
+
+      return tx.Commit()
+  }
+
+  ── 13. CONTEXT EN LLAMADAS HTTP ──
+
+  http.Client soporta contextos:
+
+  func fetch(ctx context.Context, url string) ([]byte, error) {
+      req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+      if err != nil {
+          return nil, err
+      }
+
+      resp, err := http.DefaultClient.Do(req)
+      if err != nil {
+          return nil, err
+      }
+      defer resp.Body.Close()
+
+      return io.ReadAll(resp.Body)
+  }
+
+  func main() {
+      ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+      defer cancel()
+
+      data, err := fetch(ctx, "https://api.example.com/data")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Datos:", string(data))
+  }
+
+  ── 14. CONTEXT Y CANALES ──
+
+  Patrón: worker pool con context
+
+  func worker(ctx context.Context, id int, jobs <-chan int, results chan<- int) {
+      for {
+          select {
+          case <-ctx.Done():
+              fmt.Printf("Worker %d cancelado\n", id)
+              return
+          case job, ok := <-jobs:
+              if !ok {
+                  return
+              }
+              // Procesar trabajo
+              result := job * 2
+              select {
+              case results <- result:
+              case <-ctx.Done():
+                  return
+              }
+          }
+      }
+  }
+
+  func main() {
+      ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+      defer cancel()
+
+      jobs := make(chan int, 10)
+      results := make(chan int, 10)
+
+      // Iniciar workers
+      for w := 1; w <= 3; w++ {
+          go worker(ctx, w, jobs, results)
+      }
+
+      // Enviar trabajos
+      for j := 1; j <= 5; j++ {
+          jobs <- j
+      }
+      close(jobs)
+
+      // Recibir resultados (con timeout global)
+      for i := 0; i < 5; i++ {
+          select {
+          case res := <-results:
+              fmt.Println("Resultado:", res)
+          case <-ctx.Done():
+              fmt.Println("Timeout")
+              return
+          }
+      }
+  }
+
+  ── 15. ERRORES COMUNES ──
+
+  15.1 No llamar a cancel()
+
+  // ❌ Memory leak
+  ctx, _ := context.WithCancel(parent)
+  // cancel nunca se llama
+
+  // ✅ Correcto
+  ctx, cancel := context.WithCancel(parent)
+  defer cancel()
+
+  15.2 Pasar nil como context
+
+  // ❌ Panic
+  func DoSomething(ctx context.Context) {
+      // Si ctx es nil, ctx.Done() panic
+  }
+
+  // ✅ Siempre usa context.Background() como mínimo
+  func DoSomething(ctx context.Context) {
+      if ctx == nil {
+          ctx = context.Background()
+      }
+  }
+
+  15.3 Usar context para parámetros opcionales
+
+  // ❌ Mal: usar context para pasar parámetros de negocio
+  ctx := context.WithValue(ctx, "discount", 0.10)
+
+  // ✅ Bien: usar parámetros explícitos
+  type Config struct { Discount float64 }
+  func calculate(config Config, ctx context.Context) { ... }
+
+  ── 16. CONTEXT Y GOROUTINES ──
+
+  Propagar contexto a goroutines hijas:
+
+  func parent(ctx context.Context) {
+      // Si el padre se cancela, el hijo también
+      go child(ctx)
+  }
+
+  func child(ctx context.Context) {
+      select {
+      case <-ctx.Done():
+          return
+      default:
+          // trabajar
+      }
+  }
+
+  Para operaciones que lanzan sub-goroutines, pasa el contexto:
+
+  func fetchAll(ctx context.Context, urls []string) []string {
+      var wg sync.WaitGroup
+      results := make(chan string, len(urls))
+
+      for _, url := range urls {
+          wg.Add(1)
+          go func(u string) {
+              defer wg.Done()
+              data, err := fetch(ctx, u)
+              if err != nil {
+                  return
+              }
+              select {
+              case results <- string(data):
+              case <-ctx.Done():
+              }
+          }(url)
+      }
+
+      go func() {
+          wg.Wait()
+          close(results)
+      }()
+
+      var all []string
+      for r := range results {
+          all = append(all, r)
+      }
+      return all
+  }
+
+  ── 17. CONTEXT EN LIBRERÍAS ──
+
+  Si escribes una biblioteca, acepta context como primer parámetro:
+
+  // package miLib
+
+  type Client struct {
+      baseURL string
+      client  *http.Client
+  }
+
+  func NewClient(baseURL string) *Client {
+      return &Client{
+          baseURL: baseURL,
+          client:  &http.Client{Timeout: 10 * time.Second},
+      }
+  }
+
+  func (c *Client) GetData(ctx context.Context, id string) (*Data, error) {
+      url := c.baseURL + "/data/" + id
+      req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+      if err != nil {
+          return nil, err
+      }
+      resp, err := c.client.Do(req)
+      if err != nil {
+          return nil, err
+      }
+      defer resp.Body.Close()
+
+      var data Data
+      if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+          return nil, err
+      }
+      return &data, nil
+  }
+
+  ── 18. CONTEXT CON CANCELACIÓN EN CADENA ──
+
+  func main() {
+      ctx, cancel := context.WithCancel(context.Background())
+      defer cancel()
+
+      // Etapa 1
+      dataChan := make(chan int)
+      go stage1(ctx, dataChan)
+
+      // Etapa 2
+      processedChan := make(chan int)
+      go stage2(ctx, dataChan, processedChan)
+
+      // Consumidor
+      go func() {
+          for v := range processedChan {
+              fmt.Println("Resultado:", v)
+          }
+      }()
+
+      // Simular error
+      time.Sleep(1 * time.Second)
+      fmt.Println("Error detectado, cancelando...")
+      cancel()
+      time.Sleep(500 * time.Millisecond)
+  }
+
+  func stage1(ctx context.Context, out chan<- int) {
+      for i := 0; ; i++ {
+          select {
+          case out <- i:
+          case <-ctx.Done():
+              close(out)
+              return
+          }
+      }
+  }
+
+  func stage2(ctx context.Context, in <-chan int, out chan<- int) {
+      defer close(out)
+      for v := range in {
+          result := v * 2
+          select {
+          case out <- result:
+          case <-ctx.Done():
+              return
+          }
+      }
+  }
+
+  ── 19. PROPAGACIÓN DE TIMEOUT ──
+
+  Cómo crear un timeout descendente en una cadena de llamadas:
+
+  func callService(ctx context.Context) error {
+      // Cada llamada tiene su propio timeout, derivado del padre
+      ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+      defer cancel()
+      return actualAPICall(ctx)
+  }
+
+  func actualAPICall(ctx context.Context) error {
+      // timeout total: hereda el límite del padre
+      req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.example.com", nil)
+      _, err := http.DefaultClient.Do(req)
+      return err
+  }
+
+  // El timeout total es el mínimo de todos los timeouts en la cadena.
+  // Si el padre tiene 5s pero el hijo crea uno de 2s, el total será 2s.
+
+  ── 20. EJEMPLO COMPLETO: DOWNLOADER CON CONTEXT ──
+
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "io"
+      "net/http"
+      "os"
+      "time"
+  )
+
+  func downloadFile(ctx context.Context, url, filename string) error {
+      // Crear archivo
+      file, err := os.Create(filename)
+      if err != nil {
+          return err
+      }
+      defer file.Close()
+
+      // Request con contexto
+      req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+      if err != nil {
+          return err
+      }
+
+      resp, err := http.DefaultClient.Do(req)
+      if err != nil {
+          return err
+      }
+      defer resp.Body.Close()
+
+      // Reportar progreso en goroutine
+      go func() {
+          ticker := time.NewTicker(1 * time.Second)
+          defer ticker.Stop()
+          for {
+              select {
+              case <-ticker.C:
+                  info, _ := file.Stat()
+                  fmt.Printf("Descargado: %d bytes\n", info.Size())
+              case <-ctx.Done():
+                  fmt.Println("Descarga cancelada")
+                  return
+              }
+          }
+      }()
+
+      _, err = io.Copy(file, resp.Body)
+      return err
+  }
+
+  func main() {
+      // Timeout de 10 segundos para la descarga
+      ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+      defer cancel()
+
+      err := downloadFile(ctx, "https://example.com/largefile.zip", "largefile.zip")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Descarga completada")
+  }
+
+  ── 21. BUENAS PRÁCTICAS ──
+
+  1. Context es el primer parámetro de funciones que lo aceptan.
+  2. Nunca almacenes context en structs; pásalo como parámetro.
+  3. Siempre llama a cancel() para liberar recursos.
+  4. Usa context.Background() en main() e init().
+  5. Usa context.TODO() como placeholder, reemplázalo antes de prod.
+  6. No uses context para pasar parámetros opcionales de negocio.
+  7. Convierte ctx.Done() con select para operaciones bloqueantes.
+  8. Prefiere WithTimeout sobre WithDeadline (es más legible).
+  9. Las claves de WithValue deben ser tipos personalizados.
+  10. Los contextos con valores se usan para tracing, no para lógica.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● context.Context propaga cancelación, timeouts, y valores entre
+    goroutines y límites de API.
+  ● context.Background() es la raíz; context.TODO() es placeholder.
+  ● WithCancel crea contexto cancelable; WithTimeout/WithDeadline
+    crean contextos con expiración automática.
+  ● ctx.Done() devuelve un canal que se cierra al cancelar/expirar.
+  ● ctx.Err() indica la causa: Canceled o DeadlineExceeded.
+  ● WithValue asocia datos request-scoped (usar con tipos propios).
+  ● Siempre llama a cancel() con defer para evitar memory leaks.
+  ● HTTP, BD, y clientes HTTP soportan context nativamente.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Crea un servidor HTTP con graceful shutdown usando context.
+  2. Implementa una función `fetchWithRetry(ctx, url, maxRetries)`.
+  3. Escribe un middleware que agregue un request ID al contexto.
+  4. Implementa un worker pool que se cancele con context.
+  5. Crea un cliente HTTP con timeout configurable por request.
+  6. Escribe una función batchProcess que procese N items con timeout
+     total y por item.
+  7. Implementa un semáforo con context para limitar concurrencia.
+  8. Crea un proxy HTTP que cancele la petición aguas arriba si el
+     cliente desconecta.
+  9. Escribe un rate limiter que use context.WithDeadline.
+  10. Implementa un patrón de pipeline de 3 etapas con cancelación
+      propagada.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Debo pasar context como puntero?
+  R: No. Context es una interfaz, no un puntero. Pásalo por valor.
+
+  P: ¿Puedo crear un contexto sin padre?
+  R: Solo Background() y TODO() son raíces. Todos los demás derivan de
+     uno existente.
+
+  P: ¿Context es seguro para concurrencia?
+  R: Sí. Múltiples goroutines pueden usar el mismo contexto simultánea-
+     mente.
+
+  P: ¿Qué pasa si no llamo a cancel()?
+  R: Los recursos del contexto (canales, goroutines) no se liberan hasta
+     que el contexto padre se cancele o el programa termine. Memory leak.
+
+  P: ¿Cómo propago un valor a través de middlewares HTTP?
+  R: Usa r.WithContext(ctx) y r.Context().Value().
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Implementa un "Distributed Context" que permita propagar cancelación
+  y metadata a través de servicios:
+
+  1. Define un tipo `PropagatedContext` que serialice/deserialice un
+     context a JSON para enviarlo por HTTP/gRPC.
+  2. Un middleware HTTP que extraiga el contexto propagado de los
+     headers (ej. X-Request-ID, X-Deadline, X-Cancel-Token).
+  3. Un middleware que inyecte el contexto propagado en las respuestas.
+  4. Implementa cancelación remota: si el servicio A cancela, el
+     servicio B también debe cancelar.
+  5. Timeout jerárquico: el timeout global del request padre se reduce
+     en cada salto.
+  6. Propaga valores como trace ID, user ID, roles.
+  7. El desafío: implementa un mecanismo para que un servicio notifique
+     cancelación a otros servicios (webhook o channel) sin polling.
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has dominado el paquete context de Go, esencial para escribir
+  aplicaciones concurrentes, servidores HTTP robustos, y código que
+  responda correctamente a cancelaciones y timeouts. Este conocimiento
+  es fundamental para sistemas en producción. En el próximo capítulo
+  exploraremos Go Modules en detalle.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 69: GO MODULES (GO.MOD) → go mod init/tidy, go get,
+  replace directive, versiones, workspace mode.
+
+================================================================================
+  FIN DEL CAPÍTULO 68
+================================================================================

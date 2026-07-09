@@ -1,0 +1,769 @@
+╔══════════════════════════════════════════════════════════════╗
+║            JAVA MASTER BOOK - MÓDULO V                      ║
+║        COLECCIONES Y GENÉRICOS                              ║
+║        CAPÍTULO 49: COMPARABLE VS COMPARATOR                ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDO
+
+Bienvenido al capítulo donde resolveremos uno de los dilemas más
+comunes en Java: ¿cómo ordenar objetos? Java proporciona dos
+mecanismos: Comparable (orden natural) y Comparator (orden
+personalizado).
+
+Comparable define "cómo se ordena este tipo de objeto por
+defecto". Comparator define "cómo ordenar objetos de una manera
+específica". Ambos son fundamentales para trabajar con
+TreeSet, TreeMap, Collections.sort(), y streams ordenados.
+
+FRASE DEL DÍA
+
+"Comparable te dice quién eres; Comparator te permite ser quien
+quieras ser."
+— Joshua Bloch
+
+OBJETIVOS DEL CAPÍTULO
+
+• Comprender la interfaz Comparable y el orden natural
+• Implementar compareTo() correctamente
+• Dominar la interfaz Comparator y órdenes personalizados
+• Conocer los métodos estáticos de Comparator (Java 8+)
+• Implementar comparaciones encadenadas
+• Diferenciar cuándo usar Comparable vs Comparator
+• Aplicar buenas prácticas en implementaciones
+
+================================================================================
+LA INTERFAZ COMPARABLE
+
+Comparable es una interfaz funcional que define el orden natural
+de los objetos. Se encuentra en java.lang.
+
+```java
+public interface Comparable<T> {
+    public int compareTo(T o);
+}
+```
+
+El método compareTo() debe devolver:
+  • Negativo: this es menor que el argumento (this < o)
+  • Cero: this es igual al argumento (this == o)
+  • Positivo: this es mayor que el argumento (this > o)
+
+Clases que implementan Comparable en el JDK:
+  • String (orden alfabético)
+  • Integer, Double, Long, etc. (orden numérico)
+  • Date, LocalDate, etc. (orden cronológico)
+  • BigDecimal (orden numérico)
+
+Ejemplo básico:
+
+```java
+public class Persona implements Comparable<Persona> {
+    private String nombre;
+    private int edad;
+
+    // Constructor, getters...
+
+    @Override
+    public int compareTo(Persona otra) {
+        // Orden natural: por nombre
+        return this.nombre.compareTo(otra.nombre);
+        // Negativo: this antes que otra
+        // Cero: iguales
+        // Positivo: this después que otra
+    }
+}
+```
+
+================================================================================
+IMPLEMENTANDO COMPARABLE CORRECTAMENTE
+
+Para ordenar por múltiples criterios:
+
+```java
+public class Empleado implements Comparable<Empleado> {
+    private String nombre;
+    private String apellido;
+    private double salario;
+    private int antiguedad;
+
+    public Empleado(String nombre, String apellido,
+                    double salario, int antiguedad) {
+        this.nombre = nombre;
+        this.apellido = apellido;
+        this.salario = salario;
+        this.antiguedad = antiguedad;
+    }
+
+    @Override
+    public int compareTo(Empleado otro) {
+        // 1. Por apellido (ascendente)
+        int resultado = this.apellido.compareTo(otro.apellido);
+        if (resultado != 0) return resultado;
+
+        // 2. Por nombre (ascendente)
+        resultado = this.nombre.compareTo(otro.nombre);
+        if (resultado != 0) return resultado;
+
+        // 3. Por salario (descendente)
+        resultado = Double.compare(otro.salario, this.salario);
+        if (resultado != 0) return resultado;
+
+        // 4. Por antigüedad (ascendente)
+        return Integer.compare(this.antiguedad, otro.antiguedad);
+    }
+
+    @Override
+    public String toString() {
+        return apellido + ", " + nombre +
+               " ($" + salario + ", " + antiguedad + " años)";
+    }
+}
+```
+
+Importante: No uses resta para comparar números enteros:
+
+```java
+// MAL: puede causar overflow
+public int compareTo(Persona o) {
+    return this.edad - o.edad;
+    // Si this.edad = Integer.MAX_VALUE y o.edad = -1
+    // Resultado: overflow, signo incorrecto
+}
+
+// BIEN: usar Integer.compare() o Comparator
+public int compareTo(Persona o) {
+    return Integer.compare(this.edad, o.edad);
+}
+```
+
+================================================================================
+CONTRATO DE COMPARABLE
+
+Si una clase implementa Comparable, debe cumplir:
+
+1. Reflexividad: x.compareTo(x) == 0
+
+2. Simetría: x.compareTo(y) == -y.compareTo(x)
+
+3. Transitividad: si x.compareTo(y) > 0 y y.compareTo(z) > 0,
+   entonces x.compareTo(z) > 0
+
+4. Consistencia con equals (recomendado):
+   x.compareTo(y) == 0 debería ser consistente con x.equals(y)
+
+Si no se cumple la consistencia, documenta: "Orden natural
+inconsistente con equals". Esto ocurre cuando usas un criterio
+diferente para ordenar que para determinar igualdad.
+
+```java
+public class Producto implements Comparable<Producto> {
+    private String nombre;
+    private double precio;
+
+    // compareTo solo por precio
+    @Override
+    public int compareTo(Producto o) {
+        return Double.compare(this.precio, o.precio);
+    }
+
+    // equals por nombre (diferente criterio)
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof Producto)) return false;
+        return this.nombre.equals(((Producto) o).nombre);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(nombre);
+    }
+    // NOTA: compareTo == 0 no coincide con equals == 0
+    // Dos productos pueden tener mismo precio pero diferente nombre
+}
+```
+
+================================================================================
+LA INTERFAZ COMPARATOR
+
+Comparator es una interfaz funcional que permite definir órdenes
+personalizados externos a la clase. Se encuentra en java.util.
+
+```java
+@FunctionalInterface
+public interface Comparator<T> {
+    int compare(T o1, T o2);
+
+    // Métodos default y estáticos (Java 8+)
+    // reversed(), thenComparing(), comparing(), etc.
+}
+```
+
+Comparators básicos:
+
+```java
+import java.util.*;
+
+public class ComparatorsBasicos {
+    public static void main(String[] args) {
+        List<Persona> personas = new ArrayList<>();
+        personas.add(new Persona("Ana", 25));
+        personas.add(new Persona("Luis", 30));
+        personas.add(new Persona("Carlos", 22));
+        personas.add(new Persona("Ana", 20));
+
+        // Comparator como clase anónima
+        personas.sort(new Comparator<Persona>() {
+            @Override
+            public int compare(Persona p1, Persona p2) {
+                return Integer.compare(p1.getEdad(), p2.getEdad());
+            }
+        });
+
+        // Comparator como lambda
+        personas.sort((p1, p2) -> Integer.compare(p1.getEdad(), p2.getEdad()));
+
+        // Comparator con método de referencia
+        personas.sort(Comparator.comparingInt(Persona::getEdad));
+
+        // Comparator inverso
+        personas.sort(Comparator.comparingInt(Persona::getEdad).reversed());
+
+        // Comparator por nombre
+        personas.sort(Comparator.comparing(Persona::getNombre));
+
+        // Comparator compuesto (nombre, luego edad)
+        personas.sort(Comparator.comparing(Persona::getNombre)
+                      .thenComparingInt(Persona::getEdad));
+
+        System.out.println(personas);
+    }
+}
+```
+
+================================================================================
+COMPARATOR CON MÚLTIPLES CAMPOS
+
+```java
+public class ComparatorCompuesto {
+    public static void main(String[] args) {
+        List<Empleado> empleados = new ArrayList<>();
+        empleados.add(new Empleado("Ana", "García", 50000, 5));
+        empleados.add(new Empleado("Luis", "Pérez", 60000, 3));
+        empleados.add(new Empleado("Ana", "García", 55000, 2));
+        empleados.add(new Empleado("Carlos", "Ruiz", 50000, 8));
+
+        // Forma 1: encadenado
+        Comparator<Empleado> comparador = Comparator
+            .comparing(Empleado::getApellido)
+            .thenComparing(Empleado::getNombre)
+            .thenComparingDouble(Empleado::getSalario)
+            .thenComparingInt(Empleado::getAntiguedad);
+
+        empleados.sort(comparador);
+        empleados.forEach(System.out::println);
+
+        // Forma 2: manual (equivalente)
+        empleados.sort((e1, e2) -> {
+            int cmp = e1.getApellido().compareTo(e2.getApellido());
+            if (cmp != 0) return cmp;
+            cmp = e1.getNombre().compareTo(e2.getNombre());
+            if (cmp != 0) return cmp;
+            cmp = Double.compare(e1.getSalario(), e2.getSalario());
+            if (cmp != 0) return cmp;
+            return Integer.compare(e1.getAntiguedad(), e2.getAntiguedad());
+        });
+
+        // Comparador nulo-seguro
+        Comparator<Empleado> nullSafe = Comparator
+            .nullsFirst(Comparator.comparing(Empleado::getNombre));
+
+        Comparator<Empleado> nullSafeLast = Comparator
+            .nullsLast(Comparator.comparing(Empleado::getNombre));
+    }
+}
+```
+
+================================================================================
+MÉTODOS ESTÁTICOS DE COMPARATOR (JAVA 8+)
+
+```java
+// comparing: extrae clave Comparable
+Comparator<Persona> porNombre = Comparator.comparing(Persona::getNombre);
+Comparator<Persona> porNombreReverso = Comparator.comparing(
+    Persona::getNombre).reversed();
+
+// comparingInt, comparingLong, comparingDouble: evitan boxing
+Comparator<Persona> porEdad = Comparator.comparingInt(Persona::getEdad);
+Comparator<Empleado> porSalario = Comparator.comparingDouble(Empleado::getSalario);
+
+// thenComparing: encadenar comparators
+Comparator<Persona> compuesto = Comparator
+    .comparing(Persona::getNombre)
+    .thenComparingInt(Persona::getEdad);
+
+// naturalOrder, reverseOrder
+Comparator<String> alfabetico = Comparator.naturalOrder();
+Comparator<String> inverso = Comparator.reverseOrder();
+
+// nullsFirst, nullsLast: manejar nulos
+Comparator<String> conNulos = Comparator.nullsFirst(
+    Comparator.naturalOrder());
+// null se considera menor que cualquier no-null
+
+// comparing con key extractor y comparator
+Comparator<Persona> porNombreLongitud = Comparator.comparing(
+    p -> p.getNombre().length());
+
+Comparator<Persona> porNombreIgnoreCase = Comparator.comparing(
+    Persona::getNombre, String.CASE_INSENSITIVE_ORDER);
+```
+
+================================================================================
+COMPARATOR CON CAMPOS NULOS
+
+```java
+import java.util.*;
+
+public class ManejoNulos {
+    public static void main(String[] args) {
+        List<Persona> lista = new ArrayList<>();
+        lista.add(new Persona("Ana", 25));
+        lista.add(new Persona(null, 30));    // nombre null
+        lista.add(new Persona("Carlos", 22));
+        lista.add(new Persona(null, 20));    // nombre null
+
+        // nullsFirst: null al principio
+        lista.sort(Comparator.nullsFirst(
+            Comparator.comparing(Persona::getNombre,
+                Comparator.nullsFirst(String::compareTo))));
+
+        System.out.println("nullsFirst: " + lista);
+        // [null(30), null(20), Ana(25), Carlos(22)]
+
+        // nullsLast: null al final
+        lista.sort(Comparator.nullsLast(
+            Comparator.comparing(Persona::getNombre,
+                Comparator.nullsLast(String::compareTo))));
+
+        System.out.println("nullsLast: " + lista);
+        // [Ana(25), Carlos(22), null(30), null(20)]
+    }
+}
+```
+
+================================================================================
+COMPARABLE VS COMPARATOR: ¿CUÁNDO USAR CUÁL?
+
+┌────────────────────┬─────────────────────┬─────────────────────┐
+│ CRITERIO           │ COMPARABLE          │ COMPARATOR          │
+├────────────────────┼─────────────────────┼─────────────────────┤
+│ Paquete            │ java.lang           │ java.util           │
+│ Método             │ compareTo(T)        │ compare(T, T)       │
+│ Propósito          │ Orden natural       │ Orden personalizado │
+│ Modificas la clase │ Sí (implementas)    │ No (clase externa)  │
+│ Múltiples órdenes  │ No (solo uno)       │ Sí (muchos)         │
+│ Lambda             │ No (es método abs.) │ Sí (FI)             │
+│ Stream API         │ sorted() sin args   │ sorted(Comparator)  │
+│ TreeSet/TreeMap    │ Constructor vacío   │ Constructor c/Comp  │
+└────────────────────┴─────────────────────┴─────────────────────┘
+
+Cuándo usar Comparable:
+  • La clase tiene un orden natural obvio (ej: fecha cronológica)
+  • Puedes modificar la clase fuente
+  • Solo necesitas un orden por defecto
+
+Cuándo usar Comparator:
+  • La clase no implementa Comparable
+  • Necesitas múltiples órdenes diferentes
+  • No puedes modificar la clase fuente (clase de terceros)
+  • Necesitas un orden temporal o específico para un contexto
+
+Ejemplo: ordenar String por longitud
+
+```java
+List<String> palabras = List.of("tres", "siete", "dos", "ocho");
+
+// Comparable de String: orden alfabético
+List<String> alfabetico = new ArrayList<>(palabras);
+Collections.sort(alfabetico);
+System.out.println("Alfabético: " + alfabetico);
+
+// Comparator personalizado: por longitud
+List<String> porLongitud = new ArrayList<>(palabras);
+porLongitud.sort(Comparator.comparingInt(String::length));
+System.out.println("Por longitud: " + porLongitud);
+
+// Comparator: por longitud inversa
+porLongitud.sort(Comparator.comparingInt(String::length).reversed());
+System.out.println("Por longitud inversa: " + porLongitud);
+```
+
+================================================================================
+EJEMPLO COMPLETO: ORDENACIÓN DE PRODUCTOS
+
+```java
+import java.util.*;
+
+public class OrdenacionProductos {
+    static class Producto {
+        String nombre;
+        double precio;
+        int stock;
+        String categoria;
+
+        Producto(String n, double p, int s, String c) {
+            nombre = n; precio = p; stock = s; categoria = c;
+        }
+
+        public String toString() {
+            return String.format("[%s] %s $%.2f (%d uds)",
+                categoria, nombre, precio, stock);
+        }
+    }
+
+    public static void main(String[] args) {
+        List<Producto> productos = new ArrayList<>();
+        productos.add(new Producto("Laptop", 1200, 5, "Electrónica"));
+        productos.add(new Producto("Mouse", 25, 50, "Electrónica"));
+        productos.add(new Producto("Camiseta", 15, 100, "Ropa"));
+        productos.add(new Producto("Monitor", 300, 8, "Electrónica"));
+        productos.add(new Producto("Pantalón", 45, 30, "Ropa"));
+
+        // Múltiples comparadores
+        Comparator<Producto> porPrecioAsc = Comparator
+            .comparingDouble(p -> p.precio);
+        Comparator<Producto> porPrecioDesc = Comparator
+            .comparingDouble((Producto p) -> p.precio).reversed();
+        Comparator<Producto> porStock = Comparator
+            .comparingInt(p -> p.stock);
+        Comparator<Producto> porCategoriaYNomb = Comparator
+            .comparing((Producto p) -> p.categoria)
+            .thenComparing(p -> p.nombre);
+
+        // Orden por categoría, luego precio descendente
+        Comparator<Producto> complejo = Comparator
+            .comparing((Producto p) -> p.categoria)
+            .thenComparing(Comparator.comparingDouble(
+                (Producto p) -> p.precio).reversed());
+
+        System.out.println("=== Por precio ascendente ===");
+        productos.stream().sorted(porPrecioAsc).forEach(System.out::println);
+
+        System.out.println("\n=== Por categoría + nombre ===");
+        productos.stream().sorted(porCategoriaYNomb).forEach(System.out::println);
+
+        System.out.println("\n=== Por categoría + precio desc ===");
+        productos.stream().sorted(complejo).forEach(System.out::println);
+
+        // Producto más caro
+        Producto masCaro = productos.stream()
+            .max(Comparator.comparingDouble(p -> p.precio))
+            .orElse(null);
+        System.out.println("\nMás caro: " + masCaro);
+
+        // Producto con menos stock
+        Producto menosStock = productos.stream()
+            .min(Comparator.comparingInt(p -> p.stock))
+            .orElse(null);
+        System.out.println("Menos stock: " + menosStock);
+    }
+}
+```
+
+================================================================================
+IMPLEMENTACIONES AVANZADAS
+
+Comparator con campos seleccionables:
+
+```java
+import java.util.*;
+import java.util.function.Function;
+
+public class ComparadorDinamico<T> implements Comparator<T> {
+    private List<Criterio<T>> criterios = new ArrayList<>();
+
+    public static class Criterio<T> {
+        Function<T, ? extends Comparable> extractor;
+        boolean descendente;
+
+        Criterio(Function<T, ? extends Comparable> e, boolean d) {
+            extractor = e; descendente = d;
+        }
+    }
+
+    public ComparadorDinamico<T> agregar(
+            Function<T, ? extends Comparable> extractor,
+            boolean descendente) {
+        criterios.add(new Criterio<>(extractor, descendente));
+        return this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public int compare(T o1, T o2) {
+        for (Criterio<T> c : criterios) {
+            Comparable v1 = c.extractor.apply(o1);
+            Comparable v2 = c.extractor.apply(o2);
+            int resultado = v1.compareTo(v2);
+            if (resultado != 0) {
+                return c.descendente ? -resultado : resultado;
+            }
+        }
+        return 0;
+    }
+}
+
+// Uso
+ComparadorDinamico<Empleado> comp = new ComparadorDinamico<>();
+comp.agregar(Empleado::getApellido, false)
+    .agregar(Empleado::getNombre, false)
+    .agregar(Empleado::getSalario, true);
+empleados.sort(comp);
+```
+
+================================================================================
+COMPARATOR EN COLECCIONES ORDENADAS
+
+```java
+// TreeSet con Comparator
+Set<Persona> personas = new TreeSet<>(
+    Comparator.comparingInt(Persona::getEdad).reversed()
+);
+personas.add(new Persona("Ana", 25));
+personas.add(new Persona("Luis", 30));
+personas.add(new Persona("Carlos", 22));
+System.out.println(personas);
+// [Luis(30), Ana(25), Carlos(22)] — orden edad descendente
+
+// TreeMap con Comparator
+Map<Persona, String> mapa = new TreeMap<>(
+    Comparator.comparing(Persona::getNombre)
+);
+mapa.put(new Persona("Ana", 25), "Ingeniera");
+mapa.put(new Persona("Luis", 30), "Doctor");
+System.out.println(mapa);
+// {Ana(25)=Ingeniera, Luis(30)=Doctor}
+
+// PriorityQueue con Comparator
+Queue<Persona> colaPrioridad = new PriorityQueue<>(
+    Comparator.comparingInt(Persona::getEdad)
+);
+colaPrioridad.offer(new Persona("Ana", 25));
+colaPrioridad.offer(new Persona("Luis", 30));
+colaPrioridad.offer(new Persona("Carlos", 22));
+System.out.println(colaPrioridad.poll());  // Carlos(22) — el menor
+```
+
+================================================================================
+ERRORES COMUNES Y BUENAS PRÁCTICAS
+
+Error #1: Usar resta para comparar enteros
+
+```java
+// MAL: overflow, resultados incorrectos
+public int compareTo(Persona o) {
+    return this.edad - o.edad;
+}
+
+// BIEN
+public int compareTo(Persona o) {
+    return Integer.compare(this.edad, o.edad);
+}
+```
+
+Error #2: No cumplir el contrato de transitividad
+
+```java
+// MAL: comparación inconsistente
+Comparator<Persona> malo = (a, b) ->
+    a.getNombre().length() > b.getNombre().length() ? 1 : -1;
+// No devuelve 0 cuando las longitudes son iguales
+// Viola la transitividad: A > B, B > C, pero A podría ser < C
+
+// BIEN
+Comparator<Persona> bueno = (a, b) ->
+    Integer.compare(a.getNombre().length(), b.getNombre().length());
+```
+
+Error #3: Olvidar el caso de igualdad en Comparator personalizado
+
+```java
+// MAL: no maneja igualdad
+Comparator<Integer> malo = (a, b) -> a > b ? 1 : -1;
+// Nunca devuelve 0
+
+// BIEN
+Comparator<Integer> bueno = Integer::compare;
+```
+
+Buena práctica: Usar métodos de fábrica de Comparator (Java 8+)
+
+```java
+// En lugar de escribir lambdas manuales
+Comparator<Persona> c1 = (p1, p2) ->
+    p1.getNombre().compareTo(p2.getNombre());
+
+// Usa los métodos estáticos
+Comparator<Persona> c2 = Comparator.comparing(Persona::getNombre);
+```
+
+Buena práctica: Documentar el orden natural
+
+```java
+/**
+ * Orden natural por apellido, luego nombre, luego fecha de nacimiento.
+ * El orden es ascendente para todos los campos.
+ */
+public class Empleado implements Comparable<Empleado> {
+    // ...
+}
+```
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+
+• Comparable define el orden natural de una clase mediante
+  compareTo(). Se implementa en la propia clase.
+
+• compareTo() debe ser consistente, transitivo y reflexivo.
+  Debe devolver negativo, cero o positivo.
+
+• Comparator define órdenes personalizados externos mediante
+  compare(). Es una interfaz funcional.
+
+• Java 8+ proporciona métodos estáticos: comparing(),
+  comparingInt(), thenComparing(), naturalOrder(),
+  reverseOrder(), nullsFirst(), nullsLast().
+
+• Usa Comparable para el orden natural obvio; Comparator para
+  órdenes alternativos o cuando no puedes modificar la clase.
+
+• Nunca uses resta para comparar enteros (overflow). Usa
+  Integer.compare() o Double.compare().
+
+• Los comparadores deben ser transitivos, consistentes, y
+  manejar correctamente el caso de igualdad.
+
+================================================================================
+EJERCICIOS PROPUESTOS
+
+1. ORDENACIÓN DE LIBROS:
+   Crea una clase Libro con título, autor, año y precio.
+   Implementa Comparable para orden natural por año.
+   Crea múltiples Comparators: por título, por autor,
+   por precio, y un comparator compuesto (autor → título → año).
+
+2. TABLA DE POSICIONES:
+   En una liga deportiva, los equipos tienen puntos,
+   diferencia de goles y goles a favor. Implementa
+   Comparator para ordenar: más puntos primero, si igual
+   por diferencia de goles, si igual por goles a favor.
+
+3. ORDENACIÓN DINÁMICA:
+   Crea un programa que permita al usuario elegir el criterio
+   de ordenación de una lista de personas (por nombre, edad,
+   altura) y la dirección (asc/desc) en tiempo de ejecución.
+
+4. COMPARADOR NULO-SEGURO:
+   Implementa un Comparator que pueda ordenar una lista que
+   contenga elementos null, colocándolos al principio o al
+   final según un parámetro.
+
+5. COMPARADOR POR VARIOS CAMPOS CON DIRECCIÓN:
+   Crea un sistema que permita definir una clave de ordenación
+   con múltiples campos y direcciones, como "ORDER BY apellido
+   ASC, edad DESC, salario ASC". Implementa usando Comparator
+   compuesto dinámicamente.
+
+================================================================================
+PREGUNTAS FRECUENTES
+
+P: ¿Por qué compareTo() devuelve un int y no un boolean?
+R: Porque necesita tres estados: menor, igual, mayor. Un boolean
+   solo indica dos estados. El int permite usar aritmética de
+   signos.
+
+P: ¿Qué pasa si no implemento Comparable y uso TreeSet?
+R: Lanza ClassCastException en tiempo de ejecución. TreeSet
+   necesita ordenar los elementos.
+
+P: ¿Comparator reemplaza a Comparable?
+R: No. Son complementarios. Comparable define el orden natural;
+   Comparator permite órdenes alternativos. Muchas clases usan
+   ambos.
+
+P: ¿Cómo comparo double correctamente?
+R: Usa Double.compare(a, b). No uses resta ni operadores
+   relacionales directamente.
+
+P: ¿Puedo usar Comparator.comparing() con tipos primitivos?
+R: Sí, pero es mejor usar comparingInt(), comparingLong() y
+   comparingDouble() para evitar auto-boxing.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+
+MOTOR DE ORDENACIÓN DINÁMICA
+
+Implementa un motor de ordenación dinámica que permita a los
+usuarios definir criterios de ordenación en tiempo de ejecución.
+El sistema debe:
+
+  • Definir una lista de objetos Empleado con múltiples campos
+    numéricos y de texto
+
+  • Permitir al usuario especificar criterios de ordenación
+    mediante entrada de texto:
+    "apellido ASC, salario DESC, edad ASC"
+    "nombre DESC"
+    "fechaIngreso ASC"
+
+  • Parsear la entrada para construir un Comparator compuesto
+
+  • Aplicar la ordenación a la lista y mostrar los resultados
+
+Requisitos del motor:
+  • Mapa de extractores: Map<String, Function<Empleado, ? extends Comparable>>
+    - "nombre" → Empleado::getNombre
+    - "salario" → Empleado::getSalario
+    - "edad" → Empleado::getEdad
+    - etc.
+
+  • Soporte para direcciones: ASC (ascendente) y DESC (descendente)
+
+  • Manejo de errores: campos inválidos, sintaxis incorrecta
+
+  • Validación de tipos: no permitir comparar texto con número
+
+  • Mostrar la lista original y la ordenada
+
+Extra:
+  • Guardar y cargar criterios de ordenación desde archivo
+  • Permitir ordenación anidada (subgrouping): primero por
+    departamento, dentro de cada departamento por salario
+  • Implementar ordenación por expresiones: "salario * 1.1"
+  • Visualización con formato tabular de resultados
+
+Este desafío integra Comparable, Comparator, lambdas y
+procesamiento de cadenas en un sistema de ordenación flexible
+y extensible.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+
+Has dominado las dos caras de la ordenación en Java: Comparable
+y Comparator. Comparable te da el orden natural que identifica
+a cada clase; Comparator te da la flexibilidad para ordenar de
+cualquier manera imaginable.
+
+La verdadera maestría está en saber cuándo usar cada uno:
+Comparable para el orden por defecto que nunca cambia;
+Comparator para órdenes temporales, contextuales o múltiples.
+Y con los métodos estáticos de Java 8+, escribir comparadores
+es más elegante y expresivo que nunca.
+
+PRÓXIMO CAPÍTULO
+En el Capítulo 50, el proyecto final del módulo, integraremos
+todos los conceptos de colecciones y genéricos en una aplicación
+completa de gestión empresarial. Prepárate para el desafío final.

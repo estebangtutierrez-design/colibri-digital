@@ -1,0 +1,973 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           RUBY MASTER BOOK — MÓDULO VIII: PROYECTO               ║
+║           CAPÍTULO 75: INTRODUCCIÓN A RAILS                     ║
+║        "El framework que cambió la web para siempre"             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, maestro webmaster. Ruby on Rails es el framework que
+popularizó Ruby y revolucionó el desarrollo web. En este capítulo
+exploraremos sus fundamentos: MVC, migraciones, rutas, controladores
+y vistas. Rails no es solo tecnología, es una filosofía de desarrollo
+que prioriza la felicidad del programador.
+
+FRASE DEL SABIO
+───────────────
+"Rails es opinado. Y tener opiniones es bueno porque te permite
+dejar de decidir lo trivial y enfocarte en lo importante."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Instalar y crear un proyecto Rails desde cero.
+2. Comprender la filosofía "Convention over Configuration".
+3. Trabajar con migraciones y Active Record.
+4. Definir rutas RESTful y crear controladores.
+5. Construir vistas con ERB y layouts.
+6. Conectar el flujo completo: ruta → controlador → modelo → vista.
+
+INSTALACIÓN DE RAILS
+─────────────────────
+
+```ruby
+# ============================================================
+# Requisitos previos
+# ============================================================
+# Ruby >= 3.1.0
+# SQLite3, PostgreSQL o MySQL
+# Node.js (para el pipeline de assets)
+# Yarn (opcional, para JavaScript)
+
+# ============================================================
+# Instalar Rails
+# ============================================================
+# $ gem install rails
+# $ gem install rails --no-doc
+# $ rails --version
+
+# ============================================================
+# Crear un nuevo proyecto
+# ============================================================
+# $ rails new mi_app
+# $ rails new mi_app --database=postgresql
+# $ rails new mi_app --skip-test (usa RSpec después)
+# $ rails new mi_app --api (solo API, sin vistas)
+
+# ============================================================
+# Estructura generada
+# ============================================================
+# mi_app/
+# ├── app/
+# │   ├── controllers/
+# │   ├── models/
+# │   ├── views/
+# │   ├── helpers/
+# │   ├── jobs/
+# │   ├── mailers/
+# │   └── assets/
+# ├── bin/
+# ├── config/
+# │   ├── routes.rb
+# │   ├── database.yml
+# │   └── environments/
+# ├── db/
+# │   └── migrate/
+# ├── spec/ (o test/)
+# ├── Gemfile
+# ├── Rakefile
+# └── README.md
+```
+
+COMANDOS ESENCIALES DE RAILS
+─────────────────────────────
+
+```ruby
+# ============================================================
+# Servidor
+# ============================================================
+# $ rails server        # Inicia servidor en http://localhost:3000
+# $ rails s -p 4000     # Puerto personalizado
+# $ rails s -b 0.0.0.0  # Accesible desde la red
+
+# ============================================================
+# Consola (REPL)
+# ============================================================
+# $ rails console       # IRB con la app cargada
+# $ rails c             # Atajo
+# $ rails c --sandbox   # Modo sandbox (no persiste cambios)
+
+# ============================================================
+# Generadores
+# ============================================================
+# $ rails generate model Producto nombre:string precio:float
+# $ rails generate controller Productos index show
+# $ rails generate migration AddStockToProductos stock:integer
+# $ rails generate scaffold Producto nombre:string precio:float
+
+# ============================================================
+# Base de datos
+# ============================================================
+# $ rails db:create
+# $ rails db:migrate
+# $ rails db:rollback
+# $ rails db:seed
+# $ rails db:reset        # drop + create + migrate + seed
+
+# ============================================================
+# Rutas
+# ============================================================
+# $ rails routes
+# $ rails routes --grep producto
+# $ rails routes --expanded
+
+# ============================================================
+# Testing
+# ============================================================
+# $ rails test
+# $ rspec                # Si usas RSpec
+
+# ============================================================
+# Producción
+# ============================================================
+# $ RAILS_ENV=production rails db:migrate
+# $ RAILS_ENV=production rails assets:precompile
+# $ RAILS_ENV=production rails server
+```
+
+ACTIVE RECORD — EL MODELO
+───────────────────────────
+
+```ruby
+# ============================================================
+# Migraciones — Definir el esquema de base de datos
+# ============================================================
+
+# db/migrate/20240101000001_create_productos.rb
+class CreateProductos < ActiveRecord::Migration[7.1]
+  def change
+    create_table :productos do |t|
+      t.string  :nombre, null: false
+      t.text    :descripcion
+      t.decimal :precio, precision: 10, scale: 2, null: false
+      t.integer :stock, default: 0
+      t.string  :categoria
+      t.boolean :activo, default: true
+      t.references :usuario, null: false, foreign_key: true
+
+      t.timestamps
+    end
+
+    add_index :productos, :nombre
+    add_index :productos, [:categoria, :activo]
+  end
+end
+
+# db/migrate/20240101000002_add_descuento_to_productos.rb
+class AddDescuentoToProductos < ActiveRecord::Migration[7.1]
+  def change
+    add_column :productos, :descuento, :decimal, precision: 5, scale: 2, default: 0
+  end
+end
+
+# ============================================================
+# Modelo — Active Record
+# ============================================================
+
+# app/models/producto.rb
+class Producto < ApplicationRecord
+  # == Asociaciones ==
+  belongs_to :usuario
+  has_many :items_pedido, dependent: :destroy
+  has_many :pedidos, through: :items_pedido
+
+  # == Validaciones ==
+  validates :nombre, presence: true, length: { maximum: 100 }
+  validates :precio, presence: true,
+                     numericality: { greater_than: 0 }
+  validates :stock, numericality: { greater_than_or_equal_to: 0 }
+
+  # == Scopes ==
+  scope :activos, -> { where(activo: true) }
+  scope :por_categoria, ->(cat) { where(categoria: cat) }
+  scope :baratos, -> { where(precio: ..100) }
+  scope :caros, -> { where(precio: 1000..) }
+  scope :disponibles, -> { activos.where('stock > 0') }
+
+  # == Callbacks ==
+  before_save :normalizar_nombre
+  after_create :notificar_nuevo_producto
+
+  # == Métodos de instancia ==
+  def precio_con_impuesto(tasa = 0.16)
+    precio * (1 + tasa)
+  end
+
+  def disponible?
+    activo? && stock.positive?
+  end
+
+  def descuento_aplicado?
+    descuento&.positive?
+  end
+
+  def precio_final
+    descuento_aplicado? ? precio * (1 - descuento / 100.0) : precio
+  end
+
+  private
+
+  def normalizar_nombre
+    self.nombre = nombre.strip.titleize if nombre_changed?
+  end
+
+  def notificar_nuevo_producto
+    ProductoMailer.nuevo_producto(self).deliver_later
+  end
+end
+
+# app/models/usuario.rb
+class Usuario < ApplicationRecord
+  has_secure_password
+  has_many :productos, dependent: :destroy
+
+  validates :email, presence: true,
+                    uniqueness: { case_sensitive: false },
+                    format: { with: URI::MailTo::EMAIL_REGEXP }
+  validates :nombre, presence: true
+
+  scope :admins, -> { where(admin: true) }
+
+  def admin?
+    admin
+  end
+
+  def to_s
+    nombre
+  end
+end
+
+# app/models/pedido.rb
+class Pedido < ApplicationRecord
+  belongs_to :usuario
+  has_many :items_pedido, dependent: :destroy
+  has_many :productos, through: :items_pedido
+
+  validates :estado, inclusion: { in: %w[pendiente pagado enviado entregado cancelado] }
+
+  scope :recientes, -> { order(created_at: :desc) }
+  scope :pendientes, -> { where(estado: 'pendiente') }
+
+  def total
+    items_pedido.sum(&:subtotal)
+  end
+
+  def completar!
+    update!(estado: 'entregado', completado_en: Time.current)
+  end
+end
+
+# app/models/item_pedido.rb
+class ItemPedido < ApplicationRecord
+  belongs_to :pedido
+  belongs_to :producto
+
+  validates :cantidad, numericality: { greater_than: 0 }
+
+  def subtotal
+    producto.precio * cantidad
+  end
+end
+```
+
+CONTROLADORES — EL COORDINADOR
+────────────────────────────────
+
+```ruby
+# ============================================================
+# Controlador RESTful
+# ============================================================
+
+# app/controllers/productos_controller.rb
+class ProductosController < ApplicationController
+  before_action :set_producto, only: %i[show edit update destroy]
+  before_action :authenticate_user!, except: %i[index show]
+
+  # GET /productos
+  # GET /productos?categoria=electronica
+  def index
+    @productos = Producto.disponibles
+
+    if params[:categoria].present?
+      @productos = @productos.por_categoria(params[:categoria])
+    end
+
+    if params[:busqueda].present?
+      @productos = @productos.where(
+        'nombre LIKE ?', "%#{params[:busqueda]}%"
+      )
+    end
+
+    @productos = @productos.page(params[:page]).per(12)
+  end
+
+  # GET /productos/1
+  def show
+    @producto = Producto.find(params[:id])
+    @productos_relacionados = Producto.por_categoria(@producto.categoria)
+                                      .where.not(id: @producto.id)
+                                      .limit(4)
+  end
+
+  # GET /productos/new
+  def new
+    @producto = Producto.new
+  end
+
+  # GET /productos/1/edit
+  def edit
+  end
+
+  # POST /productos
+  def create
+    @producto = current_user.productos.build(producto_params)
+
+    if @producto.save
+      redirect_to @producto, notice: 'Producto creado exitosamente.'
+    else
+      render :new, status: :unprocessable_entity
+    end
+  end
+
+  # PATCH/PUT /productos/1
+  def update
+    if @producto.update(producto_params)
+      redirect_to @producto, notice: 'Producto actualizado.'
+    else
+      render :edit, status: :unprocessable_entity
+    end
+  end
+
+  # DELETE /productos/1
+  def destroy
+    @producto.destroy
+    redirect_to productos_url, notice: 'Producto eliminado.'
+  end
+
+  private
+
+  def set_producto
+    @producto = Producto.find(params[:id])
+  rescue ActiveRecord::RecordNotFound
+    redirect_to productos_url, alert: 'Producto no encontrado.'
+  end
+
+  def producto_params
+    params.require(:producto).permit(
+      :nombre, :descripcion, :precio, :stock,
+      :categoria, :descuento, :imagen
+    )
+  end
+end
+
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  before_action :configurar_idioma
+  before_action :cargar_notificaciones, if: :user_signed_in?
+
+  private
+
+  def configurar_idioma
+    I18n.locale = params[:locale] || session[:locale] || I18n.default_locale
+  end
+
+  def cargar_notificaciones
+    @notificaciones = current_user.notificaciones.recientes.limit(5)
+  end
+end
+```
+
+RUTAS — EL MAPA DE LA APLICACIÓN
+──────────────────────────────────
+
+```ruby
+# ============================================================
+# config/routes.rb — El mapa de la aplicación
+# ============================================================
+
+Rails.application.routes.draw do
+  # == Rutas RESTful ==
+  resources :productos do
+    # Rutas anidadas
+    resources :comentarios, only: %i[create destroy]
+
+    # Rutas de colección
+    collection do
+      get :buscar
+      get :baratos
+    end
+
+    # Rutas de miembro
+    member do
+      post :comprar
+      patch :activar
+    end
+  end
+
+  resources :usuarios, only: %i[show edit update]
+  resources :pedidos, only: %i[index show create] do
+    member do
+      patch :cancelar
+    end
+  end
+
+  # == Rutas con nombres personalizados ==
+  get '/carrito', to: 'carritos#show', as: :carrito
+  post '/carrito/agregar', to: 'carritos#agregar', as: :agregar_al_carrito
+  delete '/carrito/eliminar/:id', to: 'carritos#eliminar', as: :eliminar_del_carrito
+
+  # == Autenticación ==
+  get  '/login',  to: 'sesiones#new', as: :login
+  post '/login',  to: 'sesiones#create'
+  delete '/logout', to: 'sesiones#destroy', as: :logout
+
+  get  '/registro', to: 'registros#new', as: :registro
+  post '/registro', to: 'registros#create'
+
+  # == Páginas estáticas ==
+  get  '/acerca',    to: 'paginas#acerca'
+  get  '/contacto',  to: 'paginas#contacto'
+  post '/contacto',  to: 'paginas#enviar_contacto'
+
+  # == Root ==
+  root 'productos#index'
+
+  # == API (namespaces) ==
+  namespace :api do
+    namespace :v1 do
+      resources :productos, only: %i[index show]
+      resources :usuarios, only: %i[show]
+    end
+  end
+
+  # == Rails health check ==
+  get 'up' => 'rails/health#show', as: :rails_health_check
+end
+
+# ============================================================
+# Rutas anidadas vs shallow
+# ============================================================
+# resources :usuarios do
+#   resources :productos, shallow: true
+# end
+# Rutas generadas:
+# /usuarios/1/productos      (index)
+# /productos/1               (show)
+# /productos/1/edit          (edit)
+
+# ============================================================
+# Restricciones en rutas
+# ============================================================
+# resources :productos, constraints: { id: /\d+/ }
+# get '/productos/:id', to: 'productos#show', constraints: { id: /[A-Z]\d{5}/ }
+```
+
+VISTAS — LA PRESENTACIÓN
+─────────────────────────
+
+```erb
+<%# ============================================================ %>
+<%# app/views/layouts/application.html.erb %>
+<%# ============================================================ %>
+<!DOCTYPE html>
+<html lang="<%= I18n.locale %>">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= content_for?(:title) ? yield(:title) : 'Mi Tienda' %></title>
+  <%= csrf_meta_tags %>
+  <%= csp_meta_tag %>
+  <%= stylesheet_link_tag 'application', media: 'all' %>
+  <%= javascript_include_tag 'application' %>
+</head>
+<body>
+  <header>
+    <nav>
+      <%= link_to 'Inicio', root_path %>
+      <% if user_signed_in? %>
+        <%= link_to 'Mi Perfil', current_user %>
+        <%= button_to 'Cerrar Sesión', logout_path, method: :delete %>
+      <% else %>
+        <%= link_to 'Iniciar Sesión', login_path %>
+        <%= link_to 'Registrarse', registro_path %>
+      <% end %>
+    </nav>
+    <% if flash[:notice] %>
+      <div class="notice"><%= flash[:notice] %></div>
+    <% end %>
+    <% if flash[:alert] %>
+      <div class="alert"><%= flash[:alert] %></div>
+    <% end %>
+  </header>
+
+  <main>
+    <%= yield %>
+  </main>
+
+  <footer>
+    <p>&copy; <%= Time.current.year %> Mi Tienda. Todos los derechos reservados.</p>
+  </footer>
+</body>
+</html>
+
+<%# ============================================================ %>
+<%# app/views/productos/index.html.erb %>
+<%# ============================================================ %>
+<% content_for :title, 'Productos Disponibles' %>
+
+<h1>Productos Disponibles</h1>
+
+<%= form_tag productos_path, method: :get do %>
+  <%= text_field_tag :busqueda, params[:busqueda], placeholder: 'Buscar productos...' %>
+  <%= submit_tag 'Buscar' %>
+<% end %>
+
+<div class="productos-grid">
+  <% @productos.each do |producto| %>
+    <div class="producto-card">
+      <% if producto.imagen.attached? %>
+        <%= image_tag producto.imagen.variant(:thumb) %>
+      <% end %>
+      <h2><%= link_to producto.nombre, producto %></h2>
+      <p class="precio"><%= number_to_currency(producto.precio) %></p>
+      <p class="stock"><%= producto_stock_label(producto) %></p>
+      <%= button_to 'Agregar al Carrito', agregar_al_carrito_path(producto_id: producto.id) %>
+    </div>
+  <% end %>
+</div>
+
+<%= paginate @productos %>
+
+<%# ============================================================ %>
+<%# app/views/productos/show.html.erb %>
+<%# ============================================================ %>
+<% content_for :title, @producto.nombre %>
+
+<div class="producto-detalle">
+  <div class="producto-imagen">
+    <% if @producto.imagen.attached? %>
+      <%= image_tag @producto.imagen %>
+    <% else %>
+      <div class="placeholder">Sin imagen</div>
+    <% end %>
+  </div>
+
+  <div class="producto-info">
+    <h1><%= @producto.nombre %></h1>
+    <p class="categoria"><%= @producto.categoria %></p>
+    <p class="descripcion"><%= simple_format(@producto.descripcion) %></p>
+    <p class="precio"><%= number_to_currency(@producto.precio) %></p>
+    <%= button_to 'Comprar Ahora', comprar_producto_path(@producto), class: 'btn-primary' %>
+    <%= button_to 'Agregar al Carrito', agregar_al_carrito_path(producto_id: @producto.id) %>
+  </div>
+</div>
+
+<h3>Comentarios</h3>
+<div class="comentarios">
+  <%= render @producto.comentarios %>
+</div>
+
+<% if user_signed_in? %>
+  <%= form_with model: [@producto, Comentario.new], local: true do |f| %>
+    <%= f.text_area :contenido, placeholder: 'Escribe un comentario...' %>
+    <%= f.submit 'Comentar' %>
+  <% end %>
+<% end %>
+
+<h3>Productos Relacionados</h3>
+<div class="productos-relacionados">
+  <%= render @productos_relacionados %>
+</div>
+
+<%# ============================================================ %>
+<%# app/views/productos/_form.html.erb %>
+<%# ============================================================ %>
+<%= form_with model: @producto, local: true do |f| %>
+  <% if @producto.errors.any? %>
+    <div class="error-messages">
+      <h2><%= pluralize(@producto.errors.count, 'error') %> impidieron guardar:</h2>
+      <ul>
+        <% @producto.errors.full_messages.each do |msg| %>
+          <li><%= msg %></li>
+        <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+  <div class="field">
+    <%= f.label :nombre %>
+    <%= f.text_field :nombre, required: true %>
+  </div>
+
+  <div class="field">
+    <%= f.label :descripcion %>
+    <%= f.text_area :descripcion, rows: 5 %>
+  </div>
+
+  <div class="field">
+    <%= f.label :precio %>
+    <%= f.number_field :precio, step: 0.01, required: true %>
+  </div>
+
+  <div class="field">
+    <%= f.label :stock %>
+    <%= f.number_field :stock %>
+  </div>
+
+  <div class="field">
+    <%= f.label :categoria %>
+    <%= f.select :categoria, options_for_select(Producto.distinct.pluck(:categoria).compact, @producto.categoria), include_blank: 'Selecciona...' %>
+  </div>
+
+  <div class="field">
+    <%= f.label :imagen %>
+    <%= f.file_field :imagen %>
+  </div>
+
+  <div class="actions">
+    <%= f.submit @producto.new_record? ? 'Crear Producto' : 'Actualizar Producto' %>
+  </div>
+<% end %>
+```
+
+HELPERS — LÓGICA DE VISTAS
+────────────────────────────
+
+```ruby
+# app/helpers/productos_helper.rb
+module ProductosHelper
+  def producto_stock_label(producto)
+    if producto.stock.zero?
+      content_tag(:span, 'Agotado', class: 'badge badge-danger')
+    elsif producto.stock < 10
+      content_tag(:span, "Últimas #{producto.stock} unidades", class: 'badge badge-warning')
+    else
+      content_tag(:span, 'En existencia', class: 'badge badge-success')
+    end
+  end
+
+  def producto_precio_formateado(producto)
+    if producto.descuento&.positive?
+      content_tag(:span) do
+        concat content_tag(:del, number_to_currency(producto.precio))
+        concat ' '
+        concat content_tag(:strong, number_to_currency(producto.precio_final), class: 'text-danger')
+        concat content_tag(:span, " (-#{producto.descuento}%)", class: 'descuento-label')
+      end
+    else
+      number_to_currency(producto.precio)
+    end
+  end
+end
+```
+
+MAILERS — CORREOS ELECTRÓNICOS
+────────────────────────────────
+
+```ruby
+# app/mailers/producto_mailer.rb
+class ProductoMailer < ApplicationMailer
+  def nuevo_producto(producto)
+    @producto = producto
+    @usuario  = producto.usuario
+
+    mail(
+      to: @usuario.email,
+      subject: "Producto creado: #{@producto.nombre}"
+    )
+  end
+
+  def producto_agotado(producto)
+    @producto = producto
+    @admin = Usuario.admins.first
+
+    mail(
+      to: @admin.email,
+      subject: "Producto agotado: #{@producto.nombre}"
+    )
+  end
+end
+```
+
+JOBS — TAREAS EN SEGUNDO PLANO
+────────────────────────────────
+
+```ruby
+# app/jobs/actualizar_precios_job.rb
+class ActualizarPreciosJob < ApplicationJob
+  queue_as :default
+
+  def perform(categoria, porcentaje_incremento)
+    productos = Producto.por_categoria(categoria)
+    productos.find_each do |producto|
+      producto.update!(precio: producto.precio * (1 + porcentaje_incremento / 100.0))
+    end
+
+    AdminMailer.precios_actualizados(categoria, productos.count).deliver_now
+  end
+end
+
+# Uso:
+# ActualizarPreciosJob.perform_later('electrónica', 10)
+# ActualizarPreciosJob.perform_now('electrónica', 10)
+```
+
+CONSOLA RAILS — INTERACCIÓN DIRECTA
+────────────────────────────────────
+
+```ruby
+# ============================================================
+# Ejemplos de uso en rails console
+# ============================================================
+
+# Crear registros
+p = Producto.create!(
+  nombre: 'Laptop Pro',
+  precio: 25000,
+  stock: 10,
+  categoria: 'computación',
+  usuario: Usuario.first
+)
+
+# Consultas
+Producto.count
+Producto.disponibles.por_categoria('computación')
+Producto.where('precio > ?', 1000).order(precio: :desc)
+
+# Actualizar
+p.update!(precio: 23000)
+
+# Eliminar
+p.destroy
+
+# Relaciones
+usuario = Usuario.find(1)
+usuario.productos.each { |p| puts p.nombre }
+
+# Scopes
+Producto.baratos.each { |p| puts "#{p.nombre}: $#{p.precio}" }
+```
+
+ASSETS Y PIPELINE
+──────────────────
+
+```erb
+<%# ============================================================ %>
+<%# app/assets/stylesheets/application.css %>
+<%# ============================================================ %>
+<%# /*
+ *= require_self
+ *= require_tree .
+ */ %>
+
+<%# ============================================================ %>
+<%# app/assets/stylesheets/productos.scss %>
+<%# ============================================================ %>
+<%# .productos-grid {
+<%#   display: grid;
+<%#   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+<%#   gap: 20px;
+<%#   padding: 20px 0;
+<%# }
+<%#
+<%# .producto-card {
+<%#   border: 1px solid #ddd;
+<%#   border-radius: 8px;
+<%#   padding: 15px;
+<%#   transition: box-shadow 0.3s;
+<%#
+<%#   &:hover {
+<%#     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+<%#   }
+<%#
+<%#   .precio {
+<%#     font-size: 1.5em;
+<%#     color: #2ecc71;
+<%#     font-weight: bold;
+<%#   }
+<%#
+<%#   .stock {
+<%#     color: #7f8c8d;
+<%#   }
+<%# } %>
+```
+
+CONFIGURACIÓN POR ENTORNO
+──────────────────────────
+
+```ruby
+# ============================================================
+# config/database.yml
+# ============================================================
+# default: &default
+#   adapter: postgresql
+#   encoding: unicode
+#   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+#
+# development:
+#   <<: *default
+#   database: mi_app_development
+#
+# test:
+#   <<: *default
+#   database: mi_app_test
+#
+# production:
+#   <<: *default
+#   database: mi_app_production
+#   username: <%= ENV['DB_USERNAME'] %>
+#   password: <%= ENV['DB_PASSWORD'] %>
+#   host: <%= ENV['DB_HOST'] %>
+
+# ============================================================
+# config/environments/production.rb
+# ============================================================
+# Rails.application.configure do
+#   config.cache_classes = true
+#   config.eager_load = true
+#   config.consider_all_requests_local = false
+#   config.force_ssl = true
+#   config.log_level = :info
+#   config.i18n.fallbacks = true
+#   config.active_record.dump_schema_after_migration = false
+# end
+```
+
+RAILS — BUENAS PRÁCTICAS
+─────────────────────────
+
+```ruby
+# ============================================================
+# 1. Código gordo en modelos, delgado en controladores
+# ============================================================
+# Mal:
+# def index
+#   @productos = Producto.where(activo: true)
+#                        .where('stock > 0')
+#                        .order(:nombre)
+# end
+
+# Bien:
+# def index
+#   @productos = Producto.disponibles.ordenados
+# end
+
+# ============================================================
+# 2. Usar Service Objects para lógica compleja
+# ============================================================
+# Mal en controlador:
+# def create
+#   # 30 líneas de lógica de negocio
+# end
+
+# Bien:
+# def create
+#   resultado = CrearProducto.call(params, current_user)
+# end
+
+# ============================================================
+# 3. Rutas RESTful siempre que sea posible
+# ============================================================
+# resources :productos en lugar de rutas personalizadas
+
+# ============================================================
+# 4. Migraciones: una tabla por migración
+# ============================================================
+# No mezcles cambios no relacionados
+
+# ============================================================
+# 5. Usar partials y helpers para vistas limpias
+# ============================================================
+
+# ============================================================
+# 6. NO usar callbacks para lógica de negocio
+# ============================================================
+# Mal: after_create :enviar_email
+# Bien: llamar al servicio explícitamente en el controlador
+
+# ============================================================
+# 7. Siempre usar I18n para textos
+# ============================================================
+# t('.title') en lugar de texto duro
+```
+
+RESUMEN DEL CAPÍTULO
+─────────────────────
+- Rails sigue el patrón MVC con Convención sobre Configuración.
+- `rails new` genera toda la estructura del proyecto.
+- Las migraciones definen el esquema de base de datos en Ruby.
+- Active Record proporciona ORM, validaciones y asociaciones.
+- Los controladores manejan peticiones HTTP y coordinan la lógica.
+- Las rutas mapean URLs a acciones de controladores.
+- Las vistas (ERB) presentan datos al usuario.
+- Los helpers contienen lógica de presentación reutilizable.
+- Mailers envían correos; Jobs ejecutan tareas asíncronas.
+- Rails prioriza la felicidad del desarrollador y la productividad.
+
+EJERCICIOS DEL CAPÍTULO
+────────────────────────
+1. Crea un proyecto Rails llamado `blog` con PostgreSQL.
+2. Genera un modelo `Articulo` con título, contenido y fecha.
+3. Agrega validaciones: título presente, contenido mínimo 10 chars.
+4. Crea un controlador RESTful para Artículos con 7 acciones.
+5. Define rutas anidadas para comentarios dentro de artículos.
+6. Construye vistas con layout, partials y helpers.
+7. Implementa un scope `publicados` que filtre por fecha.
+8. Agrega autenticación básica con `has_secure_password`.
+9. Crea un mailer que envíe notificación al publicar artículo.
+10. Escribe tests con RSpec para modelo, controlador y ruta.
+
+PREGUNTAS FRECUENTES (FAQ)
+───────────────────────────
+P: ¿Rails es todavía relevante en 2026?
+R: Absolutamente. Rails sigue siendo líder en desarrollo web rápido,
+   con una comunidad activa, gran ecosistema y uso en empresas como
+   GitHub, Shopify y Basecamp.
+
+P: ¿Rails API o Rails completo?
+R: Si solo construyes backend, usa `--api`. Si necesitas vistas,
+   usa Rails completo. Puedes mezclar ambos enfoques.
+
+P: ¿Cómo elijo entre migraciones o schema.rb?
+R: Las migraciones son el historial. schema.rb es el estado actual.
+   Siempre usa migraciones para modificar la base de datos.
+
+P: ¿Debo usar scaffolds?
+R: Para prototipos, sí. Para producción, prefiere generar modelos
+   y controladores por separado para tener más control.
+
+DESAFÍO DEL RAILER
+───────────────────
+Crea una aplicación Rails completa llamada "Biblioteca Virtual":
+1. Modelos: Libro, Autor, Categoria, Prestamo con relaciones.
+2. Autenticación con roles (admin, usuario, invitado).
+3. Búsqueda avanzada con Ransack o pg_search.
+4. API RESTful JSON para consumo externo.
+5. Jobs para enviar recordatorios de devolución.
+6. Tests completos con RSpec, Factory Bot y SimpleCov.
+7. Despliegue en Render o Railway con CI/CD.
+
+Este desafío demuestra que puedes construir aplicaciones web
+profesionales completas con Ruby on Rails.
+
+CIERRE DEL CAPÍTULO
+────────────────────
+Rails te ha mostrado el poder de la convención sobre configuración.
+Ahora entiendes cómo crear aplicaciones web completas con MVC,
+migraciones, rutas y vistas. Pero un gran poder conlleva una gran
+responsabilidad. En el próximo capítulo aprenderás a proteger tus
+aplicaciones con las mejores prácticas de seguridad.
+
+PRÓXIMO CAPÍTULO
+─────────────────
+▶ CAPÍTULO 76: SEGURIDAD — Protege tu castillo de Ruby

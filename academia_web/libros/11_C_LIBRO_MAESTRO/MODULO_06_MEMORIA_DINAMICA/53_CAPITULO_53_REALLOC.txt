@@ -1,0 +1,1155 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                     CAPÍTULO 53
+##
+##                       REALLOC
+##
+################################################################################
+################################################################################
+
+"La memoria dinámica no es una prisión de tamaño fijo; con realloc, tus
+estructuras pueden respirar y crecer." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido al capítulo del crecimiento!
+
+En los dos capítulos anteriores aprendiste a reservar memoria con malloc y
+calloc. Pero en la vida real, rara vez sabes de antemano cuánta memoria
+necesitarás. Un buffer de red puede recibir más datos de los esperados.
+Una lista de usuarios puede crecer. Un documento puede tener más líneas de
+las que calculaste.
+
+realloc es la función que te permite cambiar el tamaño de un bloque de
+memoria ya asignado, preservando su contenido. Es como tener un armario que
+se expande mágicamente cuando lo necesitas. Pero cuidado: si se usa mal,
+puede corromper tus datos o perder memoria.
+
+En este capítulo dominarás realloc, aprenderás a manejar sus casos
+problemáticos, y descubrirás el patrón de crecimiento exponencial que hace
+eficientes a los arrays dinámicos.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"realloc es el arte de redimensionar sin perder lo que ya construiste.
+Un programa flexible es un programa que puede crecer." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Conocer la firma de realloc: void *realloc(void *ptr, size_t new_size).
+✓ Entender que realloc preserva el contenido original hasta el mínimo entre
+  el tamaño viejo y el nuevo.
+✓ Aprender a usar un puntero temporal para evitar pérdidas de memoria cuando
+  realloc devuelve NULL.
+✓ Identificar las diferencias entre crecimiento, reducción y reasignación a
+  nuevo puntero.
+✓ Implementar el patrón de array dinámico con crecimiento exponencial.
+✓ Manejar correctamente los casos especiales: ptr == NULL y new_size == 0.
+✓ Reconocer el costo de rendimiento de las reasignaciones frecuentes.
+
+===============================================================================
+1. INTRODUCCIÓN A REALLOC
+===============================================================================
+
+La función realloc está declarada en <stdlib.h>:
+
+```c
+#include <stdlib.h>
+
+void *realloc(void *ptr, size_t new_size);
+```
+
+Argumentos:
+- ptr: puntero a un bloque de memoria previamente asignado con malloc,
+  calloc o realloc. Puede ser NULL (equivalente a malloc).
+- new_size: nuevo tamaño en bytes.
+
+Retorno:
+- Puntero al bloque redimensionado (puede ser la misma dirección o una
+  nueva).
+- NULL si la operación falla. En ese caso, el bloque original NO se libera.
+
+Comportamiento:
+
+1. Si ptr no es NULL, realloc ajusta el tamaño del bloque apuntado a
+   new_size bytes. El contenido se preserva hasta el mínimo entre el tamaño
+   original y new_size.
+
+2. Si new_size > old_size, los bytes adicionales tienen contenido
+   indeterminado (como malloc).
+
+3. Si new_size < old_size, los bytes sobrantes se descartan.
+
+4. Si ptr es NULL, realloc(ptr, size) es equivalente a malloc(size).
+
+5. Si new_size es 0 y ptr no es NULL, el comportamiento es definido por la
+   implementación (similar a free, pero puede devolver NULL o un puntero
+   válido).
+
+6. Si realloc no puede satisfacer la solicitud, devuelve NULL y el bloque
+   original permanece intacto.
+
+```c
+// Caso 1: Redimensionamiento
+int *arr = (int *)malloc(10 * sizeof(int));
+// ... llenar arr[0..9] ...
+int *tmp = (int *)realloc(arr, 20 * sizeof(int));
+if (tmp == NULL) {
+    // Error: arr sigue siendo válido, debemos manejarlo
+    fprintf(stderr, "Error al redimensionar\n");
+    free(arr);
+    exit(EXIT_FAILURE);
+}
+arr = tmp;  // Solo asignamos si realloc tuvo éxito
+```
+
+===============================================================================
+2. EL PUNTERO TEMPORAL: PATRÓN ESENCIAL
+===============================================================================
+
+El error más común con realloc es asignar directamente el resultado al mismo
+puntero de entrada:
+
+```c
+// PELIGRO: si realloc falla, perdemos el puntero original
+int *arr = (int *)malloc(10 * sizeof(int));
+arr = (int *)realloc(arr, 20 * sizeof(int));
+// Si realloc devuelve NULL, arr ahora es NULL y hemos perdido
+// el bloque original de 10 enteros (memory leak)
+```
+
+El patrón correcto es usar un puntero temporal:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int *arr = (int *)malloc(5 * sizeof(int));
+    if (arr == NULL) return EXIT_FAILURE;
+
+    for (int i = 0; i < 5; i++) arr[i] = i * 10;
+
+    // Redimensionar a 10 enteros (técnica segura)
+    int *temp = (int *)realloc(arr, 10 * sizeof(int));
+    if (temp == NULL) {
+        fprintf(stderr, "Error: realloc falló.\n");
+        fprintf(stderr, "Los %d elementos originales están intactos.\n", 5);
+        free(arr);
+        return EXIT_FAILURE;
+    }
+    arr = temp;  // Ahora podemos reasignar con seguridad
+
+    for (int i = 5; i < 10; i++) arr[i] = i * 10;
+    for (int i = 0; i < 10; i++) printf("%d ", arr[i]);
+    printf("\n");
+
+    free(arr);
+    return EXIT_SUCCESS;
+}
+```
+
+Esta técnica garantiza que si realloc falla, no perdemos la referencia al
+bloque original.
+
+===============================================================================
+3. REALLOC CON CRECIMIENTO: PRESERVACIÓN DEL CONTENIDO
+===============================================================================
+
+La preservación del contenido es una de las propiedades más importantes de
+realloc. Los datos existentes se mantienen intactos aunque el bloque se
+mueva físicamente en memoria.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    char *buffer = (char *)malloc(10 * sizeof(char));
+    if (buffer == NULL) return EXIT_FAILURE;
+
+    strcpy(buffer, "Hola");
+    printf("Antes de realloc: \"%s\" en %p\n", buffer, (void *)buffer);
+
+    // Crecer de 10 a 50 bytes
+    char *temp = (char *)realloc(buffer, 50 * sizeof(char));
+    if (temp == NULL) {
+        free(buffer);
+        return EXIT_FAILURE;
+    }
+    buffer = temp;
+
+    printf("Después de realloc: \"%s\" en %p\n", buffer, (void *)buffer);
+    // El contenido "Hola" se conserva aunque la dirección haya cambiado
+
+    strcat(buffer, ", mundo dinámico!");
+    printf("Contenido final: \"%s\"\n", buffer);
+
+    free(buffer);
+    return EXIT_SUCCESS;
+}
+```
+
+La preservación del contenido significa que realloc copia los bytes desde el
+bloque antiguo al nuevo bloque si necesita moverlo. Esto es transparente para
+el programador, pero tiene un costo de rendimiento: cuanto más grande sea el
+bloque, más tiempo llevará la copia.
+
+===============================================================================
+4. REDUCCIÓN DEL TAMAÑO CON REALLOC
+===============================================================================
+
+También podemos reducir el tamaño de un bloque. El contenido hasta el nuevo
+tamaño se preserva; el resto se descarta.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    char *buffer = (char *)malloc(100 * sizeof(char));
+    if (buffer == NULL) return EXIT_FAILURE;
+
+    strcpy(buffer, "Este es un texto muy largo que podría ocupar 100 bytes.");
+    printf("Texto completo: \"%s\" (%zu chars)\n", buffer, strlen(buffer));
+
+    // Reducir a solo 20 bytes (el texto se trunca)
+    char *temp = (char *)realloc(buffer, 20 * sizeof(char));
+    if (temp == NULL) {
+        fprintf(stderr, "Error al reducir\n");
+        free(buffer);
+        return EXIT_FAILURE;
+    }
+    buffer = temp;
+
+    // Importante: buffer[19] debe ser '\0' porque realloc no lo pone
+    buffer[19] = '\0';
+    printf("Texto truncado: \"%s\" (%zu chars)\n", buffer, strlen(buffer));
+
+    free(buffer);
+    return EXIT_SUCCESS;
+}
+```
+
+Al reducir, debemos asegurarnos manualmente de que la cadena esté
+correctamente terminada en nulo si estamos trabajando con strings.
+
+===============================================================================
+5. REALLOC CON PTR = NULL: EQUIVALENTE A MALLOC
+===============================================================================
+
+Según el estándar C, realloc(NULL, size) es equivalente a malloc(size). Esto
+permite simplificar el código inicial:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int *arr = NULL;  // Inicialmente ningún bloque
+    size_t capacidad = 0;
+    size_t count = 0;
+
+    int valores[] = {10, 20, 30, 40, 50};
+    size_t num_valores = sizeof(valores) / sizeof(valores[0]);
+
+    for (size_t i = 0; i < num_valores; i++) {
+        // Primera vez: realloc(NULL, size) es como malloc
+        // Siguientes veces: realloc crece el bloque
+        int *temp = (int *)realloc(arr, (count + 1) * sizeof(int));
+        if (temp == NULL) {
+            free(arr);
+            return EXIT_FAILURE;
+        }
+        arr = temp;
+        arr[count++] = valores[i];
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        printf("arr[%zu] = %d\n", i, arr[i]);
+    }
+
+    free(arr);
+    return EXIT_SUCCESS;
+}
+```
+
+Esta técnica funciona porque arr empieza como NULL. La primera llamada a
+realloc(NULL, sizeof(int)) es equivalente a malloc(sizeof(int)). En llamadas
+sucesivas, realloc agranda el bloque.
+
+Sin embargo, este patrón de crecimiento lineal (1 elemento a la vez) es muy
+ineficiente, como veremos en la siguiente sección.
+
+===============================================================================
+6. COSTO DE RENDIMIENTO Y CRECIMIENTO EXPONENCIAL
+===============================================================================
+
+Cuando redimensionas un bloque, realloc puede necesitar:
+1. Asignar un nuevo bloque.
+2. Copiar el contenido del bloque viejo al nuevo.
+3. Liberar el bloque viejo.
+
+Si haces realloc cada vez que agregas un elemento, el costo total es
+O(n²). La solución es crecer multiplicativamente (típicamente por 2):
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Crecimiento lineal: un elemento a la vez
+double crecimiento_lineal(int n) {
+    clock_t inicio = clock();
+    int *arr = NULL;
+    for (int i = 0; i < n; i++) {
+        int *temp = (int *)realloc(arr, (i + 1) * sizeof(int));
+        if (temp == NULL) { free(arr); return -1; }
+        arr = temp;
+        arr[i] = i;
+    }
+    free(arr);
+    return (double)(clock() - inicio) / CLOCKS_PER_SEC;
+}
+
+// Crecimiento exponencial: duplicar capacidad
+double crecimiento_exponencial(int n) {
+    clock_t inicio = clock();
+    int *arr = NULL;
+    size_t capacidad = 0;
+    for (int i = 0; i < n; i++) {
+        if ((size_t)i >= capacidad) {
+            size_t nueva_cap = capacidad == 0 ? 16 : capacidad * 2;
+            int *temp = (int *)realloc(arr, nueva_cap * sizeof(int));
+            if (temp == NULL) { free(arr); return -1; }
+            arr = temp;
+            capacidad = nueva_cap;
+        }
+        arr[i] = i;
+    }
+    free(arr);
+    return (double)(clock() - inicio) / CLOCKS_PER_SEC;
+}
+
+int main(void) {
+    int n = 100000;
+
+    printf("Crecimiento lineal (n=%d):      ", n);
+    double t1 = crecimiento_lineal(n);
+    if (t1 >= 0) printf("%.4f segundos\n", t1);
+
+    printf("Crecimiento exponencial (n=%d): ", n);
+    double t2 = crecimiento_exponencial(n);
+    if (t2 >= 0) printf("%.4f segundos\n", t2);
+
+    if (t1 > 0 && t2 > 0) {
+        printf("Mejora: %.1fx más rápido\n", t1 / t2);
+    }
+
+    return 0;
+}
+```
+
+El crecimiento exponencial (duplicar la capacidad cuando se agota) tiene un
+costo amortizado O(1) por inserción, mientras que el crecimiento lineal es
+O(n) por inserción.
+
+Factores de crecimiento típicos: 1.5x o 2x. El factor 2 es más simple, pero
+puede desperdiciar más memoria. El factor 1.5 es un buen compromiso entre
+rendimiento y uso de memoria.
+
+===============================================================================
+7. ARRAY DINÁMICO GENÉRICO CON REALLOC
+===============================================================================
+
+Construyamos una implementación genérica y reutilizable de un array dinámico.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    int *datos;
+    size_t tam;
+    size_t capacidad;
+} ArrayDinamico;
+
+ArrayDinamico *arr_crear(void) {
+    ArrayDinamico *a = (ArrayDinamico *)malloc(sizeof(ArrayDinamico));
+    if (a == NULL) return NULL;
+    a->datos = NULL;
+    a->tam = 0;
+    a->capacidad = 0;
+    return a;
+}
+
+int arr_insertar(ArrayDinamico *a, int valor) {
+    if (a->tam >= a->capacidad) {
+        size_t nueva_cap = a->capacidad == 0 ? 8 : a->capacidad * 2;
+        int *temp = (int *)realloc(a->datos, nueva_cap * sizeof(int));
+        if (temp == NULL) return -1;
+        a->datos = temp;
+        a->capacidad = nueva_cap;
+    }
+    a->datos[a->tam++] = valor;
+    return 0;
+}
+
+int arr_obtener(const ArrayDinamico *a, size_t idx, int *valor) {
+    if (idx >= a->tam) return -1;
+    *valor = a->datos[idx];
+    return 0;
+}
+
+int arr_eliminar(ArrayDinamico *a, size_t idx) {
+    if (idx >= a->tam) return -1;
+    // Desplazar elementos hacia la izquierda
+    for (size_t i = idx; i < a->tam - 1; i++) {
+        a->datos[i] = a->datos[i + 1];
+    }
+    a->tam--;
+    return 0;
+}
+
+void arr_destruir(ArrayDinamico *a) {
+    if (a) {
+        free(a->datos);
+        free(a);
+    }
+}
+
+size_t arr_tam(const ArrayDinamico *a) {
+    return a->tam;
+}
+
+void arr_imprimir(const ArrayDinamico *a) {
+    printf("[");
+    for (size_t i = 0; i < a->tam; i++) {
+        printf("%d", a->datos[i]);
+        if (i < a->tam - 1) printf(", ");
+    }
+    printf("]\n");
+}
+
+int main(void) {
+    ArrayDinamico *arr = arr_crear();
+    if (arr == NULL) return EXIT_FAILURE;
+
+    printf("Insertando 20 elementos...\n");
+    for (int i = 0; i < 20; i++) {
+        arr_insertar(arr, i * 5);
+    }
+
+    printf("Array: ");
+    arr_imprimir(arr);
+    printf("Tamaño: %zu, Capacidad: %zu\n", arr_tam(arr), arr->capacidad);
+
+    printf("\nEliminando índice 3...\n");
+    arr_eliminar(arr, 3);
+    arr_imprimir(arr);
+
+    printf("\nObteniendo índice 5: ");
+    int v;
+    if (arr_obtener(arr, 5, &v) == 0) {
+        printf("%d\n", v);
+    }
+
+    arr_destruir(arr);
+    return EXIT_SUCCESS;
+}
+```
+
+Este patrón es la base de los vectores en C++ (std::vector) y las slices
+en Go. Lo usarás constantemente en tus proyectos.
+
+===============================================================================
+8. REALLOC PARA REDIMENSIONAR MATRICES
+===============================================================================
+
+realloc también puede usarse para cambiar el tamaño de matrices
+bidimensionales dinámicas.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int filas = 3;
+    int columnas = 4;
+
+    // Crear matriz
+    int **matriz = (int **)malloc(filas * sizeof(int *));
+    if (matriz == NULL) return EXIT_FAILURE;
+
+    for (int i = 0; i < filas; i++) {
+        matriz[i] = (int *)calloc(columnas, sizeof(int));
+        if (matriz[i] == NULL) {
+            for (int j = 0; j < i; j++) free(matriz[j]);
+            free(matriz);
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Llenar
+    for (int i = 0; i < filas; i++)
+        for (int j = 0; j < columnas; j++)
+            matriz[i][j] = i * columnas + j;
+
+    printf("Matriz 3x4 original:\n");
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++)
+            printf("%3d ", matriz[i][j]);
+        printf("\n");
+    }
+
+    // Redimensionar filas: añadir 2 filas más
+    int nuevas_filas = 5;
+    int **temp = (int **)realloc(matriz, nuevas_filas * sizeof(int *));
+    if (temp == NULL) {
+        for (int i = 0; i < filas; i++) free(matriz[i]);
+        free(matriz);
+        return EXIT_FAILURE;
+    }
+    matriz = temp;
+
+    // Inicializar las nuevas filas
+    for (int i = filas; i < nuevas_filas; i++) {
+        matriz[i] = (int *)calloc(columnas, sizeof(int));
+        if (matriz[i] == NULL) {
+            for (int j = 0; j < i; j++) free(matriz[j]);
+            free(matriz);
+            return EXIT_FAILURE;
+        }
+    }
+    filas = nuevas_filas;
+
+    // Llenar nuevas filas
+    for (int i = 3; i < filas; i++)
+        for (int j = 0; j < columnas; j++)
+            matriz[i][j] = i * columnas + j;
+
+    printf("\nMatriz 5x4 redimensionada:\n");
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++)
+            printf("%3d ", matriz[i][j]);
+        printf("\n");
+    }
+
+    for (int i = 0; i < filas; i++) free(matriz[i]);
+    free(matriz);
+    return EXIT_SUCCESS;
+}
+```
+
+===============================================================================
+9. REALLOC CON REASIGNACIÓN FRECUENTE: FRAGMENTACIÓN
+===============================================================================
+
+Cuando usas realloc muchas veces, el heap puede fragmentarse. La
+fragmentación ocurre cuando hay muchos bloques pequeños libres entre bloques
+asignados, haciendo imposible asignar un bloque grande aunque haya suficiente
+memoria libre total.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    // Demostración de fragmentación
+    void *bloques[100];
+
+    printf("Asignando y liberando bloques intercalados...\n");
+
+    // Asignar bloques de tamaños variados
+    for (int i = 0; i < 100; i++) {
+        bloques[i] = malloc((i % 10 + 1) * 100);
+        if (bloques[i] == NULL) {
+            fprintf(stderr, "Error en iteración %d\n", i);
+            for (int j = 0; j < i; j++) free(bloques[j]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Liberar la mitad de ellos (pares)
+    for (int i = 0; i < 100; i += 2) {
+        free(bloques[i]);
+        bloques[i] = NULL;
+    }
+
+    // Intentar redimensionar los bloques restantes
+    for (int i = 1; i < 100; i += 2) {
+        void *temp = realloc(bloques[i], (i % 10 + 1) * 200);
+        if (temp == NULL) {
+            printf("realloc falló para bloque %d (fragmentación)\n", i);
+        } else {
+            bloques[i] = temp;
+        }
+    }
+
+    // Limpieza general
+    for (int i = 0; i < 100; i++) {
+        free(bloques[i]);
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+
+La fragmentación es un problema complejo. Las buenas prácticas incluyen:
+- Pre-asignar capacidad inicial adecuada.
+- Usar factores de crecimiento razonables (no 1, no 1000).
+- Considerar pools de memoria para asignaciones del mismo tamaño.
+
+===============================================================================
+10. PATRÓN: STRING DINÁMICO CON REALLOC
+===============================================================================
+
+Una aplicación clásica de realloc es construir cadenas dinámicamente.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+typedef struct {
+    char *datos;
+    size_t tam;
+    size_t capacidad;
+} StringDinamico;
+
+StringDinamico *str_crear(void) {
+    StringDinamico *s = (StringDinamico *)malloc(sizeof(StringDinamico));
+    if (s == NULL) return NULL;
+    s->capacidad = 32;
+    s->datos = (char *)calloc(s->capacidad, sizeof(char));
+    if (s->datos == NULL) { free(s); return NULL; }
+    s->tam = 0;
+    return s;
+}
+
+int str_agregar_char(StringDinamico *s, char c) {
+    if (s->tam + 2 > s->capacidad) {  // +2 para el char y el \0
+        size_t nueva_cap = s->capacidad * 2;
+        char *temp = (char *)realloc(s->datos, nueva_cap * sizeof(char));
+        if (temp == NULL) return -1;
+        s->datos = temp;
+        s->capacidad = nueva_cap;
+    }
+    s->datos[s->tam++] = c;
+    s->datos[s->tam] = '\0';
+    return 0;
+}
+
+int str_agregar_cadena(StringDinamico *s, const char *cad) {
+    size_t len = strlen(cad);
+    for (size_t i = 0; i < len; i++) {
+        if (str_agregar_char(s, cad[i]) != 0) return -1;
+    }
+    return 0;
+}
+
+void str_destruir(StringDinamico *s) {
+    if (s) {
+        free(s->datos);
+        free(s);
+    }
+}
+
+void str_limpiar(StringDinamico *s) {
+    if (s) {
+        s->tam = 0;
+        s->datos[0] = '\0';
+    }
+}
+
+const char *str_c_str(const StringDinamico *s) {
+    return s->datos;
+}
+
+int main(void) {
+    StringDinamico *frase = str_crear();
+    if (frase == NULL) return EXIT_FAILURE;
+
+    printf("Construyendo frase letra por letra:\n");
+
+    const char *palabras[] = {"El", "lenguaje", "C", "es", "dinámico", "y", "potente"};
+    for (int i = 0; i < 7; i++) {
+        if (i > 0) str_agregar_char(frase, ' ');
+        str_agregar_cadena(frase, palabras[i]);
+        printf("  \"%s\"\n", str_c_str(frase));
+    }
+
+    printf("\nFrase final: \"%s\"\n", str_c_str(frase));
+
+    str_destruir(frase);
+    return EXIT_SUCCESS;
+}
+```
+
+Este patrón es la base de las cadenas dinámicas en C. En C++ existe
+std::string, pero en C debemos implementarlo nosotros.
+
+===============================================================================
+11. REALLOC CON NEW_SIZE = 0
+===============================================================================
+
+El comportamiento de realloc cuando new_size es 0 es dependiente de la
+implementación. Algunas implementaciones lo tratan como free (liberan el
+bloque y devuelven NULL). Otras devuelven un puntero único pero válido.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    int *arr = (int *)malloc(100 * sizeof(int));
+    if (arr == NULL) return EXIT_FAILURE;
+
+    printf("Bloque original: %p\n", (void *)arr);
+
+    // realloc con tamaño 0: comportamiento definido por implementación
+    void *resultado = realloc(arr, 0);
+    printf("realloc(arr, 0) devolvió: %p\n", resultado);
+
+    if (resultado != NULL) {
+        // Algunas implementaciones devuelven un puntero mínimamente válido
+        printf("La implementación devolvió un puntero no NULL\n");
+        printf("(no debe desreferenciarse, pero debe liberarse)\n");
+        free(resultado);
+    } else {
+        // Otras implementaciones liberan y devuelven NULL
+        printf("La implementación liberó y devolvió NULL\n");
+        // arr ya no es válido; no debe usarse ni liberarse
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+
+La lección: no uses realloc con tamaño 0 en código portable. Si quieres
+liberar, usa free. Si quieres cambiar tamaño, asegúrate de que sea > 0.
+
+===============================================================================
+12. REALLOC Y ALINEACIÓN
+===============================================================================
+
+realloc preserva la alineación del bloque original. El nuevo bloque también
+estará correctamente alineado para cualquier tipo de datos.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+int main(void) {
+    // Asignar un bloque y verificar su alineación
+    char *bloque = (char *)malloc(1);
+    if (bloque == NULL) return EXIT_FAILURE;
+
+    printf("malloc(1) en:    %p (múltiplo de 8: %s)\n",
+           (void *)bloque,
+           ((uintptr_t)bloque % 8 == 0) ? "sí" : "no");
+
+    // Redimensionar a 1000 bytes
+    char *temp = (char *)realloc(bloque, 1000);
+    if (temp == NULL) { free(bloque); return EXIT_FAILURE; }
+    bloque = temp;
+
+    printf("realloc(1000) en: %p (múltiplo de 8: %s)\n",
+           (void *)bloque,
+           ((uintptr_t)bloque % 8 == 0) ? "sí" : "no");
+
+    // El bloque redimensionado puede almacenar cualquier tipo
+    double *pd = (double *)bloque;
+    *pd = 3.1415926535;
+    printf("Almacenando double: %.10f\n", *pd);
+
+    free(bloque);
+    return EXIT_SUCCESS;
+}
+```
+
+===============================================================================
+13. EJEMPLO INTEGRADOR: LECTOR DE ARCHIVO DINÁMICO
+===============================================================================
+
+Programa que lee un archivo de texto completo en memoria, adaptándose a su
+tamaño con realloc.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+char *leer_archivo(const char *nombre_archivo) {
+    FILE *f = fopen(nombre_archivo, "rb");
+    if (f == NULL) return NULL;
+
+    // Ir al final para conocer el tamaño
+    fseek(f, 0, SEEK_END);
+    long tam_archivo = ftell(f);
+    rewind(f);
+
+    if (tam_archivo <= 0) {
+        fclose(f);
+        return NULL;
+    }
+
+    // Reservar memoria exacta
+    char *contenido = (char *)malloc((size_t)(tam_archivo + 1));
+    if (contenido == NULL) {
+        fclose(f);
+        return NULL;
+    }
+
+    size_t leido = fread(contenido, 1, (size_t)tam_archivo, f);
+    fclose(f);
+
+    if (leido != (size_t)tam_archivo) {
+        free(contenido);
+        return NULL;
+    }
+
+    contenido[leido] = '\0';
+    return contenido;
+}
+
+char *leer_lineas_dinamico(const char *nombre_archivo) {
+    FILE *f = fopen(nombre_archivo, "r");
+    if (f == NULL) return NULL;
+
+    size_t capacidad = 128;
+    size_t longitud = 0;
+    char *buffer = (char *)malloc(capacidad);
+    if (buffer == NULL) { fclose(f); return NULL; }
+    buffer[0] = '\0';
+
+    char linea[1024];
+    while (fgets(linea, sizeof(linea), f)) {
+        size_t len_linea = strlen(linea);
+
+        while (longitud + len_linea + 1 > capacidad) {
+            capacidad *= 2;
+            char *temp = (char *)realloc(buffer, capacidad);
+            if (temp == NULL) {
+                free(buffer);
+                fclose(f);
+                return NULL;
+            }
+            buffer = temp;
+        }
+
+        strcpy(buffer + longitud, linea);
+        longitud += len_linea;
+    }
+
+    fclose(f);
+    return buffer;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Uso: %s <archivo>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    // Método 1: lectura completa con tamaño conocido
+    printf("=== Lectura completa ===\n");
+    char *contenido = leer_archivo(argv[1]);
+    if (contenido) {
+        printf("El archivo tiene %zu bytes.\n", strlen(contenido));
+        printf("Primeros 200 caracteres:\n%.200s\n", contenido);
+        free(contenido);
+    } else {
+        printf("No se pudo leer el archivo.\n");
+    }
+
+    // Método 2: lectura con crecimiento dinámico
+    printf("\n=== Lectura dinámica ===\n");
+    char *contenido2 = leer_lineas_dinamico(argv[1]);
+    if (contenido2) {
+        printf("Contenido leído dinámicamente (%zu bytes):\n", strlen(contenido2));
+        printf("%s\n", contenido2);
+        free(contenido2);
+    }
+
+    return EXIT_SUCCESS;
+}
+```
+
+===============================================================================
+14. REALLOC Y MULTITHREADING
+===============================================================================
+
+En programas multihilo, cada hilo tiene su propio heap, pero malloc/realloc
+usan un mutex global o estructura similar. Las llamadas concurrentes desde
+múltiples hilos pueden causar contención.
+
+Para reducir la contención:
+- Usa pools de memoria por hilo (thread-local storage).
+- Minimiza las llamadas a realloc.
+- Asigna bloques grandes y gestiona sub-bloques manualmente (arena
+  allocation).
+
+```c
+// Ejemplo conceptual: no ejecutable directamente
+// Uso de realloc en un entorno multihilo (requiere sincronización)
+#include <pthread.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+typedef struct {
+    int *datos;
+    size_t tam;
+    size_t capacidad;
+    pthread_mutex_t mutex;
+} ArraySeguro;
+
+ArraySeguro *arr_seguro_crear(void) {
+    ArraySeguro *a = (ArraySeguro *)malloc(sizeof(ArraySeguro));
+    if (a == NULL) return NULL;
+    a->datos = NULL;
+    a->tam = 0;
+    a->capacidad = 0;
+    pthread_mutex_init(&a->mutex, NULL);
+    return a;
+}
+
+int arr_seguro_insertar(ArraySeguro *a, int valor) {
+    pthread_mutex_lock(&a->mutex);
+    if (a->tam >= a->capacidad) {
+        size_t nueva_cap = a->capacidad == 0 ? 8 : a->capacidad * 2;
+        int *temp = (int *)realloc(a->datos, nueva_cap * sizeof(int));
+        if (temp == NULL) {
+            pthread_mutex_unlock(&a->mutex);
+            return -1;
+        }
+        a->datos = temp;
+        a->capacidad = nueva_cap;
+    }
+    a->datos[a->tam++] = valor;
+    pthread_mutex_unlock(&a->mutex);
+    return 0;
+}
+
+void arr_seguro_destruir(ArraySeguro *a) {
+    if (a) {
+        pthread_mutex_destroy(&a->mutex);
+        free(a->datos);
+        free(a);
+    }
+}
+```
+
+===============================================================================
+15. REALLOC Y TIPOS COMPLEJOS: ARRAY DE ESTRUCTURAS
+===============================================================================
+
+Redimensionar arrays dinámicos de estructuras es uno de los usos más potentes
+de realloc.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    int id;
+    char nombre[60];
+    float notas[5];
+    float promedio;
+} Alumno;
+
+typedef struct {
+    Alumno *alumnos;
+    size_t tam;
+    size_t capacidad;
+} Curso;
+
+Curso *curso_crear(void) {
+    Curso *c = (Curso *)malloc(sizeof(Curso));
+    if (c == NULL) return NULL;
+    c->alumnos = NULL;
+    c->tam = 0;
+    c->capacidad = 0;
+    return c;
+}
+
+int curso_agregar(Curso *c, const Alumno *a) {
+    if (c->tam >= c->capacidad) {
+        size_t nueva_cap = c->capacidad == 0 ? 4 : c->capacidad * 2;
+        Alumno *temp = (Alumno *)realloc(c->alumnos,
+                                          nueva_cap * sizeof(Alumno));
+        if (temp == NULL) return -1;
+        c->alumnos = temp;
+        c->capacidad = nueva_cap;
+    }
+    c->alumnos[c->tam++] = *a;
+    return 0;
+}
+
+void curso_mostrar(const Curso *c) {
+    printf("Curso (%zu alumnos, capacidad %zu):\n", c->tam, c->capacidad);
+    for (size_t i = 0; i < c->tam; i++) {
+        printf("  %d. %s - Promedio: %.2f\n",
+               c->alumnos[i].id,
+               c->alumnos[i].nombre,
+               c->alumnos[i].promedio);
+    }
+}
+
+void curso_destruir(Curso *c) {
+    if (c) {
+        free(c->alumnos);
+        free(c);
+    }
+}
+
+int main(void) {
+    Curso *curso = curso_crear();
+    if (curso == NULL) return EXIT_FAILURE;
+
+    Alumno a1 = {1, "Ana García", {8.5, 9.0, 7.5, 9.5, 8.0}, 8.5};
+    Alumno a2 = {2, "Carlos López", {6.0, 7.0, 6.5, 7.5, 8.0}, 7.0};
+    Alumno a3 = {3, "María Pérez", {9.5, 9.0, 9.5, 8.5, 10.0}, 9.3};
+
+    curso_agregar(curso, &a1);
+    curso_agregar(curso, &a2);
+    curso_agregar(curso, &a3);
+
+    curso_mostrar(curso);
+
+    printf("\nAgregando más alumnos (redimensionando)...\n");
+    for (int i = 4; i <= 10; i++) {
+        Alumno nuevo;
+        nuevo.id = i;
+        snprintf(nuevo.nombre, sizeof(nuevo.nombre), "Alumno %d", i);
+        nuevo.promedio = 5.0 + (i * 0.5);
+        for (int j = 0; j < 5; j++) nuevo.notas[j] = nuevo.promedio;
+        curso_agregar(curso, &nuevo);
+    }
+
+    curso_mostrar(curso);
+    curso_destruir(curso);
+    return EXIT_SUCCESS;
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- realloc(ptr, new_size) redimensiona un bloque de memoria preservando el
+  contenido hasta el mínimo entre el tamaño original y el nuevo.
+- Siempre usa un puntero temporal para capturar el retorno de realloc antes
+  de reasignar al puntero original.
+- Si realloc devuelve NULL, el bloque original NO se libera.
+- realloc(NULL, size) equivale a malloc(size).
+- El crecimiento exponencial (factor 2 o 1.5) es mucho más eficiente que el
+  crecimiento lineal.
+- Al reducir el tamaño, el contenido se preserva hasta el nuevo tamaño.
+- No uses realloc con tamaño 0 (comportamiento no portable).
+- La fragmentación del heap puede hacer que realloc falle aunque haya memoria
+  suficiente.
+- realloc preserva la alineación del bloque original.
+- En entornos multihilo, las llamadas a realloc deben sincronizarse.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa una función que reciba un array dinámico de
+enteros y lo redimensione para que tenga exactamente el tamaño necesario
+(eliminando la capacidad extra). La función debe devolver el nuevo array y
+actualizar la capacidad.
+
+🧩 **Ejercicio 2:** Escribe un programa que lea números enteros de la entrada
+estándar hasta EOF y los almacene en un array dinámico con crecimiento
+exponencial. Al final, imprime la media, mediana y moda.
+
+🧩 **Ejercicio 3:** Implementa un buffer circular dinámico que pueda crecer
+cuando esté lleno. Usa realloc para expandir el buffer. Debe soportar
+encolar y desencolar en O(1) amortizado.
+
+🧩 **Ejercicio 4:** Crea un programa que lea un archivo CSV con datos de
+estudiantes (nombre, edad, nota) línea por línea y los almacene en un array
+dinámico de estructuras. Usa realloc para crecer según sea necesario.
+
+🧩 **Ejercicio 5:** Implementa una pila dinámica (stack) con capacidad
+ajustable usando realloc. Las operaciones deben ser: push, pop, top, isEmpty,
+y size. La pila debe encogerse cuando esté menos de 1/4 llena.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Puedo usar realloc con un puntero que no fue devuelto por malloc?** No.
+Usar realloc con un puntero que apunta a memoria del stack, a un array
+estático, o que ya fue liberado, es comportamiento indefinido.
+
+❓ **¿Qué tan seguido debo llamar a realloc?** Lo menos posible. El patrón
+óptimo es duplicar la capacidad cuando se agota, logrando O(1) amortizado
+por inserción. Redimensionar cada elemento individualmente es O(n²).
+
+❓ **¿realloc mueve físicamente el bloque?** A veces sí, a veces no. Si hay
+espacio contiguo después del bloque, realloc puede expandirlo in situ. Si no,
+asigna un nuevo bloque, copia el contenido y libera el viejo.
+
+❓ **¿Puedo reducir la fragmentación con realloc?** Parcialmente. realloc
+puede ayudar a compactar memoria cuando reduces bloques, pero la
+fragmentación es un problema sistémico que requiere estrategias como pools
+de memoria.
+
+❓ **¿Qué pasa si llamo a realloc con el mismo tamaño?** Es inofensivo pero
+innecesario. realloc puede devolver el mismo puntero o uno diferente. Tiene
+un costo de procesamiento.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Implementación de un Vector Genérico (type-erased)** — Diseña e
+implementa un vector dinámico genérico en C que pueda almacenar cualquier
+tipo de datos, similar a std::vector de C++ pero en C. Debe usar void* y
+un tamaño de elemento configurable. Las operaciones incluyen:
+- vector_crear(element_size)
+- vector_push_back(vec, element_ptr)
+- vector_get(vec, index, element_ptr)
+- vector_set(vec, index, element_ptr)
+- vector_insert(vec, index, element_ptr)
+- vector_erase(vec, index)
+- vector_reserve(vec, new_capacity)
+- vector_destruir(vec)
+
+Usa realloc internamente con crecimiento exponencial. El desafío es manejar
+correctamente la aritmética de punteros void* y los tipos opacos.
+
+===============================================================================
+FIN DEL CAPÍTULO 53
+===============================================================================
+
+"realloc te enseña que en la programación, como en la vida, crecer no
+significa empezar de cero: significa expandir lo que ya eres sin perder
+tu esencia." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+54_CAPITULO_54_FREE.txt
+===============================================================================

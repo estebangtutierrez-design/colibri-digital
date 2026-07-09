@@ -1,0 +1,1390 @@
+================================================================================
+  RUBY MASTER BOOK
+  MÓDULO IV: PROGRAMACIÓN ORIENTADA A OBJETOS EN RUBY
+  CAPÍTULO 40: PROYECTO DEL MÓDULO IV — SISTEMA BANCARIO
+================================================================================
+
+  "No aprendes a caminar siguiendo reglas. Aprendes caminando y
+   cayéndote. Lo mismo ocurre con la programación."
+   — Richard Branson
+
+================================================================================
+
+  BIENVENIDA
+
+  Has llegado al final del Módulo IV. Durante nueve capítulos has
+  aprendido los fundamentos de la Programación Orientada a Objetos
+  en Ruby: clases, constructores, atributos, métodos de instancia y
+  clase, herencia, polimorfismo, encapsulación, y self.
+
+  Ahora es el momento de poner todo en práctica. Este capítulo es un
+  proyecto completo donde construirás un sistema bancario funcional
+  desde cero. No se trata solo de escribir código, sino de diseñar
+  una arquitectura orientada a objetos robusta, extensible y elegante.
+
+  El proyecto está dividido en fases. Cada fase introduce nuevos
+  requisitos y desafíos. Te recomiendo implementar cada fase por
+  separado, probarla, y luego pasar a la siguiente. Al final tendrás
+  un sistema bancario completo que demuestra todos los conceptos del
+  módulo.
+
+================================================================================
+
+  FRASE DEL CAPÍTULO
+
+  "La mejor manera de aprender a programar es programar. No hay atajos.
+   No hay sustituto para la práctica deliberada."
+   — Lucas Ega
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+
+  Al finalizar este capítulo serás capaz de:
+
+  • Diseñar e implementar un sistema orientado a objetos completo.
+  • Aplicar todos los conceptos del Módulo IV en un proyecto real.
+  • Organizar código en múltiples clases con responsabilidades claras.
+  • Implementar herencia y módulos para compartir comportamiento.
+  • Usar polimorfismo y duck typing para código extensible.
+  • Aplicar encapsulación para proteger invariantes.
+  • Escribir pruebas para verificar el comportamiento del sistema.
+
+================================================================================
+
+  1. VISIÓN GENERAL DEL PROYECTO
+
+  El proyecto consiste en un sistema bancario con las siguientes
+  capacidades:
+
+  - Gestión de clientes (personas físicas y jurídicas)
+  - Cuentas bancarias (corriente, ahorro, inversión)
+  - Transacciones (depósitos, retiros, transferencias)
+  - Cálculo de intereses y comisiones
+  - Generación de reportes y estados de cuenta
+  - Autenticación y control de acceso
+  - Historial de movimientos
+
+  El sistema debe ser extensible: añadir nuevos tipos de cuentas o
+  nuevas reglas de negocio no debe requerir modificar código existente.
+
+================================================================================
+
+  2. FASE 1: ESTRUCTURA BASE
+
+  ------------------------------------------------------------------
+  Fase 1a: Clase Cliente
+  ------------------------------------------------------------------
+
+  class Cliente
+    attr_reader :id, :nombre, :email, :fecha_registro
+
+    @@contador = 0
+
+    def initialize(nombre:, email:, telefono: nil)
+      @@contador += 1
+      @id = "CLI-#{@@contador.to_s.rjust(5, '0')}"
+      @nombre = nombre
+      @email = email
+      @telefono = telefono
+      @fecha_registro = Time.now
+      @activo = true
+    end
+
+    def activo?
+      @activo
+    end
+
+    def desactivar
+      @activo = false
+    end
+
+    def reactivar
+      @activo = true
+    end
+
+    def to_s
+      "#{@id}: #{@nombre} (#{@email})"
+    end
+
+    def tipo_cliente
+      self.class.name
+    end
+  end
+
+  class ClientePersonal < Cliente
+    attr_reader :apellido, :fecha_nacimiento
+
+    def initialize(nombre:, apellido:, email:, fecha_nacimiento: nil, telefono: nil)
+      super(nombre: nombre, email: email, telefono: telefono)
+      @apellido = apellido
+      @fecha_nacimiento = fecha_nacimiento
+    end
+
+    def nombre_completo
+      "#{@nombre} #{@apellido}"
+    end
+
+    def to_s
+      "#{@id}: #{nombre_completo} (#{@email})"
+    end
+  end
+
+  class ClienteEmpresarial < Cliente
+    attr_reader :razon_social, :rfc, :representante_legal
+
+    def initialize(nombre:, razon_social:, rfc:, email:, representante_legal: nil, telefono: nil)
+      super(nombre: nombre, email: email, telefono: telefono)
+      @razon_social = razon_social
+      @rfc = rfc
+      @representante_legal = representante_legal
+    end
+
+    def to_s
+      "#{@id}: #{@razon_social} (#{@rfc})"
+    end
+  end
+
+  ------------------------------------------------------------------
+  Fase 1b: Clase Cuenta base (abstracta)
+  ------------------------------------------------------------------
+
+  class Cuenta
+    attr_reader :numero, :cliente, :fecha_apertura
+
+    @@contador = 0
+
+    def initialize(cliente:, saldo_inicial: 0)
+      raise ArgumentError, "Cliente inválido" unless cliente.is_a?(Cliente)
+      raise ArgumentError, "Saldo inicial no puede ser negativo" if saldo_inicial < 0
+
+      @@contador += 1
+      @numero = generar_numero
+      @cliente = cliente
+      @saldo = saldo_inicial
+      @fecha_apertura = Time.now
+      @activa = true
+      @movimientos = []
+      registrar_movimiento(:apertura, saldo_inicial, "Apertura de cuenta")
+    end
+
+    def depositar(monto, descripcion = "Depósito")
+      validar_monto_positivo(monto)
+      return "Cuenta inactiva" unless @activa
+
+      @saldo += monto
+      registrar_movimiento(:deposito, monto, descripcion)
+      "Depósito exitoso. Saldo: $#{'%.2f' % @saldo}"
+    end
+
+    def retirar(monto, descripcion = "Retiro")
+      validar_monto_positivo(monto)
+      return "Cuenta inactiva" unless @activa
+      return "Saldo insuficiente" if monto > @saldo
+
+      comision = calcular_comision_retiro(monto)
+      total = monto + comision
+
+      return "Saldo insuficiente (incluyendo comisión)" if total > @saldo
+
+      @saldo -= total
+      registrar_movimiento(:retiro, monto, descripcion)
+      registrar_movimiento(:comision, comision, "Comisión por retiro") if comision > 0
+      "Retiro exitoso. Comisión: $#{'%.2f' % comision}. Saldo: $#{'%.2f' % @saldo}"
+    end
+
+    def saldo
+      @saldo
+    end
+
+    def activa?
+      @activa
+    end
+
+    def desactivar
+      @activa = false
+    end
+
+    def activar
+      @activa = true
+    end
+
+    def movimientos
+      @movimientos.dup
+    end
+
+    def ultimos_movimientos(n = 5)
+      @movimientos.last(n).reverse
+    end
+
+    def calcular_intereses
+      raise NotImplementedError, "Cada tipo de cuenta debe implementar su cálculo de intereses"
+    end
+
+    def to_s
+      "#{@numero}: #{@cliente.nombre} — $#{'%.2f' % @saldo}"
+    end
+
+    def estado_de_cuenta
+      lines = []
+      lines << "=" * 60
+      lines << "ESTADO DE CUENTA #{@numero}"
+      lines << "Titular: #{@cliente}"
+      lines << "Tipo: #{self.class.name}"
+      lines << "Saldo: $#{'%.2f' % @saldo}"
+      lines << "Estado: #{@activa ? 'ACTIVA' : 'INACTIVA'}"
+      lines << "-" * 60
+      lines << "MOVIMIENTOS:"
+      @movimientos.reverse.each_with_index do |m, i|
+        lines << "  #{i + 1}. #{m[:fecha]} | #{m[:tipo].to_s.upcase.rjust(12)} | $#{'%.2f' % m[:monto]} | #{m[:descripcion]}"
+      end
+      lines << "=" * 60
+      lines.join("\n")
+    end
+
+    protected
+
+    def calcular_comision_retiro(monto)
+      0
+    end
+
+    private
+
+    def generar_numero
+      tipo = self.class.name[0..2].upcase
+      "#{tipo}-#{@@contador.to_s.rjust(8, '0')}"
+    end
+
+    def validar_monto_positivo(monto)
+      raise ArgumentError, "Monto debe ser numérico" unless monto.is_a?(Numeric)
+      raise ArgumentError, "Monto debe ser positivo" unless monto > 0
+    end
+
+    def registrar_movimiento(tipo, monto, descripcion = "")
+      @movimientos << {
+        fecha: Time.now.strftime("%Y-%m-%d %H:%M:%S"),
+        tipo: tipo,
+        monto: monto,
+        descripcion: descripcion,
+        saldo_despues: @saldo
+      }
+    end
+  end
+
+================================================================================
+
+  3. FASE 2: TIPOS DE CUENTA
+
+  ------------------------------------------------------------------
+  Ejemplo: CuentaCorriente, CuentaAhorro, CuentaInversion
+  ------------------------------------------------------------------
+
+  class CuentaCorriente < Cuenta
+    COMISION_POR_RETIRO = 5.0
+    INTERES_ANUAL = 0.01
+    LIMITE_DESCUBIERTO = 0
+
+    def initialize(cliente:, saldo_inicial: 0, limite_descubierto: 0)
+      super(cliente: cliente, saldo_inicial: saldo_inicial)
+      @limite_descubierto = limite_descubierto
+    end
+
+    def retirar(monto, descripcion = "Retiro")
+      validar_monto_positivo(monto)
+      return "Cuenta inactiva" unless @activa
+
+      if monto > @saldo + @limite_descubierto
+        return "Límite de descubierto excedido. Disponible: $#{'%.2f' % (@saldo + @limite_descubierto)}"
+      end
+
+      comision = calcular_comision_retiro(monto)
+      total = monto + comision
+
+      @saldo -= total
+      registrar_movimiento(:retiro, monto, descripcion)
+      registrar_movimiento(:comision, comision, "Comisión por retiro") if comision > 0
+
+      if @saldo < 0
+        registrar_movimiento(:sobregiro, @saldo.abs, "Sobregiro utilizado")
+        "Retiro exitoso (uso de sobregiro). Comisión: $#{'%.2f' % comision}. Saldo: $#{'%.2f' % @saldo}"
+      else
+        "Retiro exitoso. Comisión: $#{'%.2f' % comision}. Saldo: $#{'%.2f' % @saldo}"
+      end
+    end
+
+    def calcular_intereses
+      if @saldo > 0
+        @saldo * INTERES_ANUAL / 12
+      else
+        0
+      end
+    end
+
+    protected
+
+    def calcular_comision_retiro(monto)
+      COMISION_POR_RETIRO
+    end
+  end
+
+  class CuentaAhorro < Cuenta
+    TASA_INTERES = 0.04
+    RETIROS_GRATIS_POR_MES = 3
+    COMISION_RETIRO_EXTRA = 10.0
+
+    def initialize(cliente:, saldo_inicial: 0)
+      super(cliente: cliente, saldo_inicial: saldo_inicial)
+      @retiros_este_mes = 0
+      @mes_actual = Time.now.month
+    end
+
+    def retirar(monto, descripcion = "Retiro")
+      actualizar_contador_mensual
+
+      comision = calcular_comision_retiro(monto)
+      total = monto + comision
+      return "Saldo insuficiente" if total > @saldo
+
+      @saldo -= total
+      @retiros_este_mes += 1
+      registrar_movimiento(:retiro, monto, descripcion)
+      registrar_movimiento(:comision, comision, "Comisión por retiro extra") if comision > 0
+      "Retiro exitoso. Comisión: $#{'%.2f' % comision}. Saldo: $#{'%.2f' % @saldo}"
+    end
+
+    def calcular_intereses
+      (@saldo * TASA_INTERES / 12).round(2)
+    end
+
+    def aplicar_intereses
+      interes = calcular_intereses
+      if interes > 0
+        @saldo += interes
+        registrar_movimiento(:interes, interes, "Interés del mes")
+        "Interés de $#{'%.2f' % interes} aplicado. Nuevo saldo: $#{'%.2f' % @saldo}"
+      else
+        "No hay intereses que aplicar"
+      end
+    end
+
+    protected
+
+    def calcular_comision_retiro(monto)
+      @retiros_este_mes >= RETIROS_GRATIS_POR_MES ? COMISION_RETIRO_EXTRA : 0
+    end
+
+    private
+
+    def actualizar_contador_mensual
+      if Time.now.month != @mes_actual
+        @retiros_este_mes = 0
+        @mes_actual = Time.now.month
+      end
+    end
+  end
+
+  class CuentaInversion < Cuenta
+    def initialize(cliente:, saldo_inicial: 0, tasa_riesgo: :moderada)
+      super(cliente: cliente, saldo_inicial: saldo_inicial)
+
+      @tasa_riesgo = tasa_riesgo
+      @inversiones = []
+      @tasas = {
+        conservadora: 0.06,
+        moderada: 0.10,
+        agresiva: 0.16
+      }
+    end
+
+    def invertir(monto, instrumento)
+      validar_monto_positivo(monto)
+      return "Cuenta inactiva" unless @activa
+      return "Saldo insuficiente" if monto > @saldo
+
+      @saldo -= monto
+      @inversiones << {
+        fecha: Time.now,
+        monto: monto,
+        instrumento: instrumento,
+        rendimiento: 0
+      }
+      registrar_movimiento(:inversion, monto, "Inversión en #{instrumento}")
+      "Inversión de $#{'%.2f' % monto} en #{instrumento} realizada"
+    end
+
+    def calcular_intereses
+      @saldo * @tasas[@tasa_riesgo] / 12
+    end
+
+    def valor_total
+      @saldo + @inversiones.sum { |i| i[:monto] }
+    end
+
+    def to_s
+      "#{super} | Valor total: $#{'%.2f' % valor_total} | Riesgo: #{@tasa_riesgo}"
+    end
+
+    protected
+
+    def calcular_comision_retiro(monto)
+      monto * 0.01  # 1% de comisión
+    end
+  end
+
+================================================================================
+
+  4. FASE 3: TRANSACCIONES Y SERVICIOS
+
+  ------------------------------------------------------------------
+  Servicio de Transferencias
+  ------------------------------------------------------------------
+
+  class TransferenciaService
+    def initialize
+      @transferencias = []
+    end
+
+    def transferir(origen, destino, monto, descripcion = "Transferencia")
+      raise ArgumentError, "Origen debe ser una Cuenta" unless origen.is_a?(Cuenta)
+      raise ArgumentError, "Destino debe ser una Cuenta" unless destino.is_a?(Cuenta)
+      validar_monto_positivo(monto)
+
+      resultado_origen = origen.retirar(monto, "Transferencia a #{destino.numero}")
+      return resultado_origen if resultado_origen.start_with?("Saldo insuficiente", "Límite", "Cuenta inactiva")
+
+      destino.depositar(monto, "Transferencia de #{origen.numero}")
+      @transferencias << {
+        fecha: Time.now,
+        origen: origen.numero,
+        destino: destino.numero,
+        monto: monto,
+        descripcion: descripcion
+      }
+      {
+        exito: true,
+        mensaje: "Transferencia de $#{'%.2f' % monto} de #{origen.numero} a #{destino.numero} exitosa",
+        comision: 0
+      }
+    end
+
+    def historial
+      @transferencias.dup
+    end
+
+    def transferencias_por_cuenta(numero_cuenta)
+      @transferencias.select { |t| t[:origen] == numero_cuenta || t[:destino] == numero_cuenta }
+    end
+
+    private
+
+    def validar_monto_positivo(monto)
+      raise ArgumentError, "Monto debe ser positivo" unless monto.is_a?(Numeric) && monto > 0
+    end
+  end
+
+  ------------------------------------------------------------------
+  Servicio de Reportes
+  ------------------------------------------------------------------
+
+  module Reportable
+    def to_hash
+      { class: self.class.name }.merge(instance_variables.each_with_object({}) do |var, hash|
+        key = var.to_s.sub("@", "").to_sym
+        value = instance_variable_get(var)
+        hash[key] = value.is_a?(String) || value.is_a?(Numeric) || value.is_a?(TrueClass) || value.is_a?(FalseClass) ? value : value.to_s
+      end)
+    end
+  end
+
+  class ReporteService
+    def generar_estado_cuenta(cuenta, formato = :texto)
+      case formato
+      when :texto
+        cuenta.estado_de_cuenta
+      when :resumido
+        "#{cuenta.numero}: $#{'%.2f' % cuenta.saldo} (#{cuenta.ultimos_movimientos(3).size} movs recientes)"
+      when :completo
+        reporte = cuenta.estado_de_cuenta
+        reporte += "\n\nINTERESES DEL MES:\n"
+        reporte += "  Interés calculado: $#{'%.2f' % cuenta.calcular_intereses}\n"
+        reporte
+      else
+        raise ArgumentError, "Formato desconocido: #{formato}"
+      end
+    end
+
+    def generar_reporte_banco(cuentas)
+      lines = []
+      lines << "=" * 60
+      lines << "REPORTE GENERAL DEL BANCO"
+      lines << "Fecha: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+      lines << "-" * 60
+      lines << "RESUMEN:"
+      lines << "Total cuentas: #{cuentas.size}"
+      lines << "Cuentas activas: #{cuentas.count(&:activa?)}"
+      lines << "Saldo total: $#{'%.2f' % cuentas.sum(&:saldo)}"
+      lines << "-" * 60
+      lines << "DETALLE POR TIPO:"
+
+      cuentas.group_by { |c| c.class.name }.each do |tipo, grupo|
+        lines << "  #{tipo}: #{grupo.size} cuentas, $#{'%.2f' % grupo.sum(&:saldo)}"
+      end
+
+      lines << "=" * 60
+      lines.join("\n")
+    end
+
+    def exportar_csv(cuentas)
+      require 'csv'
+      CSV.generate do |csv|
+        csv << ["Número", "Tipo", "Cliente", "Saldo", "Activa", "Fecha Apertura"]
+        cuentas.each do |c|
+          csv << [c.numero, c.class.name, c.cliente.nombre, c.saldo, c.activa?, c.fecha_apertura.strftime("%Y-%m-%d")]
+        end
+      end
+    end
+  end
+
+================================================================================
+
+  5. FASE 4: AUTENTICACIÓN Y SEGURIDAD
+
+  ------------------------------------------------------------------
+  Módulo de autenticación
+  ------------------------------------------------------------------
+
+  module Autenticable
+    def autenticar(password)
+      @password_hash == hash_password(password)
+    end
+
+    def cambiar_password(password_actual, password_nuevo)
+      if autenticar(password_actual)
+        @password_hash = hash_password(password_nuevo)
+        true
+      else
+        false
+      end
+    end
+
+    private
+
+    def hash_password(password)
+      Digest::SHA256.hexdigest("#{password}#{@salt}")
+    end
+
+    def generar_salt
+      SecureRandom.hex(16)
+    end
+  end
+
+  class UsuarioSistema
+    include Autenticable
+
+    attr_reader :username, :rol, :empleado_desde
+
+    ROLES = [:admin, :ejecutivo, :consultor, :auditor]
+
+    def initialize(username:, password:, rol: :consultor)
+      @username = username
+      @rol = rol
+      @salt = generar_salt
+      @password_hash = hash_password(password)
+      @empleado_desde = Time.now
+      @activo = true
+    end
+
+    def puede?(accion)
+      case @rol
+      when :admin
+        true
+      when :ejecutivo
+        %i[crear_cuenta depositar retirar transferir ver_reportes].include?(accion)
+      when :consultor
+        %i[ver_reportes ver_estado_cuenta].include?(accion)
+      when :auditor
+        %i[ver_reportes ver_historial ver_estado_cuenta].include?(accion)
+      else
+        false
+      end
+    end
+
+    def to_s
+      "#{@username} (#{@rol})"
+    end
+  end
+
+  class AutenticacionService
+    def initialize
+      @usuarios = {}
+    end
+
+    def registrar_usuario(username, password, rol: :consultor)
+      return "Usuario ya existe" if @usuarios.key?(username)
+      @usuarios[username] = UsuarioSistema.new(username: username, password: password, rol: rol)
+      "Usuario #{username} registrado como #{rol}"
+    end
+
+    def autenticar(username, password)
+      usuario = @usuarios[username]
+      return nil unless usuario
+      return nil unless usuario.autenticar(password)
+      usuario
+    end
+
+    def autorizar?(usuario, accion)
+      usuario&.puede?(accion)
+    end
+  end
+
+================================================================================
+
+  6. FASE 5: SISTEMA BANCARIO COMPLETO
+
+  ------------------------------------------------------------------
+  Clase principal del banco
+  ------------------------------------------------------------------
+
+  class Banco
+    include Reportable
+
+    attr_reader :nombre, :cuentas, :clientes
+
+    def initialize(nombre)
+      @nombre = nombre
+      @clientes = []
+      @cuentas = []
+      @transferencia_service = TransferenciaService.new
+      @reporte_service = ReporteService.new
+      @autenticacion_service = AutenticacionService.new
+      @caja = 0.0
+    end
+
+    # Gestión de clientes
+    def registrar_cliente_personal(nombre:, apellido:, email:, fecha_nacimiento: nil, telefono: nil)
+      cliente = ClientePersonal.new(
+        nombre: nombre,
+        apellido: apellido,
+        email: email,
+        fecha_nacimiento: fecha_nacimiento,
+        telefono: telefono
+      )
+      @clientes << cliente
+      cliente
+    end
+
+    def registrar_cliente_empresarial(nombre:, razon_social:, rfc:, email:, representante_legal: nil, telefono: nil)
+      cliente = ClienteEmpresarial.new(
+        nombre: nombre,
+        razon_social: razon_social,
+        rfc: rfc,
+        email: email,
+        representante_legal: representante_legal,
+        telefono: telefono
+      )
+      @clientes << cliente
+      cliente
+    end
+
+    def buscar_cliente(id)
+      @clientes.find { |c| c.id == id }
+    end
+
+    def clientes_activos
+      @clientes.select(&:activo?)
+    end
+
+    # Gestión de cuentas
+    def abrir_cuenta_corriente(cliente:, saldo_inicial: 0, limite_descubierto: 0)
+      cuenta = CuentaCorriente.new(cliente: cliente, saldo_inicial: saldo_inicial, limite_descubierto: limite_descubierto)
+      @cuentas << cuenta
+      cuenta
+    end
+
+    def abrir_cuenta_ahorro(cliente:, saldo_inicial: 0)
+      cuenta = CuentaAhorro.new(cliente: cliente, saldo_inicial: saldo_inicial)
+      @cuentas << cuenta
+      cuenta
+    end
+
+    def abrir_cuenta_inversion(cliente:, saldo_inicial: 0, tasa_riesgo: :moderada)
+      cuenta = CuentaInversion.new(cliente: cliente, saldo_inicial: saldo_inicial, tasa_riesgo: tasa_riesgo)
+      @cuentas << cuenta
+      cuenta
+    end
+
+    def buscar_cuenta(numero)
+      @cuentas.find { |c| c.numero == numero }
+    end
+
+    def cuentas_por_cliente(cliente)
+      @cuentas.select { |c| c.cliente.id == cliente.id }
+    end
+
+    # Operaciones bancarias
+    def depositar(numero_cuenta, monto, descripcion = "Depósito en ventanilla")
+      cuenta = buscar_cuenta(numero_cuenta)
+      return "Cuenta no encontrada" unless cuenta
+      cuenta.depositar(monto, descripcion)
+    end
+
+    def retirar(numero_cuenta, monto, descripcion = "Retiro en ventanilla")
+      cuenta = buscar_cuenta(numero_cuenta)
+      return "Cuenta no encontrada" unless cuenta
+      resultado = cuenta.retirar(monto, descripcion)
+      resultado
+    end
+
+    def transferir(origen_num, destino_num, monto, descripcion = "Transferencia entre cuentas")
+      origen = buscar_cuenta(origen_num)
+      destino = buscar_cuenta(destino_num)
+      return "Cuenta origen no encontrada" unless origen
+      return "Cuenta destino no encontrada" unless destino
+
+      @transferencia_service.transferir(origen, destino, monto, descripcion)
+    end
+
+    # Reportes
+    def estado_cuenta(numero, formato = :texto)
+      cuenta = buscar_cuenta(numero)
+      return "Cuenta no encontrada" unless cuenta
+      @reporte_service.generar_estado_cuenta(cuenta, formato)
+    end
+
+    def reporte_general
+      @reporte_service.generar_reporte_banco(@cuentas)
+    end
+
+    def exportar_csv
+      @reporte_service.exportar_csv(@cuentas)
+    end
+
+    # Intereses
+    def aplicar_intereses_todas
+      @cuentas.each do |cuenta|
+        if cuenta.respond_to?(:aplicar_intereses)
+          cuenta.aplicar_intereses
+        elsif cuenta.respond_to?(:calcular_intereses)
+          interes = cuenta.calcular_intereses
+          if interes > 0
+            cuenta.depositar(interes, "Interés automático")
+          end
+        end
+      end
+      "Intereses aplicados a todas las cuentas"
+    end
+
+    # Estadísticas
+    def total_clientes
+      @clientes.size
+    end
+
+    def total_cuentas
+      @cuentas.size
+    end
+
+    def saldo_total
+      @cuentas.sum(&:saldo)
+    end
+
+    def patrimonio_total
+      @cuentas.sum do |c|
+        c.respond_to?(:valor_total) ? c.valor_total : c.saldo
+      end
+    end
+
+    def to_s
+      "#{@nombre}: #{total_clientes} clientes, #{total_cuentas} cuentas, $#{'%.2f' % saldo_total}"
+    end
+  end
+
+================================================================================
+
+  7. EJEMPLO DE USO COMPLETO
+
+  ------------------------------------------------------------------
+  Demostración del sistema
+  ------------------------------------------------------------------
+
+  def demo_sistema_bancario
+    banco = Banco.new("Banco Master Ruby")
+
+    # Registrar clientes
+    ana = banco.registrar_cliente_personal(
+      nombre: "Ana",
+      apellido: "García",
+      email: "ana@ejemplo.com",
+      fecha_nacimiento: Date.new(1990, 5, 15)
+    )
+
+    empresa = banco.registrar_cliente_empresarial(
+      nombre: "TechCorp",
+      razon_social: "TechCorp S.A. de C.V.",
+      rfc: "TEC123456XYZ",
+      email: "contacto@techcorp.com"
+    )
+
+    puts "Clientes registrados:"
+    puts "  #{ana}"
+    puts "  #{empresa}"
+
+    # Abrir cuentas
+    cuenta_ahorro = banco.abrir_cuenta_ahorro(cliente: ana, saldo_inicial: 5000)
+    cuenta_corriente = banco.abrir_cuenta_corriente(cliente: ana, saldo_inicial: 2000, limite_descubierto: 500)
+    cuenta_inversion = banco.abrir_cuenta_inversion(cliente: empresa, saldo_inicial: 100000, tasa_riesgo: :moderada)
+
+    puts "\nCuentas abiertas:"
+    puts "  #{cuenta_ahorro}"
+    puts "  #{cuenta_corriente}"
+    puts "  #{cuenta_inversion}"
+
+    # Operaciones
+    puts "\n--- Operaciones ---"
+    puts banco.depositar(cuenta_ahorro.numero, 1500, "Depósito nómina")
+    puts banco.retirar(cuenta_corriente.numero, 500, "Retiro cajero")
+    puts banco.transferir(cuenta_corriente.numero, cuenta_ahorro.numero, 300)
+
+    # Inversión
+    puts cuenta_inversion.invertir(50000, " CETES")
+
+    # Reportes
+    puts "\n--- Reportes ---"
+    puts cuenta_ahorro.estado_de_cuenta
+    puts "\n#{banco.reporte_general}"
+
+    # Intereses
+    puts "\n--- Intereses ---"
+    puts banco.aplicar_intereses_todas
+    puts "\nSaldo después de intereses:"
+    puts "  #{cuenta_ahorro}"
+
+    # Estadísticas
+    puts "\n--- Estadísticas ---"
+    puts "Total clientes: #{banco.total_clientes}"
+    puts "Total cuentas: #{banco.total_cuentas}"
+    puts "Saldo total: $#{'%.2f' % banco.saldo_total}"
+    puts "Patrimonio total: $#{'%.2f' % banco.patrimonio_total}"
+
+    puts "\n#{'=' * 60}"
+    puts "DEMO COMPLETADA EXITOSAMENTE"
+    puts "#{'=' * 60}"
+  end
+
+  # demo_sistema_bancario  # Descomentar para ejecutar
+
+================================================================================
+
+  8. PRUEBAS DEL SISTEMA
+
+  ------------------------------------------------------------------
+  Pruebas unitarias con MiniTest
+  ------------------------------------------------------------------
+
+  require 'minitest/autorun'
+
+  class TestCliente < Minitest::Test
+    def setup
+      @cliente = ClientePersonal.new(
+        nombre: "Ana",
+        apellido: "García",
+        email: "ana@ejemplo.com"
+      )
+    end
+
+    def test_cliente_tiene_id
+      assert_match(/CLI-\d{5}/, @cliente.id)
+    end
+
+    def test_cliente_activo_por_defecto
+      assert @cliente.activo?
+    end
+
+    def test_desactivar_cliente
+      @cliente.desactivar
+      refute @cliente.activo?
+    end
+
+    def test_nombre_completo
+      assert_equal "Ana García", @cliente.nombre_completo
+    end
+
+    def test_cliente_empresarial_tiene_rfc
+      emp = ClienteEmpresarial.new(
+        nombre: "TechCorp",
+        razon_social: "TechCorp S.A.",
+        rfc: "TEC123456XYZ",
+        email: "contacto@techcorp.com"
+      )
+      assert_equal "TEC123456XYZ", emp.rfc
+    end
+  end
+
+  class TestCuentaAhorro < Minitest::Test
+    def setup
+      @cliente = ClientePersonal.new(nombre: "Ana", apellido: "García", email: "ana@ejemplo.com")
+      @cuenta = CuentaAhorro.new(cliente: @cliente, saldo_inicial: 1000)
+    end
+
+    def test_saldo_inicial
+      assert_equal 1000, @cuenta.saldo
+    end
+
+    def test_depositar
+      @cuenta.depositar(500)
+      assert_equal 1500, @cuenta.saldo
+    end
+
+    def test_retirar
+      @cuenta.retirar(300)
+      assert_equal 700, @cuenta.saldo
+    end
+
+    def test_retirar_saldo_insuficiente
+      resultado = @cuenta.retirar(2000)
+      assert_match(/Saldo insuficiente/, resultado)
+      assert_equal 1000, @cuenta.saldo
+    end
+
+    def test_retiros_gratis
+      3.times { @cuenta.retirar(10) }
+      assert_equal 970, @cuenta.saldo  # 1000 - 30 = 970
+    end
+
+    def test_comision_por_retiro_extra
+      4.times { @cuenta.retirar(10) }
+      assert_equal 950, @cuenta.saldo  # 1000 - 40 - 10 = 950 (último con comisión)
+    end
+
+    def test_calcular_intereses
+      interes = @cuenta.calcular_intereses
+      assert_in_delta(1000 * 0.04 / 12, interes, 0.01)
+    end
+
+    def test_depositar_monto_negativo
+      assert_raises(ArgumentError) { @cuenta.depositar(-100) }
+    end
+
+    def test_cuenta_inactiva_no_permite_operaciones
+      @cuenta.desactivar
+      assert_match(/Cuenta inactiva/, @cuenta.depositar(100))
+      assert_match(/Cuenta inactiva/, @cuenta.retirar(100))
+    end
+  end
+
+  class TestCuentaCorriente < Minitest::Test
+    def setup
+      @cliente = ClientePersonal.new(nombre: "Luis", apellido: "Pérez", email: "luis@ejemplo.com")
+      @cuenta = CuentaCorriente.new(cliente: @cliente, saldo_inicial: 500, limite_descubierto: 200)
+    end
+
+    def test_comision_por_retiro
+      @cuenta.retirar(100)
+      assert_equal 395, @cuenta.saldo  # 500 - 100 - 5 = 395
+    end
+
+    def test_sobregiro
+      @cuenta.retirar(600)
+      assert_equal(-105, @cuenta.saldo)  # 500 - 600 - 5 = -105
+    end
+
+    def test_excede_limite_sobregiro
+      resultado = @cuenta.retirar(800)
+      assert_match(/Límite de descubierto excedido/, resultado)
+    end
+  end
+
+  class TestTransferencia < Minitest::Test
+    def setup
+      @cliente = ClientePersonal.new(nombre: "Ana", apellido: "García", email: "ana@ejemplo.com")
+      @origen = CuentaCorriente.new(cliente: @cliente, saldo_inicial: 1000)
+      @destino = CuentaAhorro.new(cliente: @cliente, saldo_inicial: 500)
+      @service = TransferenciaService.new
+    end
+
+    def test_transferencia_exitosa
+      resultado = @service.transferir(@origen, @destino, 300)
+      assert resultado[:exito]
+      assert_equal 695, @origen.saldo   # 1000 - 300 - 5 (comisión)
+      assert_equal 800, @destino.saldo  # 500 + 300
+    end
+
+    def test_transferencia_saldo_insuficiente
+      resultado = @service.transferir(@origen, @destino, 2000)
+      assert_match(/Saldo insuficiente/, resultado)
+    end
+  end
+
+  class TestBanco < Minitest::Test
+    def setup
+      @banco = Banco.new("Banco Test")
+      @cliente = @banco.registrar_cliente_personal(
+        nombre: "Test",
+        apellido: "User",
+        email: "test@ejemplo.com"
+      )
+    end
+
+    def test_registrar_cliente
+      assert_equal 1, @banco.total_clientes
+    end
+
+    def test_abrir_cuenta
+      @banco.abrir_cuenta_ahorro(cliente: @cliente, saldo_inicial: 1000)
+      assert_equal 1, @banco.total_cuentas
+    end
+
+    def test_saldo_total
+      @banco.abrir_cuenta_ahorro(cliente: @cliente, saldo_inicial: 1000)
+      @banco.abrir_cuenta_corriente(cliente: @cliente, saldo_inicial: 500)
+      assert_equal 1500, @banco.saldo_total
+    end
+
+    def test_buscar_cuenta
+      cuenta = @banco.abrir_cuenta_ahorro(cliente: @cliente, saldo_inicial: 2000)
+      encontrada = @banco.buscar_cuenta(cuenta.numero)
+      assert_equal cuenta, encontrada
+    end
+  end
+
+================================================================================
+
+  9. EXTENSIONES Y MEJORAS
+
+  El sistema es extensible por diseño. Aquí hay algunas ideas para
+  mejorarlo:
+
+  ------------------------------------------------------------------
+  1. Nuevos tipos de cuenta
+  ------------------------------------------------------------------
+
+  class CuentaJoven < CuentaAhorro
+    TASA_INTERES = 0.05
+    LIMITE_MAXIMO = 10000
+
+    def initialize(cliente:, saldo_inicial: 0)
+      raise ArgumentError, "Saldo máximo para Cuenta Joven: $#{LIMITE_MAXIMO}" if saldo_inicial > LIMITE_MAXIMO
+      super(cliente: cliente, saldo_inicial: saldo_inicial)
+    end
+
+    def depositar(monto, descripcion = "Depósito")
+      return "Límite de cuenta joven excedido" if @saldo + monto > LIMITE_MAXIMO
+      super
+    end
+  end
+
+  ------------------------------------------------------------------
+  2. Nuevos servicios
+  ------------------------------------------------------------------
+
+  class ServicioPrestamo
+    def initialize(banco)
+      @banco = banco
+      @prestamos = []
+    end
+
+    def solicitar(cliente, monto, plazo_meses, tasa_anual = 0.15)
+      # Validar capacidad de pago
+      cuota = calcular_cuota(monto, tasa_anual, plazo_meses)
+
+      prestamo = {
+        id: @prestamos.size + 1,
+        cliente: cliente,
+        monto: monto,
+        plazo_meses: plazo_meses,
+        tasa_anual: tasa_anual,
+        cuota_mensual: cuota.round(2),
+        saldo_pendiente: monto,
+        fecha_inicio: Time.now,
+        pagos: []
+      }
+      @prestamos << prestamo
+
+      # Abonar a la cuenta del cliente
+      cuenta = @banco.cuentas_por_cliente(cliente).first
+      cuenta.depositar(monto, "Préstamo aprobado ##{prestamo[:id]}") if cuenta
+
+      prestamo
+    end
+
+    private
+
+    def calcular_cuota(monto, tasa, meses)
+      tasa_mensual = tasa / 12
+      monto * (tasa_mensual * (1 + tasa_mensual) ** meses) / ((1 + tasa_mensual) ** meses - 1)
+    end
+  end
+
+  ------------------------------------------------------------------
+  3. Módulo de notificaciones (polimórfico)
+  ------------------------------------------------------------------
+
+  module Notificable
+    def notificar(evento, datos)
+      notificadores.each do |n|
+        n.notificar(evento, datos) if n.respond_to?(:notificar)
+      end
+    end
+
+    def notificadores
+      @notificadores ||= []
+    end
+
+    def agregar_notificador(notificador)
+      notificadores << notificador
+    end
+  end
+
+  class NotificadorEmail
+    def notificar(evento, datos)
+      puts "Email enviado: #{evento} a #{datos[:email]}"
+    end
+  end
+
+  class NotificadorSMS
+    def notificar(evento, datos)
+      puts "SMS enviado: #{evento} a #{datos[:telefono]}"
+    end
+  end
+
+  class NotificadorSlack
+    def notificar(evento, datos)
+      puts "Slack: #{evento} en canal ##{datos[:canal]}"
+    end
+  end
+
+================================================================================
+
+  10. GUÍA DE ESTILO Y BUENAS PRÁCTICAS
+
+  Para mantener la calidad del código en este proyecto:
+
+  1. Nomenclatura:
+     - Clases: CamelCase (ClientePersonal, CuentaAhorro)
+     - Métodos: snake_case (calcular_intereses, abrir_cuenta)
+     - Variables de instancia: @snake_case (@saldo, @movimientos)
+     - Constantes: MAYÚSCULAS (TASA_INTERES, COMISION_POR_RETIRO)
+
+  2. Organización de archivos:
+     - Un archivo por clase (o grupo pequeño de clases relacionadas)
+     - Nombre del archivo en snake_case: cliente.rb, cuenta.rb
+     - Separar en directorios: modelos/, servicios/, notificadores/
+
+  3. Responsabilidad única:
+     - Cuenta: solo gestión de cuenta
+     - Cliente: solo datos del cliente
+     - Servicios: operaciones que involucran múltiples objetos
+
+  4. Encapsulación:
+     - attr_reader por defecto, attr_accessor solo cuando necesario
+     - Métodos privados para lógica interna
+     - Proteger invariantes en setters y métodos de mutación
+
+  5. Polimorfismo:
+     - Duck typing para servicios intercambiables
+     - Herencia para especialización de cuentas
+     - Módulos para compartir comportamiento transversal
+
+  6. Pruebas:
+     - Una clase de prueba por clase del modelo
+     - Probar casos felices y casos borde
+     - Probar invariantes y validaciones
+
+================================================================================
+
+  RESUMEN DEL CAPÍTULO
+
+  • El proyecto integra todos los conceptos del Módulo IV.
+  • Cliente: herencia (Personal, Empresarial), encapsulación.
+  • Cuenta: clase base abstracta, herencia (Corriente, Ahorro,
+    Inversión), polimorfismo (calcular_intereses).
+  • Servicios: TransferenciaService, ReporteService separan
+    responsabilidades.
+  • Autenticación: módulo Autenticable, clase UsuarioSistema.
+  • Banco: clase principal que orquesta el sistema completo.
+  • Polimorfismo: duck typing en notificadores, formatos de reportes.
+  • Encapsulación: invariantes protegidos, métodos privados.
+  • Pruebas: MiniTest para verificar el comportamiento.
+
+================================================================================
+
+  EJERCICIOS DEL CAPÍTULO
+
+  Ejercicio 1: Nueva cuenta
+  Implementa CuentaEmpresarial con comisiones y reglas específicas
+  para personas jurídicas.
+
+  Ejercicio 2: Más validaciones
+  Añade validaciones a Cliente: email con formato, teléfono con
+  longitud mínima, nombre no vacío.
+
+  Ejercicio 3: Reportes adicionales
+  Implementa un reporte de movimientos por rango de fechas:
+  movimientos_entre(fecha_inicio, fecha_fin).
+
+  Ejercicio 4: Cierre de cuenta
+  Implementa el cierre de una cuenta: saldo debe ser 0, movimientos
+  se archivan, cuenta se desactiva permanentemente.
+
+  Ejercicio 5: Módulo Exportable
+  Crea un módulo Exportable que permita a cualquier clase exportarse
+  a JSON, YAML y XML usando duck typing.
+
+  Ejercicio 6: Historial de tipos de interés
+  Registra el historial de tasas de interés aplicadas a cada cuenta
+  de ahorro.
+
+  Ejercicio 7: Límites de transacción
+  Implementa límites diarios de retiro por cuenta y por cliente.
+
+  Ejercicio 8: Moneda extranjera
+  Añade soporte para cuentas en múltiples monedas. Usa un conversor
+  de monedas con tasas actualizables.
+
+  Ejercicio 9: Cargos por mantenimiento
+  Implementa un cargo mensual por mantenimiento de cuenta. Los cargos
+  varían por tipo de cuenta.
+
+  Ejercicio 10: Interfaz de consola
+  Crea una interfaz de línea de comandos (REPL) para interactuar con
+  el banco: crear clientes, abrir cuentas, hacer operaciones.
+
+================================================================================
+
+  PREGUNTAS FRECUENTES (FAQ)
+
+  P: ¿Por qué usar herencia para los tipos de cuenta?
+  R: Porque las cuentas comparten la mayoría del comportamiento
+     (depositar, retirar, movimientos) y se diferencian en aspectos
+     específicos (comisiones, intereses). La herencia permite reutilizar
+     el código común y sobrescribir solo las diferencias.
+
+  P: ¿Por qué TransferenciaService es una clase separada?
+  R: Por el principio de responsabilidad única. Una transferencia
+     involucra dos cuentas y posiblemente comisiones. Es una operación
+     que no pertenece a ninguna cuenta individual. Al separarla, es
+     más fácil de probar y mantener.
+
+  P: ¿Cómo añado un nuevo tipo de cuenta sin modificar código existente?
+  R: Crea una nueva clase que herede de Cuenta. Implementa los métodos
+     específicos (calcular_intereses, calcular_comision_retiro). El
+     Banco puede crear instancias de la nueva cuenta sin modificar
+     ninguna clase existente (Principio Abierto/Cerrado).
+
+  P: ¿Qué beneficios tiene usar módulos como Autenticable?
+  R: Los módulos permiten compartir comportamiento entre clases que
+     no están relacionadas por herencia. Autenticable podría usarse
+     en UsuarioSistema, Cliente, o cualquier clase que necesite
+     autenticación.
+
+  P: ¿Cómo manejar errores en el sistema?
+  R: El sistema usa ArgumentError para validaciones de parámetros y
+     strings como mensajes de error para operaciones. En un sistema
+     real, usarías excepciones personalizadas. Por ejemplo:
+     class SaldoInsuficienteError < StandardError; end
+
+================================================================================
+
+  DESAFÍO DEL ARQUITECTO
+
+  Extiende el sistema bancario con las siguientes características
+  avanzadas. Este desafío integra TODO el módulo y te llevará al
+  siguiente nivel:
+
+  1. Sistema de tipos de interés dinámicos:
+     - Crea una clase TasaInteres que pueda ser fija, variable, o
+       escalonada por rangos de saldo
+     - Las cuentas pueden cambiar de tasa sin cambiar de tipo
+     - Usa polimorfismo: cada tipo de tasa implementa calcular(monto)
+
+  2. Módulo de auditoría:
+     - Cada operación debe registrarse con quién la hizo, cuándo,
+       y qué datos cambiaron
+     - Implementa un decorador (patrón Decorator) que envuelva
+       cualquier servicio y añada auditoría
+     - Usa method_missing para delegar todos los métodos del servicio
+
+  3. Sistema de notificaciones:
+     - Los clientes pueden elegir cómo recibir notificaciones
+       (email, SMS, push, Slack)
+     - Implementa el patrón Observer: cuando ocurre un evento
+       bancario, todos los notificadores registrados son invocados
+     - Nuevos notificadores pueden añadirse sin modificar el banco
+
+  4. Generación de documentos:
+     - Crea un módulo DocumentoGenerable con el método generar
+     - Implementa: EstadoDeCuentaPDF, ComprobanteTransferencia,
+       CertificadoFiscal
+     - Usa Template Method: el esqueleto es el mismo, el formato
+       cambia (texto, HTML, PDF simulado)
+
+  5. Cache de saldos con lazy initialization:
+     - Los saldos deben cacheadas y actualizarse solo cuando hay
+       movimientos
+     - Usa ||= en el getter de saldo
+     - Invalida la cache cuando hay depósitos o retiros
+
+  6. Polimorfismo extremo con method_missing:
+     - Crea un ProxyCuenta que pueda recibir cualquier mensaje y
+       delegarlo a la cuenta real
+     - El proxy debe registrar cada llamada para auditoría
+     - Implementa respond_to_missing?
+
+  7. Pruebas exhaustivas:
+     - Escribe pruebas para cada clase (MiniTest o RSpec)
+     - Prueba casos borde: saldo cero, montos negativos, clientes
+       inactivos, sobregiros máximos
+     - Prueba el polimorfismo: verifica que cualquier tipo de
+       cuenta responda a los mismos mensajes
+
+  8. Documentación:
+     - Documenta cada clase con comentarios explicativos
+     - Incluye ejemplos de uso en la documentación
+     - Genera documentación con RDoc o YARD
+
+  Este desafío integra absolutamente todo el Módulo IV: clases,
+  constructores, atributos, métodos de instancia y clase, herencia,
+  polimorfismo, duck typing, encapsulación, self, method_missing,
+  patrones de diseño, y pruebas.
+
+================================================================================
+
+  CIERRE DEL CAPÍTULO Y DEL MÓDULO
+
+  Has completado el Módulo IV de Ruby Master Book. Nueve capítulos de
+  teoría y un proyecto completo que integra todos los conceptos.
+
+  En este módulo has aprendido:
+
+  • Capítulo 31: Classes — la base de la POO en Ruby
+  • Capítulo 32: Constructores (Initialize) — creación de objetos
+  • Capítulo 33: Atributos (attr_accessor) — getters y setters
+  • Capítulo 34: Métodos de Instancia — comportamiento de objetos
+  • Capítulo 35: Métodos de Clase — comportamiento de clases
+  • Capítulo 36: Herencia — jerarquías de clases
+  • Capítulo 37: Polimorfismo — duck typing y method_missing
+  • Capítulo 38: Encapsulación — control de acceso y diseño
+  • Capítulo 39: Self — el objeto actual en cada contexto
+  • Capítulo 40: Proyecto — sistema bancario completo
+
+  Ahora tienes una base sólida en Programación Orientada a Objetos
+  con Ruby. Este conocimiento te permitirá diseñar sistemas complejos,
+  escribir código mantenible, y pensar en términos de objetos, mensajes
+  y comportamientos.
+
+  Pero el viaje no termina aquí. El Módulo V explorará temas avanzados:
+  módulos y mixins, metaprogramación, manejo de excepciones, archivos,
+  y mucho más. La POO que has aprendido aquí será la base sobre la que
+  construirás esos conocimientos avanzados.
+
+  Recuerda: la mejor manera de aprender es practicar. No te limites a
+  leer estos capítulos: escribe código, experimenta, rompe cosas, y
+  aprende de tus errores. Cada programa que escribas te hará mejor
+  programador.
+
+  ¡Felicidades por completar el Módulo IV!
+  ¡Nos vemos en el Módulo V!
+
+================================================================================
+  FIN DEL CAPÍTULO 40 — PROYECTO DEL MÓDULO IV
+  FIN DEL MÓDULO IV — POO EN RUBY
+================================================================================

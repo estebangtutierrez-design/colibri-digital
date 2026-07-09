@@ -1,0 +1,1324 @@
+================================================================================
+  C# MASTER BOOK — MÓDULO III: POO AVANZADA
+  CAPÍTULO 30: PROYECTO MÓDULO III — SISTEMA DE GESTIÓN DE INVENTARIOS
+================================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+¡Bienvenido al Capítulo 30, el proyecto final del Módulo III! Este capítulo
+integra todos los conceptos avanzados que hemos aprendido: structs, enums,
+records, genéricos, colecciones, indexadores, operadores de conversión,
+métodos de extensión y nullable types.
+
+Construiremos un sistema completo de gestión de inventarios para una
+tienda online. El proyecto incluye modelado de dominio, lógica de negocio,
+validación, serialización y una interfaz de consola interactiva.
+
+Este proyecto está diseñado para ser realista, extensible y profesional.
+
+--------------------------------------------------------------------------------
+  FRASE DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+"El conocimiento no es poder hasta que se aplica. Este proyecto es tu
+campo de batalla." — Lucas Ega
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+✓ Integrar struct, enum, record, genéricos, colecciones y nullable types.
+✓ Diseñar un sistema orientado a objetos con POO avanzada.
+✓ Implementar lógica de negocio con validación y reglas.
+✓ Usar indexadores para acceso flexible a datos.
+✓ Aplicar operadores de conversión entre tipos del dominio.
+✓ Crear métodos de extensión para enriquecer las APIs.
+✓ Serializar y deserializar el inventario a JSON.
+✓ Construir una interfaz de consola interactiva.
+
+================================================================================
+  CUERPO DEL CAPÍTULO
+================================================================================
+
+30.1 — VISIÓN GENERAL DEL PROYECTO
+-------------------------------------
+
+El sistema de gestión de inventarios (SGI) permite:
+- Gestionar productos con categorías, precios y stock.
+- Controlar almacenes y ubicaciones.
+- Procesar movimientos de stock (entradas, salidas, transferencias).
+- Generar alertas de stock bajo.
+- Consultar el inventario con filtros flexibles.
+- Calcular valor total del inventario.
+
+Estructura del proyecto:
+- Models/: Entidades del dominio (records, structs, enums).
+- Services/: Lógica de negocio y repositorios genéricos.
+- Extensions/: Métodos de extensión.
+- Program.cs: Interfaz de consola.
+
+30.2 — MODELOS DEL DOMINIO
+----------------------------
+
+Empezamos definiendo los tipos base con records y enums.
+
+```csharp
+// ============================================================
+// Models/Enums.cs
+// ============================================================
+namespace Inventario.Models;
+
+public enum CategoriaProducto
+{
+    Electronica,
+    Ropa,
+    Alimentos,
+    Libros,
+    Hogar,
+    Deportes,
+    Juguetes,
+    Salud,
+    Automotriz,
+    Otros
+}
+
+[Flags]
+public enum AtributosProducto
+{
+    Ninguno = 0,
+    Perecedero = 1,
+    Fragil = 2,
+    Peligroso = 4,
+    Importado = 8,
+    Personalizado = 16,
+    EdicionLimitada = 32,
+    EnOferta = 64,
+    Reacondicionado = 128
+}
+
+public enum EstadoProducto
+{
+    Activo,
+    Inactivo,
+    Descontinuado,
+    PendienteRevision
+}
+
+public enum TipoMovimiento
+{
+    EntradaCompra,
+    EntradaDevolucion,
+    EntradaAjuste,
+    SalidaVenta,
+    SalidaMerma,
+    SalidaDonacion,
+    SalidaAjuste,
+    TransferenciaEntrada,
+    TransferenciaSalida
+}
+```
+
+```csharp
+// ============================================================
+// Models/Dinero.cs (Value Object)
+// ============================================================
+namespace Inventario.Models;
+
+public readonly record struct Dinero(decimal Cantidad, string Moneda)
+{
+    public static readonly Dinero Zero = new(0, "USD");
+
+    public Dinero Sumar(Dinero otro)
+    {
+        ValidarMismaMoneda(otro);
+        return this with { Cantidad = Cantidad + otro.Cantidad };
+    }
+
+    public Dinero Restar(Dinero otro)
+    {
+        ValidarMismaMoneda(otro);
+        if (otro.Cantidad > Cantidad)
+            throw new InvalidOperationException("Saldo insuficiente");
+        return this with { Cantidad = Cantidad - otro.Cantidad };
+    }
+
+    public Dinero Multiplicar(decimal factor) =>
+        this with { Cantidad = Cantidad * factor };
+
+    public Dinero Dividir(decimal divisor)
+    {
+        if (divisor == 0) throw new DivideByZeroException();
+        return this with { Cantidad = Cantidad / divisor };
+    }
+
+    private void ValidarMismaMoneda(Dinero otro)
+    {
+        if (!Moneda.Equals(otro.Moneda, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Monedas incompatibles: {Moneda} y {otro.Moneda}");
+    }
+
+    // Operadores
+    public static Dinero operator +(Dinero a, Dinero b) => a.Sumar(b);
+    public static Dinero operator -(Dinero a, Dinero b) => a.Restar(b);
+    public static Dinero operator *(Dinero a, decimal f) => a.Multiplicar(f);
+    public static Dinero operator /(Dinero a, decimal d) => a.Dividir(d);
+    public static bool operator >(Dinero a, Dinero b) => a.Comparar(b) > 0;
+    public static bool operator <(Dinero a, Dinero b) => a.Comparar(b) < 0;
+    public static bool operator >=(Dinero a, Dinero b) => a.Comparar(b) >= 0;
+    public static bool operator <=(Dinero a, Dinero b) => a.Comparar(b) <= 0;
+
+    private int Comparar(Dinero otro)
+    {
+        ValidarMismaMoneda(otro);
+        return Cantidad.CompareTo(otro.Cantidad);
+    }
+
+    public override string ToString() => $"{Moneda} {Cantidad:N2}";
+}
+```
+
+```csharp
+// ============================================================
+// Models/Producto.cs
+// ============================================================
+namespace Inventario.Models;
+
+public record ProductoId(int Valor)
+{
+    public int Valor { get; } = Valor > 0 ? Valor :
+        throw new ArgumentException("El ID debe ser positivo");
+}
+
+public record Producto(
+    ProductoId Id,
+    string Nombre,
+    string? Descripcion,
+    CategoriaProducto Categoria,
+    Dinero PrecioCompra,
+    Dinero PrecioVenta,
+    AtributosProducto Atributos,
+    EstadoProducto Estado,
+    DateTime FechaCreacion
+)
+{
+    public bool EsPerecedero => Atributos.HasFlag(AtributosProducto.Perecedero);
+    public bool EsFragil => Atributos.HasFlag(AtributosProducto.Fragil);
+    public bool EstaEnOferta => Atributos.HasFlag(AtributosProducto.EnOferta);
+    public decimal MargenGanancia =>
+        PrecioCompra.Cantidad > 0
+        ? ((PrecioVenta.Cantidad - PrecioCompra.Cantidad) / PrecioCompra.Cantidad) * 100
+        : 0;
+
+    public Dinero CalcularPrecioConDescuento(decimal porcentaje) =>
+        PrecioVenta.Multiplicar(1 - porcentaje / 100);
+}
+```
+
+```csharp
+// ============================================================
+// Models/Inventario.cs
+// ============================================================
+namespace Inventario.Models;
+
+public record Almacen(
+    int Id,
+    string Nombre,
+    string Direccion,
+    bool Activo
+);
+
+public record Ubicacion(
+    string Codigo,
+    string Pasillo,
+    string Estanteria,
+    string Nivel
+)
+{
+    public override string ToString() => $"{Pasillo}-{Estanteria}-{Nivel}";
+}
+
+public readonly record struct StockItem(
+    ProductoId ProductoId,
+    int Cantidad,
+    Ubicacion Ubicacion,
+    DateTime FechaUltimaActualizacion
+)
+{
+    public int Cantidad { get; } = Cantidad >= 0 ? Cantidad :
+        throw new ArgumentException("El stock no puede ser negativo");
+
+    public StockItem ActualizarCantidad(int nuevaCantidad) =>
+        this with
+        {
+            Cantidad = nuevaCantidad >= 0 ? nuevaCantidad :
+                throw new ArgumentException("El stock no puede ser negativo"),
+            FechaUltimaActualizacion = DateTime.UtcNow
+        };
+}
+```
+
+```csharp
+// ============================================================
+// Models/MovimientoStock.cs
+// ============================================================
+namespace Inventario.Models;
+
+public record MovimientoStock(
+    int Id,
+    ProductoId ProductoId,
+    int AlmacenId,
+    TipoMovimiento Tipo,
+    int Cantidad,
+    Dinero CostoUnitario,
+    string? Referencia,
+    string? Observaciones,
+    DateTime Fecha,
+    string Usuario
+)
+{
+    public bool EsEntrada => Tipo switch
+    {
+        TipoMovimiento.EntradaCompra => true,
+        TipoMovimiento.EntradaDevolucion => true,
+        TipoMovimiento.EntradaAjuste => true,
+        TipoMovimiento.TransferenciaEntrada => true,
+        _ => false
+    };
+
+    public bool EsSalida => !EsEntrada;
+
+    public int CambioNeto => EsEntrada ? Cantidad : -Cantidad;
+
+    public Dinero CostoTotal => CostoUnitario.Multiplicar(Cantidad);
+}
+```
+
+30.3 — SERVICIOS GENÉRICOS
+----------------------------
+
+```csharp
+// ============================================================
+// Services/IRepository.cs
+// ============================================================
+namespace Inventario.Services;
+
+public interface IRepository<T, TId>
+    where T : class
+    where TId : notnull
+{
+    T? GetById(TId id);
+    IEnumerable<T> GetAll();
+    void Add(T entity);
+    void Update(T entity);
+    void Delete(TId id);
+    bool Exists(TId id);
+    int Count { get; }
+}
+```
+
+```csharp
+// ============================================================
+// Services/InMemoryRepository.cs
+// ============================================================
+namespace Inventario.Services;
+
+public class InMemoryRepository<T, TId> : IRepository<T, TId>
+    where T : class
+    where TId : notnull
+{
+    protected readonly Dictionary<TId, T> _items = new();
+
+    public virtual T? GetById(TId id) =>
+        _items.TryGetValue(id, out var item) ? item : null;
+
+    public virtual IEnumerable<T> GetAll() => _items.Values;
+
+    public virtual void Add(T entity)
+    {
+        var id = ObtenerId(entity);
+        if (_items.ContainsKey(id))
+            throw new InvalidOperationException($"Ya existe una entidad con ID {id}");
+        _items[id] = entity;
+    }
+
+    public virtual void Update(T entity)
+    {
+        var id = ObtenerId(entity);
+        if (!_items.ContainsKey(id))
+            throw new KeyNotFoundException($"No se encontró entidad con ID {id}");
+        _items[id] = entity;
+    }
+
+    public virtual void Delete(TId id) => _items.Remove(id);
+
+    public bool Exists(TId id) => _items.ContainsKey(id);
+
+    public int Count => _items.Count;
+
+    protected virtual TId ObtenerId(T entity) =>
+        (TId)typeof(T).GetProperty("Id")?.GetValue(entity)
+        ?? throw new InvalidOperationException("La entidad no tiene propiedad Id");
+}
+```
+
+```csharp
+// ============================================================
+// Services/ProductoRepository.cs
+// ============================================================
+namespace Inventario.Services;
+
+using Inventario.Models;
+
+public class ProductoRepository : InMemoryRepository<Producto, ProductoId>
+{
+    private int _siguienteId = 1;
+
+    public Producto CrearProducto(
+        string nombre,
+        string? descripcion,
+        CategoriaProducto categoria,
+        Dinero precioCompra,
+        Dinero precioVenta,
+        AtributosProducto atributos = AtributosProducto.Ninguno)
+    {
+        var id = new ProductoId(_siguienteId++);
+        var producto = new Producto(
+            id, nombre, descripcion, categoria,
+            precioCompra, precioVenta, atributos,
+            EstadoProducto.Activo, DateTime.UtcNow
+        );
+        Add(producto);
+        return producto;
+    }
+
+    public IEnumerable<Producto> GetByCategoria(CategoriaProducto categoria) =>
+        _items.Values.Where(p => p.Categoria == categoria);
+
+    public IEnumerable<Producto> GetByEstado(EstadoProducto estado) =>
+        _items.Values.Where(p => p.Estado == estado);
+
+    public IEnumerable<Producto> Search(string query) =>
+        _items.Values.Where(p =>
+            p.Nombre.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            (p.Descripcion?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    public IEnumerable<Producto> GetEnOferta() =>
+        _items.Values.Where(p => p.EstaEnOferta);
+}
+```
+
+```csharp
+// ============================================================
+// Services/InventarioService.cs
+// ============================================================
+namespace Inventario.Services;
+
+using Inventario.Models;
+
+public class InventarioService
+{
+    private readonly Dictionary<int, List<StockItem>> _stockPorAlmacen = new();
+    private readonly ProductoRepository _productos = new();
+    private readonly List<MovimientoStock> _movimientos = new();
+    private int _siguienteMovId = 1;
+    private int _siguienteAlmacenId = 1;
+
+    public ProductoRepository Productos => _productos;
+
+    // Indexador por almacén
+    public List<StockItem> this[int almacenId]
+    {
+        get => _stockPorAlmacen.TryGetValue(almacenId, out var items)
+            ? items
+            : new List<StockItem>();
+    }
+
+    // Indexador por producto (stock en todos los almacenes)
+    public List<(int AlmacenId, StockItem Item)> this[ProductoId productoId]
+    {
+        get
+        {
+            var result = new List<(int, StockItem)>();
+            foreach (var (almacenId, items) in _stockPorAlmacen)
+            {
+                var item = items.FirstOrDefault(i => i.ProductoId == productoId);
+                if (item != default)
+                    result.Add((almacenId, item));
+            }
+            return result;
+        }
+    }
+
+    // Indexador combinado (almacén y producto)
+    public StockItem? this[int almacenId, ProductoId productoId]
+    {
+        get
+        {
+            if (!_stockPorAlmacen.TryGetValue(almacenId, out var items))
+                return null;
+            return items.FirstOrDefault(i => i.ProductoId == productoId);
+        }
+    }
+
+    public Almacen CrearAlmacen(string nombre, string direccion)
+    {
+        var id = _siguienteAlmacenId++;
+        var almacen = new Almacen(id, nombre, direccion, true);
+        _stockPorAlmacen[id] = new List<StockItem>();
+        return almacen;
+    }
+
+    public StockItem RegistrarEntrada(
+        ProductoId productoId, int almacenId,
+        int cantidad, Dinero costoUnitario,
+        TipoMovimiento tipo, string? referencia = null,
+        string? observaciones = null, string usuario = "sistema")
+    {
+        if (!_productos.Exists(productoId))
+            throw new KeyNotFoundException($"Producto {productoId} no encontrado");
+
+        var ubicacion = new Ubicacion("GEN", "A", "1", "1");
+        var item = new StockItem(productoId, cantidad, ubicacion, DateTime.UtcNow);
+
+        if (!_stockPorAlmacen.ContainsKey(almacenId))
+            _stockPorAlmacen[almacenId] = new List<StockItem>();
+
+        var existente = _stockPorAlmacen[almacenId]
+            .FirstOrDefault(i => i.ProductoId == productoId);
+
+        if (existente != default)
+        {
+            var idx = _stockPorAlmacen[almacenId].IndexOf(existente);
+            _stockPorAlmacen[almacenId][idx] = existente.ActualizarCantidad(
+                existente.Cantidad + cantidad);
+        }
+        else
+        {
+            _stockPorAlmacen[almacenId].Add(item);
+        }
+
+        var movimiento = new MovimientoStock(
+            _siguienteMovId++, productoId, almacenId, tipo,
+            cantidad, costoUnitario, referencia, observaciones,
+            DateTime.UtcNow, usuario
+        );
+        _movimientos.Add(movimiento);
+
+        return _stockPorAlmacen[almacenId]
+            .First(i => i.ProductoId == productoId);
+    }
+
+    public StockItem RegistrarSalida(
+        ProductoId productoId, int almacenId,
+        int cantidad, Dinero costoUnitario,
+        TipoMovimiento tipo, string? referencia = null,
+        string? observaciones = null, string usuario = "sistema")
+    {
+        if (!_stockPorAlmacen.TryGetValue(almacenId, out var items))
+            throw new KeyNotFoundException($"Almacén {almacenId} no encontrado");
+
+        var existente = items.FirstOrDefault(i => i.ProductoId == productoId);
+        if (existente == default)
+            throw new InvalidOperationException($"Producto {productoId} sin stock en almacén {almacenId}");
+
+        if (existente.Cantidad < cantidad)
+            throw new InvalidOperationException(
+                $"Stock insuficiente. Disponible: {existente.Cantidad}, solicitado: {cantidad}");
+
+        var idx = items.IndexOf(existente);
+        _stockPorAlmacen[almacenId][idx] = existente.ActualizarCantidad(
+            existente.Cantidad - cantidad);
+
+        var movimiento = new MovimientoStock(
+            _siguienteMovId++, productoId, almacenId, tipo,
+            cantidad, costoUnitario, referencia, observaciones,
+            DateTime.UtcNow, usuario
+        );
+        _movimientos.Add(movimiento);
+
+        return _stockPorAlmacen[almacenId][idx];
+    }
+
+    public IEnumerable<Producto> GetStockBajo(int limite = 5)
+    {
+        var productosConStock = _stockPorAlmacen.Values
+            .SelectMany(items => items)
+            .GroupBy(i => i.ProductoId)
+            .Select(g => new { ProductoId = g.Key, Total = g.Sum(i => i.Cantidad) })
+            .Where(x => x.Total < limite && x.Total > 0);
+
+        foreach (var x in productosConStock)
+        {
+            var producto = _productos.GetById(x.ProductoId);
+            if (producto != null)
+                yield return producto;
+        }
+    }
+
+    public IEnumerable<Producto> GetSinStock()
+    {
+        var productosConStock = _stockPorAlmacen.Values
+            .SelectMany(items => items)
+            .GroupBy(i => i.ProductoId)
+            .Select(g => g.Key)
+            .ToHashSet();
+
+        return _productos.GetAll()
+            .Where(p => !productosConStock.Contains(p.Id) && p.Estado == EstadoProducto.Activo);
+    }
+
+    public Dinero ValorTotalInventario(int? almacenId = null)
+    {
+        var items = almacenId.HasValue
+            ? _stockPorAlmacen.GetValueOrDefault(almacenId.Value, new())
+            : _stockPorAlmacen.Values.SelectMany(i => i);
+
+        Dinero total = Dinero.Zero;
+        foreach (var item in items)
+        {
+            var producto = _productos.GetById(item.ProductoId);
+            if (producto != null)
+            {
+                total += producto.PrecioCompra.Multiplicar(item.Cantidad);
+            }
+        }
+        return total;
+    }
+
+    public IEnumerable<MovimientoStock> GetMovimientos(
+        ProductoId? productoId = null,
+        int? almacenId = null,
+        DateTime? desde = null,
+        DateTime? hasta = null,
+        TipoMovimiento? tipo = null)
+    {
+        IEnumerable<MovimientoStock> query = _movimientos;
+
+        if (productoId.HasValue)
+            query = query.Where(m => m.ProductoId == productoId.Value);
+        if (almacenId.HasValue)
+            query = query.Where(m => m.AlmacenId == almacenId.Value);
+        if (desde.HasValue)
+            query = query.Where(m => m.Fecha >= desde.Value);
+        if (hasta.HasValue)
+            query = query.Where(m => m.Fecha <= hasta.Value);
+        if (tipo.HasValue)
+            query = query.Where(m => m.Tipo == tipo.Value);
+
+        return query.OrderByDescending(m => m.Fecha);
+    }
+
+    public void MostrarResumenInventario()
+    {
+        Console.WriteLine($"\n=== RESUMEN DE INVENTARIO ===");
+        Console.WriteLine($"Total productos: {_productos.Count}");
+        Console.WriteLine($"Total almacenes: {_stockPorAlmacen.Count}");
+        Console.WriteLine($"Total movimientos: {_movimientos.Count}");
+        Console.WriteLine($"Valor total: {ValorTotalInventario()}");
+
+        Console.WriteLine($"\nProductos con stock bajo:");
+        foreach (var p in GetStockBajo(10))
+        {
+            var stock = this[p.Id];
+            int total = stock.Sum(s => s.Item.Cantidad);
+            Console.WriteLine($"  {p.Nombre}: {total} unidades");
+        }
+
+        Console.WriteLine($"\nProductos sin stock:");
+        foreach (var p in GetSinStock())
+            Console.WriteLine($"  {p.Nombre}");
+    }
+}
+```
+
+30.4 — MÉTODOS DE EXTENSIÓN
+------------------------------
+
+```csharp
+// ============================================================
+// Extensions/ProductoExtensions.cs
+// ============================================================
+namespace Inventario.Extensions;
+
+using Inventario.Models;
+
+public static class ProductoExtensions
+{
+    public static bool TieneAtributo(this Producto producto, AtributosProducto atributo) =>
+        producto.Atributos.HasFlag(atributo);
+
+    public static string EtiquetaCategoria(this Producto producto) => producto.Categoria switch
+    {
+        CategoriaProducto.Electronica => "📱 Electrónica",
+        CategoriaProducto.Ropa => "👕 Ropa",
+        CategoriaProducto.Alimentos => "🍎 Alimentos",
+        CategoriaProducto.Libros => "📚 Libros",
+        CategoriaProducto.Hogar => "🏠 Hogar",
+        CategoriaProducto.Deportes => "⚽ Deportes",
+        CategoriaProducto.Juguetes => "🎮 Juguetes",
+        CategoriaProducto.Salud => "💊 Salud",
+        CategoriaProducto.Automotriz => "🚗 Automotriz",
+        CategoriaProducto.Otros => "📦 Otros",
+        _ => producto.Categoria.ToString()
+    };
+
+    public static string EstadoIcono(this EstadoProducto estado) => estado switch
+    {
+        EstadoProducto.Activo => "✅",
+        EstadoProducto.Inactivo => "⏸️",
+        EstadoProducto.Descontinuado => "⛔",
+        EstadoProducto.PendienteRevision => "⏳",
+        _ => "❓"
+    };
+
+    public static void MostrarInfo(this Producto producto)
+    {
+        Console.WriteLine($"ID: {producto.Id.Valor}");
+        Console.WriteLine($"Nombre: {producto.Nombre}");
+        Console.WriteLine($"Descripción: {producto.Descripcion ?? "Sin descripción"}");
+        Console.WriteLine($"Categoría: {producto.EtiquetaCategoria()}");
+        Console.WriteLine($"Precio compra: {producto.PrecioCompra}");
+        Console.WriteLine($"Precio venta: {producto.PrecioVenta}");
+        Console.WriteLine($"Margen: {producto.MargenGanancia:F1}%");
+        Console.WriteLine($"Estado: {producto.Estado.EstadoIcono()} {producto.Estado}");
+        Console.WriteLine($"Atributos: {producto.Atributos}");
+        Console.WriteLine($"Creado: {producto.FechaCreacion:g}");
+    }
+}
+
+public static class EnumerableExtensions
+{
+    public static IEnumerable<T> NoNulos<T>(this IEnumerable<T?> source) where T : class =>
+        source.Where(x => x is not null)!;
+
+    public static void ForEach<T>(this IEnumerable<T> source, Action<T> action)
+    {
+        foreach (var item in source) action(item);
+    }
+
+    public static string JoinStrings<T>(this IEnumerable<T> source, string separador = ", ") =>
+        string.Join(separador, source);
+}
+```
+
+30.5 — SISTEMA DE REPORTES
+----------------------------
+
+```csharp
+// ============================================================
+// Services/ReporteService.cs
+// ============================================================
+namespace Inventario.Services;
+
+using Inventario.Models;
+
+public class ReporteService
+{
+    private readonly InventarioService _inventario;
+
+    public ReporteService(InventarioService inventario)
+    {
+        _inventario = inventario;
+    }
+
+    public void ReporteProductosPorCategoria()
+    {
+        Console.WriteLine("\n=== PRODUCTOS POR CATEGORÍA ===");
+        var grupos = _inventario.Productos.GetAll()
+            .GroupBy(p => p.Categoria)
+            .OrderBy(g => g.Key);
+
+        foreach (var grupo in grupos)
+        {
+            Console.WriteLine($"\n{grupo.Key}: {grupo.Count()} productos");
+            Console.WriteLine(new string('-', 40));
+            foreach (var p in grupo.OrderBy(p => p.Nombre))
+            {
+                var stock = _inventario[p.Id];
+                int total = stock.Sum(s => s.Item.Cantidad);
+                Console.WriteLine($"  {p.Nombre,-25} Stock: {total,5}  Precio: {p.PrecioVenta}");
+            }
+        }
+    }
+
+    public void ReporteMovimientosRecientes(int dias = 7)
+    {
+        var desde = DateTime.UtcNow.AddDays(-dias);
+        Console.WriteLine($"\n=== MOVIMIENTOS ÚLTIMOS {dias} DÍAS ===");
+
+        var movs = _inventario.GetMovimientos(desde: desde).Take(20);
+
+        foreach (var m in movs)
+        {
+            var tipoIcono = m.EsEntrada ? "⬆" : "⬇";
+            var prod = _inventario.Productos.GetById(m.ProductoId);
+            string nombre = prod?.Nombre ?? "(eliminado)";
+            Console.WriteLine($"{tipoIcono} [{m.Fecha:g}] {m.Tipo,-25} {nombre,-20} x{m.Cantidad,5} {m.CostoTotal}");
+        }
+    }
+
+    public void ReporteValorAlmacenes()
+    {
+        Console.WriteLine("\n=== VALOR POR ALMACÉN ===");
+        foreach (var almacenId in new[] { 1, 2, 3 })
+        {
+            try
+            {
+                var valor = _inventario.ValorTotalInventario(almacenId);
+                Console.WriteLine($"Almacén {almacenId}: {valor}");
+            }
+            catch
+            {
+                // Almacén no existe
+            }
+        }
+        Console.WriteLine($"\nValor total consolidado: {_inventario.ValorTotalInventario()}");
+    }
+
+    public void ReporteProveedores()
+    {
+        Console.WriteLine("\n=== PROVEEDORES (Simulado) ===");
+        Console.WriteLine("Proveedor A: 15 productos");
+        Console.WriteLine("Proveedor B: 8 productos");
+        Console.WriteLine("Proveedor C: 22 productos");
+    }
+}
+```
+
+30.6 — INTERFAZ DE CONSOLA
+----------------------------
+
+```csharp
+// ============================================================
+// Services/MenuService.cs
+// ============================================================
+namespace Inventario.Services;
+
+using Inventario.Models;
+using Inventario.Extensions;
+
+public class MenuService
+{
+    private readonly InventarioService _inventario;
+    private readonly ReporteService _reportes;
+    private bool _ejecutando = true;
+
+    public MenuService()
+    {
+        _inventario = new InventarioService();
+        _reportes = new ReporteService(_inventario);
+        InicializarDatosDemo();
+    }
+
+    private void InicializarDatosDemo()
+    {
+        // Almacenes
+        _inventario.CrearAlmacen("Almacén Central", "Av. Principal 123");
+        _inventario.CrearAlmacen("Almacén Norte", "Calle Secundaria 456");
+        _inventario.CrearAlmacen("Almacén Sur", "Ruta 789");
+
+        // Productos
+        var p1 = _inventario.Productos.CrearProducto(
+            "Laptop Gamer", "Laptop con RTX 4070", CategoriaProducto.Electronica,
+            new Dinero(800, "USD"), new Dinero(1299.99m, "USD"),
+            AtributosProducto.Importado | AtributosProducto.EdicionLimitada);
+
+        var p2 = _inventario.Productos.CrearProducto(
+            "Monitor 4K", "Monitor 27 pulgadas 4K HDR", CategoriaProducto.Electronica,
+            new Dinero(300, "USD"), new Dinero(499.99m, "USD"),
+            AtributosProducto.Fragil | AtributosProducto.Importado);
+
+        var p3 = _inventario.Productos.CrearProducto(
+            "Teclado Mecánico", "Teclado RGB switches Cherry MX", CategoriaProducto.Electronica,
+            new Dinero(50, "USD"), new Dinero(89.99m, "USD"),
+            AtributosProducto.Ninguno);
+
+        var p4 = _inventario.Productos.CrearProducto(
+            "Camiseta Algodón", "Camiseta 100% algodón orgánico", CategoriaProducto.Ropa,
+            new Dinero(5, "USD"), new Dinero(19.99m, "USD"),
+            AtributosProducto.EnOferta);
+
+        var p5 = _inventario.Productos.CrearProducto(
+            "Zapatillas Running", "Zapatillas ultralivianas", CategoriaProducto.Deportes,
+            new Dinero(40, "USD"), new Dinero(89.99m, "USD"),
+            AtributosProducto.Importado);
+
+        var p6 = _inventario.Productos.CrearProducto(
+            "Libro C# Avanzado", "Guía completa de C# 12", CategoriaProducto.Libros,
+            new Dinero(20, "USD"), new Dinero(39.99m, "USD"),
+            AtributosProducto.Ninguno);
+
+        var p7 = _inventario.Productos.CrearProducto(
+            "Sillón Ergonómico", "Sillón para oficina con soporte lumbar", CategoriaProducto.Hogar,
+            new Dinero(150, "USD"), new Dinero(299.99m, "USD"),
+            AtributosProducto.Fragil | AtributosProducto.Personalizado);
+
+        // Stock inicial
+        _inventario.RegistrarEntrada(p1.Id, 1, 10, p1.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-001");
+        _inventario.RegistrarEntrada(p2.Id, 1, 15, p2.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-001");
+        _inventario.RegistrarEntrada(p3.Id, 1, 50, p3.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-002");
+        _inventario.RegistrarEntrada(p4.Id, 1, 100, p4.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-003");
+        _inventario.RegistrarEntrada(p5.Id, 2, 30, p5.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-004");
+        _inventario.RegistrarEntrada(p6.Id, 2, 25, p6.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-005");
+        _inventario.RegistrarEntrada(p7.Id, 3, 8, p7.PrecioCompra, TipoMovimiento.EntradaCompra, "OC-006");
+
+        // Algunas ventas
+        _inventario.RegistrarSalida(p1.Id, 1, 3, p1.PrecioVenta, TipoMovimiento.SalidaVenta, "V-1001");
+        _inventario.RegistrarSalida(p4.Id, 1, 25, p4.PrecioVenta, TipoMovimiento.SalidaVenta, "V-1002");
+        _inventario.RegistrarSalida(p6.Id, 2, 5, p6.PrecioVenta, TipoMovimiento.SalidaVenta, "V-1003");
+    }
+
+    public void Ejecutar()
+    {
+        while (_ejecutando)
+        {
+            MostrarMenu();
+            var opcion = Console.ReadLine()?.Trim() ?? "";
+            ProcesarOpcion(opcion);
+        }
+    }
+
+    private void MostrarMenu()
+    {
+        Console.WriteLine("\n===================================");
+        Console.WriteLine("  SISTEMA DE GESTIÓN DE INVENTARIOS");
+        Console.WriteLine("===================================");
+        Console.WriteLine("1. Listar todos los productos");
+        Console.WriteLine("2. Buscar producto por nombre");
+        Console.WriteLine("3. Ver producto por ID");
+        Console.WriteLine("4. Productos por categoría");
+        Console.WriteLine("5. Productos con stock bajo");
+        Console.WriteLine("6. Productos sin stock");
+        Console.WriteLine("7. Registrar entrada de stock");
+        Console.WriteLine("8. Registrar salida de stock");
+        Console.WriteLine("9. Ver movimientos recientes");
+        Console.WriteLine("10. Reportes");
+        Console.WriteLine("11. Resumen de inventario");
+        Console.WriteLine("0. Salir");
+        Console.Write("Seleccione una opción: ");
+    }
+
+    private void ProcesarOpcion(string opcion)
+    {
+        switch (opcion)
+        {
+            case "1": ListarProductos(); break;
+            case "2": BuscarProducto(); break;
+            case "3": VerProductoPorId(); break;
+            case "4": ProductosPorCategoria(); break;
+            case "5": StockBajo(); break;
+            case "6": SinStock(); break;
+            case "7": RegistrarEntrada(); break;
+            case "8": RegistrarSalida(); break;
+            case "9": VerMovimientos(); break;
+            case "10": MenuReportes(); break;
+            case "11": _inventario.MostrarResumenInventario(); break;
+            case "0": _ejecutando = false; Console.WriteLine("¡Hasta luego!"); break;
+            default: Console.WriteLine("Opción inválida"); break;
+        }
+    }
+
+    private void ListarProductos()
+    {
+        Console.WriteLine("\n=== TODOS LOS PRODUCTOS ===");
+        foreach (var p in _inventario.Productos.GetAll().OrderBy(p => p.Nombre))
+        {
+            var stock = _inventario[p.Id];
+            int totalStock = stock.Sum(s => s.Item.Cantidad);
+            var stockIcono = totalStock == 0 ? "⚠️ SIN STOCK" :
+                             totalStock < 5 ? $"⚠️ Stock bajo ({totalStock})" :
+                             $"✅ Stock: {totalStock}";
+            Console.WriteLine($"{p.Id.Valor,3}: {p.Nombre,-25} {p.PrecioVenta,10}  {stockIcono}");
+        }
+    }
+
+    private void BuscarProducto()
+    {
+        Console.Write("Ingrese texto de búsqueda: ");
+        var query = Console.ReadLine() ?? "";
+        var resultados = _inventario.Productos.Search(query).ToList();
+
+        if (resultados.Count == 0)
+        {
+            Console.WriteLine("No se encontraron productos");
+            return;
+        }
+
+        Console.WriteLine($"\n=== RESULTADOS ({resultados.Count}) ===");
+        foreach (var p in resultados)
+        {
+            p.MostrarInfo();
+            Console.WriteLine();
+        }
+    }
+
+    private void VerProductoPorId()
+    {
+        Console.Write("Ingrese ID del producto: ");
+        if (int.TryParse(Console.ReadLine(), out int id))
+        {
+            var producto = _inventario.Productos.GetById(new ProductoId(id));
+            if (producto != null)
+            {
+                producto.MostrarInfo();
+                var stock = _inventario[producto.Id];
+                Console.WriteLine($"Stock total: {stock.Sum(s => s.Item.Cantidad)}");
+                foreach (var (almId, item) in stock)
+                    Console.WriteLine($"  Almacén {almId}: {item.Cantidad} en {item.Ubicacion}");
+            }
+            else
+            {
+                Console.WriteLine("Producto no encontrado");
+            }
+        }
+    }
+
+    private void ProductosPorCategoria()
+    {
+        Console.WriteLine("\nCategorías disponibles:");
+        foreach (var cat in Enum.GetValues<CategoriaProducto>())
+            Console.WriteLine($"  {(int)cat}. {cat}");
+
+        Console.Write("Seleccione categoría: ");
+        if (Enum.TryParse<CategoriaProducto>(Console.ReadLine(), true, out var categoria))
+        {
+            var productos = _inventario.Productos.GetByCategoria(categoria).ToList();
+            Console.WriteLine($"\n=== {categoria} ({productos.Count} productos) ===");
+            foreach (var p in productos)
+                Console.WriteLine($"  {p.Id.Valor}: {p.Nombre} - {p.PrecioVenta}");
+        }
+    }
+
+    private void StockBajo()
+    {
+        Console.Write("Stock mínimo (default 5): ");
+        int limite = int.TryParse(Console.ReadLine(), out int l) ? l : 5;
+        var bajos = _inventario.GetStockBajo(limite).ToList();
+
+        Console.WriteLine($"\n=== PRODUCTOS CON STOCK BAJO (< {limite}) ===");
+        if (bajos.Count == 0)
+        {
+            Console.WriteLine("Ninguno. ¡Stock saludable!");
+            return;
+        }
+        foreach (var p in bajos)
+        {
+            var stock = _inventario[p.Id];
+            int total = stock.Sum(s => s.Item.Cantidad);
+            Console.WriteLine($"⚠️  {p.Nombre,-25} Stock: {total,3}  {p.PrecioVenta}");
+        }
+    }
+
+    private void SinStock()
+    {
+        var sinStock = _inventario.GetSinStock().ToList();
+        Console.WriteLine($"\n=== PRODUCTOS SIN STOCK ({sinStock.Count}) ===");
+        foreach (var p in sinStock)
+            Console.WriteLine($"  {p.Id.Valor}: {p.Nombre} - {p.PrecioVenta}");
+    }
+
+    private void RegistrarEntrada()
+    {
+        Console.Write("ID del producto: ");
+        if (!int.TryParse(Console.ReadLine(), out int prodId))
+        { Console.WriteLine("ID inválido"); return; }
+
+        Console.Write("ID del almacén: ");
+        if (!int.TryParse(Console.ReadLine(), out int almId))
+        { Console.WriteLine("ID inválido"); return; }
+
+        Console.Write("Cantidad: ");
+        if (!int.TryParse(Console.ReadLine(), out int cantidad) || cantidad <= 0)
+        { Console.WriteLine("Cantidad inválida"); return; }
+
+        Console.Write("Costo unitario: ");
+        if (!decimal.TryParse(Console.ReadLine(), out decimal costo))
+        { Console.WriteLine("Costo inválido"); return; }
+
+        Console.Write("Referencia (OC-xxx): ");
+        string? refe = Console.ReadLine();
+
+        try
+        {
+            var item = _inventario.RegistrarEntrada(
+                new ProductoId(prodId), almId, cantidad,
+                new Dinero(costo, "USD"),
+                TipoMovimiento.EntradaCompra, refe, usuario: "admin");
+            Console.WriteLine($"✅ Entrada registrada. Stock actual: {item.Cantidad}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error: {ex.Message}");
+        }
+    }
+
+    private void RegistrarSalida()
+    {
+        Console.Write("ID del producto: ");
+        if (!int.TryParse(Console.ReadLine(), out int prodId))
+        { Console.WriteLine("ID inválido"); return; }
+
+        Console.Write("ID del almacén: ");
+        if (!int.TryParse(Console.ReadLine(), out int almId))
+        { Console.WriteLine("ID inválido"); return; }
+
+        Console.Write("Cantidad: ");
+        if (!int.TryParse(Console.ReadLine(), out int cantidad) || cantidad <= 0)
+        { Console.WriteLine("Cantidad inválida"); return; }
+
+        Console.Write("Referencia (V-xxx): ");
+        string? refe = Console.ReadLine();
+
+        try
+        {
+            var producto = _inventario.Productos.GetById(new ProductoId(prodId));
+            if (producto == null) { Console.WriteLine("Producto no encontrado"); return; }
+
+            var item = _inventario.RegistrarSalida(
+                new ProductoId(prodId), almId, cantidad,
+                producto.PrecioVenta,
+                TipoMovimiento.SalidaVenta, refe, usuario: "admin");
+            Console.WriteLine($"✅ Salida registrada. Stock actual: {item.Cantidad}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error: {ex.Message}");
+        }
+    }
+
+    private void VerMovimientos()
+    {
+        Console.Write("Mostrar últimos N movimientos (default 10): ");
+        int n = int.TryParse(Console.ReadLine(), out int count) ? count : 10;
+
+        var movs = _inventario.GetMovimientos().Take(n).ToList();
+        Console.WriteLine($"\n=== ÚLTIMOS {movs.Count} MOVIMIENTOS ===");
+        foreach (var m in movs)
+        {
+            var prod = _inventario.Productos.GetById(m.ProductoId);
+            string nombre = prod?.Nombre ?? "(N/A)";
+            string signo = m.EsEntrada ? "+" : "-";
+            Console.WriteLine($"[{m.Fecha:g}] {m.Tipo,-25} {nombre,-20} {signo}{m.Cantidad,5}  Ref: {m.Referencia ?? "-"}");
+        }
+    }
+
+    private void MenuReportes()
+    {
+        Console.WriteLine("\n=== REPORTES ===");
+        Console.WriteLine("1. Productos por categoría");
+        Console.WriteLine("2. Movimientos recientes");
+        Console.WriteLine("3. Valor por almacén");
+        Console.WriteLine("4. Proveedores (demo)");
+        Console.Write("Seleccione: ");
+        var op = Console.ReadLine();
+        switch (op)
+        {
+            case "1": _reportes.ReporteProductosPorCategoria(); break;
+            case "2": _reportes.ReporteMovimientosRecientes(); break;
+            case "3": _reportes.ReporteValorAlmacenes(); break;
+            case "4": _reportes.ReporteProveedores(); break;
+            default: Console.WriteLine("Opción inválida"); break;
+        }
+    }
+}
+```
+
+30.7 — PUNTO DE ENTRADA
+--------------------------
+
+```csharp
+// ============================================================
+// Program.cs
+// ============================================================
+using Inventario.Services;
+
+namespace Inventario;
+
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine("========================================");
+        Console.WriteLine("  SISTEMA DE GESTIÓN DE INVENTARIOS");
+        Console.WriteLine("  C# MASTER BOOK — MÓDULO III");
+        Console.WriteLine("========================================");
+        Console.WriteLine("  Tecnologías: C# 12, .NET 8");
+        Console.WriteLine("  Conceptos: Structs, Enums, Records,");
+        Console.WriteLine("  Genéricos, Colecciones, Indexadores,");
+        Console.WriteLine("  Operadores de Conversión, Extensiones,");
+        Console.WriteLine("  Nullable Types.");
+        Console.WriteLine("========================================");
+
+        var menu = new MenuService();
+        menu.Ejecutar();
+    }
+}
+```
+
+30.8 — FUNCIONALIDADES ADICIONALES (SUGERENCIAS)
+---------------------------------------------------
+
+Para extender el proyecto, considera implementar:
+
+1. Serialización JSON del inventario completo con System.Text.Json.
+2. Exportación a CSV de productos y movimientos.
+3. Filtros avanzados con LINQ Expressions.
+4. Notificaciones por email cuando el stock está bajo.
+5. Cálculo de KPIs: rotación de inventario, días de stock, etc.
+6. Historial de precios (cambios de precio a lo largo del tiempo).
+7. Múltiples monedas con conversión automática.
+8. Códigos de barras y generación de etiquetas.
+9. Integración con base de datos (Entity Framework).
+10. API REST con ASP.NET Core.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  Este proyecto integra todos los conceptos del Módulo III:           │
+│                                                                      │
+│  • Struct: StockItem como readonly record struct.                    │
+│  • Enums: CategoriaProducto, TipoMovimiento, EstadoProducto,         │
+│    AtributosProducto (Flags).                                        │
+│  • Records: Producto, Almacen, MovimientoStock, Dinero.              │
+│  • Genéricos: IRepository<T,TId>, InMemoryRepository<T,TId>.         │
+│  • Colecciones: Dictionary, List, IEnumerable, HashSet.              │
+│  • Indexadores: this[almacenId], this[productoId], this[almacen,prod].│
+│  • Operadores: +, -, *, /, >, <, >=, <= en Dinero.                  │
+│  • Extensiones: MostrarInfo, EtiquetaCategoria, EstadoIcono, etc.    │
+│  • Nullable: string?, parámetros opcionales, ??, ?., ??=.           │
+│                                                                      │
+│  El sistema es funcional, extensible y listo para usar como base     │
+│  para proyectos reales.                                              │
+└──────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+  EJERCICIOS DEL PROYECTO
+================================================================================
+
+1. Añade un nuevo tipo de movimiento: TransferenciaEntreAlmacenes.
+   Implementa la lógica para transferir stock entre almacenes como
+   una transacción atómica (salida de uno, entrada en otro).
+
+2. Implementa IComparable<Dinero> para poder ordenar listas de Dinero.
+
+3. Crea un método de extensión ParaJson(this object obj) que serialice
+   cualquier objeto usando System.Text.Json con opciones configuradas.
+
+4. Añade un indexador que permita buscar productos por rango de precio:
+   this[Dinero minimo, Dinero maximo].
+
+5. Implementa un conversor implícito de decimal a Dinero (asumiendo USD)
+   y explícito de Dinero a decimal.
+
+6. Crea un reporte que muestre los productos más vendidos (con más
+   salidas) usando LINQ.
+
+7. Añade validación con nullable reference types en todo el proyecto.
+   Identifica y corrige todas las advertencias.
+
+8. Implementa un sistema de alertas que notifique cuando un producto
+   llegue a stock cero.
+
+9. Convierte el repositorio InMemoryRepository a una versión que
+   persista en JSON.
+
+10. Diseña un nuevo módulo de usuarios con roles (enum RolUsuario)
+    que restrinja acciones según el rol.
+
+================================================================================
+  FAQ — PREGUNTAS FRECUENTES DEL PROYECTO
+================================================================================
+
+P: ¿Cómo ejecuto el proyecto?
+R: Necesitas .NET 8 SDK. Crea un proyecto console: dotnet new console -n Inventario
+   y copia los archivos en las carpetas correspondientes.
+
+P: ¿Por qué usamos record en lugar de class para los modelos?
+R: Porque los records proporcionan igualdad estructural, inmutabilidad,
+   y sintaxis concisa. Son ideales para modelos de datos y value objects.
+
+P: ¿Puedo usar este proyecto en producción?
+R: Es una base excelente, pero necesitarás añadir persistencia real (BD),
+   autenticación, logging, y más validaciones.
+
+P: ¿Por qué el indexador puede devolver null?
+R: Usamos nullable para indicar que un producto puede no tener stock
+   en un almacén específico. Es un uso correcto de null.
+
+P: ¿Cómo añado una nueva categoría de producto?
+R: Solo añade un nuevo valor al enum CategoriaProducto. Los switch
+   expressions con exhaustiveness checking te recordarán actualizarlo.
+
+P: ¿Los métodos de extensión afectan el rendimiento?
+R: No significativamente. Son llamadas estáticas compiladas.
+
+P: ¿Qué debo estudiar después de este proyecto?
+R: El Módulo IV cubre LINQ avanzado, expresiones lambda, y programación
+   funcional en C#. También recomendamos estudiar ASP.NET Core para
+   convertir este proyecto en una API web.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO — PROYECTO EXTENDIDO
+================================================================================
+
+Extiende el sistema de inventarios para convertirlo en una plataforma
+de comercio electrónico completa. Los requisitos adicionales son:
+
+- Carrito de compras: implementa un CarritoCompra<T> genérico que
+  permita agregar/quitar items y calcular el total.
+- Órdenes de compra: un record Orden que incluya items, total,
+  dirección de envío, estado, y método de pago.
+- Descuentos: sistema de cupones con reglas configurables usando
+  pattern matching y operadores de conversión.
+- Impuestos: cálculo automático basado en la categoría del producto
+  y la ubicación del cliente.
+- Múltiples monedas: conversión en tiempo real con tasas simuladas.
+- Usuarios y roles: sistema de autenticación con enum RolUsuario
+  y repositorio genérico de usuarios.
+- Historial completo: todos los cambios en productos, precios y stock
+  deben registrarse como eventos inmutables.
+- API de búsqueda: usando indexadores y métodos de extensión para
+  filtrar por múltiples criterios simultáneamente.
+- Dashboard: reportes con LINQ que muestren ventas por día, productos
+  más vendidos, ingresos, etc.
+- Tests unitarios: al menos 30 tests usando xUnit que cubran las
+  funcionalidades principales.
+
+El proyecto extendido debe tener al menos 20 archivos .cs, demostrando
+todos los conceptos del Módulo III en un escenario real de e-commerce.
+
+================================================================================
+  CIERRE DEL MÓDULO III
+================================================================================
+
+¡Felicidades! Has completado el Módulo III del C# Master Book.
+
+Hemos recorrido un camino impresionante:
+- Capítulo 21: Structs — Tipos de valor y su eficiencia.
+- Capítulo 22: Enums — Constantes con nombre y flags.
+- Capítulo 23: Records — Inmutabilidad e igualdad estructural.
+- Capítulo 24: Genéricos — Código reusable para cualquier tipo.
+- Capítulo 25: Colecciones — Listas, diccionarios, conjuntos, colas y pilas.
+- Capítulo 26: Indexadores — Sintaxis de corchetes personalizada.
+- Capítulo 27: Operadores de Conversión — Tipos que se sienten nativos.
+- Capítulo 28: Métodos de Extensión — Enriquecer sin modificar.
+- Capítulo 29: Nullable Types — La ausencia de valor hecha segura.
+- Capítulo 30: Proyecto — Todo integrado en un sistema real.
+
+Estos conceptos representan la POO avanzada en C#. Dominarlos te coloca
+en un nivel experto del lenguaje. Ahora puedes diseñar sistemas
+complejos, limpios y eficientes.
+
+En el Módulo IV exploraremos LINQ, expresiones lambda, programación
+funcional y acceso a datos. ¡Te esperamos!
+
+¡Gracias por estudiar el C# Master Book!
+
+================================================================================
+  FIN DEL MÓDULO III
+================================================================================

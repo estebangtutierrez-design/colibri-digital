@@ -1,0 +1,978 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO V
+##
+##                       CAPÍTULO 49
+##
+##                            CRUD
+##
+################################################################################
+################################################################################
+
+"CRUD no es solo un acrónimo; es el latido de toda aplicación que respira
+datos." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, arquitecto de datos persistentes! Has llegado al capítulo donde
+todo cobra sentido. En los capítulos anteriores aprendiste formularios, GET,
+POST, validaciones, sesiones, cookies, MySQL y PDO. Ahora es momento de unir
+todas esas piezas en el patrón más fundamental de las aplicaciones web: CRUD.
+
+CRUD significa Create (Crear), Read (Leer), Update (Actualizar) y Delete
+(Eliminar). Estas cuatro operaciones son la base de cualquier sistema que
+maneje datos: desde una simple lista de tareas hasta un ERP empresarial.
+
+En este capítulo construirás un sistema CRUD completo usando PDO y MySQL.
+Cada operación se asociará a un método HTTP específico y seguirá las mejores
+prácticas de seguridad y usabilidad que has aprendido.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Crear, leer, actualizar, eliminar: con estas cuatro llaves abres las puertas
+de cualquier aplicación de datos." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Implementar las cuatro operaciones CRUD con PDO y prepared statements.
+✓ Asociar cada operación al método HTTP adecuado (GET para leer, POST para
+  crear/actualizar/eliminar).
+✓ Diseñar una interfaz de usuario con listado, formularios y confirmaciones.
+✓ Manejar mensajes flash para feedback de operaciones.
+✓ Implementar paginación en el listado.
+✓ Asegurar cada operación contra CSRF, XSS e inyección SQL.
+✓ Estructurar el código siguiendo el patrón de una sola página por operación.
+
+===============================================================================
+1. ARQUITECTURA DE UN SISTEMA CRUD
+===============================================================================
+
+Un sistema CRUD típico tiene esta estructura:
+
+| Operación | Método HTTP | URL                        | Archivo PHP         |
+|-----------|-------------|----------------------------|---------------------|
+| Listar    | GET         | /productos.php             | productos.php       |
+| Ver       | GET         | /productos.php?id=5        | productos.php       |
+| Crear     | GET+POST   | /productos-crear.php       | productos-crear.php |
+| Editar    | GET+POST   | /productos-editar.php?id=5 | productos-editar.php|
+| Eliminar  | POST        | /productos-eliminar.php    | productos-eliminar.php |
+
+Otra arquitectura común es tener un solo archivo por recurso que maneje todas
+las operaciones según el parámetro action:
+
+| URL                             | acción    | Descripción       |
+|---------------------------------|-----------|-------------------|
+| /productos.php                  | listar    | Lista de productos|
+| /productos.php?action=crear     | crear     | Formulario crear  |
+| /productos.php?action=editar&id=5 | editar | Formulario editar |
+| /productos.php?action=eliminar&id=5 | eliminar | Confirmar+eliminar |
+
+Usaremos la primera arquitectura (archivos separados) por claridad.
+
+Estructura de archivos del proyecto CRUD:
+
+```
+crud-productos/
+|-- config/
+|   |-- database.php      # Conexión PDO
+|   |-- session.php       # Sesión + mensajes flash
+|-- layout/
+|   |-- header.php        # Header HTML
+|   |-- footer.php        # Footer HTML
+|-- css/
+|   |-- estilo.css        # Estilos
+|-- productos.php         # Listado
+|-- productos-crear.php   # Crear
+|-- productos-editar.php  # Editar
+|-- productos-eliminar.php# Eliminar
+|-- index.php             # Redirección al listado
+```
+
+===============================================================================
+2. CONFIGURACIÓN Y BASE DE DATOS
+===============================================================================
+
+Base de datos:
+
+```sql
+CREATE DATABASE IF NOT EXISTS crud_productos
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+
+USE crud_productos;
+
+CREATE TABLE IF NOT EXISTS productos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(200) NOT NULL,
+    descripcion TEXT,
+    precio DECIMAL(10, 2) NOT NULL,
+    stock INT UNSIGNED NOT NULL DEFAULT 0,
+    categoria VARCHAR(50) NOT NULL DEFAULT 'general',
+    activo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+config/database.php:
+
+```php
+<?php
+$host     = 'localhost';
+$dbname   = 'crud_productos';
+$usuario  = 'root';
+$password = '';
+$charset  = 'utf8mb4';
+
+$dsn = "mysql:host=$host;dbname=$dbname;charset=$charset";
+
+$opciones = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => false,
+];
+
+try {
+    $pdo = new PDO($dsn, $usuario, $password, $opciones);
+} catch (PDOException $e) {
+    error_log("Error de conexión: " . $e->getMessage());
+    die("Error de conexión a la base de datos.");
+}
+?>
+```
+
+config/session.php:
+
+```php
+<?php
+session_start();
+
+// CSRF token
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Mensajes flash
+function mensajeFlash(string $tipo, string $texto): void
+{
+    $_SESSION['flash'][] = ['tipo' => $tipo, 'texto' => $texto];
+}
+
+function obtenerFlash(): array
+{
+    $mensajes = $_SESSION['flash'] ?? [];
+    unset($_SESSION['flash']);
+    return $mensajes;
+}
+?>
+```
+
+===============================================================================
+3. READ — LISTAR PRODUCTOS
+===============================================================================
+
+productos.php:
+
+```php
+<?php
+require 'config/database.php';
+require 'config/session.php';
+
+$pagina = max(1, (int)($_GET['pagina'] ?? 1));
+$porPagina = 10;
+$offset = ($pagina - 1) * $porPagina;
+$busqueda = trim($_GET['q'] ?? '');
+$categoria = $_GET['categoria'] ?? '';
+
+$condiciones = [];
+$params = [];
+
+if ($busqueda !== '') {
+    $condiciones[] = '(nombre LIKE :busqueda OR descripcion LIKE :busqueda2)';
+    $params[':busqueda'] = "%{$busqueda}%";
+    $params[':busqueda2'] = "%{$busqueda}%";
+}
+
+if ($categoria !== '') {
+    $condiciones[] = 'categoria = :categoria';
+    $params[':categoria'] = $categoria;
+}
+
+$where = '';
+if (!empty($condiciones)) {
+    $where = 'WHERE ' . implode(' AND ', $condiciones);
+}
+
+// Total de registros
+$sqlTotal = "SELECT COUNT(*) FROM productos $where";
+$stmtTotal = $pdo->prepare($sqlTotal);
+$stmtTotal->execute($params);
+$totalRegistros = (int)$stmtTotal->fetchColumn();
+$totalPaginas = max(1, (int)ceil($totalRegistros / $porPagina));
+
+if ($pagina > $totalPaginas) {
+    $pagina = $totalPaginas;
+    $offset = ($pagina - 1) * $porPagina;
+}
+
+// Productos
+$sql = "SELECT * FROM productos $where ORDER BY created_at DESC LIMIT :limite OFFSET :offset";
+$stmt = $pdo->prepare($sql);
+foreach ($params as $clave => $valor) {
+    $stmt->bindValue($clave, $valor);
+}
+$stmt->bindValue(':limite', $porPagina, PDO::PARAM_INT);
+$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+$stmt->execute();
+$productos = $stmt->fetchAll();
+
+// Categorías únicas para el filtro
+$categorias = $pdo->query('SELECT DISTINCT categoria FROM productos ORDER BY categoria')->fetchAll(PDO::FETCH_COLUMN);
+
+$mensajesFlash = obtenerFlash();
+
+require 'layout/header.php';
+?>
+
+<h1>Gestión de Productos</h1>
+
+<?php foreach ($mensajesFlash as $flash): ?>
+    <div class="flash flash-<?= htmlspecialchars($flash['tipo']) ?>">
+        <?= htmlspecialchars($flash['texto']) ?>
+    </div>
+<?php endforeach; ?>
+
+<div class="barra-acciones">
+    <a href="productos-crear.php" class="btn btn-crear">+ Nuevo Producto</a>
+
+    <form method="GET" class="form-busqueda">
+        <input type="text" name="q" placeholder="Buscar producto..."
+               value="<?= htmlspecialchars($busqueda) ?>">
+        <select name="categoria">
+            <option value="">Todas las categorías</option>
+            <?php foreach ($categorias as $cat): ?>
+                <option value="<?= htmlspecialchars($cat) ?>"
+                    <?= $categoria === $cat ? 'selected' : '' ?>>
+                    <?= htmlspecialchars(ucfirst($cat)) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit">Filtrar</button>
+        <?php if ($busqueda !== '' || $categoria !== ''): ?>
+            <a href="productos.php" class="btn-limpiar">Limpiar</a>
+        <?php endif; ?>
+    </form>
+</div>
+
+<p class="total">Mostrando <?= count($productos) ?> de <?= $totalRegistros ?> productos</p>
+
+<table class="tabla">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+            <th>Categoría</th>
+            <th>Precio</th>
+            <th>Stock</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php if (empty($productos)): ?>
+            <tr><td colspan="7" class="sin-datos">No hay productos registrados.</td></tr>
+        <?php else: ?>
+            <?php foreach ($productos as $p): ?>
+                <tr>
+                    <td><?= $p['id'] ?></td>
+                    <td><?= htmlspecialchars($p['nombre']) ?></td>
+                    <td><?= htmlspecialchars(ucfirst($p['categoria'])) ?></td>
+                    <td>$<?= number_format($p['precio'], 2) ?></td>
+                    <td><?= $p['stock'] ?></td>
+                    <td>
+                        <span class="badge <?= $p['activo'] ? 'activo' : 'inactivo' ?>">
+                            <?= $p['activo'] ? 'Activo' : 'Inactivo' ?>
+                        </span>
+                    </td>
+                    <td class="acciones">
+                        <a href="productos-editar.php?id=<?= $p['id'] ?>" class="btn-editar">Editar</a>
+                        <form method="POST" action="productos-eliminar.php"
+                              onsubmit="return confirm('¿Eliminar <?= htmlspecialchars($p['nombre']) ?>?')">
+                            <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                            <input type="hidden" name="csrf_token"
+                                   value="<?= $_SESSION['csrf_token'] ?>">
+                            <button type="submit" class="btn-eliminar">Eliminar</button>
+                        </form>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        <?php endif; ?>
+    </tbody>
+</table>
+
+<?php if ($totalPaginas > 1): ?>
+    <div class="paginacion">
+        <?php if ($pagina > 1): ?>
+            <a href="?pagina=<?= $pagina - 1 ?>&q=<?= urlencode($busqueda) ?>&categoria=<?= urlencode($categoria) ?>">Anterior</a>
+        <?php endif; ?>
+
+        <?php for ($i = 1; $i <= $totalPaginas; $i++): ?>
+            <a href="?pagina=<?= $i ?>&q=<?= urlencode($busqueda) ?>&categoria=<?= urlencode($categoria) ?>"
+               class="<?= $i === $pagina ? 'activa' : '' ?>">
+                <?= $i ?>
+            </a>
+        <?php endfor; ?>
+
+        <?php if ($pagina < $totalPaginas): ?>
+            <a href="?pagina=<?= $pagina + 1 ?>&q=<?= urlencode($busqueda) ?>&categoria=<?= urlencode($categoria) ?>">Siguiente</a>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+
+<?php require 'layout/footer.php'; ?>
+```
+
+===============================================================================
+4. CREATE — CREAR PRODUCTO
+===============================================================================
+
+productos-crear.php:
+
+```php
+<?php
+require 'config/database.php';
+require 'config/session.php';
+
+$errores = [];
+$datos = [
+    'nombre' => '',
+    'descripcion' => '',
+    'precio' => '',
+    'stock' => '',
+    'categoria' => 'general',
+    'activo' => 1,
+];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $tokenRecibido = $_POST['csrf_token'] ?? '';
+    if (!hash_equals($_SESSION['csrf_token'], $tokenRecibido)) {
+        die('Error de validación CSRF.');
+    }
+
+    $datos['nombre'] = trim($_POST['nombre'] ?? '');
+    $datos['descripcion'] = trim($_POST['descripcion'] ?? '');
+    $datos['precio'] = str_replace(',', '.', trim($_POST['precio'] ?? ''));
+    $datos['stock'] = $_POST['stock'] ?? '';
+    $datos['categoria'] = $_POST['categoria'] ?? 'general';
+    $datos['activo'] = isset($_POST['activo']) ? 1 : 0;
+
+    // Validaciones
+    if ($datos['nombre'] === '') {
+        $errores[] = 'El nombre del producto es obligatorio.';
+    } elseif (strlen($datos['nombre']) > 200) {
+        $errores[] = 'El nombre no debe exceder 200 caracteres.';
+    }
+
+    $precioValido = filter_var($datos['precio'], FILTER_VALIDATE_FLOAT);
+    if ($precioValido === false || $precioValido < 0) {
+        $errores[] = 'Ingrese un precio válido (mayor o igual a 0).';
+    } else {
+        $datos['precio'] = $precioValido;
+    }
+
+    $stockValido = filter_var($datos['stock'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+    if ($stockValido === false) {
+        $errores[] = 'El stock debe ser un número entero mayor o igual a 0.';
+    } else {
+        $datos['stock'] = $stockValido;
+    }
+
+    $categoriasPermitidas = ['general', 'electronica', 'ropa', 'hogar', 'libros', 'deportes'];
+    if (!in_array($datos['categoria'], $categoriasPermitidas)) {
+        $errores[] = 'Seleccione una categoría válida.';
+    }
+
+    if (empty($errores)) {
+        try {
+            $stmt = $pdo->prepare(
+                'INSERT INTO productos (nombre, descripcion, precio, stock, categoria, activo)
+                 VALUES (:nombre, :descripcion, :precio, :stock, :categoria, :activo)'
+            );
+            $stmt->execute([
+                ':nombre' => $datos['nombre'],
+                ':descripcion' => $datos['descripcion'],
+                ':precio' => $datos['precio'],
+                ':stock' => $datos['stock'],
+                ':categoria' => $datos['categoria'],
+                ':activo' => $datos['activo'],
+            ]);
+
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            mensajeFlash('exito', 'Producto creado exitosamente.');
+            header('Location: productos.php');
+            exit;
+        } catch (PDOException $e) {
+            error_log("Error al crear producto: " . $e->getMessage());
+            $errores[] = 'Error al guardar el producto. Intente de nuevo.';
+        }
+    }
+}
+
+require 'layout/header.php';
+?>
+
+<h1>Crear Producto</h1>
+
+<?php if (!empty($errores)): ?>
+    <div class="flash flash-error">
+        <ul>
+            <?php foreach ($errores as $error): ?>
+                <li><?= htmlspecialchars($error) ?></li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
+<?php endif; ?>
+
+<form method="POST" class="form-crud">
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="campo">
+        <label for="nombre">Nombre *</label>
+        <input type="text" id="nombre" name="nombre" required
+               value="<?= htmlspecialchars($datos['nombre']) ?>"
+               maxlength="200">
+    </div>
+
+    <div class="campo">
+        <label for="descripcion">Descripción</label>
+        <textarea id="descripcion" name="descripcion" rows="4"><?= htmlspecialchars($datos['descripcion']) ?></textarea>
+    </div>
+
+    <div class="campo-grupo">
+        <div class="campo">
+            <label for="precio">Precio *</label>
+            <input type="number" id="precio" name="precio" step="0.01" min="0" required
+                   value="<?= htmlspecialchars($datos['precio']) ?>">
+        </div>
+        <div class="campo">
+            <label for="stock">Stock *</label>
+            <input type="number" id="stock" name="stock" min="0" required
+                   value="<?= htmlspecialchars($datos['stock']) ?>">
+        </div>
+    </div>
+
+    <div class="campo">
+        <label for="categoria">Categoría</label>
+        <select id="categoria" name="categoria">
+            <option value="general" <?= $datos['categoria'] === 'general' ? 'selected' : '' ?>>General</option>
+            <option value="electronica" <?= $datos['categoria'] === 'electronica' ? 'selected' : '' ?>>Electrónica</option>
+            <option value="ropa" <?= $datos['categoria'] === 'ropa' ? 'selected' : '' ?>>Ropa</option>
+            <option value="hogar" <?= $datos['categoria'] === 'hogar' ? 'selected' : '' ?>>Hogar</option>
+            <option value="libros" <?= $datos['categoria'] === 'libros' ? 'selected' : '' ?>>Libros</option>
+            <option value="deportes" <?= $datos['categoria'] === 'deportes' ? 'selected' : '' ?>>Deportes</option>
+        </select>
+    </div>
+
+    <div class="campo checkbox">
+        <label>
+            <input type="checkbox" name="activo" <?= $datos['activo'] ? 'checked' : '' ?>>
+            Producto activo
+        </label>
+    </div>
+
+    <div class="botones">
+        <button type="submit" class="btn btn-guardar">Guardar Producto</button>
+        <a href="productos.php" class="btn btn-cancelar">Cancelar</a>
+    </div>
+</form>
+
+<?php require 'layout/footer.php'; ?>
+```
+
+===============================================================================
+5. UPDATE — EDITAR PRODUCTO
+===============================================================================
+
+productos-editar.php:
+
+```php
+<?php
+require 'config/database.php';
+require 'config/session.php';
+
+$id = (int)($_GET['id'] ?? 0);
+
+if ($id <= 0) {
+    header('Location: productos.php');
+    exit;
+}
+
+// Obtener producto actual
+$stmt = $pdo->prepare('SELECT * FROM productos WHERE id = :id');
+$stmt->execute([':id' => $id]);
+$producto = $stmt->fetch();
+
+if (!$producto) {
+    mensajeFlash('error', 'Producto no encontrado.');
+    header('Location: productos.php');
+    exit;
+}
+
+$errores = [];
+$datos = $producto;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $tokenRecibido = $_POST['csrf_token'] ?? '';
+    if (!hash_equals($_SESSION['csrf_token'], $tokenRecibido)) {
+        die('Error de validación CSRF.');
+    }
+
+    $datos['nombre'] = trim($_POST['nombre'] ?? '');
+    $datos['descripcion'] = trim($_POST['descripcion'] ?? '');
+    $datos['precio'] = str_replace(',', '.', trim($_POST['precio'] ?? ''));
+    $datos['stock'] = $_POST['stock'] ?? '';
+    $datos['categoria'] = $_POST['categoria'] ?? 'general';
+    $datos['activo'] = isset($_POST['activo']) ? 1 : 0;
+
+    if ($datos['nombre'] === '') {
+        $errores[] = 'El nombre del producto es obligatorio.';
+    }
+
+    $precioValido = filter_var($datos['precio'], FILTER_VALIDATE_FLOAT);
+    if ($precioValido === false || $precioValido < 0) {
+        $errores[] = 'Ingrese un precio válido.';
+    } else {
+        $datos['precio'] = $precioValido;
+    }
+
+    $stockValido = filter_var($datos['stock'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+    if ($stockValido === false) {
+        $errores[] = 'El stock debe ser un número entero mayor o igual a 0.';
+    } else {
+        $datos['stock'] = $stockValido;
+    }
+
+    if (empty($errores)) {
+        try {
+            $stmt = $pdo->prepare(
+                'UPDATE productos
+                 SET nombre = :nombre, descripcion = :descripcion,
+                     precio = :precio, stock = :stock,
+                     categoria = :categoria, activo = :activo
+                 WHERE id = :id'
+            );
+            $stmt->execute([
+                ':nombre' => $datos['nombre'],
+                ':descripcion' => $datos['descripcion'],
+                ':precio' => $datos['precio'],
+                ':stock' => $datos['stock'],
+                ':categoria' => $datos['categoria'],
+                ':activo' => $datos['activo'],
+                ':id' => $id,
+            ]);
+
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            mensajeFlash('exito', 'Producto actualizado correctamente.');
+            header('Location: productos.php');
+            exit;
+        } catch (PDOException $e) {
+            error_log("Error al actualizar producto: " . $e->getMessage());
+            $errores[] = 'Error al actualizar el producto.';
+        }
+    }
+}
+
+require 'layout/header.php';
+?>
+
+<h1>Editar Producto #<?= $id ?></h1>
+
+<?php if (!empty($errores)): ?>
+    <div class="flash flash-error">
+        <ul>
+            <?php foreach ($errores as $error): ?>
+                <li><?= htmlspecialchars($error) ?></li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
+<?php endif; ?>
+
+<form method="POST" class="form-crud">
+    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+    <div class="campo">
+        <label for="nombre">Nombre *</label>
+        <input type="text" id="nombre" name="nombre" required
+               value="<?= htmlspecialchars($datos['nombre']) ?>">
+    </div>
+
+    <div class="campo">
+        <label for="descripcion">Descripción</label>
+        <textarea id="descripcion" name="descripcion" rows="4"><?= htmlspecialchars($datos['descripcion']) ?></textarea>
+    </div>
+
+    <div class="campo-grupo">
+        <div class="campo">
+            <label for="precio">Precio *</label>
+            <input type="number" id="precio" name="precio" step="0.01" min="0" required
+                   value="<?= htmlspecialchars($datos['precio']) ?>">
+        </div>
+        <div class="campo">
+            <label for="stock">Stock *</label>
+            <input type="number" id="stock" name="stock" min="0" required
+                   value="<?= htmlspecialchars($datos['stock']) ?>">
+        </div>
+    </div>
+
+    <div class="campo">
+        <label for="categoria">Categoría</label>
+        <select id="categoria" name="categoria">
+            <option value="general" <?= $datos['categoria'] === 'general' ? 'selected' : '' ?>>General</option>
+            <option value="electronica" <?= $datos['categoria'] === 'electronica' ? 'selected' : '' ?>>Electrónica</option>
+            <option value="ropa" <?= $datos['categoria'] === 'ropa' ? 'selected' : '' ?>>Ropa</option>
+            <option value="hogar" <?= $datos['categoria'] === 'hogar' ? 'selected' : '' ?>>Hogar</option>
+            <option value="libros" <?= $datos['categoria'] === 'libros' ? 'selected' : '' ?>>Libros</option>
+            <option value="deportes" <?= $datos['categoria'] === 'deportes' ? 'selected' : '' ?>>Deportes</option>
+        </select>
+    </div>
+
+    <div class="campo checkbox">
+        <label>
+            <input type="checkbox" name="activo" <?= $datos['activo'] ? 'checked' : '' ?>>
+            Producto activo
+        </label>
+    </div>
+
+    <div class="botones">
+        <button type="submit" class="btn btn-guardar">Actualizar Producto</button>
+        <a href="productos.php" class="btn btn-cancelar">Cancelar</a>
+    </div>
+</form>
+
+<?php require 'layout/footer.php'; ?>
+```
+
+===============================================================================
+6. DELETE — ELIMINAR PRODUCTO
+===============================================================================
+
+productos-eliminar.php:
+
+```php
+<?php
+require 'config/database.php';
+require 'config/session.php';
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: productos.php');
+    exit;
+}
+
+$tokenRecibido = $_POST['csrf_token'] ?? '';
+if (!hash_equals($_SESSION['csrf_token'], $tokenRecibido)) {
+    die('Error de validación CSRF.');
+}
+
+$id = (int)($_POST['id'] ?? 0);
+
+if ($id <= 0) {
+    mensajeFlash('error', 'ID de producto inválido.');
+    header('Location: productos.php');
+    exit;
+}
+
+try {
+    $stmt = $pdo->prepare('DELETE FROM productos WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+
+    if ($stmt->rowCount() > 0) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        mensajeFlash('exito', 'Producto eliminado correctamente.');
+    } else {
+        mensajeFlash('error', 'El producto no existe o ya fue eliminado.');
+    }
+} catch (PDOException $e) {
+    error_log("Error al eliminar producto: " . $e->getMessage());
+    mensajeFlash('error', 'Error al eliminar el producto.');
+}
+
+header('Location: productos.php');
+exit;
+?>
+```
+
+===============================================================================
+7. LAYOUT Y ESTILOS
+===============================================================================
+
+layout/header.php:
+
+```php
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRUD de Productos</title>
+    <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+    <div class="contenedor">
+```
+
+layout/footer.php:
+
+```php
+    </div>
+</body>
+</html>
+```
+
+css/estilo.css:
+
+```css
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; background: #f5f5f5; color: #333; }
+.contenedor { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { margin-bottom: 20px; color: #2c3e50; }
+
+.flash { padding: 12px; border-radius: 4px; margin-bottom: 15px; }
+.flash-exito { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+.flash-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+.barra-acciones { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+.form-busqueda { display: flex; gap: 8px; }
+.form-busqueda input, .form-busqueda select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+
+.btn { display: inline-block; padding: 8px 16px; border-radius: 4px; text-decoration: none; cursor: pointer; border: none; font-size: 14px; }
+.btn-crear { background: #28a745; color: #fff; }
+.btn-editar { background: #ffc107; color: #000; padding: 4px 8px; border-radius: 3px; text-decoration: none; font-size: 13px; }
+.btn-eliminar { background: #dc3545; color: #fff; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 13px; }
+.btn-guardar { background: #007bff; color: #fff; }
+.btn-cancelar { background: #6c757d; color: #fff; }
+.btn-limpiar { color: #666; text-decoration: underline; font-size: 13px; }
+
+.total { margin-bottom: 10px; color: #666; font-size: 14px; }
+
+.tabla { width: 100%; border-collapse: collapse; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.tabla th, .tabla td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+.tabla th { background: #f8f9fa; font-weight: 600; }
+.tabla tr:hover { background: #f1f1f1; }
+.sin-datos { text-align: center; color: #999; padding: 40px; }
+.acciones { display: flex; gap: 5px; }
+
+.badge { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.badge.activo { background: #d4edda; color: #155724; }
+.badge.inactivo { background: #f8d7da; color: #721c24; }
+
+.paginacion { margin-top: 20px; text-align: center; display: flex; justify-content: center; gap: 5px; }
+.paginacion a { padding: 6px 12px; border: 1px solid #ddd; border-radius: 3px; text-decoration: none; color: #333; }
+.paginacion a.activa { background: #007bff; color: #fff; border-color: #007bff; }
+
+.form-crud { background: #fff; padding: 20px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 600px; }
+.campo { margin-bottom: 15px; }
+.campo label { display: block; margin-bottom: 5px; font-weight: 600; }
+.campo input[type="text"], .campo input[type="number"], .campo textarea, .campo select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+.campo-grupo { display: flex; gap: 15px; }
+.campo-grupo .campo { flex: 1; }
+.campo.checkbox label { display: inline; font-weight: normal; }
+.botones { display: flex; gap: 10px; margin-top: 20px; }
+```
+
+===============================================================================
+8. FLUJO COMPLETO DEL CRUD
+===============================================================================
+
+Resumen del flujo de cada operación:
+
+CREATE:
+  1. GET productos-crear.php → muestra formulario vacío.
+  2. Usuario llena campos y hace clic en "Guardar".
+  3. POST productos-crear.php → valida, inserta en BD, redirige a listado.
+  4. Listado muestra mensaje flash de éxito.
+
+READ:
+  1. GET productos.php → consulta BD con paginación y filtros.
+  2. Muestra tabla con todos los productos.
+  3. Enlaces a editar y formularios para eliminar.
+
+UPDATE:
+  1. Clic en "Editar" → GET productos-editar.php?id=X.
+  2. Consulta producto por ID, llena formulario con datos actuales.
+  3. Usuario modifica campos y hace clic en "Actualizar".
+  4. POST productos-editar.php → valida, actualiza BD, redirige.
+  5. Listado muestra mensaje flash de éxito.
+
+DELETE:
+  1. Clic en "Eliminar" → confirmación con JavaScript.
+  2. POST productos-eliminar.php → verifica CSRF, elimina de BD.
+  3. Redirige a listado con mensaje flash.
+
+Puntos clave de seguridad:
+
+  - CSRF: cada formulario POST tiene token CSRF.
+  - SQL injection: todos los valores se pasan por prepared statements.
+  - XSS: htmlspecialchars() en todas las salidas.
+  - Validación: server-side en todas las operaciones.
+  - Método HTTP: GET solo para lectura; POST para escritura.
+  - ID: convertido a (int) antes de usar en consultas.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- CRUD son las cuatro operaciones fundamentales: Create, Read, Update, Delete.
+- Cada operación CRUD debe asociarse al método HTTP correcto.
+- Los prepared statements de PDO protegen contra inyección SQL.
+- Los tokens CSRF protegen los formularios de escritura.
+- La paginación mejora la usabilidad en listados grandes.
+- Los mensajes flash (con sesiones) dan feedback al usuario tras
+  redirecciones.
+- htmlspecialchars() previene XSS en todas las salidas.
+- La validación server-side es obligatoria en crear y editar.
+- DELETE debe usar POST (nunca GET) y confirmación del usuario.
+- La estructura de archivos separados (crear, editar, eliminar) mantiene el
+  código organizado.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea la base de datos y la tabla "productos" del capítulo.
+Inserta 20 productos de prueba directamente en SQL.
+
+🧩 **Ejercicio 2:** Implementa el listado de productos con paginación (5
+productos por página) y filtro por categoría.
+
+🧩 **Ejercicio 3:** Crea el formulario de creación de productos con
+validación completa (nombre requerido, precio > 0, stock >= 0).
+
+🧩 **Ejercicio 4:** Implementa la edición de productos con los mismos campos
+y validaciones, precargando los datos existentes.
+
+🧩 **Ejercicio 5:** Implementa la eliminación con confirmación JavaScript,
+verificación CSRF y mensaje flash de resultado.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo usar GET o POST para eliminar?** Siempre POST. GET es para
+consultas. DELETE con GET podría ser pre-cargado por el navegador o un bot de
+Google y eliminar datos accidentalmente.
+
+❓ **¿Por qué usar mensajes flash en lugar de mostrar el mensaje directamente?**
+Los mensajes flash sobreviven a una redirección HTTP. Si muestras el mensaje
+directamente y luego rediriges, se pierde. Flash lo guarda en sesión.
+
+❓ **¿Cómo manejo la paginación con filtros?** Incluye todos los parámetros de
+filtro en los enlaces de paginación (q, categoria, etc.) para que los filtros
+se preserven.
+
+❓ **¿Qué es la regeneración del token CSRF?** Después de una operación
+exitosa, generas un nuevo token CSRF para prevenir su reutilización.
+
+❓ **¿Debo validar también en el cliente?** Sí, la validación HTML5 con
+required, min, type="number" mejora la experiencia. Pero nunca confíes solo en
+ella.
+
+❓ **¿Cómo hago para que la tabla sea responsiva?** Agrega
+overflow-x: auto al contenedor de la tabla, o usa un diseño de tarjetas en
+pantallas pequeñas.
+
+❓ **¿Qué hago si tengo muchas columnas?** Muestra las más importantes en el
+listado y usa un botón "Ver detalle" para el resto. También puedes permitir
+que el usuario seleccione qué columnas ver.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema CRUD Completo para Gestión de Biblioteca con Relaciones y Roles**
+
+Construye un sistema CRUD completo para una biblioteca que gestione libros,
+autores, miembros y préstamos. El sistema debe cumplir con:
+
+  1. Base de datos (MySQL con InnoDB):
+     - autores: id, nombre, apellido, fecha_nacimiento, nacionalidad, biografia.
+     - libros: id, titulo, isbn (UNIQUE), autor_id (FK), año, editorial, genero,
+       sinopsis, ejemplares_totales, ejemplares_disponibles, created_at.
+     - miembros: id, nombre, apellido, email (UNIQUE), telefono, direccion,
+       fecha_registro, activo.
+     - prestamos: id, libro_id (FK), miembro_id (FK), fecha_prestamo,
+       fecha_devolucion_estimada, fecha_devolucion_real (NULL), estado.
+
+  2. CRUD de Autores:
+     - Listado con búsqueda por nombre.
+     - Crear: nombre, apellido, fecha_nacimiento, nacionalidad (select), biografia.
+     - Editar: mismos campos.
+     - Eliminar: solo si no tiene libros asociados.
+
+  3. CRUD de Libros:
+     - Listado con búsqueda por título, autor, ISBN. Paginación.
+     - Crear: todos los campos. Select de autores poblado desde BD.
+     - Al crear, ejemplares_disponibles = ejemplares_totales.
+     - Editar: mismos campos.
+     - Eliminar: solo si no tiene préstamos activos.
+
+  4. CRUD de Miembros:
+     - Listado con búsqueda y paginación.
+     - Crear/Editar con validación de email único.
+     - Eliminar: desactivar (borrado lógico, no físico).
+
+  5. Gestión de Préstamos:
+     - Crear préstamo: seleccionar miembro (autocomplete), libro (solo
+       disponibles), fecha_prestamo (hoy), fecha_devolucion_estimada (hoy+7).
+     - Al crear, disminuir ejemplares_disponibles del libro.
+     - Devolver libro: botón que actualiza fecha_devolucion_real y
+       aumenta ejemplares_disponibles.
+     - No permitir préstamo si ejemplares_disponibles = 0.
+     - No permitir préstamo si el miembro tiene más de 3 préstamos activos.
+     - Listado de préstamos activos y devueltos con filtros.
+
+  6. Dashboard (index.php):
+     - Total de libros, autores, miembros, préstamos activos.
+     - Préstamos vencidos (fecha_devolucion_estimada pasada y no devueltos).
+     - Top 5 libros más prestados.
+
+  7. Seguridad y usabilidad:
+     - Tokens CSRF en todos los formularios POST.
+     - Prepared statements en todas las consultas.
+     - htmlspecialchars() en todas las salidas.
+     - Mensajes flash para éxito/error.
+     - Confirmación antes de eliminar.
+     - Validación server-side completa.
+     - Paginación en todos los listados.
+
+  8. Bonus: exportar listado de libros a CSV.
+
+  Criterios de evaluación:
+  - CRUD completo y funcional para las 4 entidades (autores, libros, miembros,
+    préstamos).
+  - Relaciones correctas entre tablas con integridad referencial.
+  - Reglas de negocio implementadas correctamente (stock, límite de préstamos).
+  - Código modular, seguro y bien estructurado.
+  - Interfaz limpia y funcional.
+
+===============================================================================
+FIN DEL CAPÍTULO 49
+===============================================================================
+
+"CRUD es el alfabeto de las aplicaciones de datos; aprende sus cuatro letras y
+podrás escribir cualquier historia." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+50_CAPITULO_50_PROYECTO_MODULO_V.txt
+===============================================================================

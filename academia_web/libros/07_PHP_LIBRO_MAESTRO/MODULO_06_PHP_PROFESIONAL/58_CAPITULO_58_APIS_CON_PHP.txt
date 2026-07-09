@@ -1,0 +1,1303 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                    CAPÍTULO 58: APIS CON PHP
+##
+################################################################################
+
+"Una API no es solo JSON. Es un contrato entre sistemas, un
+lenguaje universal que permite que el software hable con
+software sin necesidad de interfaces humanas."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Las APIs (Application Programming Interfaces) son el corazón de la
+integración moderna. Una aplicación web profesional rara vez está
+sola: se comunica con frontends (React, Vue, Angular), aplicaciones
+móviles (iOS, Android), servicios de terceros (PayPal, Stripe,
+Google) y otros microservicios.
+
+PHP es excelente para construir APIs REST. Con las herramientas
+adecuadas, puedes crear servicios web rápidos, bien estructurados
+y seguros.
+
+En este capítulo aprenderás a:
+  - Diseñar una API RESTful con rutas limpias.
+  - Manejar JSON de entrada y salida.
+  - Implementar autenticación con tokens (JWT).
+  - Versionar tu API.
+  - Documentar con OpenAPI/Swagger.
+  - Manejar errores y códigos HTTP correctamente.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Una API bien diseñada no necesita documentación.
+Una API excelente tiene documentación porque los
+mejores ingenieros piensan en quienes vienen después."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Diseñar una API RESTful con endpoints semánticos.
+✓ Manejar JSON como formato de entrada y salida.
+✓ Implementar un enrutador API con verbos HTTP.
+✓ Autenticar peticiones con API keys y JWT.
+✓ Versionar la API (v1, v2).
+✓ Implementar paginación, filtrado y ordenamiento.
+✓ Manejar errores con códigos HTTP estándar.
+✓ Documentar la API con OpenAPI.
+✓ Construir un cliente API con Guzzle.
+
+===============================================================================
+1. FUNDAMENTOS DE APIs REST
+===============================================================================
+
+REST (Representational State Transfer) es un estilo de arquitectura
+que utiliza los verbos HTTP para operar sobre recursos:
+
+```
+GET     /api/usuarios         → Listar usuarios
+GET     /api/usuarios/{id}    → Ver un usuario
+POST    /api/usuarios         → Crear usuario
+PUT     /api/usuarios/{id}    → Actualizar usuario completo
+PATCH   /api/usuarios/{id}    → Actualizar parcialmente
+DELETE  /api/usuarios/{id}    → Eliminar usuario
+```
+
+Principios REST:
+  - Stateless: cada petición contiene toda la información necesaria.
+  - Cacheable: las respuestas indican si pueden cachearse.
+  - Interface uniforme: URLs consistentes y predecibles.
+  - Cliente-Servidor: separación de responsabilidades.
+
+Códigos de estado HTTP comunes en APIs:
+
+```
+200 OK          → Éxito (GET, PUT, PATCH)
+201 Created     → Recurso creado (POST)
+204 No Content  → Éxito sin contenido (DELETE)
+400 Bad Request → Error del cliente (validación)
+401 Unauthorized → No autenticado
+403 Forbidden   → No autorizado (sin permisos)
+404 Not Found   → Recurso no existe
+409 Conflict    → Conflicto (duplicado)
+422 Unprocessable → Error de validación
+429 Too Many   → Rate limit excedido
+500 Server Error → Error interno
+```
+
+===============================================================================
+2. ESTRUCTURA DEL PROYECTO API
+===============================================================================
+
+```
+api/
+├── public/
+│   └── index.php          ← Front controller API
+├── src/
+│   ├── Controllers/
+│   │   ├── UsuarioController.php
+│   │   ├── AuthController.php
+│   │   └── ProductoController.php
+│   ├── Middleware/
+│   │   ├── AuthMiddleware.php
+│   │   ├── CorsMiddleware.php
+│   │   └── RateLimitMiddleware.php
+│   ├── Models/
+│   │   └── Usuario.php
+│   ├── Core/
+│   │   ├── Router.php
+│   │   ├── Request.php
+│   │   └── Response.php
+│   └── Validators/
+│       └── UsuarioValidator.php
+├── config/
+│   ├── database.php
+│   └── app.php
+├── routes/
+│   └── api.php
+├── storage/
+│   └── logs/
+├── vendor/
+└── composer.json
+```
+
+===============================================================================
+3. FRONT CONTROLLER PARA API
+===============================================================================
+
+```php
+<?php
+// public/index.php
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use App\Core\Router;
+use App\Core\Request;
+use App\Core\Response;
+
+// Configurar cabeceras CORS y JSON
+header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+
+// Manejar preflight CORS
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+// Inicializar
+$router = new Router();
+$request = new Request();
+
+// Cargar rutas
+require_once __DIR__ . '/../routes/api.php';
+
+// Despachar
+try {
+    $router->dispatch($request);
+} catch (\Throwable $e) {
+    Response::error(500, 'Error interno del servidor', [
+        'message' => $e->getMessage(),
+    ]);
+}
+```
+
+===============================================================================
+4. CLASE REQUEST Y RESPONSE
+===============================================================================
+
+```php
+<?php
+// src/Core/Request.php
+namespace App\Core;
+
+class Request
+{
+    private array $body;
+    private array $query;
+    private array $headers;
+
+    public function __construct()
+    {
+        $this->body    = json_decode(file_get_contents('php://input'), true) ?? [];
+        $this->query   = $_GET;
+        $this->headers = $this->parseHeaders();
+    }
+
+    private function parseHeaders(): array
+    {
+        $headers = [];
+        foreach ($_SERVER as $key => $value) {
+            if (str_starts_with($key, 'HTTP_')) {
+                $header = str_replace('_', '-', substr($key, 5));
+                $headers[$header] = $value;
+            }
+        }
+        return $headers;
+    }
+
+    public function getMethod(): string
+    {
+        return $_SERVER['REQUEST_METHOD'];
+    }
+
+    public function getUri(): string
+    {
+        $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+        return rtrim($uri, '/');
+    }
+
+    public function input(string $key, mixed $default = null): mixed
+    {
+        return $this->body[$key] ?? $_POST[$key] ?? $default;
+    }
+
+    public function all(): array
+    {
+        return array_merge($_GET, $this->body);
+    }
+
+    public function query(string $key, mixed $default = null): mixed
+    {
+        return $this->query[$key] ?? $default;
+    }
+
+    public function header(string $key, ?string $default = null): ?string
+    {
+        return $this->headers[$key] ?? $_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $key))] ?? $default;
+    }
+
+    public function bearerToken(): ?string
+    {
+        $auth = $this->header('Authorization');
+        if ($auth && str_starts_with($auth, 'Bearer ')) {
+            return substr($auth, 7);
+        }
+        return null;
+    }
+}
+```
+
+```php
+<?php
+// src/Core/Response.php
+namespace App\Core;
+
+class Response
+{
+    public static function json(mixed $data, int $status = 200): void
+    {
+        http_response_code($status);
+        echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    public static function success(mixed $data, string $message = 'OK', int $status = 200): void
+    {
+        self::json([
+            'success' => true,
+            'message' => $message,
+            'data'    => $data,
+        ], $status);
+    }
+
+    public static function created(mixed $data, string $message = 'Creado'): void
+    {
+        self::success($data, $message, 201);
+    }
+
+    public static function noContent(): void
+    {
+        http_response_code(204);
+        exit;
+    }
+
+    public static function error(int $status, string $message, array $details = []): void
+    {
+        self::json([
+            'success' => false,
+            'error'   => [
+                'code'    => $status,
+                'message' => $message,
+                'details' => $details,
+            ],
+        ], $status);
+    }
+
+    public static function paginated(array $items, int $total, int $page, int $perPage): void
+    {
+        $lastPage = (int) ceil($total / $perPage);
+
+        self::json([
+            'success' => true,
+            'data'    => $items,
+            'meta'    => [
+                'current_page' => $page,
+                'per_page'     => $perPage,
+                'total'        => $total,
+                'last_page'    => $lastPage,
+                'has_more'     => $page < $lastPage,
+            ],
+        ]);
+    }
+}
+```
+
+===============================================================================
+5. ROUTER PARA API
+===============================================================================
+
+```php
+<?php
+// src/Core/Router.php
+namespace App\Core;
+
+class Router
+{
+    private array $routes = [];
+
+    public function get(string $pattern, string $handler): void
+    {
+        $this->add('GET', $pattern, $handler);
+    }
+
+    public function post(string $pattern, string $handler): void
+    {
+        $this->add('POST', $pattern, $handler);
+    }
+
+    public function put(string $pattern, string $handler): void
+    {
+        $this->add('PUT', $pattern, $handler);
+    }
+
+    public function patch(string $pattern, string $handler): void
+    {
+        $this->add('PATCH', $pattern, $handler);
+    }
+
+    public function delete(string $pattern, string $handler): void
+    {
+        $this->add('DELETE', $pattern, $handler);
+    }
+
+    private function add(string $method, string $pattern, string $handler): void
+    {
+        $pattern = preg_replace('/\{(\w+)\}/', '(?P<$1>[^/]+)', $pattern);
+        $pattern = '#^' . $pattern . '$#';
+
+        $this->routes[] = [
+            'method'  => $method,
+            'pattern' => $pattern,
+            'handler' => $handler,
+        ];
+    }
+
+    public function dispatch(Request $request): void
+    {
+        $method = $request->getMethod();
+        $uri    = $request->getUri();
+
+        foreach ($this->routes as $route) {
+            if ($route['method'] !== $method) {
+                continue;
+            }
+
+            if (preg_match($route['pattern'], $uri, $matches)) {
+                $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+                [$controllerName, $action] = explode('@', $route['handler']);
+
+                $controllerClass = "App\\Controllers\\{$controllerName}";
+
+                if (!class_exists($controllerClass)) {
+                    Response::error(500, "Controlador {$controllerName} no encontrado");
+                }
+
+                $controller = new $controllerClass();
+                $controller->$action($request, ...array_values($params));
+                return;
+            }
+        }
+
+        Response::error(404, 'Endpoint no encontrado');
+    }
+}
+```
+
+===============================================================================
+6. DEFINICIÓN DE RUTAS
+===============================================================================
+
+```php
+<?php
+// routes/api.php
+
+use App\Core\Router;
+use App\Core\Request;
+
+/** @var Router $router */
+
+// API v1
+$router->get('/api/v1/usuarios', 'UsuarioController@index');
+$router->get('/api/v1/usuarios/{id}', 'UsuarioController@show');
+$router->post('/api/v1/usuarios', 'UsuarioController@store');
+$router->put('/api/v1/usuarios/{id}', 'UsuarioController@update');
+$router->patch('/api/v1/usuarios/{id}', 'UsuarioController@partialUpdate');
+$router->delete('/api/v1/usuarios/{id}', 'UsuarioController@destroy');
+
+// Auth
+$router->post('/api/v1/auth/login', 'AuthController@login');
+$router->post('/api/v1/auth/register', 'AuthController@register');
+$router->post('/api/v1/auth/logout', 'AuthController@logout');
+$router->post('/api/v1/auth/refresh', 'AuthController@refresh');
+
+// Productos
+$router->get('/api/v1/productos', 'ProductoController@index');
+$router->get('/api/v1/productos/{id}', 'ProductoController@show');
+$router->post('/api/v1/productos', 'ProductoController@store');
+$router->put('/api/v1/productos/{id}', 'ProductoController@update');
+$router->delete('/api/v1/productos/{id}', 'ProductoController@destroy');
+
+// Health check
+$router->get('/api/health', function (Request $request) {
+    Response::json([
+        'status'  => 'ok',
+        'time'    => date('c'),
+        'version' => '1.0.0',
+        'php'     => PHP_VERSION,
+    ]);
+});
+```
+
+===============================================================================
+7. CONTROLADOR DE API
+===============================================================================
+
+```php
+<?php
+// src/Controllers/UsuarioController.php
+namespace App\Controllers;
+
+use App\Core\Request;
+use App\Core\Response;
+use App\Models\Usuario;
+use App\Validators\UsuarioValidator;
+
+class UsuarioController
+{
+    private Usuario $model;
+
+    public function __construct()
+    {
+        $this->model = new Usuario();
+    }
+
+    public function index(Request $request): void
+    {
+        $page    = (int) ($request->query('page', 1));
+        $perPage = (int) ($request->query('per_page', 15));
+        $search  = $request->query('search', '');
+        $orderBy = $request->query('order_by', 'id');
+        $orderDir = strtoupper($request->query('order_dir', 'DESC'));
+
+        // Validar parámetros
+        $perPage = min(max($perPage, 1), 100);
+        $page    = max($page, 1);
+        $orderDir = in_array($orderDir, ['ASC', 'DESC']) ? $orderDir : 'DESC';
+
+        $result = $this->model->paginate($page, $perPage, $search, $orderBy, $orderDir);
+
+        Response::paginated(
+            $result['data'],
+            $result['total'],
+            $page,
+            $perPage
+        );
+    }
+
+    public function show(Request $request, int $id): void
+    {
+        $usuario = $this->model->findById($id);
+
+        if (!$usuario) {
+            Response::error(404, 'Usuario no encontrado');
+            return;
+        }
+
+        // No exponer el hash de contraseña
+        unset($usuario['password']);
+
+        Response::success($usuario);
+    }
+
+    public function store(Request $request): void
+    {
+        $data = $request->all();
+
+        $validator = new UsuarioValidator();
+        $errors = $validator->validate($data);
+
+        if (!empty($errors)) {
+            Response::error(422, 'Error de validación', $errors);
+            return;
+        }
+
+        try {
+            $id = $this->model->create($data);
+            $usuario = $this->model->findById($id);
+            unset($usuario['password']);
+
+            Response::created($usuario, 'Usuario creado exitosamente');
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '23000') {
+                Response::error(409, 'El email ya está registrado');
+                return;
+            }
+            throw $e;
+        }
+    }
+
+    public function update(Request $request, int $id): void
+    {
+        $usuario = $this->model->findById($id);
+        if (!$usuario) {
+            Response::error(404, 'Usuario no encontrado');
+            return;
+        }
+
+        $data = $request->all();
+
+        // No permitir cambiar el email si ya existe
+        if (isset($data['email'])) {
+            $exists = $this->model->findByEmail($data['email']);
+            if ($exists && $exists['id'] !== $id) {
+                Response::error(409, 'El email ya está en uso');
+                return;
+            }
+        }
+
+        $this->model->update($id, $data);
+        $usuario = $this->model->findById($id);
+        unset($usuario['password']);
+
+        Response::success($usuario, 'Usuario actualizado');
+    }
+
+    public function destroy(Request $request, int $id): void
+    {
+        $usuario = $this->model->findById($id);
+        if (!$usuario) {
+            Response::error(404, 'Usuario no encontrado');
+            return;
+        }
+
+        $this->model->delete($id);
+        Response::noContent();
+    }
+}
+```
+
+===============================================================================
+8. AUTENTICACIÓN CON JWT
+===============================================================================
+
+JWT (JSON Web Token) es el estándar para autenticación en APIs.
+
+```bash
+composer require firebase/php-jwt
+```
+
+```php
+<?php
+// src/Core/Jwt.php
+namespace App\Core;
+
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+
+class JwtHandler
+{
+    private static string $secretKey = 'tu-clave-secreta-aqui-cambiar-en-produccion';
+
+    public static function generateToken(array $payload): string
+    {
+        $issuedAt  = time();
+        $expiresAt = $issuedAt + 3600; // 1 hora
+
+        $token = [
+            'iat'   => $issuedAt,
+            'exp'   => $expiresAt,
+            'iss'   => 'mi-app-api',
+            'sub'   => $payload['user_id'],
+            'data'  => [
+                'user_id' => $payload['user_id'],
+                'email'   => $payload['email'],
+                'rol'     => $payload['rol'],
+            ],
+        ];
+
+        return JWT::encode($token, self::$secretKey, 'HS256');
+    }
+
+    public static function validateToken(string $token): object
+    {
+        return JWT::decode($token, new Key(self::$secretKey, 'HS256'));
+    }
+
+    public static function refreshToken(string $token): ?string
+    {
+        try {
+            $decoded = self::validateToken($token);
+            return self::generateToken((array) $decoded->data);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+}
+```
+
+===============================================================================
+9. MIDDLEWARE DE AUTENTICACIÓN
+===============================================================================
+
+```php
+<?php
+// src/Middleware/AuthMiddleware.php
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+use App\Core\JwtHandler;
+
+class AuthMiddleware
+{
+    public static function authenticate(Request $request): void
+    {
+        $token = $request->bearerToken();
+
+        if (!$token) {
+            Response::error(401, 'Token de autenticación requerido');
+        }
+
+        try {
+            $decoded = JwtHandler::validateToken($token);
+            $request->setAttribute('user', (array) $decoded->data);
+        } catch (\Throwable $e) {
+            Response::error(401, 'Token inválido o expirado');
+        }
+    }
+}
+
+// src/Middleware/RateLimitMiddleware.php
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+
+class RateLimitMiddleware
+{
+    private static array $limits = [];
+
+    public static function limit(int $maxRequests = 60, int $window = 60): void
+    {
+        $ip = $_SERVER['REMOTE_ADDR'];
+        $key = "rate_limit:{$ip}";
+        $now = time();
+
+        // Limpiar entradas antiguas
+        self::$limits[$key] = array_filter(
+            self::$limits[$key] ?? [],
+            fn(int $time) => $time > ($now - $window)
+        );
+
+        if (count(self::$limits[$key]) >= $maxRequests) {
+            Response::error(429, 'Demasiadas peticiones. Intenta más tarde.');
+        }
+
+        self::$limits[$key][] = $now;
+    }
+}
+
+// src/Middleware/CorsMiddleware.php
+namespace App\Middleware;
+
+class CorsMiddleware
+{
+    public static function handle(): void
+    {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type, Authorization');
+        header('Access-Control-Max-Age: 86400');
+
+        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+            http_response_code(204);
+            exit;
+        }
+    }
+}
+```
+
+Uso en rutas:
+
+```php
+<?php
+// routes/api.php
+use App\Middleware\AuthMiddleware;
+use App\Middleware\RateLimitMiddleware;
+
+// Rutas públicas (sin autenticación)
+$router->post('/api/v1/auth/login', 'AuthController@login');
+$router->post('/api/v1/auth/register', 'AuthController@register');
+$router->get('/api/health', 'HealthController@check');
+
+// Rutas protegidas (con autenticación)
+$router->get('/api/v1/usuarios', function (Request $request) {
+    AuthMiddleware::authenticate($request);
+    RateLimitMiddleware::limit(30, 60);
+
+    $controller = new \App\Controllers\UsuarioController();
+    $controller->index($request);
+});
+
+// O mejor: agrupar rutas protegidas
+function protectedRoute(Router $router, string $method, string $pattern, string $handler): void
+{
+    $router->add($method, $pattern, function (Request $request) use ($handler) {
+        AuthMiddleware::authenticate($request);
+        RateLimitMiddleware::limit(60, 60);
+
+        [$controllerName, $action] = explode('@', $handler);
+        $controllerClass = "App\\Controllers\\{$controllerName}";
+        $controller = new $controllerClass();
+        $controller->$action($request);
+    });
+}
+```
+
+===============================================================================
+10. VALIDACIÓN EN APIs
+===============================================================================
+
+```php
+<?php
+// src/Validators/UsuarioValidator.php
+namespace App\Validators;
+
+class UsuarioValidator
+{
+    public function validate(array $data, bool $isUpdate = false): array
+    {
+        $errors = [];
+
+        if (!$isUpdate || isset($data['nombre'])) {
+            if (empty($data['nombre'])) {
+                $errors['nombre'] = 'El nombre es requerido';
+            } elseif (strlen($data['nombre']) < 3) {
+                $errors['nombre'] = 'El nombre debe tener al menos 3 caracteres';
+            }
+        }
+
+        if (!$isUpdate || isset($data['email'])) {
+            if (empty($data['email'])) {
+                $errors['email'] = 'El email es requerido';
+            } elseif (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+                $errors['email'] = 'El email no es válido';
+            }
+        }
+
+        if (!$isUpdate || isset($data['password'])) {
+            if (!$isUpdate) {
+                if (empty($data['password'])) {
+                    $errors['password'] = 'La contraseña es requerida';
+                } elseif (strlen($data['password']) < 8) {
+                    $errors['password'] = 'La contraseña debe tener al menos 8 caracteres';
+                }
+            }
+        }
+
+        return $errors;
+    }
+}
+```
+
+Para validación fluida en APIs:
+
+```php
+<?php
+// src/Core/Validator.php
+namespace App\Core;
+
+class Validator
+{
+    private array $errors = [];
+    private array $data;
+
+    public function __construct(array $data)
+    {
+        $this->data = $data;
+    }
+
+    public function required(string $field, string $label = ''): static
+    {
+        if (empty($this->data[$field])) {
+            $this->errors[$field][] = ($label ?: $field) . ' es requerido';
+        }
+        return $this;
+    }
+
+    public function email(string $field): static
+    {
+        if (!empty($this->data[$field]) && !filter_var($this->data[$field], FILTER_VALIDATE_EMAIL)) {
+            $this->errors[$field][] = 'Email no válido';
+        }
+        return $this;
+    }
+
+    public function min(string $field, int $length): static
+    {
+        if (!empty($this->data[$field]) && strlen($this->data[$field]) < $length) {
+            $this->errors[$field][] = "Mínimo $length caracteres";
+        }
+        return $this;
+    }
+
+    public function max(string $field, int $length): static
+    {
+        if (!empty($this->data[$field]) && strlen($this->data[$field]) > $length) {
+            $this->errors[$field][] = "Máximo $length caracteres";
+        }
+        return $this;
+    }
+
+    public function numeric(string $field): static
+    {
+        if (!empty($this->data[$field]) && !is_numeric($this->data[$field])) {
+            $this->errors[$field][] = 'Debe ser un número';
+        }
+        return $this;
+    }
+
+    public function inArray(string $field, array $options): static
+    {
+        if (!empty($this->data[$field]) && !in_array($this->data[$field], $options)) {
+            $this->errors[$field][] = 'Valor no permitido';
+        }
+        return $this;
+    }
+
+    public function passes(): bool
+    {
+        return empty($this->errors);
+    }
+
+    public function errors(): array
+    {
+        $result = [];
+        foreach ($this->errors as $field => $msgs) {
+            $result[$field] = $msgs[0]; // Solo primer error por campo
+        }
+        return $result;
+    }
+}
+```
+
+===============================================================================
+11. PAGINACIÓN, FILTRADO Y ORDENAMIENTO
+===============================================================================
+
+```php
+<?php
+// src/Core/QueryBuilder.php
+namespace App\Core;
+
+class QueryBuilder
+{
+    private \PDO $db;
+    private string $table;
+    private array $wheres = [];
+    private array $params = [];
+    private ?string $orderBy = null;
+    private ?string $orderDir = 'ASC';
+    private ?int $limit = null;
+    private ?int $offset = null;
+
+    public function __construct(\PDO $db, string $table)
+    {
+        $this->db    = $db;
+        $this->table = $table;
+    }
+
+    public function where(string $column, string $operator, mixed $value): static
+    {
+        $this->wheres[] = "$column $operator :where_" . count($this->params);
+        $this->params[":where_" . (count($this->params))] = $value;
+        return $this;
+    }
+
+    public function search(array $columns, string $term): static
+    {
+        if (!empty($term)) {
+            $conditions = [];
+            foreach ($columns as $col) {
+                $param = ':search_' . str_replace('.', '_', $col);
+                $conditions[] = "$col LIKE $param";
+                $this->params[$param] = "%$term%";
+            }
+            $this->wheres[] = '(' . implode(' OR ', $conditions) . ')';
+        }
+        return $this;
+    }
+
+    public function orderBy(string $column, string $direction = 'ASC'): static
+    {
+        $this->orderBy = $column;
+        $this->orderDir = strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC';
+        return $this;
+    }
+
+    public function paginate(int $page = 1, int $perPage = 15): array
+    {
+        $this->limit  = $perPage;
+        $this->offset = ($page - 1) * $perPage;
+
+        // Count total
+        $countSql = "SELECT COUNT(*) FROM {$this->table}";
+        if (!empty($this->wheres)) {
+            $countSql .= ' WHERE ' . implode(' AND ', $this->wheres);
+        }
+        $stmt = $this->db->prepare($countSql);
+        $stmt->execute($this->params);
+        $total = (int) $stmt->fetchColumn();
+
+        // Get data
+        $dataSql = "SELECT * FROM {$this->table}";
+        if (!empty($this->wheres)) {
+            $dataSql .= ' WHERE ' . implode(' AND ', $this->wheres);
+        }
+        if ($this->orderBy) {
+            $dataSql .= " ORDER BY {$this->orderBy} {$this->orderDir}";
+        }
+        $dataSql .= " LIMIT {$this->limit} OFFSET {$this->offset}";
+
+        $stmt = $this->db->prepare($dataSql);
+        $stmt->execute($this->params);
+        $data = $stmt->fetchAll();
+
+        return [
+            'data'  => $data,
+            'total' => $total,
+            'page'  => $page,
+            'per_page' => $perPage,
+            'last_page' => (int) ceil($total / $perPage),
+        ];
+    }
+}
+```
+
+Uso en controlador:
+
+```php
+<?php
+$db = \App\Core\Database::connect();
+
+$result = (new QueryBuilder($db, 'usuarios'))
+    ->search(['nombre', 'email'], $request->query('search', ''))
+    ->where('activo', '=', 1)
+    ->orderBy($request->query('order_by', 'id'), $request->query('order_dir', 'DESC'))
+    ->paginate(
+        (int) $request->query('page', 1),
+        (int) $request->query('per_page', 20)
+    );
+
+Response::paginated($result['data'], $result['total'], $result['page'], $result['per_page']);
+```
+
+===============================================================================
+12. DOCUMENTACIÓN CON OPENAPI
+===============================================================================
+
+Documentar APIs con OpenAPI (Swagger):
+
+```yaml
+# api-docs/openapi.yaml
+openapi: 3.0.3
+info:
+  title: Mi App API
+  description: API REST para gestión de usuarios
+  version: 1.0.0
+  contact:
+    name: Equipo de Desarrollo
+    email: dev@mi-app.com
+
+servers:
+  - url: https://api.mi-app.com/v1
+    description: Producción
+  - url: http://localhost:8000/api/v1
+    description: Desarrollo
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Usuario:
+      type: object
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+        email:
+          type: string
+          format: email
+        rol:
+          type: string
+          enum: [admin, editor, user]
+        creado_en:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+            message:
+              type: string
+            details:
+              type: object
+
+paths:
+  /usuarios:
+    get:
+      summary: Listar usuarios
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            default: 15
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista paginada de usuarios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Usuario'
+                  meta:
+                    type: object
+                    properties:
+                      current_page:
+                        type: integer
+                      per_page:
+                        type: integer
+                      total:
+                        type: integer
+                      last_page:
+                        type: integer
+        '401':
+          description: No autenticado
+
+    post:
+      summary: Crear usuario
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre, email, password]
+              properties:
+                nombre:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '201':
+          description: Usuario creado
+        '422':
+          description: Error de validación
+```
+
+Para servir la documentación, puedes usar Swagger UI:
+
+```bash
+# Opción 1: Descargar Swagger UI
+# https://github.com/swagger-api/swagger-ui/releases
+
+# Opción 2: Usar un paquete PHP
+composer require swagger-api/swagger-ui
+```
+
+```php
+<?php
+// routes/api.php - Ruta para docs
+$router->get('/api/docs', function () {
+    $html = file_get_contents(__DIR__ . '/../api-docs/index.html');
+    echo $html;
+});
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- REST usa verbos HTTP (GET, POST, PUT, PATCH, DELETE) sobre recursos.
+- Las APIs devuelven JSON con códigos HTTP estándar.
+- El front controller configura CORS, Content-Type y maneja rutas.
+- Request encapsula la entrada (body, query, headers).
+- Response estandariza la salida JSON (success, error, paginated).
+- El router API mapea métodos HTTP + patrón a controladores.
+- JWT (JSON Web Token) es el estándar para autenticación en APIs.
+- Los middleware manejan autenticación, rate limiting y CORS.
+- La validación en APIs debe devolver errores con código 422.
+- QueryBuilder permite paginación, búsqueda y ordenamiento.
+- OpenAPI/Swagger documenta la API de forma estándar.
+- Las APIs deben versionarse (/api/v1/) para evolucionar sin romper
+  clientes.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea una API REST completa para un CRUD de
+   productos con campos: id, nombre, precio, stock, categoria_id.
+   Implementa paginación, filtrado por categoría y búsqueda.
+
+🧩 **Ejercicio 2:** Implementa autenticación JWT completa:
+   login, register, logout, refresh token. El token debe expirar
+   en 1 hora y renovarse con refresh token de 7 días.
+
+🧩 **Ejercicio 3:** Agrega rate limiting por IP usando archivos
+   o Redis. Limita a 100 peticiones por minuto para endpoints
+   públicos y 1000 para autenticados.
+
+🧩 **Ejercicio 4:** Crea un cliente API con Guzzle que consuma
+   tu propia API. Implementa un método que autentique, obtenga
+   usuarios y los muestre en tabla.
+
+🧩 **Ejercicio 5:** Documenta tu API de productos con OpenAPI.
+   Incluye schemas, parámetros, respuestas y ejemplos. Usa
+   Swagger UI para visualizarla.
+
+🧩 **Ejercicio 6:** Versiona tu API. Crea /api/v1/productos y
+   /api/v2/productos. La v2 debe incluir un campo adicional
+   (descuento) y cambiar el formato de respuesta.
+
+🧩 **Ejercicio 7:** Implementa un sistema de webhooks. Cuando
+   se cree un usuario, dispara un webhook POST a las URLs
+   registradas por los clientes. Los clientes se registran
+   mediante la API.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Qué diferencia hay entre PUT y PATCH?**
+   PUT reemplaza el recurso completo. Si no envías todos los campos,
+   se actualizan con null. PATCH solo actualiza los campos enviados.
+   PUT es idempotente (múltiples llamadas = mismo resultado).
+
+❓ **¿Debo usar JWT o sesiones para APIs?**
+   JWT es el estándar para APIs porque es stateless (no requiere BD
+   para validar). Las sesiones son stateful (requieren almacenamiento
+   en servidor). Para APIs móviles y SPA, JWT es mejor.
+
+❓ **¿Cómo manejo CORS en producción?**
+   En producción, no uses Access-Control-Allow-Origin: *. Especifica
+   los orígenes permitidos. Lee el header Origin de la petición y
+   valida contra una lista blanca.
+
+❓ **¿Cómo pruebo mi API?**
+   Usa herramientas como Postman, Insomnia, o cURL. También puedes
+   escribir tests con PHPUnit y Guzzle para pruebas automatizadas.
+
+❓ **¿Qué hago con errores 500 en producción?**
+   Captura todas las excepciones en el front controller, registra
+   el error en logs, y devuelve un JSON genérico sin detalles
+   internos. Nunca expongas stack traces en producción.
+
+❓ **¿Cómo manejo la paginación en el cliente?**
+   Devuelve metadatos: current_page, per_page, total, last_page,
+   has_more. El cliente usa page=N para navegar. Puedes incluir
+   URLs de first, prev, next, last en la respuesta.
+
+❓ **¿Debo usar HATEOAS en mis APIs?**
+   HATEOAS (Hypermedia as the Engine of Application State) incluye
+   enlaces en las respuestas para que el cliente descubra la API.
+   Es opcional pero mejora la discoverability. Ejemplo:
+   "links": {"self": "/api/v1/usuarios/1", "edit": "/api/v1/usuarios/1"}
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **API REST Profesional con Microservicios**
+
+   Construye una plataforma completa con múltiples APIs:
+
+   1. API de Autenticación (Auth Service):
+      - Register, Login, Logout, Refresh Token.
+      - 2FA con TOTP.
+      - OAuth2 con GitHub y Google.
+
+   2. API de Usuarios (User Service):
+      - CRUD completo con roles y permisos.
+      - Búsqueda avanzada con filtros combinados.
+      - Exportación a CSV y PDF.
+
+   3. API de Contenido (Content Service):
+      - CRUD de artículos con categorías y tags.
+      - Subida de imágenes con redimensionado automático.
+      - Versionado de contenido (historial de cambios).
+
+   4. API de Notificaciones (Notification Service):
+      - Envío de emails, SMS y notificaciones push.
+      - Webhooks para eventos del sistema.
+      - Cola de notificaciones con procesamiento async.
+
+   5. Gateway API:
+      - Punto de entrada único (/api/).
+      - Enrutamiento a servicios internos.
+      - Rate limiting global.
+      - Logging centralizado.
+      - Caché de respuestas.
+
+   Cada microservicio debe:
+      - Tener su propio composer.json y autoload.
+      - Estar documentado con OpenAPI.
+      - Tener tests unitarios y de integración.
+      - Implementar logging con Monolog.
+      - Usar variables de entorno para configuración.
+
+   El Gateway expone rutas como:
+   ```
+   POST /api/auth/login
+   GET  /api/users (→ User Service)
+   GET  /api/articles (→ Content Service)
+   POST /api/notifications/send (→ Notification Service)
+   ```
+
+   Este desafío integra todos los módulos del curso en un sistema
+   distribuido profesional.
+
+===============================================================================
+FIN DEL CAPÍTULO 58
+===============================================================================
+
+"Una API no es solo código que responde JSON. Es un puente entre
+sistemas, un contrato que debe ser claro, justo y duradero."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+59_CAPITULO_59_OPTIMIZACION.txt
+===============================================================================

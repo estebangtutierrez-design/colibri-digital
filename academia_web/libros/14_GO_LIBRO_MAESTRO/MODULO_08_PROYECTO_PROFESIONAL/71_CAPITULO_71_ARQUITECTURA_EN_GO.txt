@@ -1,0 +1,1113 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 71: ARQUITECTURA EN GO                       ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, gran arquitecto. Has llegado al módulo profesional de GO
+Master Book. Aquí dejamos atrás los fundamentos y nos adentramos en
+el diseño de sistemas reales. En este capítulo aprenderás a organizar
+proyectos Go de forma profesional: estructura de directorios, layout
+estándar, inyección de dependencias, y herramientas como Wire.
+
+FRASE MOTIVACIONAL
+──────────────────
+"La arquitectura no es solo el esqueleto del código; es el lenguaje
+con el que el sistema le cuenta su historia a quien lo mantiene."
+— Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Comprender el layout estándar de proyectos Go (cmd/internal/pkg).
+2. Diseñar una estructura limpia y escalable desde el día uno.
+3. Implementar inyección de dependencias manual y con Wire.
+4. Separar responsabilidades usando paquetes y capas.
+5. Escribir código que otros desarrolladores amen mantener.
+6. Conocer anti-patrones de organización en Go.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. EL LAYOUT ESTÁNDAR DE GO
+───────────────────────────
+
+Go no impone una estructura de proyecto oficial, pero la comunidad
+ha adoptado el layout estándar que encontramos en github.com/golang-
+standards/project-layout. Este patrón separa el código en:
+
+  myproject/
+  ├── cmd/
+  │   └── myapp/
+  │       └── main.go
+  ├── internal/
+  │   ├── handler/
+  │   ├── service/
+  │   └── repository/
+  ├── pkg/
+  │   └── mylib/
+  ├── api/
+  ├── web/
+  ├── config/
+  ├── scripts/
+  └── go.mod
+
+• cmd/: Puntos de entrada de la aplicación. Cada subdirectorio es un
+  binario diferente. El código aquí debe ser mínimo: solo inicializar
+  dependencias, leer config, y lanzar el servidor/CLI.
+• internal/: Código privado que Go prohíbe importar desde fuera del
+  módulo. Es la mejor práctica para ocultar implementaciones.
+• pkg/: Código que SÍ puede ser importado por otros módulos. Usar con
+  criterio; no todo debe ser público.
+• api/: Definiciones protobuf, OpenAPI, etc.
+• web/: Assets estáticos, templates HTML.
+
+Ejemplo mínimo de cmd/server/main.go:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "myproject/internal/handler"
+    "myproject/internal/repository"
+    "myproject/internal/service"
+)
+
+func main() {
+    // 1. Configuración
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+
+    // 2. Inicializar capas (inyección manual)
+    repo := repository.NewMemoryRepository()
+    svc := service.NewUserService(repo)
+    h := handler.NewHTTPHandler(svc)
+
+    // 3. Router
+    mux := http.NewServeMux()
+    mux.HandleFunc("GET /users", h.ListUsers)
+    mux.HandleFunc("POST /users", h.CreateUser)
+
+    // 4. Servidor con graceful shutdown
+    srv := &http.Server{
+        Addr:    ":" + port,
+        Handler: mux,
+    }
+
+    go func() {
+        log.Printf("Servidor escuchando en :%s", port)
+        if err := srv.ListenAndServe(); err != nil &&
+            err != http.ErrServerClosed {
+            log.Fatalf("error en servidor: %v", err)
+        }
+    }()
+
+    // 5. Esperar señal de terminación
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+    <-quit
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    if err := srv.Shutdown(ctx); err != nil {
+        log.Fatalf("error en shutdown: %v", err)
+    }
+}
+```
+
+2. CAPAS ARQUITECTÓNICAS
+────────────────────────
+
+La arquitectura en capas es el patrón más común en Go. Cada capa
+tiene una responsabilidad única y se comunica con la siguiente a
+través de interfaces.
+
+  ┌─────────────────────────────────────────────┐
+  │           HANDLER (transporte)              │
+  │  HTTP / gRPC / CLI → recibe requests        │
+  ├─────────────────────────────────────────────┤
+  │           SERVICE (negocio)                 │
+  │  Lógica de negocio, orquestación            │
+  ├─────────────────────────────────────────────┤
+  │        REPOSITORY (datos)                   │
+  │  Base de datos, API externa, archivos       │
+  └─────────────────────────────────────────────┘
+
+Ejemplo completo de cada capa:
+
+handler/user_handler.go:
+
+```go
+package handler
+
+import (
+    "encoding/json"
+    "net/http"
+    "strconv"
+
+    "myproject/internal/service"
+)
+
+type UserHandler struct {
+    svc *service.UserService
+}
+
+func NewUserHandler(svc *service.UserService) *UserHandler {
+    return &UserHandler{svc: svc}
+}
+
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+type UserResponse struct {
+    ID    int    `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+    var req CreateUserRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "invalid request body", http.StatusBadRequest)
+        return
+    }
+    if req.Name == "" || req.Email == "" {
+        http.Error(w, "name and email are required", http.StatusBadRequest)
+        return
+    }
+    user, err := h.svc.CreateUser(r.Context(), req.Name, req.Email)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    json.NewEncoder(w).Encode(UserResponse{
+        ID:    user.ID,
+        Name:  user.Name,
+        Email: user.Email,
+    })
+}
+
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+    users, err := h.svc.ListUsers(r.Context())
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    var resp []UserResponse
+    for _, u := range users {
+        resp = append(resp, UserResponse{
+            ID:    u.ID,
+            Name:  u.Name,
+            Email: u.Email,
+        })
+    }
+    json.NewEncoder(w).Encode(resp)
+}
+
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+    idStr := r.PathValue("id")
+    id, err := strconv.Atoi(idStr)
+    if err != nil {
+        http.Error(w, "invalid id", http.StatusBadRequest)
+        return
+    }
+    user, err := h.svc.GetUser(r.Context(), id)
+    if err != nil {
+        http.Error(w, "user not found", http.StatusNotFound)
+        return
+    }
+    json.NewEncoder(w).Encode(UserResponse{
+        ID:    user.ID,
+        Name:  user.Name,
+        Email: user.Email,
+    })
+}
+```
+
+service/user_service.go:
+
+```go
+package service
+
+import (
+    "context"
+    "errors"
+    "regexp"
+    "strings"
+
+    "myproject/internal/repository"
+    "myproject/internal/model"
+)
+
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+type UserService struct {
+    repo repository.UserRepository
+}
+
+func NewUserService(repo repository.UserRepository) *UserService {
+    return &UserService{repo: repo}
+}
+
+func (s *UserService) CreateUser(ctx context.Context, name, email string) (*model.User, error) {
+    name = strings.TrimSpace(name)
+    email = strings.TrimSpace(strings.ToLower(email))
+
+    if name == "" {
+        return nil, errors.New("name cannot be empty")
+    }
+    if len(name) > 100 {
+        return nil, errors.New("name too long (max 100 characters)")
+    }
+    if !emailRegex.MatchString(email) {
+        return nil, errors.New("invalid email format")
+    }
+    existing, _ := s.repo.FindByEmail(ctx, email)
+    if existing != nil {
+        return nil, errors.New("email already registered")
+    }
+    user := &model.User{
+        Name:  name,
+        Email: email,
+    }
+    if err := s.repo.Create(ctx, user); err != nil {
+        return nil, err
+    }
+    return user, nil
+}
+
+func (s *UserService) GetUser(ctx context.Context, id int) (*model.User, error) {
+    if id <= 0 {
+        return nil, errors.New("invalid user id")
+    }
+    user, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, errors.New("user not found")
+    }
+    return user, nil
+}
+
+func (s *UserService) ListUsers(ctx context.Context) ([]*model.User, error) {
+    return s.repo.FindAll(ctx)
+}
+
+func (s *UserService) UpdateUser(ctx context.Context, id int, name, email string) (*model.User, error) {
+    user, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, errors.New("user not found")
+    }
+    if name != "" {
+        name = strings.TrimSpace(name)
+        if len(name) > 100 {
+            return nil, errors.New("name too long")
+        }
+        user.Name = name
+    }
+    if email != "" {
+        email = strings.TrimSpace(strings.ToLower(email))
+        if !emailRegex.MatchString(email) {
+            return nil, errors.New("invalid email format")
+        }
+        user.Email = email
+    }
+    if err := s.repo.Update(ctx, user); err != nil {
+        return nil, err
+    }
+    return user, nil
+}
+
+func (s *UserService) DeleteUser(ctx context.Context, id int) error {
+    if id <= 0 {
+        return errors.New("invalid user id")
+    }
+    return s.repo.Delete(ctx, id)
+}
+```
+
+repository/user_repository.go:
+
+```go
+package repository
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "sync/atomic"
+
+    "myproject/internal/model"
+)
+
+// UserRepository define el contrato para el almacenamiento de usuarios.
+type UserRepository interface {
+    Create(ctx context.Context, user *model.User) error
+    FindByID(ctx context.Context, id int) (*model.User, error)
+    FindByEmail(ctx context.Context, email string) (*model.User, error)
+    FindAll(ctx context.Context) ([]*model.User, error)
+    Update(ctx context.Context, user *model.User) error
+    Delete(ctx context.Context, id int) error
+}
+
+type MemoryRepository struct {
+    mu     sync.RWMutex
+    users  map[int]*model.User
+    nextID atomic.Int64
+}
+
+func NewMemoryRepository() *MemoryRepository {
+    return &MemoryRepository{
+        users: make(map[int]*model.User),
+    }
+}
+
+func (r *MemoryRepository) Create(ctx context.Context, user *model.User) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    id := int(r.nextID.Add(1))
+    user.ID = id
+    r.users[user.ID] = user
+    return nil
+}
+
+func (r *MemoryRepository) FindByID(ctx context.Context, id int) (*model.User, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    user, ok := r.users[id]
+    if !ok {
+        return nil, fmt.Errorf("user %d not found", id)
+    }
+    return user, nil
+}
+
+func (r *MemoryRepository) FindByEmail(ctx context.Context, email string) (*model.User, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    for _, u := range r.users {
+        if u.Email == email {
+            return u, nil
+        }
+    }
+    return nil, fmt.Errorf("email %s not found", email)
+}
+
+func (r *MemoryRepository) FindAll(ctx context.Context) ([]*model.User, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    result := make([]*model.User, 0, len(r.users))
+    for _, u := range r.users {
+        result = append(result, u)
+    }
+    return result, nil
+}
+
+func (r *MemoryRepository) Update(ctx context.Context, user *model.User) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if _, ok := r.users[user.ID]; !ok {
+        return fmt.Errorf("user %d not found", user.ID)
+    }
+    r.users[user.ID] = user
+    return nil
+}
+
+func (r *MemoryRepository) Delete(ctx context.Context, id int) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if _, ok := r.users[id]; !ok {
+        return fmt.Errorf("user %d not found", id)
+    }
+    delete(r.users, id)
+    return nil
+}
+```
+
+model/user.go:
+
+```go
+package model
+
+type User struct {
+    ID    int    `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+```
+
+3. INYECCIÓN DE DEPENDENCIAS
+────────────────────────────
+
+La inyección de dependencias (DI) es el patrón donde las dependencias
+de un componente se proporcionan desde fuera, típicamente en el
+constructor. Go favorece la inyección manual por su simplicidad.
+
+DI Manual (recomendada para proyectos medianos):
+
+```go
+func main() {
+    db, _ := sql.Open("postgres", dsn)
+    repo := repository.NewPostgresRepository(db)
+    svc := service.NewUserService(repo)
+    h := handler.NewUserHandler(svc)
+    // ...
+}
+```
+
+Para proyectos grandes, Wire de Google automatiza este proceso.
+
+4. WIRE — GENERACIÓN AUTOMÁTICA DE DI
+─────────────────────────────────────
+
+Wire genera código de inyección de dependencias en tiempo de
+compilación. No usa reflection, lo que evita errores en runtime.
+
+Instalación:
+
+```bash
+go install github.com/google/wire/cmd/wire@latest
+```
+
+Ejemplo de wire.go (en cmd/server/):
+
+```go
+//go:build wireinject
+// +build wireinject
+
+package main
+
+import (
+    "myproject/internal/handler"
+    "myproject/internal/repository"
+    "myproject/internal/service"
+
+    "github.com/google/wire"
+)
+
+func InitializeServer() (*handler.UserHandler, error) {
+    wire.Build(
+        repository.NewMemoryRepository,
+        service.NewUserService,
+        handler.NewUserHandler,
+    )
+    return nil, nil
+}
+```
+
+Luego ejecutamos:
+
+```bash
+wire ./cmd/server/
+```
+
+Wire genera wire_gen.go automáticamente:
+
+```go
+// Code generated by Wire. DO NOT EDIT.
+
+package main
+
+import (
+    "myproject/internal/handler"
+    "myproject/internal/repository"
+    "myproject/internal/service"
+)
+
+func InitializeServer() (*handler.UserHandler, error) {
+    memoryRepository := repository.NewMemoryRepository()
+    userService := service.NewUserService(memoryRepository)
+    userHandler := handler.NewUserHandler(userService)
+    return userHandler, nil
+}
+```
+
+5. PROVIDER SETS Y BINDING DE INTERFACES
+─────────────────────────────────────────
+
+Wire permite agrupar proveedores y asociar implementaciones a
+interfaces:
+
+```go
+var RepositorySet = wire.NewSet(
+    repository.NewPostgresRepository,
+    wire.Bind(new(repository.UserRepository), new(*repository.PostgresRepository)),
+)
+
+var ServiceSet = wire.NewSet(
+    service.NewUserService,
+)
+
+var HandlerSet = wire.NewSet(
+    handler.NewUserHandler,
+)
+
+func InitializeApp() (*handler.UserHandler, error) {
+    wire.Build(
+        RepositorySet,
+        ServiceSet,
+        HandlerSet,
+    )
+    return nil, nil
+}
+```
+
+6. CLEAN ARCHITECTURE EN GO
+───────────────────────────
+
+La arquitectura limpia de Robert C. Martin se adapta muy bien a Go.
+Las dependencias apuntan hacia adentro: los casos de uso (servicios)
+dependen de interfaces definidas por ellos mismos, no de
+implementaciones concretas.
+
+Reglas:
+1. Capa de dominio (modelos, errores del negocio) — sin dependencias.
+2. Capa de aplicación (servicios/usecases) — depende del dominio.
+3. Capa de infraestructura (repos, APIs externas) — implementa
+   interfaces definidas en aplicación.
+4. Capa de presentación (handlers, CLI) — orquesta todo.
+
+Ejemplo de interfaces definidas por el servicio (ports):
+
+```go
+package service
+
+type UserRepository interface {
+    Create(ctx context.Context, user *model.User) error
+    FindByID(ctx context.Context, id int) (*model.User, error)
+    FindByEmail(ctx context.Context, email string) (*model.User, error)
+    FindAll(ctx context.Context) ([]*model.User, error)
+    Update(ctx context.Context, user *model.User) error
+    Delete(ctx context.Context, id int) error
+}
+```
+
+7. PATRÓN OPTIONS (FUNCTIONAL OPTIONS)
+──────────────────────────────────────
+
+Para configurar structos con muchas opciones sin romper
+compatibilidad:
+
+```go
+type Server struct {
+    host    string
+    port    int
+    timeout time.Duration
+    logger  *slog.Logger
+}
+
+type Option func(*Server)
+
+func WithHost(host string) Option {
+    return func(s *Server) {
+        s.host = host
+    }
+}
+
+func WithPort(port int) Option {
+    return func(s *Server) {
+        s.port = port
+    }
+}
+
+func WithTimeout(t time.Duration) Option {
+    return func(s *Server) {
+        s.timeout = t
+    }
+}
+
+func NewServer(opts ...Option) *Server {
+    s := &Server{
+        host:    "localhost",
+        port:    8080,
+        timeout: 30 * time.Second,
+        logger:  slog.Default(),
+    }
+    for _, opt := range opts {
+        opt(s)
+    }
+    return s
+}
+```
+
+8. CONFIGMAP — LECTURA DE CONFIGURACIÓN
+────────────────────────────────────────
+
+Usar una estructura centralizada para la configuración:
+
+```go
+package config
+
+import (
+    "fmt"
+    "os"
+    "strconv"
+    "time"
+)
+
+type Config struct {
+    Server   ServerConfig
+    Database DatabaseConfig
+    Log      LogConfig
+}
+
+type ServerConfig struct {
+    Host            string
+    Port            int
+    ReadTimeout     time.Duration
+    WriteTimeout    time.Duration
+    ShutdownTimeout time.Duration
+}
+
+type DatabaseConfig struct {
+    Driver   string
+    DSN      string
+    MaxConns int
+}
+
+type LogConfig struct {
+    Level string
+    File  string
+}
+
+func Load() (*Config, error) {
+    port, err := strconv.Atoi(getEnv("PORT", "8080"))
+    if err != nil {
+        return nil, fmt.Errorf("invalid PORT: %w", err)
+    }
+    maxConns, err := strconv.Atoi(getEnv("DB_MAX_CONNS", "25"))
+    if err != nil {
+        return nil, fmt.Errorf("invalid DB_MAX_CONNS: %w", err)
+    }
+    readTimeout, err := time.ParseDuration(getEnv("READ_TIMEOUT", "10s"))
+    if err != nil {
+        return nil, fmt.Errorf("invalid READ_TIMEOUT: %w", err)
+    }
+    writeTimeout, err := time.ParseDuration(getEnv("WRITE_TIMEOUT", "10s"))
+    if err != nil {
+        return nil, fmt.Errorf("invalid WRITE_TIMEOUT: %w", err)
+    }
+    shutdownTimeout, err := time.ParseDuration(getEnv("SHUTDOWN_TIMEOUT", "15s"))
+    if err != nil {
+        return nil, fmt.Errorf("invalid SHUTDOWN_TIMEOUT: %w", err)
+    }
+    return &Config{
+        Server: ServerConfig{
+            Host:            getEnv("HOST", "0.0.0.0"),
+            Port:            port,
+            ReadTimeout:     readTimeout,
+            WriteTimeout:    writeTimeout,
+            ShutdownTimeout: shutdownTimeout,
+        },
+        Database: DatabaseConfig{
+            Driver:   getEnv("DB_DRIVER", "postgres"),
+            DSN:      getEnv("DB_DSN", "postgres://user:pass@localhost:5432/db?sslmode=disable"),
+            MaxConns: maxConns,
+        },
+        Log: LogConfig{
+            Level: getEnv("LOG_LEVEL", "info"),
+            File:  getEnv("LOG_FILE", ""),
+        },
+    }, nil
+}
+
+func getEnv(key, fallback string) string {
+    if v := os.Getenv(key); v != "" {
+        return v
+    }
+    return fallback
+}
+```
+
+9. ANTI-PATRONES EN ARQUITECTURA GO
+────────────────────────────────────
+
+❌ Package "utils" o "common": Se convierten en cajones de sastre.
+   → Mejor: paquetes con nombres específicos (strutil, httputil).
+
+❌ Ciclos de importación: Ocurren cuando A importa B y B importa A.
+   → Solución: interfaces en el consumidor, no en el proveedor.
+
+❌ Main como script enorme: Todo el código en cmd/main.go.
+   → Solución: main solo debe inicializar y orquestar.
+
+❌ God objects: Un solo paquete "models" con todas las estructuras.
+   → Mejor: modelos livianos cerca de donde se usan.
+
+❌ Dependencias ocultas: Usar variables globales para DB, logger, etc.
+   → Solución: inyección explícita de dependencias.
+
+10. PATRÓN DE ADAPTADOR (HEXAGONAL / PORTS AND ADAPTERS)
+─────────────────────────────────────────────────────────
+
+La arquitectura hexagonal separa el núcleo de la aplicación (puertos)
+de los adaptadores de infraestructura.
+
+```go
+// Puerto (definido en core)
+type OrderRepository interface {
+    Save(ctx context.Context, order *model.Order) error
+    FindByID(ctx context.Context, id string) (*model.Order, error)
+}
+
+// Adaptador primario (entrada) — HTTP
+type OrderHandler struct {
+    svc *service.OrderService
+}
+
+func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
+    // recibe request HTTP, llama al servicio
+}
+
+// Adaptador secundario (salida) — PostgreSQL
+type PostgresOrderRepo struct {
+    db *sql.DB
+}
+
+func (r *PostgresOrderRepo) Save(ctx context.Context, order *model.Order) error {
+    _, err := r.db.ExecContext(ctx, "INSERT INTO orders ...")
+    return err
+}
+```
+
+11. ORGANIZACIÓN DE PROYECTOS MULTIMÓDULO
+──────────────────────────────────────────
+
+Para proyectos grandes con múltiples equipos, Go Workspaces permite
+trabajar con varios módulos:
+
+```go
+myproject/
+├── cmd/
+├── services/
+│   ├── users/       → go.mod independiente
+│   ├── orders/      → go.mod independiente
+│   └── payments/    → go.mod independiente
+├── libs/
+│   ├── validator/   → go.mod independiente
+│   └── httputil/    → go.mod independiente
+├── go.work
+└── go.work.sum
+```
+
+go.work:
+
+```
+go 1.22
+
+use (
+    ./cmd
+    ./services/users
+    ./services/orders
+    ./services/payments
+    ./libs/validator
+    ./libs/httputil
+)
+```
+
+12. MIDDLEWARE Y COMPOSICIÓN
+───────────────────────────
+
+Patrón middleware para envolver handlers HTTP:
+
+```go
+type Middleware func(http.Handler) http.Handler
+
+func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
+    for i := len(middlewares) - 1; i >= 0; i-- {
+        h = middlewares[i](h)
+    }
+    return h
+}
+
+func LoggingMiddleware(logger *slog.Logger) Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            start := time.Now()
+            logger.Info("request started",
+                "method", r.Method,
+                "path", r.URL.Path,
+            )
+            next.ServeHTTP(w, r)
+            logger.Info("request completed",
+                "method", r.Method,
+                "path", r.URL.Path,
+                "duration", time.Since(start),
+            )
+        })
+    }
+}
+
+func RecoveryMiddleware() Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            defer func() {
+                if rec := recover(); rec != nil {
+                    http.Error(w, "internal server error",
+                        http.StatusInternalServerError)
+                }
+            }()
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+func CORSMiddleware(allowedOrigins []string) Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            origin := r.Header.Get("Origin")
+            for _, allowed := range allowedOrigins {
+                if origin == allowed {
+                    w.Header().Set("Access-Control-Allow-Origin", origin)
+                    break
+                }
+            }
+            w.Header().Set("Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE, OPTIONS")
+            w.Header().Set("Access-Control-Allow-Headers",
+                "Content-Type, Authorization")
+            if r.Method == http.MethodOptions {
+                w.WriteHeader(http.StatusNoContent)
+                return
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+USO:
+
+```go
+func main() {
+    mux := http.NewServeMux()
+    mux.HandleFunc("GET /users", myHandler.ListUsers)
+
+    wrapped := Chain(mux,
+        RecoveryMiddleware(),
+        LoggingMiddleware(slog.Default()),
+        CORSMiddleware([]string{"http://localhost:3000"}),
+    )
+
+    http.ListenAndServe(":8080", wrapped)
+}
+```
+
+13. BUILDER PATTERN PARA CONSTRUCCIÓN DE CONSULTAS
+──────────────────────────────────────────────────
+
+```go
+package repository
+
+import (
+    "fmt"
+    "strings"
+)
+
+type QueryBuilder struct {
+    selectCols []string
+    from       string
+    where      []string
+    args       []interface{}
+    orderBy    string
+    limit      int
+    offset     int
+}
+
+func Select(cols ...string) *QueryBuilder {
+    return &QueryBuilder{selectCols: cols}
+}
+
+func (qb *QueryBuilder) From(table string) *QueryBuilder {
+    qb.from = table
+    return qb
+}
+
+func (qb *QueryBuilder) Where(cond string, args ...interface{}) *QueryBuilder {
+    qb.where = append(qb.where, cond)
+    qb.args = append(qb.args, args...)
+    return qb
+}
+
+func (qb *QueryBuilder) OrderBy(col string) *QueryBuilder {
+    qb.orderBy = col
+    return qb
+}
+
+func (qb *QueryBuilder) Limit(n int) *QueryBuilder {
+    qb.limit = n
+    return qb
+}
+
+func (qb *QueryBuilder) Offset(n int) *QueryBuilder {
+    qb.offset = n
+    return qb
+}
+
+func (qb *QueryBuilder) Build() (string, []interface{}) {
+    var b strings.Builder
+    b.WriteString("SELECT ")
+    b.WriteString(strings.Join(qb.selectCols, ", "))
+    b.WriteString(" FROM ")
+    b.WriteString(qb.from)
+    if len(qb.where) > 0 {
+        b.WriteString(" WHERE ")
+        b.WriteString(strings.Join(qb.where, " AND "))
+    }
+    if qb.orderBy != "" {
+        b.WriteString(" ORDER BY ")
+        b.WriteString(qb.orderBy)
+    }
+    if qb.limit > 0 {
+        b.WriteString(fmt.Sprintf(" LIMIT %d", qb.limit))
+    }
+    if qb.offset > 0 {
+        b.WriteString(fmt.Sprintf(" OFFSET %d", qb.offset))
+    }
+    return b.String(), qb.args
+}
+```
+
+14. TESTING DE ARQUITECTURA
+───────────────────────────
+
+Podemos escribir tests que verifiquen la estructura del proyecto:
+
+```go
+package architecture_test
+
+import (
+    "testing"
+)
+
+func TestNoCyclicImports(t *testing.T) {
+    // go vet verifica ciclos de importación automáticamente
+    // Ejecutar: go vet ./...
+}
+
+func TestInternalPackagesNotExported(t *testing.T) {
+    // Los paquetes en internal/ son privados por definición del
+    // compilador. No necesitamos test para esto.
+}
+
+func TestMainPackageIsMinimal(t *testing.T) {
+    // Revisión manual: el package main en cmd/ debe tener
+    // menos de ~100 líneas. Herramientas de lint pueden
+    // verificar esto.
+}
+```
+
+15. CONCLUSIÓN DEL CAPÍTULO
+──────────────────────────
+
+Has aprendido a estructurar un proyecto Go de forma profesional:
+
+• Layout cmd/internal/pkg para separar responsabilidades.
+• Inyección de dependencias manual y con Wire.
+• Capas bien definidas (handler, service, repository).
+• Patrones funcionales (Options, Middleware, Builder).
+• Clean Architecture y Hexagonal adaptadas a Go.
+
+Una buena arquitectura es la que permite cambiar de opinión sin
+cambiar todo el código. Go te da las herramientas; tú pones el
+criterio.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• Layout estándar: cmd/, internal/, pkg/
+• Capas: handler (transporte), service (negocio), repository (datos)
+• Inyección de dependencias: manual (simple) o Wire (automático)
+• Clean Architecture: interfaces definidas por el consumidor
+• Anti-patrones: evitar utils/, ciclos, god objects, mains enormes
+• Middleware Chain para composición de funcionalidad HTTP
+• Functional Options para configurar structs sin romper API
+
+EJERCICIOS
+──────────
+
+1. Crea un proyecto Go con estructura cmd/internal/pkg desde cero.
+   Implementa un CRUD de productos con las tres capas.
+
+2. Transforma el ejercicio anterior para usar Wire. Compara el
+   código generado con la inyección manual.
+
+3. Añade middleware de logging, recovery y CORS a tu servidor HTTP.
+
+4. Extrae la configuración a un paquete config/ usando variables de
+   entorno. Añade validación de campos requeridos.
+
+5. Implementa un adaptador de base de datos PostgreSQL y otro en
+   memoria para el mismo repositorio. Cambia entre ellos con una
+   variable de entorno.
+
+6. Agrega tests unitarios para cada capa usando mocking de interfaces.
+
+7. Crea un Functional Option para configurar el pool de conexiones
+   de la base de datos.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Debo usar siempre el layout cmd/internal/pkg?
+R: No es obligatorio, pero es el estándar de la comunidad. Para
+   proyectos muy pequeños (un solo paquete), un solo main.go basta.
+
+P: ¿Wire o inyección manual?
+R: Para proyectos con menos de 10 dependencias, manual es más claro.
+   Wire brilla cuando tienes decenas de dependencias y necesitas
+   cambiar implementaciones rápidamente.
+
+P: ¿Cómo evito los ciclos de importación?
+R: Definí las interfaces en el paquete que las consume (service),
+   no en el que las implementa (repository). Así repository puede
+   importar model, y service importa repository, pero no al revés.
+
+P: ¿Debo usar internal/ o pkg/?
+R: internal/ para código que no quieres que nadie fuera de tu módulo
+   importe. pkg/ para bibliotecas reutilizables. Por defecto, usa
+   internal/ y solo expón a pkg/ cuando sea necesario.
+
+P: ¿Cómo manejo múltiples binarios en un proyecto?
+R: Cada subdirectorio de cmd/ es un binario diferente:
+   cmd/server/, cmd/worker/, cmd/cli/. Cada uno con su main.go.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Diseña la arquitectura completa para un sistema de e-commerce con
+los siguientes requisitos:
+
+• Servicio de usuarios (registro, login, perfiles)
+• Servicio de productos (catálogo, búsqueda, inventario)
+• Servicio de órdenes (carrito, checkout, historial)
+• Servicio de pagos (integración con pasarela externa)
+• Servicio de notificaciones (email, SMS, push)
+• API Gateway que unifica todo
+
+Tu entrega debe incluir:
+a) Árbol de directorios completo del proyecto.
+b) Interfaces de cada servicio (puertos).
+c) Diagrama de dependencias entre paquetes.
+d) Estrategia de inyección de dependencias.
+e) Justificación de por qué elegiste esa arquitectura.
+
+CIERRE
+──────
+La arquitectura es la base de todo sistema duradero. Has dado el
+primer paso hacia la maestría profesional. En el próximo capítulo
+aplicaremos los principios SOLID para que tu diseño sea aún más
+robusto y mantenible.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 72: Diseño en Go — SOLID en Go

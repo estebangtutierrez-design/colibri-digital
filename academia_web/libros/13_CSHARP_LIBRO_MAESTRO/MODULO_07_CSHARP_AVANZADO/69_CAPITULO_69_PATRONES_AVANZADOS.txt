@@ -1,0 +1,2041 @@
+================================================================================
+  CAPITULO 69: PATRONES AVANZADOS
+  MODULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+!Bienvenido al Capitulo 69! Los patrones de diseno son soluciones
+reutilizables para problemas comunes en el desarrollo de software.
+En este capitulo exploraremos los patrones mas importantes en C#
+moderno: Singleton, Factory, Dependency Injection, IDisposable,
+y otros patrones esenciales para el desarrollo profesional.
+
+FRASE DEL DIA
+-------------
+"Los patrones no son recetas, sino lenguajes. Aprenderlos te permite
+comunicar ideas complejas con una sola palabra." — Christopher Alexander
+
+OBJETIVOS DEL CAPITULO
+----------------------
+1. Implementar Singleton thread-safe en C# moderno.
+2. Disenar Factory Methods y Abstract Factory.
+3. Comprender Dependency Injection con contenedores.
+4. Implementar IDisposable correctamente.
+5. Conocer patrones adicionales: Strategy, Observer, Builder.
+6. Aplicar patrones en escenarios reales.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. SINGLETON ---
+
+Singleton garantiza que una clase tenga solo una instancia y proporciona
+un punto de acceso global a ella.
+
+```csharp
+using System;
+
+// Version 1: Thread-safe con Lazy<T> (recomendada)
+public sealed class ConfiguracionGlobal
+{
+    private static readonly Lazy<ConfiguracionGlobal> _instancia =
+        new Lazy<ConfiguracionGlobal>(() => new ConfiguracionGlobal());
+
+    public static ConfiguracionGlobal Instancia => _instancia.Value;
+
+    private ConfiguracionGlobal()
+    {
+        Console.WriteLine("  ConfiguracionGlobal inicializada.");
+        Inicializar();
+    }
+
+    public string Servidor { get; private set; }
+    public int Puerto { get; private set; }
+    public string CadenaConexion { get; private set; }
+
+    private void Inicializar()
+    {
+        Servidor = "localhost";
+        Puerto = 5432;
+        CadenaConexion = $"Server={Servidor};Port={Puerto};Database=master";
+    }
+}
+
+// Version 2: Thread-safe con lock (clasica)
+public sealed class Logger
+{
+    private static Logger _instancia;
+    private static readonly object _lock = new object();
+
+    private readonly string _logFile;
+
+    private Logger()
+    {
+        _logFile = $"app_{DateTime.Now:yyyyMMdd}.log";
+    }
+
+    public static Logger Instancia
+    {
+        get
+        {
+            if (_instancia == null) // Double-check locking
+            {
+                lock (_lock)
+                {
+                    if (_instancia == null)
+                        _instancia = new Logger();
+                }
+            }
+            return _instancia;
+        }
+    }
+
+    public void Log(string mensaje)
+    {
+        string linea = $"[{DateTime.Now:HH:mm:ss}] {mensaje}";
+        Console.WriteLine($"  [LOG] {linea}");
+        // En produccion: File.AppendAllText(_logFile, linea + Environment.NewLine);
+    }
+}
+
+// Version 3: Inicializacion estatica (simple, thread-safe)
+public sealed class ContadorVisitas
+{
+    public static readonly ContadorVisitas Instancia = new ContadorVisitas();
+
+    private int _visitas;
+
+    static ContadorVisitas() { } // Asegura inicializacion perezosa
+
+    private ContadorVisitas() { }
+
+    public int Incrementar() => ++_visitas;
+    public int Total => _visitas;
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== SINGLETON ===\n");
+
+        ConfiguracionGlobal c1 = ConfiguracionGlobal.Instancia;
+        ConfiguracionGlobal c2 = ConfiguracionGlobal.Instancia;
+        Console.WriteLine($"Misma instancia: {ReferenceEquals(c1, c2)}");
+        Console.WriteLine($"Servidor: {c1.Servidor}");
+
+        Logger l1 = Logger.Instancia;
+        Logger l2 = Logger.Instancia;
+        Console.WriteLine($"\nMismo Logger: {ReferenceEquals(l1, l2)}");
+        l1.Log("Aplicacion iniciada");
+        l2.Log("Usuario autenticado");
+
+        Console.WriteLine($"\nVisitas: {ContadorVisitas.Instancia.Incrementar()}");
+        Console.WriteLine($"Visitas: {ContadorVisitas.Instancia.Incrementar()}");
+        Console.WriteLine($"Total: {ContadorVisitas.Instancia.Total}");
+    }
+}
+```
+
+--- 2. FACTORY METHOD ---
+
+Factory Method define una interfaz para crear objetos, pero permite a
+las subclases decidir que clase instanciar.
+
+```csharp
+using System;
+
+// Producto abstracto
+public abstract class Notificador
+{
+    public abstract void Enviar(string mensaje);
+}
+
+// Productos concretos
+public class EmailNotificador : Notificador
+{
+    private readonly string _servidor;
+
+    public EmailNotificador(string servidor)
+    {
+        _servidor = servidor;
+    }
+
+    public override void Enviar(string mensaje)
+    {
+        Console.WriteLine($"  [EMAIL] ({_servidor}): {mensaje}");
+    }
+}
+
+public class SMSNotificador : Notificador
+{
+    private readonly string _numeroOrigen;
+
+    public SMSNotificador(string numeroOrigen)
+    {
+        _numeroOrigen = numeroOrigen;
+    }
+
+    public override void Enviar(string mensaje)
+    {
+        Console.WriteLine($"  [SMS] ({_numeroOrigen}): {mensaje}");
+    }
+}
+
+public class PushNotificador : Notificador
+{
+    public override void Enviar(string mensaje)
+    {
+        Console.WriteLine($"  [PUSH]: {mensaje}");
+    }
+}
+
+// Creator abstracto
+public abstract class NotificadorFactory
+{
+    public abstract Notificador CrearNotificador();
+
+    public void EnviarMensaje(string mensaje)
+    {
+        var notificador = CrearNotificador();
+        notificador.Enviar(mensaje);
+    }
+}
+
+// Creatores concretos
+public class EmailFactory : NotificadorFactory
+{
+    private readonly string _servidor;
+
+    public EmailFactory(string servidor)
+    {
+        _servidor = servidor;
+    }
+
+    public override Notificador CrearNotificador()
+    {
+        return new EmailNotificador(_servidor);
+    }
+}
+
+public class SMSFactory : NotificadorFactory
+{
+    private readonly string _numero;
+
+    public SMSFactory(string numero)
+    {
+        _numero = numero;
+    }
+
+    public override Notificador CrearNotificador()
+    {
+        return new SMSNotificador(_numero);
+    }
+}
+
+public class PushFactory : NotificadorFactory
+{
+    public override Notificador CrearNotificador()
+    {
+        return new PushNotificador();
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== FACTORY METHOD ===\n");
+
+        var factories = new NotificadorFactory[]
+        {
+            new EmailFactory("smtp.empresa.com"),
+            new SMSFactory("+123456789"),
+            new PushFactory()
+        };
+
+        foreach (var factory in factories)
+        {
+            Console.WriteLine($"\nUsando {factory.GetType().Name}:");
+            factory.EnviarMensaje("Notificacion importante!");
+        }
+    }
+}
+```
+
+--- 3. ABSTRACT FACTORY ---
+
+Abstract Factory proporciona una interfaz para crear familias de objetos
+relacionados sin especificar sus clases concretas.
+
+```csharp
+using System;
+
+// Productos abstractos
+public abstract class Boton
+{
+    public abstract void Dibujar();
+}
+
+public abstract class Ventana
+{
+    public abstract void Mostrar();
+}
+
+// Productos concretos: Windows
+public class WindowsBoton : Boton
+{
+    public override void Dibujar()
+        => Console.WriteLine("  [Windows] Boton dibujado con estilo WinUI");
+}
+
+public class WindowsVentana : Ventana
+{
+    public override void Mostrar()
+        => Console.WriteLine("  [Windows] Ventana mostrada con borde redondeado");
+}
+
+// Productos concretos: macOS
+public class MacBoton : Boton
+{
+    public override void Dibujar()
+        => Console.WriteLine("  [macOS] Boton dibujado con estilo Aqua");
+}
+
+public class MacVentana : Ventana
+{
+    public override void Mostrar()
+        => Console.WriteLine("  [macOS] Ventana mostrada con sombra paralaje");
+}
+
+// Productos concretos: Linux
+public class LinuxBoton : Boton
+{
+    public override void Dibujar()
+        => Console.WriteLine("  [Linux] Boton dibujado con estilo GTK");
+}
+
+public class LinuxVentana : Ventana
+{
+    public override void Mostrar()
+        => Console.WriteLine("  [Linux] Ventana mostrada con tema Adwaita");
+}
+
+// Abstract Factory
+public interface IUIFactory
+{
+    Boton CrearBoton();
+    Ventana CrearVentana();
+}
+
+// Concrete Factories
+public class WindowsFactory : IUIFactory
+{
+    public Boton CrearBoton() => new WindowsBoton();
+    public Ventana CrearVentana() => new WindowsVentana();
+}
+
+public class MacFactory : IUIFactory
+{
+    public Boton CrearBoton() => new MacBoton();
+    public Ventana CrearVentana() => new MacVentana();
+}
+
+public class LinuxFactory : IUIFactory
+{
+    public Boton CrearBoton() => new LinuxBoton();
+    public Ventana CrearVentana() => new LinuxVentana();
+}
+
+public enum SOPlatform { Windows, Mac, Linux }
+
+public static class UIFactoryProvider
+{
+    public static IUIFactory CrearFactory(SOPlatform platform)
+    {
+        return platform switch
+        {
+            SOPlatform.Windows => new WindowsFactory(),
+            SOPlatform.Mac => new MacFactory(),
+            SOPlatform.Linux => new LinuxFactory(),
+            _ => throw new ArgumentException($"Plataforma {platform} no soportada")
+        };
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== ABSTRACT FACTORY ===\n");
+
+        var platforms = new[] { SOPlatform.Windows, SOPlatform.Mac, SOPlatform.Linux };
+
+        foreach (var platform in platforms)
+        {
+            Console.WriteLine($"\nPlataforma: {platform}");
+            var factory = UIFactoryProvider.CrearFactory(platform);
+
+            var boton = factory.CrearBoton();
+            var ventana = factory.CrearVentana();
+
+            boton.Dibujar();
+            ventana.Mostrar();
+        }
+    }
+}
+```
+
+--- 4. DEPENDENCY INJECTION (MANUAL) ---
+
+Dependency Injection invierte el control: en lugar de que las clases
+creen sus dependencias, estas se inyectan desde el exterior.
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+// Interfaces
+public interface IRepositorioUsuarios
+{
+    Usuario ObtenerPorId(int id);
+    void Guardar(Usuario usuario);
+}
+
+public interface IServicioEmail
+{
+    void Enviar(string destinatario, string asunto, string cuerpo);
+}
+
+public interface ILogger
+{
+    void Info(string mensaje);
+    void Error(string mensaje, Exception ex = null);
+}
+
+// Modelo
+public class Usuario
+{
+    public int Id { get; set; }
+    public string Nombre { get; set; }
+    public string Email { get; set; }
+}
+
+// Implementaciones concretas
+public class RepositorioUsuariosSQL : IRepositorioUsuarios
+{
+    private readonly string _connectionString;
+    private readonly ILogger _logger;
+
+    public RepositorioUsuariosSQL(string connectionString, ILogger logger)
+    {
+        _connectionString = connectionString;
+        _logger = logger;
+    }
+
+    public Usuario ObtenerPorId(int id)
+    {
+        _logger.Info($"Obteniendo usuario #{id}");
+        return new Usuario { Id = id, Nombre = "Juan", Email = "juan@email.com" };
+    }
+
+    public void Guardar(Usuario usuario)
+    {
+        _logger.Info($"Guardando usuario {usuario.Nombre}");
+    }
+}
+
+public class ServicioEmailSMTP : IServicioEmail
+{
+    private readonly string _smtpServer;
+    private readonly ILogger _logger;
+
+    public ServicioEmailSMTP(string smtpServer, ILogger logger)
+    {
+        _smtpServer = smtpServer;
+        _logger = logger;
+    }
+
+    public void Enviar(string destinatario, string asunto, string cuerpo)
+    {
+        _logger.Info($"Enviando email a {destinatario}: {asunto}");
+        Console.WriteLine($"  [EMAIL] Para: {destinatario}, Asunto: {asunto}");
+    }
+}
+
+public class ConsoleLogger : ILogger
+{
+    public void Info(string mensaje)
+        => Console.WriteLine($"  [INFO] {mensaje}");
+
+    public void Error(string mensaje, Exception ex = null)
+    {
+        Console.WriteLine($"  [ERROR] {mensaje}");
+        if (ex != null)
+            Console.WriteLine($"    {ex.Message}");
+    }
+}
+
+// Clase que usa DI
+public class RegistroUsuarioService
+{
+    private readonly IRepositorioUsuarios _repositorio;
+    private readonly IServicioEmail _email;
+    private readonly ILogger _logger;
+
+    // Todas las dependencias se inyectan por constructor
+    public RegistroUsuarioService(
+        IRepositorioUsuarios repositorio,
+        IServicioEmail email,
+        ILogger logger)
+    {
+        _repositorio = repositorio;
+        _email = email;
+        _logger = logger;
+    }
+
+    public void Registrar(string nombre, string email)
+    {
+        _logger.Info($"Iniciando registro de {nombre}");
+
+        var usuario = new Usuario
+        {
+            Nombre = nombre,
+            Email = email
+        };
+
+        _repositorio.Guardar(usuario);
+
+        _email.Enviar(email, "Bienvenido!",
+            $"Hola {nombre}, gracias por registrarte.");
+
+        _logger.Info("Registro completado exitosamente.");
+    }
+}
+
+// Contenedor DI simple
+public class SimpleContainer
+{
+    private readonly Dictionary<Type, Func<object>> _registrations = new();
+
+    public void Register<TInterface, TImplementation>()
+        where TImplementation : TInterface
+    {
+        _registrations[typeof(TInterface)] = () => Resolve(typeof(TImplementation));
+    }
+
+    public void RegisterSingleton<TInterface, TImplementation>()
+        where TImplementation : TInterface
+    {
+        TImplementation instancia = default;
+        _registrations[typeof(TInterface)] = () =>
+        {
+            if (instancia == null)
+                instancia = (TImplementation)Resolve(typeof(TImplementation));
+            return instancia;
+        };
+    }
+
+    public void RegisterInstance<TInterface>(TInterface instance)
+    {
+        _registrations[typeof(TInterface)] = () => instance;
+    }
+
+    public T Resolve<T>() => (T)Resolve(typeof(T));
+
+    public object Resolve(Type type)
+    {
+        if (_registrations.TryGetValue(type, out var factory))
+            return factory();
+
+        // Crear automaticamente si es concreto
+        if (!type.IsAbstract && !type.IsInterface)
+        {
+            var ctor = type.GetConstructors()[0];
+            var parameters = ctor.GetParameters();
+            var args = new object[parameters.Length];
+
+            for (int i = 0; i < parameters.Length; i++)
+                args[i] = Resolve(parameters[i].ParameterType);
+
+            return ctor.Invoke(args);
+        }
+
+        throw new InvalidOperationException($"No se puede resolver {type.Name}");
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DEPENDENCY INJECTION ===\n");
+
+        // Configurar contenedor
+        var container = new SimpleContainer();
+        container.RegisterSingleton<ILogger, ConsoleLogger>();
+        container.Register<IRepositorioUsuarios, RepositorioUsuariosSQL>();
+        container.Register<IServicioEmail, ServicioEmailSMTP>();
+        container.RegisterInstance("connectionString", "Server=.;Database=test");
+        container.RegisterInstance("smtpServer", "smtp.empresa.com");
+
+        // Resolver servicio
+        var service = container.Resolve<RegistroUsuarioService>();
+        service.Registrar("Ana Garcia", "ana@email.com");
+
+        Console.WriteLine("\nRegistro completado!");
+    }
+}
+
+// Extension para SimpleContainer con valores
+public static class SimpleContainerExtensions
+{
+    private static readonly Dictionary<Type, object> _values = new();
+
+    public static void RegisterInstance<T>(this SimpleContainer container, string name, T value)
+    {
+        _values[typeof(T)] = value;
+    }
+
+    public static T Resolve<T>(this SimpleContainer container, string name)
+    {
+        return (T)_values[typeof(T)];
+    }
+}
+```
+
+--- 5. IDISPOSABLE PATTERN ---
+
+El patron IDisposable libera recursos no administrados de forma
+determinista. Es crucial para archivos, conexiones, etc.
+
+```csharp
+using System;
+using System.IO;
+
+// Implementacion basica
+public class ManejadorArchivo : IDisposable
+{
+    private FileStream _fileStream;
+    private bool _disposed;
+
+    public ManejadorArchivo(string ruta)
+    {
+        _fileStream = File.OpenRead(ruta);
+        Console.WriteLine($"  Archivo abierto: {ruta}");
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Liberar recursos managed
+            _fileStream?.Dispose();
+            Console.WriteLine("  Recursos managed liberados.");
+        }
+
+        // Liberar recursos no managed (si los hubiera)
+        _disposed = true;
+    }
+
+    ~ManejadorArchivo()
+    {
+        Dispose(false); // Solo recursos no managed
+    }
+
+    public void Leer()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(ManejadorArchivo));
+
+        byte[] buffer = new byte[100];
+        _fileStream.Read(buffer, 0, buffer.Length);
+    }
+}
+
+// Implementacion completa con SafeHandle
+public class RecursoSeguro : IDisposable
+{
+    private IntPtr _recursoNativo;
+    private bool _disposed;
+
+    public RecursoSeguro()
+    {
+        _recursoNativo = System.Runtime.InteropServices.Marshal.AllocHGlobal(1000);
+        Console.WriteLine("  Memoria nativa asignada.");
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Liberar otros recursos managed
+        }
+
+        // Liberar recurso nativo
+        if (_recursoNativo != IntPtr.Zero)
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(_recursoNativo);
+            _recursoNativo = IntPtr.Zero;
+            Console.WriteLine("  Memoria nativa liberada.");
+        }
+
+        _disposed = true;
+    }
+
+    ~RecursoSeguro()
+    {
+        Dispose(false);
+    }
+}
+
+// Uso con using
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== IDISPOSABLE PATTERN ===\n");
+
+        // using statement (recomendado)
+        Console.WriteLine("1. Usando 'using':");
+        using (var recurso = new RecursoSeguro())
+        {
+            Console.WriteLine("  Usando el recurso...");
+        }
+        Console.WriteLine("  Recurso liberado automaticamente.");
+
+        // using declaration (C# 8+)
+        Console.WriteLine("\n2. Usando 'using declaration':");
+        using var archivo = new ManejadorArchivo("/etc/hosts");
+        archivo.Leer();
+        Console.WriteLine("  Archivo leido.");
+        // Se libera al salir del ambito
+
+        // Try/finally manual
+        Console.WriteLine("\n3. Try/finally manual:");
+        RecursoSeguro recurso2 = null;
+        try
+        {
+            recurso2 = new RecursoSeguro();
+            Console.WriteLine("  Usando recurso en try/finally...");
+        }
+        finally
+        {
+            recurso2?.Dispose();
+        }
+
+        // Usar con null-conditional
+        Console.WriteLine("\n4. Con null-conditional:");
+        (null as RecursoSeguro)?.Dispose();
+        Console.WriteLine("  Dispose seguro con null.");
+    }
+}
+```
+
+--- 6. STRATEGY PATTERN ---
+
+Strategy permite definir una familia de algoritmos, encapsularlos y
+hacerlos intercambiables.
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+// Strategy interface
+public interface ICompresionStrategy
+{
+    string Comprimir(string datos);
+    string Descomprimir(string datos);
+    string Tipo { get; }
+}
+
+// Concrete strategies
+public class CompresionGZip : ICompresionStrategy
+{
+    public string Tipo => "GZip";
+
+    public string Comprimir(string datos)
+    {
+        Console.WriteLine($"  [GZip] Comprimiendo {datos.Length} chars...");
+        return $"gzip:{datos}";
+    }
+
+    public string Descomprimir(string datos)
+    {
+        Console.WriteLine("  [GZip] Descomprimiendo...");
+        return datos.Replace("gzip:", "");
+    }
+}
+
+public class CompresionBrotli : ICompresionStrategy
+{
+    public string Tipo => "Brotli";
+
+    public string Comprimir(string datos)
+    {
+        Console.WriteLine($"  [Brotli] Comprimiendo {datos.Length} chars...");
+        return $"br:{datos}";
+    }
+
+    public string Descomprimir(string datos)
+    {
+        Console.WriteLine("  [Brotli] Descomprimiendo...");
+        return datos.Replace("br:", "");
+    }
+}
+
+public class CompresionLZ4 : ICompresionStrategy
+{
+    public string Tipo => "LZ4";
+
+    public string Comprimir(string datos)
+    {
+        Console.WriteLine($"  [LZ4] Comprimiendo {datos.Length} chars (alta velocidad)...");
+        return $"lz4:{datos}";
+    }
+
+    public string Descomprimir(string datos)
+    {
+        Console.WriteLine("  [LZ4] Descomprimiendo...");
+        return datos.Replace("lz4:", "");
+    }
+}
+
+// Context
+public class ProcesadorArchivos
+{
+    private ICompresionStrategy _strategy;
+
+    public ProcesadorArchivos(ICompresionStrategy strategy)
+    {
+        _strategy = strategy;
+    }
+
+    public void CambiarStrategy(ICompresionStrategy strategy)
+    {
+        _strategy = strategy;
+        Console.WriteLine($"  Strategy cambiada a {strategy.Tipo}");
+    }
+
+    public string Procesar(string contenido)
+    {
+        Console.WriteLine($"\nProcesando con {_strategy.Tipo}:");
+
+        string comprimido = _strategy.Comprimir(contenido);
+        Console.WriteLine($"  Comprimido: {comprimido.Substring(0, Math.Min(30, comprimido.Length))}...");
+
+        string descomprimido = _strategy.Descomprimir(comprimido);
+        Console.WriteLine($"  Descomprimido: {descomprimido.Substring(0, Math.Min(30, descomprimido.Length))}...");
+
+        return descomprimido;
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== STRATEGY PATTERN ===\n");
+
+        var procesador = new ProcesadorArchivos(new CompresionGZip());
+        procesador.Procesar("Este es un texto de ejemplo para compresion...");
+
+        procesador.CambiarStrategy(new CompresionBrotli());
+        procesador.Procesar("Otro texto para probar Brotli...");
+
+        procesador.CambiarStrategy(new CompresionLZ4());
+        procesador.Procesar("LZ4 es ideal para velocidad...");
+    }
+}
+```
+
+--- 7. OBSERVER PATTERN ---
+
+Observer establece una relacion de uno a muchos donde cuando un objeto
+cambia su estado, todos sus dependientes son notificados.
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+// Event args personalizados
+public class CambioPrecioEventArgs : EventArgs
+{
+    public string Simbolo { get; }
+    public decimal PrecioAnterior { get; }
+    public decimal PrecioNuevo { get; }
+    public decimal CambioPorcentual => ((PrecioNuevo - PrecioAnterior) / PrecioAnterior) * 100;
+
+    public CambioPrecioEventArgs(string simbolo, decimal anterior, decimal nuevo)
+    {
+        Simbolo = simbolo;
+        PrecioAnterior = anterior;
+        PrecioNuevo = nuevo;
+    }
+}
+
+// Sujeto (Observable)
+public class Accion
+{
+    private decimal _precio;
+    private readonly List<IObserver<CambioPrecioEventArgs>> _observers = new();
+
+    public string Simbolo { get; }
+    public decimal Precio => _precio;
+
+    public Accion(string simbolo, decimal precioInicial)
+    {
+        Simbolo = simbolo;
+        _precio = precioInicial;
+    }
+
+    public IDisposable Subscribe(IObserver<CambioPrecioEventArgs> observer)
+    {
+        _observers.Add(observer);
+        return new Unsubscriber(_observers, observer);
+    }
+
+    public void ActualizarPrecio(decimal nuevoPrecio)
+    {
+        if (nuevoPrecio == _precio) return;
+
+        var args = new CambioPrecioEventArgs(Simbolo, _precio, nuevoPrecio);
+        _precio = nuevoPrecio;
+
+        foreach (var observer in _observers.ToArray())
+            observer.OnNext(args);
+    }
+
+    private class Unsubscriber : IDisposable
+    {
+        private readonly List<IObserver<CambioPrecioEventArgs>> _observers;
+        private readonly IObserver<CambioPrecioEventArgs> _observer;
+
+        public Unsubscriber(List<IObserver<CambioPrecioEventArgs>> observers,
+                          IObserver<CambioPrecioEventArgs> observer)
+        {
+            _observers = observers;
+            _observer = observer;
+        }
+
+        public void Dispose()
+        {
+            _observers.Remove(_observer);
+        }
+    }
+}
+
+// Observers
+public class Inversor : IObserver<CambioPrecioEventArgs>
+{
+    public string Nombre { get; }
+
+    public Inversor(string nombre)
+    {
+        Nombre = nombre;
+    }
+
+    public void OnNext(CambioPrecioEventArgs value)
+    {
+        string accion = value.CambioPorcentual >= 0
+            ? $"GANANCIA de {value.CambioPorcentual:F2}%"
+            : $"PERDIDA de {Math.Abs(value.CambioPorcentual):F2}%";
+
+        Console.WriteLine($"  [Inversor {Nombre}] {value.Simbolo}: " +
+            $"${value.PrecioAnterior} -> ${value.PrecioNuevo} ({accion})");
+    }
+
+    public void OnError(Exception error)
+        => Console.WriteLine($"  [Inversor {Nombre}] Error: {error.Message}");
+
+    public void OnCompleted()
+        => Console.WriteLine($"  [Inversor {Nombre}] Mercado cerrado.");
+}
+
+public class Analista : IObserver<CambioPrecioEventArgs>
+{
+    public void OnNext(CambioPrecioEventArgs value)
+    {
+        Console.WriteLine($"  [Analista] Analizando {value.Simbolo}: " +
+            $"cambio de {value.CambioPorcentual:F2}%");
+    }
+
+    public void OnError(Exception error)
+        => Console.WriteLine($"  [Analista] Error: {error.Message}");
+
+    public void OnCompleted()
+        => Console.WriteLine("  [Analista] Analisis finalizado.");
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== OBSERVER PATTERN ===\n");
+
+        var apple = new Accion("AAPL", 150.00m);
+
+        var inversor1 = new Inversor("Juan");
+        var inversor2 = new Inversor("Maria");
+        var analista = new Analista();
+
+        using var sub1 = apple.Subscribe(inversor1);
+        using var sub2 = apple.Subscribe(inversor2);
+        using var sub3 = apple.Subscribe(analista);
+
+        Console.WriteLine("Cambios de precio de AAPL:");
+        apple.ActualizarPrecio(152.50m);
+        apple.ActualizarPrecio(148.30m);
+        apple.ActualizarPrecio(155.00m);
+
+        Console.WriteLine("\nMaria se desconecta...");
+        sub2.Dispose();
+
+        apple.ActualizarPrecio(153.75m);
+    }
+}
+```
+
+--- 8. BUILDER PATTERN ---
+
+Builder separa la construccion de un objeto complejo de su representacion.
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+// Producto
+public class Pedido
+{
+    public int Numero { get; set; }
+    public string Cliente { get; set; }
+    public DateTime Fecha { get; set; }
+    public string DireccionEnvio { get; set; }
+    public string MetodoPago { get; set; }
+    public List<string> Productos { get; } = new();
+    public decimal Descuento { get; set; }
+    public bool EnvioGratis { get; set; }
+    public string Notas { get; set; }
+
+    public decimal Subtotal
+    {
+        get
+        {
+            // Simulacion: cada producto cuesta $100
+            return Productos.Count * 100m;
+        }
+    }
+
+    public decimal Total => Subtotal - Descuento;
+
+    public void Mostrar()
+    {
+        Console.WriteLine($"\nPedido #{Numero}");
+        Console.WriteLine($"  Cliente: {Cliente}");
+        Console.WriteLine($"  Fecha: {Fecha:d}");
+        Console.WriteLine($"  Productos ({Productos.Count}):");
+        foreach (var p in Productos)
+            Console.WriteLine($"    - {p}");
+        Console.WriteLine($"  Direccion: {DireccionEnvio}");
+        Console.WriteLine($"  Pago: {MetodoPago}");
+        Console.WriteLine($"  Subtotal: ${Subtotal}");
+        Console.WriteLine($"  Descuento: ${Descuento}");
+        Console.WriteLine($"  Envio gratis: {EnvioGratis}");
+        Console.WriteLine($"  Total: ${Total}");
+        if (!string.IsNullOrEmpty(Notas))
+            Console.WriteLine($"  Notas: {Notas}");
+    }
+}
+
+// Builder interface
+public interface IPedidoBuilder
+{
+    void Reset();
+    IPedidoBuilder ConNumero(int numero);
+    IPedidoBuilder ParaCliente(string cliente);
+    IPedidoBuilder ConFecha(DateTime fecha);
+    IPedidoBuilder EnviarA(string direccion);
+    IPedidoBuilder PagarCon(string metodo);
+    IPedidoBuilder AgregarProducto(string producto);
+    IPedidoBuilder ConDescuento(decimal descuento);
+    IPedidoBuilder ConEnvioGratis(bool gratis);
+    IPedidoBuilder ConNotas(string notas);
+    Pedido Construir();
+}
+
+// Concrete Builder
+public class PedidoBuilder : IPedidoBuilder
+{
+    private Pedido _pedido = new();
+
+    public void Reset()
+    {
+        _pedido = new Pedido();
+    }
+
+    public IPedidoBuilder ConNumero(int numero)
+    {
+        _pedido.Numero = numero;
+        return this;
+    }
+
+    public IPedidoBuilder ParaCliente(string cliente)
+    {
+        _pedido.Cliente = cliente;
+        return this;
+    }
+
+    public IPedidoBuilder ConFecha(DateTime fecha)
+    {
+        _pedido.Fecha = fecha;
+        return this;
+    }
+
+    public IPedidoBuilder EnviarA(string direccion)
+    {
+        _pedido.DireccionEnvio = direccion;
+        return this;
+    }
+
+    public IPedidoBuilder PagarCon(string metodo)
+    {
+        _pedido.MetodoPago = metodo;
+        return this;
+    }
+
+    public IPedidoBuilder AgregarProducto(string producto)
+    {
+        _pedido.Productos.Add(producto);
+        return this;
+    }
+
+    public IPedidoBuilder ConDescuento(decimal descuento)
+    {
+        _pedido.Descuento = descuento;
+        return this;
+    }
+
+    public IPedidoBuilder ConEnvioGratis(bool gratis)
+    {
+        _pedido.EnvioGratis = gratis;
+        return this;
+    }
+
+    public IPedidoBuilder ConNotas(string notas)
+    {
+        _pedido.Notas = notas;
+        return this;
+    }
+
+    public Pedido Construir()
+    {
+        var pedido = _pedido;
+        Reset(); // Preparar para siguiente construccion
+        return pedido;
+    }
+}
+
+// Director (opcional)
+public class PedidoDirector
+{
+    private readonly IPedidoBuilder _builder;
+
+    public PedidoDirector(IPedidoBuilder builder)
+    {
+        _builder = builder;
+    }
+
+    public Pedido CrearPedidoEstandar(int numero, string cliente)
+    {
+        return _builder
+            .ConNumero(numero)
+            .ParaCliente(cliente)
+            .ConFecha(DateTime.Now)
+            .EnviarA("Direccion por defecto")
+            .PagarCon("Tarjeta Credito")
+            .AgregarProducto("Producto Estandar")
+            .Construir();
+    }
+
+    public Pedido CrearPedidoPremium(int numero, string cliente)
+    {
+        return _builder
+            .ConNumero(numero)
+            .ParaCliente(cliente)
+            .ConFecha(DateTime.Now)
+            .EnviarA("Oficina Central")
+            .PagarCon("PayPal")
+            .AgregarProducto("Producto Premium")
+            .AgregarProducto("Producto Premium")
+            .ConDescuento(50m)
+            .ConEnvioGratis(true)
+            .ConNotas("Cliente VIP")
+            .Construir();
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== BUILDER PATTERN ===\n");
+
+        // Uso fluido
+        var builder = new PedidoBuilder();
+
+        var pedido1 = builder
+            .ConNumero(1001)
+            .ParaCliente("Juan Perez")
+            .ConFecha(DateTime.Now)
+            .EnviarA("Av. Siempre Viva 742")
+            .PagarCon("Efectivo")
+            .AgregarProducto("Laptop")
+            .AgregarProducto("Mouse")
+            .AgregarProducto("Teclado")
+            .ConNotas("Entregar en horario laboral")
+            .Construir();
+
+        pedido1.Mostrar();
+
+        // Usando director
+        Console.WriteLine("\n--- Pedido con Director ---");
+        var director = new PedidoDirector(builder);
+
+        var estandar = director.CrearPedidoEstandar(2001, "Maria Garcia");
+        estandar.Mostrar();
+
+        var premium = director.CrearPedidoPremium(3001, "Carlos Ruiz");
+        premium.Mostrar();
+    }
+}
+```
+
+--- 9. REPOSITORY PATTERN ---
+
+Repository abstrae el acceso a datos, proporcionando una interfaz
+similar a una coleccion para el dominio.
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+// Entidad de dominio
+public class Producto
+{
+    public int Id { get; set; }
+    public string Nombre { get; set; }
+    public decimal Precio { get; set; }
+    public int Stock { get; set; }
+    public bool Activo { get; set; }
+}
+
+// Interface del repositorio
+public interface IProductoRepository
+{
+    Producto ObtenerPorId(int id);
+    IEnumerable<Producto> ObtenerTodos();
+    IEnumerable<Producto> Buscar(Func<Producto, bool> criterio);
+    void Agregar(Producto producto);
+    void Actualizar(Producto producto);
+    void Eliminar(int id);
+    bool Existe(int id);
+    int Contar();
+}
+
+// Implementacion en memoria
+public class ProductoRepositoryMemoria : IProductoRepository
+{
+    private readonly List<Producto> _productos = new();
+    private int _nextId = 1;
+
+    public ProductoRepositoryMemoria()
+    {
+        // Datos de ejemplo
+        Agregar(new Producto { Nombre = "Laptop", Precio = 1500m, Stock = 10 });
+        Agregar(new Producto { Nombre = "Mouse", Precio = 25m, Stock = 100 });
+        Agregar(new Producto { Nombre = "Teclado", Precio = 80m, Stock = 50 });
+    }
+
+    public Producto ObtenerPorId(int id)
+        => _productos.FirstOrDefault(p => p.Id == id);
+
+    public IEnumerable<Producto> ObtenerTodos()
+        => _productos.Where(p => p.Activo).ToList();
+
+    public IEnumerable<Producto> Buscar(Func<Producto, bool> criterio)
+        => _productos.Where(criterio).ToList();
+
+    public void Agregar(Producto producto)
+    {
+        producto.Id = _nextId++;
+        producto.Activo = true;
+        _productos.Add(producto);
+    }
+
+    public void Actualizar(Producto producto)
+    {
+        var existente = ObtenerPorId(producto.Id);
+        if (existente != null)
+        {
+            existente.Nombre = producto.Nombre;
+            existente.Precio = producto.Precio;
+            existente.Stock = producto.Stock;
+        }
+    }
+
+    public void Eliminar(int id)
+    {
+        var producto = ObtenerPorId(id);
+        if (producto != null)
+            producto.Activo = false; // Soft delete
+    }
+
+    public bool Existe(int id)
+        => _productos.Any(p => p.Id == id);
+
+    public int Contar()
+        => _productos.Count(p => p.Activo);
+}
+
+// Servicio de dominio que usa el repositorio
+public class InventarioService
+{
+    private readonly IProductoRepository _repository;
+
+    public InventarioService(IProductoRepository repository)
+    {
+        _repository = repository;
+    }
+
+    public void AgregarProducto(string nombre, decimal precio, int stock)
+    {
+        if (string.IsNullOrWhiteSpace(nombre))
+            throw new ArgumentException("El nombre es requerido.");
+
+        if (precio <= 0)
+            throw new ArgumentException("El precio debe ser positivo.");
+
+        if (stock < 0)
+            throw new ArgumentException("El stock no puede ser negativo.");
+
+        var producto = new Producto
+        {
+            Nombre = nombre,
+            Precio = precio,
+            Stock = stock
+        };
+
+        _repository.Agregar(producto);
+        Console.WriteLine($"  Producto '{nombre}' agregado.");
+    }
+
+    public void VenderProducto(int productoId, int cantidad)
+    {
+        var producto = _repository.ObtenerPorId(productoId);
+        if (producto == null)
+            throw new InvalidOperationException($"Producto #{productoId} no encontrado.");
+
+        if (producto.Stock < cantidad)
+            throw new InvalidOperationException(
+                $"Stock insuficiente para #{productoId}. Disponible: {producto.Stock}");
+
+        producto.Stock -= cantidad;
+        _repository.Actualizar(producto);
+        Console.WriteLine($"  Vendidos {cantidad} de '{producto.Nombre}'. Stock restante: {producto.Stock}");
+    }
+
+    public void ListarProductos()
+    {
+        Console.WriteLine("\nInventario:");
+        foreach (var p in _repository.ObtenerTodos())
+            Console.WriteLine($"  #{p.Id} {p.Nombre} - ${p.Precio} (stock: {p.Stock})");
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== REPOSITORY PATTERN ===\n");
+
+        var repository = new ProductoRepositoryMemoria();
+        var inventario = new InventarioService(repository);
+
+        inventario.ListarProductos();
+
+        Console.WriteLine("\nAgregando producto:");
+        inventario.AgregarProducto("Monitor 4K", 450m, 15);
+
+        Console.WriteLine("\nVendiendo productos:");
+        inventario.VenderProducto(1, 2);
+        inventario.VenderProducto(2, 5);
+
+        Console.WriteLine("\nInventario actualizado:");
+        inventario.ListarProductos();
+    }
+}
+```
+
+--- 10. DECORATOR PATTERN ---
+
+Decorator agrega responsabilidades a un objeto dinamicamente.
+
+```csharp
+using System;
+
+// Componente abstracto
+public abstract class Bebida
+{
+    public abstract string Descripcion { get; }
+    public abstract decimal Costo { get; }
+}
+
+// Componente concreto
+public class Cafe : Bebida
+{
+    public override string Descripcion => "Cafe";
+    public override decimal Costo => 2.00m;
+}
+
+public class Te : Bebida
+{
+    public override string Descripcion => "Te";
+    public override decimal Costo => 1.50m;
+}
+
+// Decorador base
+public abstract class BebidaDecorator : Bebida
+{
+    protected Bebida _bebida;
+
+    public BebidaDecorator(Bebida bebida)
+    {
+        _bebida = bebida;
+    }
+}
+
+// Decoradores concretos
+public class Leche : BebidaDecorator
+{
+    public Leche(Bebida bebida) : base(bebida) { }
+
+    public override string Descripcion => _bebida.Descripcion + ", Leche";
+    public override decimal Costo => _bebida.Costo + 0.50m;
+}
+
+public class Crema : BebidaDecorator
+{
+    public Crema(Bebida bebida) : base(bebida) { }
+
+    public override string Descripcion => _bebida.Descripcion + ", Crema";
+    public override decimal Costo => _bebida.Costo + 0.75m;
+}
+
+public class Canela : BebidaDecorator
+{
+    public Canela(Bebida bebida) : base(bebida) { }
+
+    public override string Descripcion => _bebida.Descripcion + ", Canela";
+    public override decimal Costo => _bebida.Costo + 0.25m;
+}
+
+public class Chocolate : BebidaDecorator
+{
+    public Chocolate(Bebida bebida) : base(bebida) { }
+
+    public override string Descripcion => _bebida.Descripcion + ", Chocolate";
+    public override decimal Costo => _bebida.Costo + 0.60m;
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== DECORATOR PATTERN ===\n");
+
+        // Pedido simple
+        Bebida bebida1 = new Cafe();
+        Console.WriteLine($"{bebida1.Descripcion}: ${bebida1.Costo}");
+
+        // Pedido decorado
+        Bebida bebida2 = new Cafe();
+        bebida2 = new Leche(bebida2);
+        bebida2 = new Crema(bebida2);
+        Console.WriteLine($"{bebida2.Descripcion}: ${bebida2.Costo}");
+
+        // Pedido multiple
+        Bebida bebida3 = new Te();
+        bebida3 = new Leche(bebida3);
+        bebida3 = new Canela(bebida3);
+        bebida3 = new Chocolate(bebida3);
+        Console.WriteLine($"{bebida3.Descripcion}: ${bebida3.Costo}");
+
+        // Pedido simple con extras
+        Bebida bebida4 = new Cafe();
+        bebida4 = new Chocolate(bebida4);
+        Console.WriteLine($"\n{bebida4.Descripcion}: ${bebida4.Costo}");
+    }
+}
+```
+
+--- 11. CHAIN OF RESPONSIBILITY ---
+
+Chain of Responsibility pasa la solicitud a traves de una cadena de
+manejadores hasta que uno la procesa.
+
+```csharp
+using System;
+
+// Modelo de solicitud
+public class SolicitudSoporte
+{
+    public string Usuario { get; set; }
+    public string Descripcion { get; set; }
+    public NivelSeveridad Severidad { get; set; }
+    public bool Resuelta { get; set; }
+}
+
+public enum NivelSeveridad
+{
+    Baja,
+    Media,
+    Alta,
+    Critica
+}
+
+// Manejador abstracto
+public abstract class ManejadorSoporte
+{
+    protected ManejadorSoporte _siguiente;
+
+    public ManejadorSoporte EstablecerSiguiente(ManejadorSoporte siguiente)
+    {
+        _siguiente = siguiente;
+        return siguiente;
+    }
+
+    public virtual void Manejar(SolicitudSoporte solicitud)
+    {
+        if (_siguiente != null)
+            _siguiente.Manejar(solicitud);
+    }
+}
+
+// Manejador nivel 1: Soporte Basico
+public class SoporteBasico : ManejadorSoporte
+{
+    public override void Manejar(SolicitudSoporte solicitud)
+    {
+        if (solicitud.Severidad == NivelSeveridad.Baja)
+        {
+            Console.WriteLine($"  [Soporte Basico] Resolviendo: {solicitud.Descripcion}");
+            solicitud.Resuelta = true;
+        }
+        else
+        {
+            Console.WriteLine("  [Soporte Basico] Escalando a nivel medio...");
+            base.Manejar(solicitud);
+        }
+    }
+}
+
+// Manejador nivel 2: Soporte Tecnico
+public class SoporteTecnico : ManejadorSoporte
+{
+    public override void Manejar(SolicitudSoporte solicitud)
+    {
+        if (solicitud.Severidad == NivelSeveridad.Media)
+        {
+            Console.WriteLine($"  [Soporte Tecnico] Resolviendo: {solicitud.Descripcion}");
+            solicitud.Resuelta = true;
+        }
+        else
+        {
+            Console.WriteLine("  [Soporte Tecnico] Escalando a nivel alto...");
+            base.Manejar(solicitud);
+        }
+    }
+}
+
+// Manejador nivel 3: Ingeniero
+public class Ingeniero : ManejadorSoporte
+{
+    public override void Manejar(SolicitudSoporte solicitud)
+    {
+        if (solicitud.Severidad == NivelSeveridad.Alta)
+        {
+            Console.WriteLine($"  [Ingeniero] Resolviendo: {solicitud.Descripcion}");
+            solicitud.Resuelta = true;
+        }
+        else
+        {
+            Console.WriteLine("  [Ingeniero] Escalando a emergencia...");
+            base.Manejar(solicitud);
+        }
+    }
+}
+
+// Manejador nivel 4: Equipo de Emergencia
+public class EquipoEmergencia : ManejadorSoporte
+{
+    public override void Manejar(SolicitudSoporte solicitud)
+    {
+        if (solicitud.Severidad == NivelSeveridad.Critica)
+        {
+            Console.WriteLine($"  [Equipo Emergencia] RESOLVIENDO CRITICO: {solicitud.Descripcion}");
+            solicitud.Resuelta = true;
+        }
+        else
+        {
+            Console.WriteLine("  [Equipo Emergencia] No se puede manejar esta solicitud.");
+        }
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== CHAIN OF RESPONSIBILITY ===\n");
+
+        // Configurar cadena
+        var basico = new SoporteBasico();
+        var tecnico = new SoporteTecnico();
+        var ingeniero = new Ingeniero();
+        var emergencia = new EquipoEmergencia();
+
+        basico.EstablecerSiguiente(tecnico)
+              .EstablecerSiguiente(ingeniero)
+              .EstablecerSiguiente(emergencia);
+
+        // Probar solicitudes
+        var solicitudes = new[]
+        {
+            new SolicitudSoporte { Usuario = "Juan", Descripcion = "Olvide mi contrasena", Severidad = NivelSeveridad.Baja },
+            new SolicitudSoporte { Usuario = "Ana", Descripcion = "El sistema no responde", Severidad = NivelSeveridad.Media },
+            new SolicitudSoporte { Usuario = "Carlos", Descripcion = "Error en calculo financiero", Severidad = NivelSeveridad.Alta },
+            new SolicitudSoporte { Usuario = "Admin", Descripcion = "SERVIDOR CAIDO!", Severidad = NivelSeveridad.Critica }
+        };
+
+        foreach (var s in solicitudes)
+        {
+            Console.WriteLine($"\nSolicitud de {s.Usuario} ({s.Severidad}): {s.Descripcion}");
+            basico.Manejar(s);
+            Console.WriteLine($"  Resuelta: {s.Resuelta}");
+        }
+    }
+}
+```
+
+--- 12. FLUENT INTERFACE CON PATRONES ---
+
+Combinando varios patrones en una API fluida:
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+public class ConsultaSQL
+{
+    private string _tabla;
+    private List<string> _columnas = new() { "*" };
+    private List<string> _condiciones = new();
+    private List<string> _ordenes = new();
+    private int? _limite;
+
+    public ConsultaSQL Seleccionar(params string[] columnas)
+    {
+        _columnas = new List<string>(columnas);
+        return this;
+    }
+
+    public ConsultaSQL Desde(string tabla)
+    {
+        _tabla = tabla;
+        return this;
+    }
+
+    public ConsultaSQL Donde(string condicion)
+    {
+        _condiciones.Add(condicion);
+        return this;
+    }
+
+    public ConsultaSQL OrdenarPor(string columna, bool ascendente = true)
+    {
+        _ordenes.Add($"{columna} {(ascendente ? "ASC" : "DESC")}");
+        return this;
+    }
+
+    public ConsultaSQL Limitar(int limite)
+    {
+        _limite = limite;
+        return this;
+    }
+
+    public string Construir()
+    {
+        var sql = $"SELECT {string.Join(", ", _columnas)}
+FROM {_tabla}";
+
+        if (_condiciones.Count > 0)
+            sql += $"
+WHERE {string.Join(" AND ", _condiciones)}";
+
+        if (_ordenes.Count > 0)
+            sql += $"
+ORDER BY {string.Join(", ", _ordenes)}";
+
+        if (_limite.HasValue)
+            sql += $"
+LIMIT {_limite.Value}";
+
+        sql += ";";
+        return sql;
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== FLUENT INTERFACE ===\n");
+
+        var sql = new ConsultaSQL()
+            .Seleccionar("Id", "Nombre", "Email", "FechaRegistro")
+            .Desde("Usuarios")
+            .Donde("Activo = 1")
+            .Donde("FechaRegistro > '2024-01-01'")
+            .OrdenarPor("Nombre")
+            .OrdenarPor("FechaRegistro", false)
+            .Limitar(50)
+            .Construir();
+
+        Console.WriteLine("SQL Generado:");
+        Console.WriteLine(sql);
+    }
+}
+```
+
+--- 13. PATRON IDISPOSABLE AVANZADO ---
+
+```csharp
+using System;
+using System.IO;
+using System.Collections.Generic;
+
+// Gestor de recursos con tracking
+public class RecursoRastreable : IDisposable
+{
+    private static readonly List<RecursoRastreable> _instancias = new();
+    private static readonly object _lock = new();
+
+    private readonly string _nombre;
+    private bool _disposed;
+
+    public RecursoRastreable(string nombre)
+    {
+        _nombre = nombre;
+        lock (_lock)
+        {
+            _instancias.Add(this);
+        }
+        Console.WriteLine($"  [+] Recurso '{_nombre}' creado. Total: {_instancias.Count}");
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            lock (_lock)
+            {
+                _instancias.Remove(this);
+            }
+            Console.WriteLine($"  [-] Recurso '{_nombre}' liberado. Restantes: {_instancias.Count}");
+        }
+
+        _disposed = true;
+    }
+
+    ~RecursoRastreable() => Dispose(false);
+
+    public static int InstanciasActivas
+    {
+        get { lock (_lock) { return _instancias.Count; } }
+    }
+}
+
+// Factory con Dispose
+public class ConexionBD : IDisposable
+{
+    private readonly string _connectionString;
+    private bool _conectado;
+
+    private ConexionBD(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+
+    public static ConexionBD Conectar(string connectionString)
+    {
+        var conn = new ConexionBD(connectionString);
+        conn._conectado = true;
+        Console.WriteLine($"  [DB] Conectado a: {connectionString}");
+        return conn;
+    }
+
+    public void EjecutarQuery(string sql)
+    {
+        if (!_conectado)
+            throw new ObjectDisposedException(nameof(ConexionBD));
+        Console.WriteLine($"  [DB] Ejecutando: {sql}");
+    }
+
+    public void Dispose()
+    {
+        if (_conectado)
+        {
+            _conectado = false;
+            Console.WriteLine($"  [DB] Desconectado de: {_connectionString}");
+        }
+    }
+}
+
+// Dispose pattern con hierencia
+public class RecursoBase : IDisposable
+{
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+            Console.WriteLine("  [Base] Liberando recursos managed.");
+        Console.WriteLine("  [Base] Liberando recursos nativos.");
+        _disposed = true;
+    }
+
+    ~RecursoBase() => Dispose(false);
+}
+
+public class RecursoDerivado : RecursoBase
+{
+    private bool _disposed;
+    private FileStream _archivo;
+
+    public RecursoDerivado(string ruta)
+    {
+        _archivo = File.OpenRead(ruta);
+        Console.WriteLine($"  [Derivado] Archivo abierto: {ruta}");
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            _archivo?.Dispose();
+            Console.WriteLine("  [Derivado] Liberando recursos managed.");
+        }
+
+        Console.WriteLine("  [Derivado] Liberando recursos nativos.");
+        _disposed = true;
+
+        // Llamar al base
+        base.Dispose(disposing);
+    }
+
+    ~RecursoDerivado() => Dispose(false);
+}
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== IDISPOSABLE AVANZADO ===\n");
+
+        // Tracking de recursos
+        using (var r1 = new RecursoRastreable("Recurso-1"))
+        using (var r2 = new RecursoRastreable("Recurso-2"))
+        {
+            Console.WriteLine($"  Instancias activas: {RecursoRastreable.InstanciasActivas}");
+            using (var r3 = new RecursoRastreable("Recurso-3"))
+            {
+                Console.WriteLine($"  Instancias activas: {RecursoRastreable.InstanciasActivas}");
+            }
+            Console.WriteLine($"  Instancias activas: {RecursoRastreable.InstanciasActivas}");
+        }
+        Console.WriteLine($"  Instancias activas final: {RecursoRastreable.InstanciasActivas}");
+
+        // Factory con Dispose
+        Console.WriteLine("\nFactory con Dispose:");
+        using (var db = ConexionBD.Conectar("Server=.;Database=master"))
+        {
+            db.EjecutarQuery("SELECT * FROM Usuarios");
+        }
+
+        // Herencia con Dispose
+        Console.WriteLine("\nHerencia con Dispose:");
+        using (var recurso = new RecursoDerivado("/etc/hosts"))
+        {
+            Console.WriteLine("  Usando recurso...");
+        }
+    }
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPITULO
+================================================================================
+
+1. Singleton: Una unica instancia global (usar Lazy<T>).
+2. Factory Method: Crear objetos sin especificar la clase concreta.
+3. Abstract Factory: Familias de objetos relacionados.
+4. Dependency Injection: Invertir el control de dependencias.
+5. IDisposable: Liberar recursos no administrados.
+6. Strategy: Algoritmos intercambiables.
+7. Observer: Notificacion de cambios uno-a-muchos.
+8. Builder: Construccion de objetos complejos paso a paso.
+9. Repository: Abstraccion de acceso a datos.
+10. Decorator: Agregar responsabilidades dinamicamente.
+11. Chain of Responsibility: Cadena de manejadores.
+12. Fluent Interface: API legible y encadenable.
+
+================================================================================
+  EJERCICIOS PRACTICOS
+================================================================================
+
+Ejercicio 1: Implemente un singleton Logger que escriba en archivo con
+rotacion diaria y configuracion de nivel (Info, Warn, Error).
+
+Ejercicio 2: Cree un Abstract Factory para crear diferentes tipos de
+reportes (PDF, Excel, HTML, CSV) con sus respectivos estilos.
+
+Ejercicio 3: Implemente un mini contenedor DI que soporte Transient,
+Scoped y Singleton, con resolucion por constructor.
+
+Ejercicio 4: Disene una jerarquia de clases con IDisposable que gestione
+conexiones a base de datos, transacciones y comandos.
+
+Ejercicio 5: Combine Strategy y Decorator para crear un procesador de
+texto que pueda aplicar multiples transformaciones (mayusculas,
+eliminar espacios, reemplazar palabras) en cadena.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Cual patron debo usar primero? R: Dependency Injection es el mas
+importante en C# moderno. Facilita testing y desacoplamiento.
+
+P: Singleton es anti-patron? R: Puede serlo si se usa para estado global
+mutable. Use Singleton para configuracion, logging, caching (inmutable).
+
+P: Cuando usar Factory vs Builder? R: Factory para crear objetos en un
+solo paso. Builder para construccion paso a paso con muchas opciones.
+
+P: IDisposable siempre necesario? R: Solo si tiene recursos no
+administrados (archivos, conexiones, handles nativos). Para recursos
+managed use using y confie en el GC.
+
+P: Que es mejor: interfaces o clases abstractas para patrones? R:
+Interfaces para contratos (Strategy, Observer). Clases abstractas
+cuando hay comportamiento base (Template Method, Decorator).
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+Disene e implemente un mini-framework de aplicacion que combine multiples
+patrones de diseno:
+
+1. Contenedor DI propio que soporte:
+   - Registro por interface/concreto
+   - Transient, Singleton, Scoped
+   - Resolucion automatica de dependencias
+   - Factories registradas (Func<IService>)
+   - Decorators automaticos
+
+2. Repositorio generico con Unit of Work:
+   - IRepository<T> con CRUD basico
+   - IUnitOfWork con SaveChanges y transacciones
+   - Implementacion en memoria y SQL (simulada)
+
+3. Sistema de plugins con:
+   - IPlugin interface con Init/Execute/Shutdown
+   - PluginLoader que escanea assemblies
+   - PluginContext con DI container aislado
+
+4. Logging con patron Decorator:
+   - ILogger basico
+   - Decorators: TimestampLogger, ThreadSafeLogger, FileLogger
+   - Configuracion por atributo [Log]
+
+5. Manejador de comandos con Chain of Responsibility:
+   - ICommandHandler<TCommand>
+   - Middleware pipeline: Logging, Validacion, Transaccion, Cache
+   - Los handlers se resuelven via DI
+
+6. UI fluida con Builder:
+   - Constructor de formularios con fluent API
+   - Formulario.Titulo("Login")
+     .Campo("Usuario").Requerido().MaxLongitud(50)
+     .Campo("Password").Password()
+     .Boton("Aceptar").Accion(() => Login())
+     .Construir();
+
+Requisitos:
+- Todo debe estar desacoplado via interfaces
+- Los patrones deben poder combinarse
+- El codigo debe ser testeable unitariamente
+- Debe incluir ejemplo funcional completo
+
+================================================================================
+  CIERRE DEL CAPITULO
+================================================================================
+
+Los patrones de diseno son el vocabulario del arquitecto de software.
+Dominarlos permite crear sistemas flexibles, mantenibles y escalables.
+En el proximo y ultimo capitulo del modulo aplicaremos todo lo aprendido
+en un proyecto completo de sistema de plugins.
+
+!Felicidades! Domina los patrones de diseno avanzados en C#.
+
+PROXIMO CAPITULO: 70 - Proyecto: Sistema de Plugins
+================================================================================

@@ -1,0 +1,1023 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                        CAPÍTULO 63
+##
+##                              JWT
+##
+################################################################################
+################################################################################
+
+"Un JWT es como un pasaporte digital: contiene la identidad del portador y
+pruebas criptográficas de que no ha sido alterado."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Saludos, arquitecto de backend. Has aprendido a construir APIs REST y a
+comunicarte con JSON. Ahora es momento de asegurar esas comunicaciones con
+JWT (JSON Web Tokens).
+
+En el mundo empresarial, las APIs no pueden estar abiertas a cualquiera.
+Necesitas un mecanismo para verificar la identidad de quien hace cada
+petición. JWT es el estándar moderno para la autenticación basada en
+tokens en APIs REST.
+
+Un JWT no es solo un token de acceso: es un contenedor autocontenido de
+información, firmado criptográficamente, que puede ser verificado sin
+necesidad de consultar una base de datos. Cada token lleva dentro la
+identidad, los permisos y la validez, todo empaquetado en una cadena
+compacta y segura.
+
+En este capítulo aprenderás a generar y verificar JWTs usando la librería
+`firebase/php-jwt`, entenderás la estructura de un token y cómo usarlo
+para proteger tus endpoints.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La confianza en un sistema distribuido no se declara, se demuestra con
+firmas digitales. JWT es esa prueba criptográfica que abre las puertas."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Comprender la estructura de un JWT: header, payload y signature.
+✓ Instalar y configurar la librería `firebase/php-jwt` mediante Composer.
+✓ Generar tokens JWT con datos personalizados y tiempo de expiración.
+✓ Verificar y decodificar tokens JWT en peticiones entrantes.
+✓ Manejar errores comunes: token expirado, firma inválida, malformado.
+✓ Extraer datos del usuario autenticado desde el token.
+✓ Implementar autenticación stateless basada en JWT en tu API REST.
+
+===============================================================================
+1. ¿QUÉ ES JWT?
+===============================================================================
+
+JSON Web Token (JWT) es un estándar abierto (RFC 7519) que define una
+forma compacta y autocontenida de transmitir información entre partes
+como un objeto JSON. Esta información se verifica y es confiable porque
+está firmada digitalmente.
+
+Un JWT tiene tres partes separadas por puntos (`.`):
+
+```
+TOKEN = HEADER + "." + PAYLOAD + "." + SIGNATURE
+```
+
+Ejemplo de un JWT real:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.
+eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6Ikp1YW4gUMOpcmV6IiwiaWF0IjoxNTE2MjM5MDIyfQ.
+SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+```
+
+**Header**: Contiene el tipo de token y el algoritmo de firma.
+
+```json
+{
+    "alg": "HS256",
+    "typ": "JWT"
+}
+```
+
+**Payload**: Contiene los claims (declaraciones) sobre la identidad del
+usuario y metadatos adicionales.
+
+```json
+{
+    "sub": "1234567890",
+    "name": "Juan Pérez",
+    "iat": 1516239022,
+    "exp": 1516242622,
+    "rol": "admin"
+}
+```
+
+**Signature**: Se genera codificando en Base64URL el header y payload, y
+firmando esa cadena con una clave secreta usando el algoritmo especificado.
+
+```
+HMACSHA256(
+    base64UrlEncode(header) + "." + base64UrlEncode(payload),
+    secret
+)
+```
+
+Características clave de JWT:
+
+- **Autocontenido**: El token contiene toda la información necesaria sobre
+  el usuario, eliminando consultas a BD en cada petición.
+- **Stateless**: El servidor no necesita mantener sesiones activas; el
+  token es la única fuente de verdad.
+- **Portable**: Funciona entre dominios y servicios; perfecto para
+  microservicios y SSO (Single Sign-On).
+- **Seguro**: Firmado criptográficamente; cualquier alteración invalida
+  la firma.
+
+===============================================================================
+2. INSTALACIÓN DE firebase/php-jwt
+===============================================================================
+
+La librería más popular para manejar JWT en PHP es `firebase/php-jwt`.
+Se instala fácilmente con Composer.
+
+```bash
+# Instalar firebase/php-jwt via Composer
+composer require firebase/php-jwt
+
+# Verificar instalación
+composer show firebase/php-jwt
+
+# Estructura del proyecto con JWT
+mi-api-rest/
+├── composer.json
+├── composer.lock
+├── vendor/
+│   ├── firebase/
+│   │   └── php-jwt/
+│   │       └── src/
+│   │           ├── JWT.php
+│   │           ├── Key.php
+│   │           └── ExpiredException.php
+│   └── autoload.php
+├── src/
+│   ├── Auth/
+│   │   └── JwtHandler.php
+│   └── ...
+└── config/
+    └── app.php
+```
+
+El archivo `composer.json` se verá así:
+
+```json
+{
+    "name": "mi-api/rest",
+    "description": "API REST empresarial",
+    "require": {
+        "php": ">=8.1",
+        "firebase/php-jwt": "^6.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    }
+}
+```
+
+===============================================================================
+3. GENERACIÓN DE TOKENS JWT
+===============================================================================
+
+Para emitir un JWT, necesitas definir los claims (declaraciones) y firmarlos
+con una clave secreta.
+
+```php
+<?php
+// src/Auth/JwtHandler.php
+namespace App\Auth;
+
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use Firebase\JWT\ExpiredException;
+use Exception;
+
+class JwtHandler
+{
+    private string $secret;
+    private string $algoritmo;
+    private int $tiempoExpiracion;
+
+    public function __construct()
+    {
+        $this->secret = getenv('JWT_SECRET');
+        $this->algoritmo = 'HS256';
+        $this->tiempoExpiracion = (int)(getenv('JWT_EXPIRATION') ?: 3600);
+
+        if (empty($this->secret)) {
+            throw new \RuntimeException(
+                'JWT_SECRET no está configurado en las variables de entorno'
+            );
+        }
+    }
+
+    public function generarToken(array $datosUsuario): string
+    {
+        $ahora = time();
+
+        $payload = [
+            'iss' => 'mi-api-rest',           // Emisor (issuer)
+            'sub' => $datosUsuario['id'],      // Sujeto (subject) — ID del usuario
+            'iat' => $ahora,                   // Emitido en (issued at)
+            'exp' => $ahora + $this->tiempoExpiracion, // Expiración
+            'nbf' => $ahora,                   // No válido antes de (not before)
+            'jti' => bin2hex(random_bytes(16)), // ID único del token
+            'data' => [
+                'id'       => $datosUsuario['id'],
+                'nombre'   => $datosUsuario['nombre'],
+                'email'    => $datosUsuario['email'],
+                'rol'      => $datosUsuario['rol'] ?? 'usuario'
+            ]
+        ];
+
+        return JWT::encode($payload, $this->secret, $this->algoritmo);
+    }
+
+    public function generarTokenRefresco(int $usuarioId): string
+    {
+        $payload = [
+            'iss' => 'mi-api-rest',
+            'sub' => $usuarioId,
+            'iat' => time(),
+            'exp' => time() + 2592000, // 30 días
+            'type' => 'refresh'
+        ];
+
+        return JWT::encode($payload, $this->secret, $this->algoritmo);
+    }
+}
+?>
+```
+
+Uso del generador de tokens:
+
+```php
+<?php
+// Uso en el login
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use App\Auth\JwtHandler;
+
+$jwtHandler = new JwtHandler();
+
+$usuario = [
+    'id'     => 42,
+    'nombre' => 'María García',
+    'email'  => 'maria@example.com',
+    'rol'    => 'admin'
+];
+
+$tokenAcceso = $jwtHandler->generarToken($usuario);
+$tokenRefresco = $jwtHandler->generarTokenRefresco($usuario['id']);
+
+echo "Token de acceso: {$tokenAcceso}\n";
+echo "Token de refresco: {$tokenRefresco}\n";
+
+// Respuesta típica de login
+$respuesta = [
+    'success' => true,
+    'data'    => [
+        'token_acceso'  => $tokenAcceso,
+        'token_refresco' => $tokenRefresco,
+        'token_type'    => 'Bearer',
+        'expires_in'    => 3600,
+        'usuario'       => [
+            'id'     => $usuario['id'],
+            'nombre' => $usuario['nombre'],
+            'email'  => $usuario['email'],
+            'rol'    => $usuario['rol']
+        ]
+    ]
+];
+
+echo json_encode($respuesta, JSON_PRETTY_PRINT);
+?>
+```
+
+===============================================================================
+4. VERIFICACIÓN DE TOKENS JWT
+===============================================================================
+
+Para proteger tus endpoints, debes verificar el token en cada petición.
+
+```php
+<?php
+// src/Auth/JwtHandler.php (continuación)
+
+    public function verificarToken(string $token): object
+    {
+        try {
+            $decoded = JWT::decode(
+                $token,
+                new Key($this->secret, $this->algoritmo)
+            );
+
+            return $decoded;
+
+        } catch (ExpiredException $e) {
+            throw new \RuntimeException(
+                'Token expirado. Por favor, inicia sesión nuevamente.',
+                401
+            );
+        } catch (\Firebase\JWT\SignatureInvalidException $e) {
+            throw new \RuntimeException(
+                'Firma del token inválida. El token ha sido alterado.',
+                401
+            );
+        } catch (\Firebase\JWT\BeforeValidException $e) {
+            throw new \RuntimeException(
+                'El token aún no es válido.',
+                401
+            );
+        } catch (Exception $e) {
+            throw new \RuntimeException(
+                'Token inválido: ' . $e->getMessage(),
+                401
+            );
+        }
+    }
+
+    public function extraerUsuarioDeToken(string $token): array
+    {
+        $decoded = $this->verificarToken($token);
+
+        if (!isset($decoded->data)) {
+            throw new \RuntimeException(
+                'Token no contiene datos de usuario',
+                401
+            );
+        }
+
+        return (array) $decoded->data;
+    }
+
+    public function refrescarToken(string $tokenRefresco): array
+    {
+        $decoded = $this->verificarToken($tokenRefresco);
+
+        if (!isset($decoded->type) || $decoded->type !== 'refresh') {
+            throw new \RuntimeException(
+                'Token de refresco inválido',
+                401
+            );
+        }
+
+        // Aquí consultarías la BD para obtener datos actualizados del usuario
+        $usuario = [
+            'id'    => $decoded->sub,
+            'nombre' => 'María García',
+            'email'  => 'maria@example.com',
+            'rol'   => 'admin'
+        ];
+
+        return [
+            'token_acceso' => $this->generarToken($usuario),
+            'expires_in'   => $this->tiempoExpiracion
+        ];
+    }
+?>
+```
+
+===============================================================================
+5. MIDDLEWARE DE AUTENTICACIÓN JWT
+===============================================================================
+
+El middleware de autenticación se ejecuta antes de cada ruta protegida.
+Extrae el token del header `Authorization: Bearer <token>` y lo verifica.
+
+```php
+<?php
+// src/Middleware/AuthMiddleware.php
+namespace App\Middleware;
+
+use App\Auth\JwtHandler;
+
+class AuthMiddleware
+{
+    private JwtHandler $jwtHandler;
+
+    public function __construct()
+    {
+        $this->jwtHandler = new JwtHandler();
+    }
+
+    public function handle(callable $next): callable
+    {
+        return function (array $params) use ($next) {
+            try {
+                $token = $this->extraerTokenDeHeaders();
+
+                if ($token === null) {
+                    $this->responderError(
+                        401,
+                        'Token de autenticación requerido'
+                    );
+                    return;
+                }
+
+                $usuario = $this->jwtHandler->extraerUsuarioDeToken($token);
+
+                // Inyectar usuario en los parámetros
+                $params['usuario_autenticado'] = $usuario;
+
+                // Ejecutar el siguiente handler
+                return $next($params);
+
+            } catch (\RuntimeException $e) {
+                $this->responderError(401, $e->getMessage());
+            }
+        };
+    }
+
+    private function extraerTokenDeHeaders(): ?string
+    {
+        $headers = getallheaders();
+        $authHeader = $headers['Authorization'] ?? '';
+
+        if (empty($authHeader)) {
+            return null;
+        }
+
+        if (preg_match('/^Bearer\s+(.+)$/i', $authHeader, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
+    }
+
+    private function responderError(int $codigo, string $mensaje): void
+    {
+        http_response_code($codigo);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'error'   => [
+                'codigo'  => $codigo,
+                'mensaje' => $mensaje
+            ]
+        ]);
+        exit;
+    }
+}
+?>
+```
+
+Integración del middleware con el enrutador:
+
+```php
+<?php
+// routes/api.php — Con autenticación
+use App\Middleware\AuthMiddleware;
+
+$router = new Router();
+
+// Rutas públicas (sin autenticación)
+$router->post('/api/v1/auth/login',    [AuthController::class, 'login']);
+$router->post('/api/v1/auth/register', [AuthController::class, 'register']);
+
+// Rutas protegidas (con autenticación)
+$authMiddleware = new AuthMiddleware();
+
+$router->get('/api/v1/usuarios', $authMiddleware->handle(
+    function ($params) {
+        $ctrl = new UsuarioController();
+        $ctrl->index($params);
+    }
+));
+
+$router->get('/api/v1/usuarios/{id}', $authMiddleware->handle(
+    function ($params) {
+        $ctrl = new UsuarioController();
+        $ctrl->show($params['id'], $params);
+    }
+));
+
+$router->post('/api/v1/productos', $authMiddleware->handle(
+    function ($params) {
+        $ctrl = new ProductoController();
+        $ctrl->store($params);
+    }
+));
+?>
+```
+
+===============================================================================
+6. CLAIMS ESTÁNDAR Y PERSONALIZADOS
+===============================================================================
+
+JWT define claims estándar (registered claims) que son recomendados:
+
+| Claim | Nombre             | Descripción                                  |
+|-------|--------------------|----------------------------------------------|
+| `iss` | Issuer             | Identifica quién emitió el token             |
+| `sub` | Subject            | Identifica al sujeto del token (ej. ID)      |
+| `aud` | Audience           | Identifica los destinatarios del token       |
+| `exp` | Expiration Time    | Tiempo después del cual el token expira      |
+| `nbf` | Not Before         | Tiempo antes del cual el token no es válido  |
+| `iat` | Issued At          | Tiempo en que fue emitido el token           |
+| `jti` | JWT ID             | Identificador único del token                |
+
+Claims personalizados para tu aplicación:
+
+```php
+<?php
+// Claims personalizados comunes en APIs empresariales
+$payload = [
+    // Claims estándar
+    'iss'  => 'https://api.egaenterprise.com',
+    'sub'  => 42,
+    'aud'  => 'https://app.egaenterprise.com',
+    'exp'  => time() + 3600,
+    'nbf'  => time(),
+    'iat'  => time(),
+    'jti'  => bin2hex(random_bytes(16)),
+
+    // Claims personalizados
+    'data' => [
+        'id'          => 42,
+        'nombre'      => 'Carlos Ruiz',
+        'email'       => 'carlos@ega.com',
+        'rol'         => 'gerente',
+        'permisos'    => [
+            'productos:leer',
+            'productos:escribir',
+            'usuarios:leer'
+        ],
+        'departamento' => 'ventas',
+        'sucursal_id'  => 5,
+        'autenticacion_2fa' => true
+    ],
+
+    // Metadata del token
+    'token_version' => 1,
+    'client_id'     => 'web_app_v3'
+];
+
+$token = JWT::encode($payload, $secret, 'HS256');
+?>
+```
+
+===============================================================================
+7. MANEJO DE EXPIRACIÓN Y REFRESCO
+===============================================================================
+
+Los tokens de acceso tienen una vida corta (15-60 minutos). Los tokens de
+refresco permiten obtener nuevos tokens sin pedir credenciales de nuevo.
+
+```php
+<?php
+// AuthController.php — Login y refresco
+class AuthController
+{
+    private JwtHandler $jwtHandler;
+    private PDO $db;
+
+    public function __construct(PDO $db)
+    {
+        $this->jwtHandler = new JwtHandler();
+        $this->db = $db;
+    }
+
+    public function login(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+
+        $email = $datos['email'] ?? '';
+        $password = $datos['password'] ?? '';
+
+        if (empty($email) || empty($password)) {
+            Response::error('Email y contraseña son requeridos', 422);
+            return;
+        }
+
+        // Verificar credenciales
+        $stmt = $this->db->prepare(
+            "SELECT id, nombre, email, password, rol
+             FROM usuarios WHERE email = ?"
+        );
+        $stmt->execute([$email]);
+        $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$usuario || !password_verify($password, $usuario['password'])) {
+            Response::error('Credenciales inválidas', 401);
+            return;
+        }
+
+        // Generar tokens
+        $tokenAcceso = $this->jwtHandler->generarToken([
+            'id'     => $usuario['id'],
+            'nombre' => $usuario['nombre'],
+            'email'  => $usuario['email'],
+            'rol'    => $usuario['rol']
+        ]);
+
+        $tokenRefresco = $this->jwtHandler->generarTokenRefresco(
+            $usuario['id']
+        );
+
+        // Almacenar refresh token en BD para poder invalidarlo
+        $stmt = $this->db->prepare(
+            "INSERT INTO refresh_tokens (usuario_id, token, expires_at)
+             VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 30 DAY))"
+        );
+        $stmt->execute([$usuario['id'], $tokenRefresco]);
+
+        Response::success([
+            'token_acceso'   => $tokenAcceso,
+            'token_refresco'  => $tokenRefresco,
+            'token_type'     => 'Bearer',
+            'expires_in'     => 3600,
+            'usuario'        => [
+                'id'     => $usuario['id'],
+                'nombre' => $usuario['nombre'],
+                'email'  => $usuario['email'],
+                'rol'    => $usuario['rol']
+            ]
+        ], 'Inicio de sesión exitoso');
+    }
+
+    public function refresh(): void
+    {
+        $datos = json_decode(file_get_contents('php://input'), true);
+        $tokenRefresco = $datos['token_refresco'] ?? '';
+
+        if (empty($tokenRefresco)) {
+            Response::error('Token de refresco requerido', 422);
+            return;
+        }
+
+        try {
+            $nuevosTokens = $this->jwtHandler->refrescarToken($tokenRefresco);
+
+            // Invalidar el refresh token anterior
+            $stmt = $this->db->prepare(
+                "DELETE FROM refresh_tokens WHERE token = ?"
+            );
+            $stmt->execute([$tokenRefresco]);
+
+            Response::success([
+                'token_acceso'  => $nuevosTokens['token_acceso'],
+                'expires_in'    => $nuevosTokens['expires_in']
+            ], 'Token refrescado exitosamente');
+
+        } catch (\RuntimeException $e) {
+            Response::error($e->getMessage(), 401);
+        }
+    }
+
+    public function logout(): void
+    {
+        $headers = getallheaders();
+        $authHeader = $headers['Authorization'] ?? '';
+
+        if (preg_match('/^Bearer\s+(.+)$/i', $authHeader, $matches)) {
+            $token = $matches[1];
+
+            // Agregar a blacklist (implementación simple)
+            $stmt = $this->db->prepare(
+                "INSERT INTO token_blacklist (token, created_at)
+                 VALUES (?, NOW())"
+            );
+            $stmt->execute([$token]);
+        }
+
+        Response::success(null, 'Sesión cerrada exitosamente');
+    }
+}
+?>
+```
+
+===============================================================================
+8. ALGORITMOS DE FIRMA
+===============================================================================
+
+JWT soporta múltiples algoritmos de firma. Los más comunes son:
+
+| Algoritmo | Tipo        | Descripción                          |
+|-----------|-------------|--------------------------------------|
+| HS256     | Simétrico   | HMAC con SHA-256 (clave secreta)     |
+| HS384     | Simétrico   | HMAC con SHA-384                     |
+| HS512     | Simétrico   | HMAC con SHA-512                     |
+| RS256     | Asimétrico  | RSA con SHA-256 (pares de llaves)    |
+| RS384     | Asimétrico  | RSA con SHA-384                      |
+| RS512     | Asimétrico  | RSA con SHA-512                      |
+| ES256     | Asimétrico  | ECDSA con P-256 y SHA-256            |
+
+```php
+<?php
+// Algoritmos asimétricos (RS256) — Recomendado para microservicios
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+
+// Generar par de llaves (una vez)
+// openssl genrsa -out private.pem 2048
+// openssl rsa -in private.pem -pubout -out public.pem
+
+$privateKey = file_get_contents('/etc/keys/private.pem');
+$publicKey = file_get_contents('/etc/keys/public.pem');
+
+// Emitir token con llave privada
+$payload = [
+    'iss'  => 'auth-service',
+    'sub'  => 42,
+    'exp'  => time() + 3600,
+    'data' => ['rol' => 'admin']
+];
+
+$token = JWT::encode($payload, $privateKey, 'RS256');
+
+// Verificar token con llave pública
+$decoded = JWT::decode($token, new Key($publicKey, 'RS256'));
+
+// Múltiples claves para rotación
+$keyRing = [
+    'key1' => new Key($publicKey1, 'RS256'),
+    'key2' => new Key($publicKey2, 'RS256'),
+];
+
+// Añadir el key ID (kid) en el header
+$headers = ['kid' => 'key1'];
+$token = JWT::encode($payload, $privateKey1, 'RS256', 'key1');
+
+// La librería detecta el kid automáticamente al decodificar
+$decoded = JWT::decode($token, $keyRing);
+?>
+```
+
+===============================================================================
+9. BUENAS PRÁCTICAS DE SEGURIDAD CON JWT
+===============================================================================
+
+```php
+<?php
+// 1. Usar una clave secreta fuerte
+// Generar: openssl rand -base64 64
+$secret = '8X5vK2pL9mN4qR7tW1zY3bA6cD8eF0gH2jK4lM6nP8qR0sT2uV4wX6yZ';
+
+// 2. Establecer expiración corta para tokens de acceso
+$accesoExp = 900; // 15 minutos
+$refrescoExp = 2592000; // 30 días
+
+// 3. Incluir audiencia (aud) para evitar token reuse entre servicios
+$payload['aud'] = 'mi-api-rest';
+
+// 4. Validar el issuer (iss)
+$payload['iss'] = 'https://auth.egaenterprise.com';
+
+// 5. Implementar rotación de refresh tokens
+// Cada vez que se usa un refresh token, se invalida el anterior y se emite
+// uno nuevo (rotación automática)
+
+// 6. Blacklist de tokens invalidados
+function tokenEstaEnBlacklist(string $token, PDO $db): bool
+{
+    $stmt = $db->prepare(
+        "SELECT 1 FROM token_blacklist WHERE token = ?"
+    );
+    $stmt->execute([$token]);
+    return (bool)$stmt->fetchColumn();
+}
+
+// 7. No almacenar información sensible en el payload
+// El payload está solo codificado en Base64, no encriptado
+// Cualquiera puede leerlo decodificando Base64
+$payloadPELIGROSO = [
+    'password' => 'supersecreto', // ¡NUNCA HAGAS ESTO!
+    'tarjeta'  => '4111-1111-1111-1111' // ¡NUNCA!
+];
+
+// 8. Usar https siempre para evitar interceptación de tokens
+// El token viaja en el header Authorization
+
+// 9. Detectar token reuse (posible robo)
+function verificarTokenReuse(string $token, string $usuarioId, PDO $db): void
+{
+    $stmt = $db->prepare(
+        "SELECT 1 FROM refresh_tokens
+         WHERE usuario_id = ? AND token = ?"
+    );
+    $stmt->execute([$usuarioId, $token]);
+
+    if (!$stmt->fetchColumn()) {
+        // Posible robo de token — invalidar todos los tokens del usuario
+        $db->prepare(
+            "DELETE FROM refresh_tokens WHERE usuario_id = ?"
+        )->execute([$usuarioId]);
+        throw new \RuntimeException(
+            'Posible robo de token. Todos los tokens han sido invalidados.',
+            401
+        );
+    }
+}
+?>
+```
+
+===============================================================================
+10. ALMACENAMIENTO SEGURO DEL TOKEN EN EL CLIENTE
+===============================================================================
+
+Aunque el enfoque del libro es backend, es importante que conozcas las
+prácticas seguras del lado del cliente.
+
+```javascript
+// JavaScript — Almacenamiento seguro (httpOnly cookie vs localStorage)
+
+// Opción 1: httpOnly cookie (recomendada para APIs web)
+// El servidor establece la cookie automáticamente
+// setcookie('token', $jwt, [
+//     'httponly' => true,
+//     'secure' => true,
+//     'samesite' => 'Strict',
+//     'path' => '/api/'
+// ]);
+
+// Opción 2: localStorage (con vulnerabilidad XSS)
+// NO RECOMENDADO para producción
+// localStorage.setItem('token', jwtToken);
+
+// Opción 3: Memory-only (más seguro pero menos persistente)
+// Almacenar en variable JS, no persiste al recargar
+
+// Enviar token en cada petición
+async function llamarApi(url, token) {
+    const respuesta = await fetch(url, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        }
+    });
+
+    if (respuesta.status === 401) {
+        // Token expirado — intentar refrescar
+        const nuevoToken = await refrescarToken();
+        return llamarApi(url, nuevoToken);
+    }
+
+    return respuesta.json();
+}
+```
+
+===============================================================================
+11. PRUEBAS CON JWT EN CURL
+===============================================================================
+
+```bash
+# 1. Obtener token (login)
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@ega.com","password":"secreta"}' \
+  | jq -r '.data.token_acceso')
+
+echo "Token: $TOKEN"
+
+# 2. Decodificar el payload (solo para depuración)
+echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq .
+
+# 3. Llamar a endpoint protegido
+curl -s http://localhost:8000/api/v1/usuarios \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# 4. Intentar sin token (debe dar 401)
+curl -s http://localhost:8000/api/v1/usuarios | jq .
+
+# 5. Intentar con token inválido
+curl -s http://localhost:8000/api/v1/usuarios \
+  -H "Authorization: Bearer TOKEN_INVALIDO" | jq .
+
+# 6. Refrescar token
+REFRESH=$(echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.data.token_refresco')
+
+curl -s -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d "{\"token_refresco\": \"$REFRESH\"}" | jq .
+```
+
+===============================================================================
+12. DIAGRAMA DE FLUJO DE AUTENTICACIÓN
+===============================================================================
+
+```
+CLIENTE                    SERVIDOR API                     BASE DE DATOS
+   |                           |                                |
+   |--- POST /auth/login --->|                                |
+   |   {email, password}     |--- SELECT usuario ----------->|
+   |                          |<-- usuario + password_hash ---|
+   |                          |                                |
+   |                          |--- password_verify()           |
+   |                          |                                |
+   |                          |--- Generar JWT                 |
+   |<-- 200 {token_acceso,   |                                |
+   |        token_refresco}  |                                |
+   |                          |                                |
+   |--- GET /api/usuarios -->|                                |
+   |   Authorization: Bearer |--- Verificar JWT               |
+   |   <token>               |--- Extraer usuario del token   |
+   |                          |                                |
+   |<-- 200 {data: [...]}   |                                |
+   |                          |                                |
+   |--- GET /api/usuarios -->|  (sin token)                   |
+   |                          |                                |
+   |<-- 401 {error: ...}    |                                |
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- JWT es un estándar (RFC 7519) para tokens autocontenidos y firmados
+  que permiten autenticación stateless en APIs REST.
+- Un JWT tiene tres partes: Header (algoritmo + tipo), Payload (datos +
+  claims), y Signature (firma criptográfica).
+- `firebase/php-jwt` es la librería más popular para JWT en PHP, fácil de
+  instalar con Composer.
+- Los tokens de acceso deben tener expiración corta (15-60 min); los
+  tokens de refresco permiten renovarlos sin credenciales (30 días).
+- El middleware de autenticación extrae el token del header Authorization,
+  lo verifica e inyecta los datos del usuario en la petición.
+- Nunca almacenes datos sensibles en el payload (solo está codificado en
+  Base64, no encriptado).
+- Siempre usa HTTPS en producción para evitar interceptación de tokens.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Instala `firebase/php-jwt` con Composer. Crea una clase
+`JwtService` con métodos `generate()`, `validate()` y `getUserFromToken()`.
+
+🧩 **Ejercicio 2:** Implementa la rotación automática de refresh tokens:
+cada vez que se use un refresh token, invalida el anterior y emite uno
+nuevo. Almacena los tokens en una tabla `refresh_tokens`.
+
+🧩 **Ejercicio 3:** Crea un sistema de blacklist de tokens usando una tabla
+`token_blacklist`. Implementa la verificación en el middleware de
+autenticación.
+
+🧩 **Ejercicio 4:** Implementa autenticación con múltiples algoritmos (HS256
+para acceso, RS256 para microservicios). Crea un key ring que seleccione
+la clave según el `kid` del header.
+
+🧩 **Ejercicio 5:** Escribe un script de pruebas que simule el flujo completo:
+registro, login, acceso a ruta protegida, refresh de token, logout con
+blacklist, y verificación de expiración.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Es seguro almacenar datos en el payload de JWT?** El payload está
+firmado (no puede alterarse) pero solo codificado en Base64 (cualquiera
+puede leerlo). No almacenes contraseñas, tarjetas de crédito ni datos
+sensibles.
+
+❓ **¿Qué hago si un token es robado?** Sin una blacklist, no puedes
+invalidar un JWT hasta que expire. Implementa una blacklist en BD o usa
+tokens de muy corta duración (5-15 min) con refresh tokens rotativos.
+
+❓ **¿JWT es mejor que las sesiones tradicionales?** Depende. JWT es mejor
+para APIs distribuidas, microservicios y apps móviles. Las sesiones son
+más simples para aplicaciones monolíticas con servidor único.
+
+❓ **¿Cuánto debe durar un token de acceso?** Entre 15 y 60 minutos. Lo
+suficiente para no pedir login constantemente, pero lo bastante corto
+para limitar el daño si el token se ve comprometido.
+
+❓ **¿Debo usar HS256 o RS256?** HS256 (simétrico) es suficiente para una
+sola API. RS256 (asimétrico) es necesario cuando múltiples servicios
+deben verificar tokens sin compartir la clave secreta.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de autenticación empresarial con JWT** — Diseña e implementa
+un sistema completo de autenticación que incluya: registro de usuarios con
+verificación de email, login con generación de tokens de acceso y refresco,
+middleware de autenticación con blacklist, rotación automática de refresh
+tokens, detección de token reuse (posible robo), soporte para múltiples
+algoritmos (HS256 y RS256), logout con invalidación inmediata, endpoints
+de cambio de contraseña (requiere contraseña actual + nueva), y un sistema
+de refresh token rotation que invalide el token anterior cada vez que se
+emita uno nuevo. Añade logging de todos los eventos de autenticación para
+auditoría. El sistema debe manejar gracefulmente: token expirado, token
+malformado, firma inválida, token en blacklist, y refresh token reusado.
+
+===============================================================================
+FIN DEL CAPÍTULO 63
+===============================================================================
+
+"Un JWT bien implementado es la puerta de entrada a un sistema seguro.
+Un JWT mal implementado es una puerta abierta a cualquier intruso."
+                              — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+64_CAPITULO_64_MIDDLEWARE.txt
+===============================================================================

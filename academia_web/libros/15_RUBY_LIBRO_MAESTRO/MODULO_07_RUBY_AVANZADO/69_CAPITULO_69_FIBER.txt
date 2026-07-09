@@ -1,0 +1,1074 @@
+===============================================================================
+                RUBY MASTER BOOK · MÓDULO VII · RUBY AVANZADO
+===============================================================================
+  CAPÍTULO 69: FIBER
+===============================================================================
+
+   ███████╗██╗██████╗ ███████╗██████╗
+   ██╔════╝██║██╔══██╗██╔════╝██╔══██╗
+   █████╗  ██║██████╔╝█████╗  ██████╔╝
+   ██╔══╝  ██║██╔══██╗██╔══╝  ██╔══██╗
+   ██║     ██║██║  ██║███████╗██║  ██║
+   ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+
+================================================================================
+                        BIENVENIDA AL CAPÍTULO 69
+================================================================================
+
+  Bienvenido al mundo de la concurrencia cooperativa en Ruby. Las
+  fibras (Fiber) son una primitiva de control de flujo que permite
+  pausar y reanudar unidades de ejecución de manera explícita.
+
+  A diferencia de los hilos (Threads), que son gestionados por el
+  sistema operativo y se ejecutan en paralelo, las fibras son
+  cooperativas: tú decides cuándo se pausan y cuándo se reanudan.
+  Esto las hace ideales para productores/consumidores, generadores
+  infinitos, y control de flujo asíncrono sin la complejidad de los
+  hilos.
+
+  Las fibras son la base de bibliotecas como Enumerator::Lazy y
+  muchas implementaciones de async/await en Ruby.
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+  "Las fibras son como hilos, pero educados: esperan su turno para
+   ejecutarse."
+   — Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✓ Crear fibras con Fiber.new.
+  ✓ Usar Fiber.yield para pausar una fibra.
+  ✓ Usar resume para reanudar una fibra.
+  ✓ Transferir control entre fibras con transfer.
+  ✓ Diferenciar fibras de hilos.
+  ✓ Implementar generadores con fibras.
+  ✓ Usar fibras para lazy evaluation.
+  ✓ Aplicar el patrón productor-consumidor con fibras.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+-------------------------------------------------------------------------------
+  1. ¿QUÉ ES UNA FIBRA?
+-------------------------------------------------------------------------------
+
+  Una fibra (Fiber) es una unidad de ejecución ligera que puede ser
+  pausada y reanudada explícitamente. A diferencia de los hilos:
+
+    • Las fibras son cooperativas (no hay cambio de contexto forzado).
+    • Una fibra debe ceder explícitamente el control con yield.
+    • Las fibras NO se ejecutan en paralelo (en MRI).
+    • Las fibras son más ligeras que los hilos.
+
+  Las fibras son ideales para:
+    • Generadores (secuencias infinitas).
+    • Productores/consumidores.
+    • Control de flujo asíncrono.
+    • Lazy evaluation.
+
+-------------------------------------------------------------------------------
+  2. CREACIÓN DE FIBRAS
+-------------------------------------------------------------------------------
+
+  Se crean con Fiber.new y un bloque:
+
+    fibra = Fiber.new do
+      puts "Dentro de la fibra: paso 1"
+      Fiber.yield
+      puts "Dentro de la fibra: paso 2"
+      "resultado final"
+    end
+
+    puts "Antes de resume"
+    fibra.resume  # Dentro de la fibra: paso 1
+    puts "Después de primer resume"
+    fibra.resume  # Dentro de la fibra: paso 2
+    puts "Después de segundo resume"
+    resultado = fibra.resume  # nil (ya terminó)
+
+  La fibra se pausa con Fiber.yield y se reanuda con resume.
+
+-------------------------------------------------------------------------------
+  3. FIBER.YIELD: PAUSAR LA FIBRA
+-------------------------------------------------------------------------------
+
+  Fiber.yield pausa la ejecución de la fibra y devuelve el control
+  al código que llamó a resume:
+
+    fibra = Fiber.new do
+      Fiber.yield "primer valor"
+      Fiber.yield "segundo valor"
+      "último valor"
+    end
+
+    puts fibra.resume  # "primer valor"
+    puts fibra.resume  # "segundo valor"
+    puts fibra.resume  # "último valor"
+
+  Cada yield "retorna" un valor a quien llama a resume.
+
+-------------------------------------------------------------------------------
+  4. RESUME: REANUDAR LA FIBRA
+-------------------------------------------------------------------------------
+
+  resume reanuda la ejecución de la fibra. Puedes pasar argumentos:
+
+    fibra = Fiber.new do |nombre|
+      respuesta = Fiber.yield "Hola #{nombre}, ¿cómo estás?"
+      "Me alegra que digas: #{respuesta}"
+    end
+
+    saludo = fibra.resume("Ana")
+    puts saludo  # "Hola Ana, ¿cómo estás?"
+
+    respuesta = fibra.resume("bien, gracias")
+    puts respuesta  # "Me alegra que digas: bien, gracias"
+
+  Los argumentos pasados a resume se convierten en el valor de retorno
+  de Fiber.yield.
+
+-------------------------------------------------------------------------------
+  5. CICLO DE VIDA DE UNA FIBRA
+-------------------------------------------------------------------------------
+
+  Estados de una fibra:
+    • :created  - Creada pero no iniciada
+    • :running  - En ejecución
+    • :suspended - Pausada (esperando resume)
+    • :resumed  - Se ha reanudado (transitorio)
+    • :terminated - Finalizada
+
+    fibra = Fiber.new { Fiber.yield :pausada; :fin }
+    puts fibra.status  # :created (o nil fuera de la fibra)
+
+    fibra.resume
+    puts fibra.status  # nil (en el hilo principal)
+
+  Cuando la fibra termina, su estado es nil y devuelve el último valor.
+
+-------------------------------------------------------------------------------
+  6. TRANSFER: CONTROL EXPLÍCITO
+-------------------------------------------------------------------------------
+
+  Además de resume/yield, existe transfer para pasar control entre
+  fibras de manera más flexible:
+
+    fibra_a = Fiber.new do
+      3.times do |i|
+        puts "A: #{i}"
+        Fiber.yield
+      end
+    end
+
+    fibra_b = Fiber.new do
+      3.times do |i|
+        puts "B: #{i}"
+        Fiber.yield
+      end
+    end
+
+    # Round-robin con yield/resume
+    3.times do
+      fibra_a.resume
+      fibra_b.resume
+    end
+
+  transfer permite cambiar a una fibra específica:
+
+    fibra_a = Fiber.new do
+      puts "A: inicio"
+      fibra_b.transfer
+      puts "A: fin"
+    end
+
+    fibra_b = Fiber.new do
+      puts "B: ejecutándose"
+    end
+
+    fibra_a.resume
+
+-------------------------------------------------------------------------------
+  7. FIBERS VS THREADS
+-------------------------------------------------------------------------------
+
+  Característica     | Fiber              | Thread
+  -------------------|--------------------|---------------------
+  Scheduling         | Cooperativo        | Preventivo (OS)
+  Paralelismo        | No (MRI)           | Sí (según implementación)
+  Cambio de contexto| Explícito (yield)  | Implícito (OS)
+  Peso               | Muy ligero         | Pesado
+  Compartición       | Sin carrera (1 a 1)| Carrera (race conditions)
+  Control de flujo   | Manual             | Automático
+  Estado             | :created, :suspended, | :run, :sleep, :aborting
+                      | :terminado         |
+  Uso típico         | Generadores, lazy  | I/O paralelo, CPU
+
+-------------------------------------------------------------------------------
+  8. GENERADORES CON FIBERS
+-------------------------------------------------------------------------------
+
+  Las fibras son ideales para generar secuencias infinitas:
+
+    def generar_fibonacci
+      Fiber.new do
+        a, b = 0, 1
+        loop do
+          Fiber.yield a
+          a, b = b, a + b
+        end
+      end
+    end
+
+    fib = generar_fibonacci
+    10.times { puts fib.resume }
+    # 0, 1, 1, 2, 3, 5, 8, 13, 21, 34
+
+-------------------------------------------------------------------------------
+  9. GENERADOR DE NÚMEROS PRIMOS
+-------------------------------------------------------------------------------
+
+    def generar_primos
+      Fiber.new do
+        n = 2
+        loop do
+          es_primo = (2..Math.sqrt(n)).none? { |i| n % i == 0 }
+          Fiber.yield n if es_primo
+          n += 1
+        end
+      end
+    end
+
+    primos = generar_primos
+    5.times { puts primos.resume }
+    # 2, 3, 5, 7, 11
+
+-------------------------------------------------------------------------------
+  10. PRODUCTOR-CONSUMIDOR CON FIBERS
+-------------------------------------------------------------------------------
+
+    def productor(buffer, items)
+      Fiber.new do
+        items.each do |item|
+          puts "Productor: produciendo #{item}"
+          buffer << item
+          Fiber.yield
+        end
+      end
+    end
+
+    def consumidor(buffer, cantidad)
+      Fiber.new do
+        cantidad.times do
+          item = buffer.shift
+          puts "Consumidor: consumiendo #{item}"
+          Fiber.yield
+        end
+      end
+    end
+
+    buffer = []
+    prod = productor(buffer, ["A", "B", "C", "D", "E"])
+    cons = consumidor(buffer, 5)
+
+    5.times do
+      prod.resume
+      cons.resume
+    end
+
+-------------------------------------------------------------------------------
+  11. LAZY ENUMERATOR CON FIBER
+-------------------------------------------------------------------------------
+
+  Podemos implementar lazy evaluation:
+
+    def lazy_select(enum, &filtro)
+      Fiber.new do
+        enum.each do |item|
+          Fiber.yield item if filtro.call(item)
+        end
+      end
+    end
+
+    numeros = (1..100)
+    pares = lazy_select(numeros, &:even?)
+    5.times { puts pares.resume }
+    # 2, 4, 6, 8, 10
+
+-------------------------------------------------------------------------------
+  12. ENUMERATOR CON FIBER
+-------------------------------------------------------------------------------
+
+  La clase Enumerator en Ruby usa fibras internamente:
+
+    enumerador = Enumerator.new do |y|
+      y << "primero"
+      y << "segundo"
+      y << "tercero"
+    end
+
+    puts enumerador.next  # "primero"
+    puts enumerador.next  # "segundo"
+
+  Cada y << es equivalente a Fiber.yield.
+
+-------------------------------------------------------------------------------
+  13. FIBER Y EXCEPCIONES
+-------------------------------------------------------------------------------
+
+  Las excepciones dentro de una fibra se propagan al llamador:
+
+    fibra = Fiber.new do
+      raise "Error dentro de la fibra"
+    end
+
+    begin
+      fibra.resume
+    rescue => e
+      puts "Capturado: #{e.message}"
+    end
+
+  Si no se captura, la fibra termina con estado terminado.
+
+-------------------------------------------------------------------------------
+  14. FIBER.RESUME CON BLOQUE
+-------------------------------------------------------------------------------
+
+  Puedes pasar un bloque a resume que se ejecuta en el contexto de
+  la fibra:
+
+    fibra = Fiber.new do
+      valor = Fiber.yield
+      "Recibí: #{valor}"
+    end
+
+    # Pasar un bloque a resume
+    puts fibra.resume { 42 }
+    # No es común, pero posible.
+
+  Nota: Los argumentos a resume se pasan como return de Fiber.yield.
+
+-------------------------------------------------------------------------------
+  15. FIBER POOL (VARIAS FIBRAS)
+-------------------------------------------------------------------------------
+
+  Coordinación de múltiples fibras:
+
+    fibras = 3.times.map do |i|
+      Fiber.new do
+        3.times do |j|
+          puts "Fibra #{i}: iteración #{j}"
+          Fiber.yield
+        end
+      end
+    end
+
+    # Round-robin
+    3.times do
+      fibras.each(&:resume)
+    end
+
+-------------------------------------------------------------------------------
+  16. FIBER Y TRANSFERENCIA DE CONTROL
+-------------------------------------------------------------------------------
+
+  transfer es más flexible que resume porque permite saltar entre
+  fibras sin necesidad de que la fibra actual llame a yield:
+
+    fibra_a = Fiber.new do
+      puts "A: inicio"
+      resultado = fibra_b.transfer("desde A")
+      puts "A: recibió '#{resultado}'"
+    end
+
+    fibra_b = Fiber.new do |mensaje|
+      puts "B: recibió '#{mensaje}'"
+      "saludo desde B"
+    end
+
+    fibra_a.resume
+    # A: inicio
+    # B: recibió 'desde A'
+    # A: recibió 'saludo desde B'
+
+-------------------------------------------------------------------------------
+  17. LIMITACIONES DE FIBER EN MRI
+-------------------------------------------------------------------------------
+
+  1. Sin paralelismo real: Las fibras en MRI no ejecutan código en
+     paralelo. Para paralelismo real necesitas Ractor o procesos.
+  2. Sin interrupción: Una fibra debe ceder explícitamente (cooperativa).
+  3. No apta para CPU intensivo: El código que nunca cede bloquea todo.
+  4. Stack fijo: Aunque ligero, cada fibra tiene su propio stack.
+  5. No hay scheduler global: Tú debes coordinar las fibras.
+
+-------------------------------------------------------------------------------
+  18. FIBER Y RACTOR
+-------------------------------------------------------------------------------
+
+  En Ruby 3.0+, los Ractors proporcionan paralelismo real. Las fibras
+  pueden usarse dentro de un Ractor:
+
+    ractor = Ractor.new do
+      fibra = Fiber.new do
+        Fiber.yield "desde ractor"
+      end
+      fibra.resume
+    end
+
+    puts ractor.take  # "desde ractor"
+
+  Ractor + Fiber es una combinación poderosa.
+
+-------------------------------------------------------------------------------
+  19. FIBER COMO CORRUTINA
+-------------------------------------------------------------------------------
+
+  Las fibras implementan el patrón de corrutinas:
+
+    def ping(counter, pong_fiber)
+      Fiber.new do
+        loop do
+          puts "ping #{counter}"
+          counter += 1
+          pong_fiber.transfer
+        end
+      end
+    end
+
+    def pong(counter, ping_fiber)
+      Fiber.new do
+        loop do
+          puts "pong #{counter}"
+          counter += 1
+          ping_fiber.transfer
+        end
+      end
+    end
+
+    ping_f = ping(0, nil)
+    pong_f = pong(0, ping_f)
+    ping_f = ping(0, pong_f)  # reasignar con referencia circular
+
+    # Necesitamos manejar la referencia circular
+    # Este es un ejemplo conceptual
+
+-------------------------------------------------------------------------------
+  CÓDIGO COMPLETO DE EJEMPLO
+-------------------------------------------------------------------------------
+
+```ruby
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# =============================================================================
+# CAPÍTULO 69: FIBER
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. FIBRA BÁSICA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "1. FIBRA BÁSICA"
+puts "=" * 60
+
+fibra = Fiber.new do
+  puts "  Fibra: paso 1"
+  Fiber.yield
+  puts "  Fibra: paso 2"
+  "completado"
+end
+
+puts "  Main: antes de resume"
+fibra.resume
+puts "  Main: entre resumes"
+fibra.resume
+puts "  Main: después de resume"
+
+# ---------------------------------------------------------------------------
+# 2. FIBER.YIELD CON VALORES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "2. YIELD CON VALORES"
+puts "=" * 60
+
+contador = Fiber.new do
+  Fiber.yield 1
+  Fiber.yield 2
+  Fiber.yield 3
+  "fin"
+end
+
+3.times { puts "  Valor: #{contador.resume}" }
+
+# ---------------------------------------------------------------------------
+# 3. PASAR ARGUMENTOS A RESUME
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "3. ARGUMENTOS A RESUME"
+puts "=" * 60
+
+conversacion = Fiber.new do |nombre|
+  respuesta1 = Fiber.yield "Hola #{nombre}, ¿cómo estás?"
+  respuesta2 = Fiber.yield "Qué bien que digas '#{respuesta1}'"
+  "Chao #{nombre}, me alegra la conversación"
+end
+
+puts "  #{conversacion.resume("Ana")}"
+puts "  #{conversacion.resume("muy bien")}"
+puts "  #{conversacion.resume(":)")}"
+
+# ---------------------------------------------------------------------------
+# 4. ESTADOS DE UNA FIBRA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "4. ESTADOS"
+puts "=" * 60
+
+f = Fiber.new do
+  Fiber.yield :suspendido
+  :terminado
+end
+
+puts "  Estado (creada): #{f.status.inspect}"
+puts "  Valor: #{f.resume}"
+puts "  Estado (suspendido): #{f.status.inspect}"
+puts "  Valor: #{f.resume}"
+puts "  Estado (terminada): #{f.status.inspect}"
+
+# ---------------------------------------------------------------------------
+# 5. GENERADOR: FIBONACCI
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "5. GENERADOR FIBONACCI"
+puts "=" * 60
+
+def fibonacci
+  Fiber.new do
+    a, b = 0, 1
+    loop do
+      Fiber.yield a
+      a, b = b, a + b
+    end
+  end
+end
+
+fib = fibonacci
+10.times { |i| puts "  fib(#{i}) = #{fib.resume}" }
+
+# ---------------------------------------------------------------------------
+# 6. GENERADOR: PRIMOS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "6. GENERADOR PRIMOS"
+puts "=" * 60
+
+def primos
+  Fiber.new do
+    n = 2
+    loop do
+      es_primo = (2..Integer.sqrt(n)).none? { |i| n % i == 0 }
+      Fiber.yield n if es_primo
+      n += 1
+    end
+  end
+end
+
+p = primos
+5.times { puts "  Primo: #{p.resume}" }
+
+# ---------------------------------------------------------------------------
+# 7. PRODUCTOR-CONSUMIDOR
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "7. PRODUCTOR-CONSUMIDOR"
+puts "=" * 60
+
+def crear_productor(buffer, items)
+  Fiber.new do
+    items.each do |item|
+      puts "  Productor: #{item}"
+      buffer << item
+      Fiber.yield
+    end
+  end
+end
+
+def crear_consumidor(buffer, cantidad)
+  Fiber.new do
+    cantidad.times do
+      item = buffer.shift
+      puts "  Consumidor: #{item}"
+      Fiber.yield
+    end
+  end
+end
+
+buffer = []
+prod = crear_productor(buffer, ["A", "B", "C", "D", "E"])
+cons = crear_consumidor(buffer, 5)
+
+5.times { prod.resume; cons.resume }
+
+# ---------------------------------------------------------------------------
+# 8. LAZY SELECT
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "8. LAZY SELECT"
+puts "=" * 60
+
+def lazy_select(enum, &filtro)
+  Fiber.new do
+    enum.each do |item|
+      Fiber.yield item if filtro.call(item)
+    end
+  end
+end
+
+numeros = 1..Float::INFINITY
+pares = lazy_select(numeros, &:even?)
+5.times { puts "  Par: #{pares.resume}" }
+
+# ---------------------------------------------------------------------------
+# 9. ENUMERATOR CON FIBER
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "9. ENUMERATOR"
+puts "=" * 60
+
+enum = Enumerator.new do |y|
+  y << "primero"
+  y << "segundo"
+  y << "tercero"
+end
+
+puts "  #{enum.next}"
+puts "  #{enum.next}"
+puts "  #{enum.next}"
+
+# ---------------------------------------------------------------------------
+# 10. MÚLTIPLES FIBRAS (ROUND-ROBIN)
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "10. ROUND-ROBIN"
+puts "=" * 60
+
+fibras = 3.times.map do |i|
+  Fiber.new do
+    3.times do |j|
+      puts "  Fibra #{i}: paso #{j}"
+      Fiber.yield
+    end
+  end
+end
+
+3.times do
+  fibras.each(&:resume)
+end
+
+# ---------------------------------------------------------------------------
+# 11. TRANSFER
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "11. TRANSFER"
+puts "=" * 60
+
+fa = Fiber.new do
+  puts "  A: inicio"
+  fb.transfer
+  puts "  A: después de transfer"
+  "resultado A"
+end
+
+fb = Fiber.new do
+  puts "  B: ejecutándose"
+  "resultado B"
+end
+
+puts "  Main: iniciando"
+resultado = fa.resume
+puts "  Main: resultado = #{resultado}"
+
+# ---------------------------------------------------------------------------
+# 12. FIBER Y EXCEPCIONES
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "12. EXCEPCIONES"
+puts "=" * 60
+
+f_error = Fiber.new do
+  raise "Error dentro de fibra"
+end
+
+begin
+  f_error.resume
+rescue => e
+  puts "  Excepción capturada: #{e.message}"
+end
+
+# ---------------------------------------------------------------------------
+# 13. FIBER COMO ITERADOR
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "13. FIBER ITERADOR"
+puts "=" * 60
+
+def each_fiber(enum)
+  Fiber.new do
+    enum.each { |item| Fiber.yield item }
+    nil
+  end
+end
+
+iter = each_fiber(%w[Ruby Python Java])
+while (value = iter.resume)
+  puts "  Lenguaje: #{value}"
+end
+
+# ---------------------------------------------------------------------------
+# 14. FIBER ANIDADAS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "14. FIBER ANIDADAS"
+puts "=" * 60
+
+externa = Fiber.new do
+  puts "  Externa: inicio"
+
+  interna = Fiber.new do
+    puts "  Interna: ejecutándose"
+    Fiber.yield "valor interno"
+  end
+
+  valor = interna.resume
+  puts "  Externa: recibió '#{valor}'"
+  "valor externo"
+end
+
+puts "  Main: #{externa.resume}"
+
+# ---------------------------------------------------------------------------
+# 15. CONTADOR CON FIBER
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "15. CONTADOR"
+puts "=" * 60
+
+contador_fiber = Fiber.new do
+  count = 0
+  loop do
+    count += 1
+    Fiber.yield count
+  end
+end
+
+5.times { |i| puts "  Cuenta: #{contador_fiber.resume}" }
+
+# ---------------------------------------------------------------------------
+# 16. PING-PONG CON FIBERS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "16. PING-PONG"
+puts "=" * 60
+
+def crear_ping(pong_fiber)
+  Fiber.new do
+    loop do
+      puts "  Ping"
+      sleep 0.1
+      pong_fiber.transfer
+    end
+  end
+end
+
+def crear_pong(ping_fiber)
+  Fiber.new do
+    loop do
+      puts "  Pong"
+      sleep 0.1
+      ping_fiber.transfer
+    end
+  end
+end
+
+# Crear con referencias circulares
+ping = nil
+pong = nil
+ping = crear_ping(pong)
+pong = crear_pong(ping)
+
+# 3 intercambios
+3.times { ping.resume }
+
+# ---------------------------------------------------------------------------
+# 17. FIBER COMO CORRUTINA DE LECTURA
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "17. CORRUTINA LECTURA"
+puts "=" * 60
+
+def leer_archivo_por_lineas(ruta)
+  Fiber.new do
+    File.foreach(ruta) do |linea|
+      Fiber.yield linea.chomp
+    end
+    nil
+  end
+end
+
+# Crear un archivo temporal de ejemplo
+File.write("/tmp/ejemplo_fiber.txt", "línea 1\nlínea 2\nlínea 3\n")
+
+lector = leer_archivo_por_lineas("/tmp/ejemplo_fiber.txt")
+while (linea = lector.resume)
+  puts "  Línea: #{linea}"
+end
+
+# ---------------------------------------------------------------------------
+# 18. MAP LAZY CON FIBER
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "18. MAP LAZY"
+puts "=" * 60
+
+def lazy_map(enum, &transformacion)
+  Fiber.new do
+    enum.each do |item|
+      Fiber.yield transformacion.call(item)
+    end
+  end
+end
+
+nums = [1, 2, 3, 4, 5]
+doblados = lazy_map(nums) { |n| n * 2 }
+3.times { puts "  Doble: #{doblados.resume}" }
+
+# ---------------------------------------------------------------------------
+# 19. FUSIÓN DE FIBERS
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "19. FUSIÓN"
+puts "=" * 60
+
+def fusionar(fib_a, fib_b)
+  Fiber.new do
+    loop do
+      a = fib_a.resume
+      b = fib_b.resume
+      break if a.nil? || b.nil?
+      Fiber.yield [a, b]
+    end
+  end
+end
+
+fa = each_fiber([1, 2, 3])
+fb = each_fiber(["a", "b", "c"])
+fusion = fusionar(fa, fb)
+
+while (par = fusion.resume)
+  puts "  Par: #{par.inspect}"
+end
+
+# ---------------------------------------------------------------------------
+# 20. EJEMPLO INTEGRADOR: PIPELINE
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "20. PIPELINE INTEGRADOR"
+puts "=" * 60
+
+def pipeline
+  fuente = Fiber.new do
+    (1..10).each { |n| Fiber.yield n }
+    nil
+  end
+
+  filtro = Fiber.new do
+    while (n = fuente.resume)
+      Fiber.yield n if n.even?
+    end
+    nil
+  end
+
+  transformacion = Fiber.new do
+    while (n = filtro.resume)
+      Fiber.yield n * 10
+    end
+    nil
+  end
+
+  consumidor = Fiber.new do
+    while (n = transformacion.resume)
+      puts "  Resultado: #{n}"
+    end
+  end
+
+  consumidor.resume
+end
+
+pipeline
+
+puts "=" * 60
+puts "FIN DEL EJEMPLO COMPLETO"
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+  En este capítulo hemos explorado las fibras en Ruby:
+
+  • Fiber.new crea una fibra con un bloque de código.
+  • Fiber.yield pausa la fibra y devuelve control al llamador.
+  • resume reanuda una fibra desde donde se pausó.
+  • transfer permite cambiar entre fibras arbitrariamente.
+  • Las fibras son cooperativas (no preventivas como los hilos).
+  • Las fibras no ejecutan código en paralelo en MRI.
+  • Son ideales para generadores, productores/consumidores y lazy eval.
+  • Enumerator usa fibras internamente.
+  • Las excepciones en fibras se propagan al llamador.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+  Ejercicio 1: Crea una fibra que genere los primeros 10 cuadrados
+  perfectos (1, 4, 9, 16...).
+
+  Ejercicio 2: Implementa un generador infinito de la secuencia de
+  Collatz usando fibras.
+
+  Ejercicio 3: Crea un sistema productor-consumidor con buffer de
+  capacidad 3 usando 2 fibras.
+
+  Ejercicio 4: Implementa un lazy_filter y lazy_map que encadenen
+  fibras en un pipeline.
+
+  Ejercicio 5: Crea 3 fibras que ejecuten en round-robin compartiendo
+  un contador.
+
+  Ejercicio 6: Implementa un generador de permutaciones de un array
+  usando fibras.
+
+  Ejercicio 7: Crea una fibra que lea un archivo CSV línea por línea
+  y devuelva cada fila como hash.
+
+  Ejercicio 8: Implementa el juego de la vida de Conway usando fibras
+  para cada célula.
+
+  Ejercicio 9: Crea un sistema de registro (logging) asíncrono donde
+  una fibra consumidora escribe logs en segundo plano.
+
+  Ejercicio 10: Implementa un semáforo con fibras para controlar acceso
+  a un recurso compartido.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  P: ¿Las fibras son lo mismo que los hilos?
+  R: No. Los hilos son gestionados por el SO y pueden ejecutarse en
+     paralelo. Las fibras son cooperativas y tú controlas cuándo se
+     pausan y reanudan.
+
+  P: ¿Pueden las fibras ejecutarse en paralelo?
+  R: En MRI (Matz's Ruby Interpreter), no. En implementaciones como
+     JRuby, las fibras pueden mapearse a hilos del sistema.
+
+  P: ¿Cuándo debo usar fibras en lugar de hilos?
+  R: Usa fibras para control de flujo (generadores, pipelines, lazy
+     evaluation). Usa hilos para I/O paralelo o tareas que deben
+     ejecutarse simultáneamente.
+
+  P: ¿Las fibras son seguras para estado compartido?
+  R: Como las fibras no se ejecutan en paralelo en MRI, no hay race
+     conditions. Pero en JRuby o TruffleRuby sí puede haberlas.
+
+  P: ¿Qué diferencia hay entre yield y Fiber.yield?
+  R: yield (sin prefijo) es para bloques. Fiber.yield es específico
+     de fibras para pausar la ejecución.
+
+  P: ¿Puedo crear miles de fibras?
+  R: Sí, las fibras son muy ligeras. Puedes crear decenas de miles
+     sin problemas de memoria.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  Implementa un "Sistema de Procesamiento de Streaming" usando fibras.
+
+  Requisitos:
+    • Una cadena de fibras conectadas como pipeline.
+    • Fibra 1: Fuente de datos (genera números del 1 al N).
+    • Fibra 2: Filtro (solo pares).
+    • Fibra 3: Transformación (multiplica por 10).
+    • Fibra 4: Acumulador (suma todos los valores).
+    • Fibra 5: Consumidor (imprime cada valor procesado).
+    • Cada fibra debe pasar el control a la siguiente con transfer.
+    • El pipeline debe manejar señales de parada.
+
+  Ejemplo:
+
+    pipeline = StreamingPipeline.new
+    pipeline.fuente(1..100)
+    pipeline.filtro { |n| n.even? }
+    pipeline.transformacion { |n| n * 10 }
+    pipeline.acumulador
+    pipeline.consumidor { |n| puts "Resultado: #{n}" }
+    pipeline.ejecutar
+    puts "Total acumulado: #{pipeline.total}"
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+  Las fibras son una de esas herramientas que no usas todos los días,
+  pero cuando las necesitas, son insustituibles. Te dan control
+  explícito sobre el flujo de ejecución, permitiéndote crear
+  generadores, pipelines y corrutinas con elegancia.
+
+  Has aprendido que las fibras no son competencia de los hilos, sino
+  una herramienta complementaria para un tipo diferente de problema:
+  el control de flujo cooperativo, donde tú decides qué pasa y cuándo.
+
+  En el próximo capítulo cerraremos el módulo con un proyecto integrador
+  que combina metaprogramación, lambdas y fibras.
+
+  Nos vemos en el Capítulo 70: PROYECTO DEL MÓDULO VII.
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  → CAPÍTULO 70: PROYECTO DEL MÓDULO VII
+  → Aplicarás todos los conceptos del módulo en un proyecto completo
+    que integra metaprogramación, lambdas, closures y fibras.
+
+================================================================================
+  FIN DEL CAPÍTULO 69
+================================================================================

@@ -1,0 +1,364 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                        MÓDULO VIII
+##                        CAPÍTULO 73
+##            MÓDULO DE AUTENTICACIÓN
+################################################################################
+################################################################################
+
+"La autenticación es la puerta de entrada de tu aplicación.
+Sin ella, cualquier dato estaría expuesto."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+Hoy implementamos el sistema de autenticación:
+- Registro de nuevos usuarios.
+- Inicio de sesión.
+- Cierre de sesión.
+- Protección de rutas.
+- Persistencia de sesión.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Implementar registro y login.
+✓ Manejar sesión con sessionStorage.
+✓ Proteger rutas privadas.
+✓ Mostrar usuario actual en el header.
+
+===============================================================================
+1. STORE DE AUTENTICACIÓN
+===============================================================================
+
+```javascript
+// store.js - Estado global y autenticación
+
+const store = {
+    // Datos
+    _usuarios: [],
+    _proyectos: [],
+    _tareas: [],
+    _usuarioActual: null,
+
+    // Inicializar
+    init() {
+        this._usuarios = this.#cargar("usuarios") || [];
+        this._proyectos = this.#cargar("proyectos") || [];
+        this._tareas = this.#cargar("tareas") || [];
+
+        // Recuperar sesión
+        let sesion = sessionStorage.getItem("sesion");
+        if (sesion) {
+            this._usuarioActual = JSON.parse(sesion);
+        }
+
+        this.#actualizarUI();
+    },
+
+    #cargar(clave) {
+        try {
+            let datos = localStorage.getItem("gp-" + clave);
+            return datos ? JSON.parse(datos) : null;
+        } catch { return null; }
+    },
+
+    #guardar(clave, datos) {
+        localStorage.setItem("gp-" + clave, JSON.stringify(datos));
+    },
+
+    // ===== AUTENTICACIÓN =====
+
+    registrar(nombre, email, password) {
+        if (this._usuarios.find(u => u.email === email)) {
+            return { exito: false, error: "Email ya registrado" };
+        }
+
+        let usuario = {
+            id: "u" + Date.now(),
+            nombre: nombre,
+            email: email,
+            password: password  // En producción: hash
+        };
+
+        this._usuarios.push(usuario);
+        this.#guardar("usuarios", this._usuarios);
+
+        return { exito: true, usuario: usuario };
+    },
+
+    login(email, password) {
+        let usuario = this._usuarios.find(u =>
+            u.email === email && u.password === password
+        );
+
+        if (!usuario) {
+            return { exito: false, error: "Email o contraseña incorrectos" };
+        }
+
+        this._usuarioActual = usuario;
+        sessionStorage.setItem("sesion", JSON.stringify(usuario));
+        this.#actualizarUI();
+
+        return { exito: true, usuario: usuario };
+    },
+
+    logout() {
+        this._usuarioActual = null;
+        sessionStorage.removeItem("sesion");
+        this.#actualizarUI();
+        router.irA("/");
+    },
+
+    estaAutenticado() {
+        return this._usuarioActual !== null;
+    },
+
+    getUsuarioActual() {
+        return this._usuarioActual;
+    },
+
+    // ===== PROYECTOS =====
+
+    getProyectos() {
+        return this._proyectos;
+    },
+
+    crearProyecto(nombre, descripcion) {
+        let proyecto = {
+            id: "p" + Date.now(),
+            nombre: nombre,
+            descripcion: descripcion || "",
+            creador: this._usuarioActual?.id,
+            miembros: [this._usuarioActual?.id],
+            creado: new Date().toISOString()
+        };
+        this._proyectos.push(proyecto);
+        this.#guardar("proyectos", this._proyectos);
+        return proyecto;
+    },
+
+    // ===== TAREAS =====
+
+    getTareas(proyectoId) {
+        return this._tareas.filter(t => t.proyectoId === proyectoId);
+    },
+
+    crearTarea(proyectoId, titulo, descripcion, prioridad) {
+        let tarea = {
+            id: "t" + Date.now(),
+            proyectoId: proyectoId,
+            titulo: titulo,
+            descripcion: descripcion || "",
+            estado: "pendiente",
+            asignado: null,
+            prioridad: prioridad || "media",
+            creado: new Date().toISOString()
+        };
+        this._tareas.push(tarea);
+        this.#guardar("tareas", this._tareas);
+        return tarea;
+    },
+
+    cambiarEstadoTarea(tareaId, nuevoEstado) {
+        let tarea = this._tareas.find(t => t.id === tareaId);
+        if (tarea) {
+            tarea.estado = nuevoEstado;
+            this.#guardar("tareas", this._tareas);
+        }
+        return tarea;
+    },
+
+    eliminarTarea(tareaId) {
+        this._tareas = this._tareas.filter(t => t.id !== tareaId);
+        this.#guardar("tareas", this._tareas);
+    },
+
+    // UI
+    #actualizarUI() {
+        let header = document.querySelector("#header");
+        if (!header) return;
+
+        if (this._usuarioActual) {
+            header.innerHTML = `
+                <h1 onclick="router.irA('/')" style="cursor:pointer">
+                  📋 Gestor de Proyectos
+                </h1>
+                <nav>
+                  <a href="#/proyectos">Proyectos</a>
+                  <span> | </span>
+                  <span>👤 ${this._usuarioActual.nombre}</span>
+                  <button onclick="store.logout()" class="btn-danger"
+                          style="margin-left:10px">Salir</button>
+                </nav>
+            `;
+        } else {
+            header.innerHTML = `
+                <h1 onclick="router.irA('/')" style="cursor:pointer">
+                  📋 Gestor de Proyectos
+                </h1>
+                <nav>
+                  <a href="#/login">Iniciar Sesión</a>
+                  <span> | </span>
+                  <a href="#/registro">Registrarse</a>
+                </nav>
+            `;
+        }
+    }
+};
+```
+
+===============================================================================
+2. MANEJADORES DE AUTENTICACIÓN
+===============================================================================
+
+```javascript
+// En app.js - Manejadores de formularios
+
+document.addEventListener("submit", function(e) {
+    let form = e.target;
+
+    // Login
+    if (form.id === "login-form") {
+        e.preventDefault();
+        let email = document.querySelector("#login-email").value;
+        let password = document.querySelector("#login-password").value;
+
+        let resultado = store.login(email, password);
+
+        if (resultado.exito) {
+            router.irA("/proyectos");
+        } else {
+            mostrarError(resultado.error);
+        }
+    }
+
+    // Registro
+    if (form.id === "registro-form") {
+        e.preventDefault();
+        let nombre = document.querySelector("#reg-nombre").value;
+        let email = document.querySelector("#reg-email").value;
+        let password = document.querySelector("#reg-password").value;
+
+        let resultado = store.registrar(nombre, email, password);
+
+        if (resultado.exito) {
+            store.login(email, password);
+            router.irA("/proyectos");
+        } else {
+            mostrarError(resultado.error);
+        }
+    }
+});
+
+// Delegación de eventos para acciones
+document.querySelector("#app").addEventListener("click", function(e) {
+    let target = e.target;
+
+    // Botones de cierre de sesión dinámicos
+    if (target.id === "btn-logout" ||
+        target.classList.contains("btn-logout")) {
+        store.logout();
+    }
+});
+```
+
+===============================================================================
+3. PROTECCIÓN DE RUTAS
+===============================================================================
+
+```javascript
+// router.js - Con protección de rutas
+
+class RouterSeguro extends Router {
+    constructor() {
+        super();
+    }
+
+    registrar(ruta, componente, requiereAuth = false) {
+        this._rutas = this._rutas || {};
+        this._auth = this._auth || {};
+
+        this._rutas[ruta] = componente;
+        this._auth[ruta] = requiereAuth;
+    }
+
+    _navegar() {
+        let hash = window.location.hash.slice(1) || "/";
+
+        if (this._auth && this._auth[hash]) {
+            if (!store.estaAutenticado()) {
+                this.irA("/login");
+                return;
+            }
+        }
+
+        super._navegar();
+    }
+}
+
+// Uso:
+// router.registrar("/proyectos", mostrarProyectos, true);
+// router.registrar("/perfil", mostrarPerfil, true);
+// router.registrar("/", mostrarHome, false);
+```
+
+===============================================================================
+4. FORMULARIO DE REGISTRO
+===============================================================================
+
+```javascript
+// Ruta de registro
+router.registrar("/registro", function() {
+    return '<div class="card">' +
+           '<h2>Crear Cuenta</h2>' +
+           '<form id="registro-form">' +
+           '<div class="form-group">' +
+           '<label>Nombre</label>' +
+           '<input type="text" id="reg-nombre" required>' +
+           '</div>' +
+           '<div class="form-group">' +
+           '<label>Email</label>' +
+           '<input type="email" id="reg-email" required>' +
+           '</div>' +
+           '<div class="form-group">' +
+           '<label>Contraseña (mín. 6 caracteres)</label>' +
+           '<input type="password" id="reg-password" minlength="6" required>' +
+           '</div>' +
+           '<button type="submit" class="btn-success">Crear Cuenta</button>' +
+           '<p style="margin-top:10px">¿Ya tienes cuenta? ' +
+           '<a href="#/login">Inicia sesión</a></p>' +
+           '</form></div>';
+});
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ Registro y login con validación.
+✔ Sesión persistente en sessionStorage.
+✔ Protección de rutas por autenticación.
+✔ UI actualizada según estado de sesión.
+✔ store centralizado con datos y persistencia.
+✔ Delegación de eventos para acciones dinámicas.
+
+===============================================================================
+FIN DEL CAPÍTULO 73
+===============================================================================
+
+"La autenticación es la primera línea de defensa.
+Un buen sistema de login protege no solo datos,
+sino la confianza del usuario."
+— Profesor Búho AI
+
+===============================================================================

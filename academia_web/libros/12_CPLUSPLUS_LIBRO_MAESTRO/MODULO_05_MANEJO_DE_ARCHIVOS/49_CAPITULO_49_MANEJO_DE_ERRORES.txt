@@ -1,0 +1,1138 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 49: MANEJO DE ERRORES EN ARCHIVOS
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo de manejo de errores en archivos. Hasta ahora hemos
+visto cómo hacer las cosas cuando funcionan. En este capítulo nos centraremos
+en lo que ocurre cuando fallan: discos llenos, permisos denegados, archivos
+corruptos, rutas inexistentes. Aprenderemos patrones profesionales para hacer
+que nuestro código sea robusto y confiable frente a cualquier adversidad.
+
+FRASE
+-----
+"Un programa robusto no es el que no falla, sino el que falla con dignidad."
+— Anónimo
+
+OBJETIVOS
+---------
+• Usar try/catch con operaciones de archivo de forma efectiva.
+• Configurar exception flags (exceptions()) en flujos.
+• Implementar patrones de manejo de errores: reintento, fallback, degradación.
+• Diferenciar entre errores del usuario, del sistema y de programación.
+• Construir capas de manejo de errores (operativa, lógica, presentación).
+• Diseñar sistemas de logging y diagnóstico de errores de archivos.
+
+CONTENIDO
+---------
+
+1. ESTRATEGIAS DE MANEJO DE ERRORES
+
+  ┌─────────────────────────────────────────────────────┐
+  │  Estrategia        Cuándo usarla                     │
+  │                                                     │
+  │  Ignorar           Operaciones no críticas           │
+  │  Reintentar        Errores transitorios (red, disco) │
+  │  Fallback          Usar alternativa si falla         │
+  │  Degradar          Continuar con funcionalidad       │
+  │                    reducida                          │
+  │  Abortar           Errores críticos, datos corruptos │
+  │  Registrar         Siempre, en todos los casos       │
+  └─────────────────────────────────────────────────────┘
+
+2. EXCEPCIONES VS CÓDIGOS DE ERROR
+
+  Excepciones:
+    - Flujo de control separado del código normal.
+    - No se pueden ignorar fácilmente.
+    - Mayor overhead.
+    - Ideales para errores excepcionales (badbit).
+
+  Códigos de error / flags:
+    - Explícitos, no hay magia.
+    - Menor overhead.
+    - Pueden ignorarse accidentalmente.
+    - Ideales para errores esperados (failbit).
+
+3. PATRÓN: OPERACIÓN SEGURA
+
+  Toda operación de archivo debe seguir:
+    1. Verificar precondiciones.
+    2. Intentar operación.
+    3. Verificar estado post-operación.
+    4. Manejar error si ocurre.
+    5. Liberar recursos siempre (RAII).
+
+4. LOGGING DE ERRORES
+
+  Registrar no solo el error, sino también:
+    - Qué operación falló.
+    - En qué archivo/línea.
+    - Estado del flujo (failbit, badbit, eofbit).
+    - Contexto (qué se intentaba hacer).
+
+================================================================================
+CÓDIGO DE EJEMPLO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <system_error>
+#include <cerrno>
+#include <cstring>
+
+using namespace std;
+
+//==============================================================================
+// EJEMPLO 1: TRY/CATCH BÁSICO CON EXCEPCIONES
+//==============================================================================
+void ejemplo_try_catch_basico()
+{
+    cout << "\n--- EJEMPLO 1: try/catch básico ---\n";
+
+    ifstream archivo;
+    archivo.exceptions(ifstream::failbit | ifstream::badbit);
+
+    try
+    {
+        archivo.open("archivo_inexistente.txt");
+        cout << "  Esto no se ejecuta.\n";
+    }
+    catch (const ifstream::failure& e)
+    {
+        cout << "  Error capturado: " << e.what() << "\n";
+        cout << "  Código: " << e.code() << "\n";
+        cout << "  Mensaje: " << strerror(errno) << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 2: EXCEPCIONES EN ESCRITURA
+//==============================================================================
+void ejemplo_excepcion_escritura()
+{
+    cout << "\n--- EJEMPLO 2: Excepción en escritura ---\n";
+
+    ofstream archivo;
+    archivo.exceptions(ofstream::failbit | ofstream::badbit);
+
+    try
+    {
+        archivo.open("/root/no_permiso.txt");
+        archivo << "Contenido\n";
+        archivo.close();
+    }
+    catch (const ofstream::failure& e)
+    {
+        cout << "  Error de escritura: " << e.what() << "\n";
+        cout << "  Posible causa: permisos o ruta inválida.\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 3: SEPARACIÓN DE FAILBIT Y BADBIT
+//==============================================================================
+void ejemplo_separacion_bits()
+{
+    cout << "\n--- EJEMPLO 3: Separación failbit vs badbit ---\n";
+
+    ifstream archivo;
+    archivo.exceptions(ifstream::badbit); // Solo badbit lanza excepción
+
+    try
+    {
+        archivo.open("archivo_inexistente.txt");
+
+        if (archivo.fail())
+        {
+            cout << "  failbit activo (archivo no existe). No es crítico.\n";
+            cout << "  Se puede continuar con valor por defecto.\n";
+        }
+    }
+    catch (const ifstream::failure& e)
+    {
+        cout << "  badbit! Error grave: " << e.what() << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 4: PATRÓN DE REINTENTO
+//==============================================================================
+bool operacion_archivo_reintento(const string& nombre, int intentos = 3)
+{
+    for (int i = 0; i < intentos; ++i)
+    {
+        try
+        {
+            ofstream archivo(nombre + "_" + to_string(i) + ".tmp");
+            archivo << "Intento " << i + 1 << "\n";
+
+            if (archivo.good())
+            {
+                cout << "  Éxito en intento " << i + 1 << "\n";
+                return true;
+            }
+        }
+        catch (const exception& e)
+        {
+            cerr << "  Intento " << i + 1 << " falló: " << e.what() << "\n";
+        }
+    }
+
+    cout << "  Todos los intentos fallaron.\n";
+    return false;
+}
+
+void ejemplo_reintento_patron()
+{
+    cout << "\n--- EJEMPLO 4: Patrón de reintento ---\n";
+    operacion_archivo_reintento("test_reintento", 2);
+}
+
+//==============================================================================
+// EJEMPLO 5: PATRÓN FALLBACK
+//==============================================================================
+/*
+  Si no se puede abrir el archivo preferido, usar una alternativa.
+*/
+class ConfigFallback
+{
+    string archivo_;
+    map<string, string> datos_;
+
+public:
+    bool cargar(const string& principal, const string& respaldo)
+    {
+        archivo_ = principal;
+        ifstream in(principal);
+
+        if (!in)
+        {
+            cout << "  No se pudo abrir '" << principal << "'.\n";
+            cout << "  Usando respaldo: '" << respaldo << "'\n";
+            in.open(respaldo);
+            archivo_ = respaldo;
+        }
+
+        if (!in)
+        {
+            cout << "  Tampoco se pudo abrir el respaldo.\n";
+            cout << "  Usando valores por defecto.\n";
+            datos_["host"] = "localhost";
+            datos_["port"] = "3000";
+            return false;
+        }
+
+        string linea;
+        while (getline(in, linea))
+        {
+            size_t eq = linea.find('=');
+            if (eq != string::npos)
+            {
+                string k = linea.substr(0, eq);
+                string v = linea.substr(eq + 1);
+                datos_[k] = v;
+            }
+        }
+        return true;
+    }
+
+    string get(const string& k, const string& def = "") const
+    {
+        auto it = datos_.find(k);
+        return (it != datos_.end()) ? it->second : def;
+    }
+};
+
+void ejemplo_fallback()
+{
+    cout << "\n--- EJEMPLO 5: Fallback ---\n";
+
+    ofstream("config_respaldo.conf") << "host=127.0.0.1\nport=9090\n";
+
+    ConfigFallback cfg;
+    cfg.cargar("config_no_existe.conf", "config_respaldo.conf");
+
+    cout << "  host: " << cfg.get("host") << "\n";
+    cout << "  port: " << cfg.get("port") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 6: DEGRADACIÓN GRACIOSA
+//==============================================================================
+/*
+  Si el archivo de log no se puede abrir, simplemente no se registra.
+  La aplicación no debe fallar por un error de logging.
+*/
+class Logger
+{
+    ofstream archivo_;
+    bool activo_ = false;
+
+public:
+    bool abrir(const string& nombre)
+    {
+        archivo_.open(nombre, ios::app);
+        activo_ = archivo_.is_open();
+
+        if (!activo_)
+        {
+            cerr << "  Logger: no se pudo abrir '" << nombre << "'.\n";
+            cerr << "  Logger: modo consola activado.\n";
+        }
+        return activo_;
+    }
+
+    void log(const string& msg)
+    {
+        if (activo_)
+            archivo_ << "[" << __DATE__ << " " << __TIME__ << "] " << msg << "\n";
+        else
+            cout << "[LOG] " << msg << "\n"; // degradación a consola
+    }
+
+    void close()
+    {
+        if (activo_)
+        {
+            archivo_.close();
+            activo_ = false;
+        }
+    }
+};
+
+void ejemplo_degradacion()
+{
+    cout << "\n--- EJEMPLO 6: Degradación graciosa ---\n";
+
+    Logger log;
+
+    // Intentar abrir en /root (sin permiso)
+    log.abrir("/root/app.log");
+    log.log("Inicio de aplicación");
+    log.log("Usuario autenticado");
+    log.log("Operación completada");
+    log.close();
+
+    cout << "  Log degradado a consola sin fallar.\n";
+}
+
+//==============================================================================
+// EJEMPLO 7: CAPA DE ERROR CON CÓDIGOS
+//==============================================================================
+enum class ErrorArchivo
+{
+    OK = 0,
+    NO_EXISTE = 1,
+    SIN_PERMISO = 2,
+    CORRUPTO = 3,
+    VERSION_INVALIDA = 4,
+    DISCO_LLENO = 5,
+    DESCONOCIDO = 99
+};
+
+struct ResultadoOperacion
+{
+    bool exito;
+    ErrorArchivo error;
+    string mensaje;
+};
+
+class OperacionesArchivo
+{
+public:
+    static ResultadoOperacion leerEntero(const string& archivo, int& valor)
+    {
+        ifstream in(archivo);
+        if (!in)
+        {
+            // Determinar causa
+            if (errno == EACCES)
+                return {false, ErrorArchivo::SIN_PERMISO,
+                        "Permiso denegado"};
+            return {false, ErrorArchivo::NO_EXISTE,
+                    "El archivo no existe"};
+        }
+
+        if (!(in >> valor))
+        {
+            return {false, ErrorArchivo::CORRUPTO,
+                    "No se pudo leer entero del archivo"};
+        }
+
+        if (in.bad())
+        {
+            return {false, ErrorArchivo::DESCONOCIDO,
+                    "Error de E/S durante lectura"};
+        }
+
+        return {true, ErrorArchivo::OK, "Operación exitosa"};
+    }
+
+    static ResultadoOperacion escribirEntero(const string& archivo, int valor)
+    {
+        ofstream out(archivo);
+        if (!out)
+        {
+            if (errno == ENOSPC)
+                return {false, ErrorArchivo::DISCO_LLENO,
+                        "No hay espacio en disco"};
+            if (errno == EACCES)
+                return {false, ErrorArchivo::SIN_PERMISO,
+                        "Permiso denegado"};
+            return {false, ErrorArchivo::DESCONOCIDO,
+                    "Error al abrir para escritura"};
+        }
+
+        out << valor;
+        if (out.fail())
+        {
+            return {false, ErrorArchivo::DISCO_LLENO,
+                    "Error durante escritura (disco lleno?)"};
+        }
+
+        return {true, ErrorArchivo::OK, "Escritura exitosa"};
+    }
+};
+
+void ejemplo_codigos_error()
+{
+    cout << "\n--- EJEMPLO 7: Códigos de error ---\n";
+
+    int valor = 0;
+    auto r1 = OperacionesArchivo::leerEntero("archivo_falso.txt", valor);
+    cout << "  Leer archivo_falso.txt:\n";
+    cout << "    Éxito: " << r1.exito
+         << " Código: " << static_cast<int>(r1.error)
+         << " Mensaje: " << r1.mensaje << "\n";
+
+    auto r2 = OperacionesArchivo::escribirEntero("test_numero.txt", 42);
+    cout << "  Escribir test_numero.txt:\n";
+    cout << "    Éxito: " << r2.exito
+         << " Mensaje: " << r2.mensaje << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 8: RAII + EXCEPCIONES (MEJOR PRÁCTICA)
+//==============================================================================
+class ArchivoSeguro
+{
+    ifstream archivo_;
+    string nombre_;
+
+public:
+    ArchivoSeguro(const string& nombre) : nombre_(nombre)
+    {
+        archivo_.exceptions(ifstream::badbit);
+
+        try
+        {
+            archivo_.open(nombre);
+        }
+        catch (const ifstream::failure&)
+        {
+            // No lanzar desde constructor si no es crítico
+            cerr << "  Advertencia: no se pudo abrir '" << nombre << "'\n";
+        }
+    }
+
+    ~ArchivoSeguro()
+    {
+        if (archivo_.is_open())
+            archivo_.close();
+    }
+
+    bool leerLinea(string& linea)
+    {
+        if (!archivo_.is_open() || archivo_.bad())
+            return false;
+
+        if (getline(archivo_, linea))
+            return true;
+
+        if (archivo_.bad())
+            throw runtime_error("Error de E/S en " + nombre_);
+
+        return false; // EOF
+    }
+
+    bool estaAbierto() const { return archivo_.is_open(); }
+};
+
+void ejemplo_raii_excepciones()
+{
+    cout << "\n--- EJEMPLO 8: RAII + excepciones ---\n";
+
+    try
+    {
+        ArchivoSeguro arch("archivo_falso.txt");
+
+        if (arch.estaAbierto())
+        {
+            string linea;
+            while (arch.leerLinea(linea))
+                cout << "  " << linea << "\n";
+        }
+        else
+        {
+            cout << "  No se pudo abrir, pero RAII maneja recursos.\n";
+        }
+    }
+    catch (const exception& e)
+    {
+        cerr << "  Excepción: " << e.what() << "\n";
+    }
+
+    cout << "  Recurso liberado automáticamente.\n";
+}
+
+//==============================================================================
+// EJEMPLO 9: LOGGING DE ERRORES CON DETALLE
+//==============================================================================
+class ErrorLogger
+{
+    ofstream log_;
+
+public:
+    bool abrir(const string& archivo)
+    {
+        log_.open(archivo, ios::app);
+        return log_.is_open();
+    }
+
+    void registrar(const string& operacion, const string& archivo,
+                   const string& error, int linea)
+    {
+        log_ << "[" << __DATE__ << " " << __TIME__ << "] "
+             << "OP: " << operacion
+             << " | ARCHIVO: " << archivo
+             << " | ERROR: " << error
+             << " | LÍNEA: " << linea
+             << " | errno: " << errno
+             << " (" << strerror(errno) << ")\n";
+        log_.flush();
+    }
+};
+
+void ejemplo_logging()
+{
+    cout << "\n--- EJEMPLO 9: Logging de errores ---\n";
+
+    ErrorLogger logger;
+    logger.abrir("errores.log");
+
+    ifstream archivo;
+    archivo.exceptions(ifstream::badbit);
+
+    try
+    {
+        archivo.open("/root/secreto.txt");
+    }
+    catch (const ifstream::failure& e)
+    {
+        logger.registrar("open", "/root/secreto.txt",
+                         e.what(), __LINE__);
+        cout << "  Error registrado en errores.log\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 10: JERARQUÍA DE EXCEPCIONES PERSONALIZADA
+//==============================================================================
+class ErrorArchivoEx : public runtime_error
+{
+    string archivo_;
+    int codigo_;
+
+public:
+    ErrorArchivoEx(const string& msg, const string& archivo, int cod)
+        : runtime_error(msg), archivo_(archivo), codigo_(cod) {}
+
+    string archivo() const { return archivo_; }
+    int codigo() const { return codigo_; }
+};
+
+class ErrorArchivoNoEncontrado : public ErrorArchivoEx
+{
+public:
+    ErrorArchivoNoEncontrado(const string& archivo)
+        : ErrorArchivoEx("Archivo no encontrado: " + archivo, archivo, 404) {}
+};
+
+class ErrorArchivoPermiso : public ErrorArchivoEx
+{
+public:
+    ErrorArchivoPermiso(const string& archivo)
+        : ErrorArchivoEx("Permiso denegado: " + archivo, archivo, 403) {}
+};
+
+class ErrorArchivoCorrupto : public ErrorArchivoEx
+{
+public:
+    ErrorArchivoCorrupto(const string& archivo)
+        : ErrorArchivoEx("Archivo corrupto: " + archivo, archivo, 500) {}
+};
+
+void funcionQueFalla(const string& nombre)
+{
+    if (nombre.find("no_existe") != string::npos)
+        throw ErrorArchivoNoEncontrado(nombre);
+    if (nombre.find("/root/") != string::npos)
+        throw ErrorArchivoPermiso(nombre);
+}
+
+void ejemplo_jerarquia_excepciones()
+{
+    cout << "\n--- EJEMPLO 10: Jerarquía de excepciones ---\n";
+
+    vector<string> archivos = {"no_existe.txt", "/root/config.txt", "valido.txt"};
+
+    for (const auto& a : archivos)
+    {
+        try
+        {
+            funcionQueFalla(a);
+            cout << "  '" << a << "' OK\n";
+        }
+        catch (const ErrorArchivoNoEncontrado& e)
+        {
+            cout << "  '" << a << "' " << e.what()
+                 << " (código " << e.codigo() << ")\n";
+        }
+        catch (const ErrorArchivoPermiso& e)
+        {
+            cout << "  '" << a << "' " << e.what()
+                 << " (código " << e.codigo() << ")\n";
+        }
+        catch (const ErrorArchivoEx& e)
+        {
+            cout << "  '" << a << "' Error general: " << e.what() << "\n";
+        }
+    }
+}
+
+//==============================================================================
+// EJEMPLO 11: TRANSACCIÓN DE ARCHIVO (TODO O NADA)
+//==============================================================================
+/*
+  Escribir en un archivo temporal y renombrar al final para garantizar
+  atomicidad.
+*/
+bool escribirTransaccion(const string& archivo_final, const string& contenido)
+{
+    string temporal = archivo_final + ".tmp";
+
+    try
+    {
+        ofstream out(temporal);
+        if (!out)
+        {
+            cerr << "  Error al crear temporal.\n";
+            return false;
+        }
+
+        out.exceptions(ofstream::failbit | ofstream::badbit);
+        out << contenido;
+        out.close();
+
+        if (rename(temporal.c_str(), archivo_final.c_str()) != 0)
+        {
+            cerr << "  Error al renombrar: " << strerror(errno) << "\n";
+            remove(temporal.c_str());
+            return false;
+        }
+
+        return true;
+    }
+    catch (const exception& e)
+    {
+        cerr << "  Error en transacción: " << e.what() << "\n";
+        remove(temporal.c_str());
+        return false;
+    }
+}
+
+void ejemplo_transaccion()
+{
+    cout << "\n--- EJEMPLO 11: Transacción de archivo ---\n";
+
+    if (escribirTransaccion("final.txt", "Contenido atómico\n"))
+        cout << "  Transacción exitosa.\n";
+    else
+        cout << "  Transacción fallida (temporal eliminado).\n";
+
+    ifstream ver("final.txt");
+    string linea;
+    if (getline(ver, linea))
+        cout << "  Contenido: " << linea << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 12: VALIDACIÓN PRE-OPERACIÓN
+//==============================================================================
+bool puedeEscribirEn(const string& ruta)
+{
+    ofstream test(ruta, ios::app);
+    return test.is_open();
+}
+
+bool puedeLeer(const string& ruta)
+{
+    ifstream test(ruta);
+    return test.is_open();
+}
+
+bool directorioExiste(const string& ruta)
+{
+    size_t slash = ruta.find_last_of("/\\");
+    if (slash == string::npos) return true;
+
+    string dir = ruta.substr(0, slash);
+    ifstream test(dir + "/.");
+    return test.good();
+}
+
+void ejemplo_validacion_previa()
+{
+    cout << "\n--- EJEMPLO 12: Validación pre-operación ---\n";
+
+    cout << "  ¿/tmp existe? " << (directorioExiste("/tmp/test.txt") ? "sí" : "no") << "\n";
+    cout << "  ¿/no_existe/foo.txt? " << (directorioExiste("/no_existe/foo.txt") ? "sí" : "no") << "\n";
+    cout << "  ¿puedo leer /etc/passwd? " << (puedeLeer("/etc/passwd") ? "sí" : "no") << "\n";
+    cout << "  ¿puedo escribir en /root? " << (puedeEscribirEn("/root/test.tmp") ? "sí" : "no") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 13: RECUPERACIÓN DE ARCHIVO PARCIALMENTE ESCRITO
+//==============================================================================
+/*
+  Si el programa se interrumpe mientras escribe, al reiniciar debe poder
+  recuperarse o al menos detectar el problema.
+*/
+class Recuperador
+{
+    string archivo_;
+
+public:
+    Recuperador(const string& archivo) : archivo_(archivo) {}
+
+    bool hayEscrituraParcial()
+    {
+        ifstream in(archivo_);
+        if (!in) return false;
+
+        // Buscar marca de finalización
+        string linea;
+        bool encontrado = false;
+        while (getline(in, linea))
+        {
+            if (linea == "==FIN==")
+            {
+                encontrado = true;
+                break;
+            }
+        }
+
+        return !encontrado && in.gcount() > 0;
+    }
+
+    bool escribirCompleto(const vector<string>& datos)
+    {
+        ofstream out(archivo_);
+        if (!out) return false;
+
+        for (const auto& d : datos)
+            out << d << "\n";
+
+        out << "==FIN==\n";
+        return out.good();
+    }
+
+    bool reparar()
+    {
+        if (!hayEscrituraParcial())
+            return false;
+
+        cout << "  Detectada escritura parcial. Reparando...\n";
+
+        // Leer líneas válidas
+        ifstream in(archivo_);
+        vector<string> validas;
+        string linea;
+
+        while (getline(in, linea))
+        {
+            if (linea == "==FIN==") break;
+            validas.push_back(linea);
+        }
+        in.close();
+
+        return escribirCompleto(validas);
+    }
+};
+
+void ejemplo_recuperacion()
+{
+    cout << "\n--- EJEMPLO 13: Recuperación de escritura parcial ---\n";
+
+    Recuperador rec("datos_recuperables.txt");
+    rec.escribirCompleto({"Línea 1", "Línea 2", "Línea 3"});
+    cout << "  Archivo intacto. ¿Hay escritura parcial? "
+         << rec.hayEscrituraParcial() << "\n";
+
+    // Simular escritura parcial truncando el archivo
+    ofstream trunc("datos_recuperables.txt", ios::trunc);
+    trunc << "Línea 1\nLínea 2 (incompleta...";
+    trunc.close();
+
+    cout << "  Ahora hay escritura parcial: " << rec.hayEscrituraParcial() << "\n";
+    rec.reparar();
+
+    ifstream ver("datos_recuperables.txt");
+    cout << "  Contenido tras reparación:\n";
+    string l;
+    while (getline(ver, l))
+        cout << "    " << l << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 14: EXCEPCIONES POLÍTICAS (CUSTOM EXCEPTION POLICY)
+//==============================================================================
+class PoliticaExcepciones
+{
+public:
+    enum Clase { RECUPERABLE, CRITICA, DESCONOCIDA };
+
+    static Clase clasificar(const exception& e)
+    {
+        if (dynamic_cast<const ErrorArchivoNoEncontrado*>(&e))
+            return RECUPERABLE;
+
+        if (dynamic_cast<const ErrorArchivoPermiso*>(&e))
+            return RECUPERABLE;
+
+        if (dynamic_cast<const ErrorArchivoCorrupto*>(&e))
+            return CRITICA;
+
+        if (dynamic_cast<const ifstream::failure*>(&e))
+        {
+            auto& f = dynamic_cast<const ifstream::failure&>(e);
+            if (f.code().value() & ios::badbit)
+                return CRITICA;
+            return RECUPERABLE;
+        }
+
+        return DESCONOCIDA;
+    }
+
+    static void manejar(const exception& e, const string& contexto)
+    {
+        Clase c = clasificar(e);
+
+        switch (c)
+        {
+            case RECUPERABLE:
+                cout << "  [RECUPERABLE] " << contexto << ": "
+                     << e.what() << " (continuando)\n";
+                break;
+
+            case CRITICA:
+                cout << "  [CRÍTICA] " << contexto << ": "
+                     << e.what() << " (abortando operación)\n";
+                throw; // relanzar
+                break;
+
+            case DESCONOCIDA:
+                cout << "  [DESCONOCIDA] " << contexto << ": "
+                     << e.what() << " (relanzando como crítica)\n";
+                throw;
+                break;
+        }
+    }
+};
+
+void ejemplo_politica()
+{
+    cout << "\n--- EJEMPLO 14: Política de excepciones ---\n";
+
+    try
+    {
+        try
+        {
+            throw ErrorArchivoNoEncontrado("datos.txt");
+        }
+        catch (const exception& e)
+        {
+            PoliticaExcepciones::manejar(e, "cargar_config");
+        }
+
+        try
+        {
+            throw ErrorArchivoCorrupto("basedatos.db");
+        }
+        catch (const exception& e)
+        {
+            PoliticaExcepciones::manejar(e, "leer_db");
+        }
+    }
+    catch (const exception& e)
+    {
+        cout << "  Excepción crítica propagada al nivel superior.\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 15: WRAPPER COMPLETO DE ARCHIVO SEGURO
+//==============================================================================
+template<typename T>
+class ArchivoSeguroIO
+{
+    string nombre_;
+    T& stream_;
+    bool abierto_ = false;
+
+public:
+    ArchivoSeguroIO(const string& nombre, T& stream)
+        : nombre_(nombre), stream_(stream)
+    {
+        stream_.exceptions(T::badbit);
+    }
+
+    bool abrir(ios::openmode mode = T::default_mode)
+    {
+        try
+        {
+            stream_.open(nombre_, mode);
+            abierto_ = stream_.is_open();
+        }
+        catch (const exception& e)
+        {
+            cerr << "  Error al abrir " << nombre_ << ": " << e.what() << "\n";
+            abierto_ = false;
+        }
+        return abierto_;
+    }
+
+    bool escribir(const string& datos)
+    {
+        if (!abierto_) return false;
+        try
+        {
+            stream_ << datos;
+            return !stream_.fail();
+        }
+        catch (const exception& e)
+        {
+            cerr << "  Error al escribir en " << nombre_ << ": " << e.what() << "\n";
+            return false;
+        }
+    }
+
+    bool leerLinea(string& linea)
+    {
+        if (!abierto_) return false;
+        try
+        {
+            return (bool)getline(stream_, linea);
+        }
+        catch (const exception& e)
+        {
+            cerr << "  Error al leer de " << nombre_ << ": " << e.what() << "\n";
+            return false;
+        }
+    }
+
+    void cerrar()
+    {
+        if (abierto_)
+        {
+            try
+            {
+                stream_.close();
+            }
+            catch (...)
+            {
+                cerr << "  Error al cerrar " << nombre_ << "\n";
+            }
+            abierto_ = false;
+        }
+    }
+
+    ~ArchivoSeguroIO()
+    {
+        cerrar();
+    }
+};
+
+void ejemplo_wrapper()
+{
+    cout << "\n--- EJEMPLO 15: Wrapper completo ---\n";
+
+    ofstream out;
+    ArchivoSeguroIO<ofstream> wrapper("seguro_wrapper.txt", out);
+
+    if (wrapper.abrir())
+    {
+        wrapper.escribir("Línea de prueba\n");
+        wrapper.escribir("Otra línea\n");
+        wrapper.cerrar();
+        cout << "  Escritura segura completada.\n";
+    }
+
+    ifstream in;
+    ArchivoSeguroIO<ifstream> wrapper_in("seguro_wrapper.txt", in);
+
+    if (wrapper_in.abrir())
+    {
+        string linea;
+        while (wrapper_in.leerLinea(linea))
+            cout << "  " << linea << "\n";
+        wrapper_in.cerrar();
+    }
+}
+
+//==============================================================================
+// MAIN
+//==============================================================================
+int main()
+{
+    cout << "=============================================\n";
+    cout << "  C++ MASTER BOOK  CAP. 49: ERRORES\n";
+    cout << "=============================================\n";
+
+    ejemplo_try_catch_basico();
+    ejemplo_excepcion_escritura();
+    ejemplo_separacion_bits();
+    ejemplo_reintento_patron();
+    ejemplo_fallback();
+    ejemplo_degradacion();
+    ejemplo_codigos_error();
+    ejemplo_raii_excepciones();
+    ejemplo_logging();
+    ejemplo_jerarquia_excepciones();
+    ejemplo_transaccion();
+    ejemplo_validacion_previa();
+    ejemplo_recuperacion();
+    ejemplo_politica();
+    ejemplo_wrapper();
+
+    cout << "\n=============================================\n";
+    cout << "  Fin del capítulo 49.\n";
+    cout << "=============================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN
+-------
+El manejo de errores en archivos es lo que distingue al software profesional
+del amateur. En este capítulo implementamos múltiples estrategias: reintento
+con backoff, fallback a archivos alternativos, degradación graciosa (log a
+consola si no hay archivo), transacciones atómicas con archivos temporales,
+detección de escrituras parciales, y jerarquías de excepciones personalizadas.
+Aprendimos a separar failbit (recuperable) de badbit (crítico), a utilizar
+RAII para garantizar la liberación de recursos incluso tras excepciones, y a
+construir un sistema de logging de errores con contexto detallado.
+
+EJERCICIOS
+----------
+1. Añade un mecanismo de "circuit breaker" que después de N errores
+   consecutivos en un archivo, espere un tiempo antes de reintentar.
+
+2. Implementa un sistema de "cuarentena": cuando un archivo se corrompe,
+   se mueve a una carpeta de cuarentena y se crea uno nuevo.
+
+3. Crea una función que intente leer un archivo; si falla, busque una copia
+   de respaldo con extensión .bak; si también falla, cree un archivo vacío.
+
+4. Implementa reintento con backoff exponencial y jitter (aleatoriedad) para
+   evitar tormentas de reintentos en sistemas distribuidos.
+
+5. Diseña un "gestor de errores de archivo" que registre cada error en tres
+   lugares: archivo de log, consola, y un dashboard en memoria.
+
+6. Añade un umbral de errores: si se superan X errores en Y segundos,
+   la aplicación pasa a "modo seguro" (solo lectura, sin escritura).
+
+7. Implementa detección de bucles de error: si la misma operación falla más
+   de N veces seguidas, se marca como fallo permanente y se notifica.
+
+8. Crea un "validador de integridad" que lea un archivo, verifique su
+   checksum, y si está corrupto, intente repararlo con información
+   redundante (paridad simple).
+
+9. Implementa notificaciones de error: cuando un archivo crítico no se puede
+   leer, envía una alerta (simulada) por email o webhook.
+
+10. (Avanzado) Diseña un "sistema de archivos virtual tolerante a fallos"
+    que use múltiples archivos físicos como respaldo, con detección de
+    inconsistencias y reconstrucción automática por mayoría (como RAID 5).
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: Debo usar excepciones o verificar flags?
+R: Usa excepciones para badbit (errores graves) y verificación manual para
+   failbit (errores recuperables como formato incorrecto o EOF).
+
+P: Qué hago con los recursos si hay una excepción?
+R: Usa RAII. Los destructores de ifstream/ofstream cierran los archivos
+   automáticamente. No intentes gestionar recursos manualmente con try/catch.
+
+P: Cómo sé si un error es transitorio o permanente?
+R: Errores transitorios (timeout, disco ocupado) suelen resolverse solos;
+   usa reintento. Errores permanentes (archivo no existe, permisos) no
+   mejoran con reintentos; usa fallback o reporte inmediato.
+
+P: Qué nivel de detalle debe tener mi log de errores?
+R: Suficiente para reproducir el error: operación, archivo, línea de código,
+   errno, contexto (qué se intentaba hacer), y timestamp.
+
+P: Cómo manejo archivos parcialmente escritos?
+R: Usa una marca de finalización ("COMMIT", "==FIN==") al terminar de
+   escribir. Al abrir, verifica que la marca exista; si no, el archivo
+   está incompleto y debe repararse o descartarse.
+
+P: Es buena idea lanzar excepciones desde destructores?
+R: No. Los destructores deben ser noexcept. Si una operación en el destructor
+   falla, registra el error internamente pero no lances.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+Implementa un "Sistema de Archivos Resiliente" (RFS) que:
+  - Use archivos temporales para escrituras atómicas (write -> rename).
+  - Implemente journaling: cada operación se registra en un log antes de
+    ejecutarse, permitiendo recuperación tras fallo.
+  - Tenga detección de corrupción con checksums por bloque.
+  - Ofrezca 3 niveles de seguridad: NORMAL (sin respaldo), PROTEGIDO
+    (un respaldo), MIRROR (dos respaldos en discos separados).
+  - Use reintento con backoff para operaciones transitorias.
+  - Implemente degradación graciosa: si un mirror falla, continuar con
+    el otro y registrar la alerta.
+  - Incluya diagnóstico: historial de errores, estadísticas, estado actual.
+
+Este desafío integra todos los conceptos del capítulo: reintento, transacciones,
+RAII, logging, jerarquía de errores, y estrategias de recuperación.
+
+CIERRE
+------
+El manejo de errores no es un añadido: es parte fundamental del diseño.
+Cada operación de archivo debe considerar qué pasa si falla. Con los
+patrones de este capítulo, tus aplicaciones serán robustas, confiables
+y capaces de sobrevivir en entornos hostiles. En el próximo capítulo
+culminaremos el módulo con un proyecto integrador.
+
+PRÓXIMO CAPÍTULO
+----------------
+Capítulo 50: PROYECTO MÓDULO V  Base de datos de registros de estudiantes
+con persistencia en archivos.
+
+================================================================================
+  FIN DEL CAPÍTULO 49  C++ MASTER BOOK
+================================================================================

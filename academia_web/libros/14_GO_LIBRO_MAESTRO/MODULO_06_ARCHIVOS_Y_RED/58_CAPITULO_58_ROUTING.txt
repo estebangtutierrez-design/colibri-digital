@@ -1,0 +1,1082 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 58: ROUTING (Mux, Gorilla Mux, Chi)
+================================================================================
+
+  "El routing es el mapa de tu API. Un buen router no solo dirige
+   el tráfico: lo organiza, lo valida y lo prepara para su destino."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 58 de GO MASTER BOOK. El enrutamiento
+  (routing) es el corazón de cualquier servidor HTTP: decide qué
+  handler procesa cada petición según su método, ruta y parámetros.
+  Go ofrece el ServeMux estándar, que desde Go 1.22 tiene soporte
+  para patrones avanzados. Además, exploraremos routers populares
+  de la comunidad como Gorilla Mux y Chi, que ofrecen características
+  adicionales como variables de ruta, middleware y subrouters.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Un buen router anticipa las rutas que vendrán y se adapta
+   a las que cambian."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Dominar el ServeMux estándar de Go.
+  ✓ Usar patrones con variables en Go 1.22+ (PathValue).
+  ✓ Implementar rutas con método específico (GET, POST, etc.).
+  ✓ Usar router Gorilla Mux (path vars, subrouters).
+  ✓ Usar router Chi (middleware, grupos, composición).
+  ✓ Comparar routers y elegir el adecuado.
+  ✓ Implementar subrouters para organización.
+  ✓ Manejar rutas comodín (wildcard) y prefijos.
+  ✓ Combinar varios routers.
+  ✓ Construir una API REST con routing profesional.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. SERVEMUX — EL ROUTER ESTÁNDAR
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ServeMux es el enrutador incluido en la biblioteca estándar. Desde
+  Go 1.22, soporta patrones mejorados.
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      mux := http.NewServeMux()
+
+      // Ruta exacta
+      mux.HandleFunc("/", homeHandler)
+      mux.HandleFunc("/contacto", contactoHandler)
+
+      // Prefijo (coincide con /api y /api/*)
+      mux.HandleFunc("/api/", apiHandler)
+
+      http.ListenAndServe(":8080", mux)
+  }
+
+  func homeHandler(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Página principal")
+  }
+
+  func contactoHandler(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Página de contacto")
+  }
+
+  func apiHandler(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "API: %s", r.URL.Path)
+  }
+  ```
+
+  2. PATRONES CON MÉTODO HTTP (Go 1.22+)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Desde Go 1.22, el ServeMux soporta especificar el método HTTP:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "net/http"
+  )
+
+  type Mensaje struct {
+      Mensaje string `json:"mensaje"`
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+
+      // Método + ruta
+      mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(Mensaje{Mensaje: "Bienvenido a la API"})
+      })
+
+      mux.HandleFunc("GET /usuarios", listarUsuarios)
+      mux.HandleFunc("POST /usuarios", crearUsuario)
+      mux.HandleFunc("PUT /usuarios/{id}", actualizarUsuario)
+      mux.HandleFunc("DELETE /usuarios/{id}", eliminarUsuario)
+
+      // Rutas comodín
+      mux.HandleFunc("GET /productos/{categoria}/...", productosPorCategoria)
+
+      fmt.Println("API en :8080")
+      http.ListenAndServe(":8080", mux)
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode([]string{"Ana", "Luis", "María"})
+  }
+
+  func crearUsuario(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      w.WriteHeader(http.StatusCreated)
+      json.NewEncoder(w).Encode(Mensaje{Mensaje: "Usuario creado"})
+  }
+
+  func actualizarUsuario(w http.ResponseWriter, r *http.Request) {
+      id := r.PathValue("id")
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(Mensaje{Mensaje: "Usuario " + id + " actualizado"})
+  }
+
+  func eliminarUsuario(w http.ResponseWriter, r *http.Request) {
+      id := r.PathValue("id")
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(Mensaje{Mensaje: "Usuario " + id + " eliminado"})
+  }
+
+  func productosPorCategoria(w http.ResponseWriter, r *http.Request) {
+      categoria := r.PathValue("categoria")
+      resto := r.PathValue("...")
+      fmt.Fprintf(w, "Categoría: %s, Subruta: %s", categoria, resto)
+  }
+  ```
+
+  3. PATRONES Y PRECEDENCIA EN SERVEMUX
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Reglas de precedencia:
+  1. Rutas exactas ("GET /usuarios") tienen prioridad.
+  2. Rutas con variables ("GET /usuarios/{id}").
+  3. Rutas comodín ("GET /usuarios/{id}/...").
+  4. Rutas prefijo ("/").
+
+  ```go
+  // Orden de prioridad
+  mux.HandleFunc("GET /usuarios/reporte", reporteHandler)       # 1
+  mux.HandleFunc("GET /usuarios/{id}", usuarioHandler)          # 2
+  mux.HandleFunc("GET /usuarios/{id}/...", subrutasHandler)     # 3
+  mux.HandleFunc("GET /", defaultHandler)                      # 4
+  ```
+
+  4. RUTAS CON HOST ESPECÍFICO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  mux := http.NewServeMux()
+  mux.HandleFunc("api.miapp.com/", handlerAPI)
+  mux.HandleFunc("admin.miapp.com/", handlerAdmin)
+  mux.HandleFunc("/", handlerDefault)
+
+  http.ListenAndServe(":8080", mux)
+  ```
+
+  5. MANEJO DE ERROR 404 PERSONALIZADO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+  )
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          if r.URL.Path != "/" {
+              w.Header().Set("Content-Type", "application/json")
+              w.WriteHeader(http.StatusNotFound)
+              json.NewEncoder(w).Encode(map[string]string{
+                  "error":   "Ruta no encontrada",
+                  "ruta":    r.URL.Path,
+                  "metodo":  r.Method,
+              })
+              return
+          }
+          json.NewEncoder(w).Encode(map[string]string{
+              "mensaje": "API v1.0",
+          })
+      })
+
+      http.ListenAndServe(":8080", mux)
+  }
+  ```
+
+  6. GORILLA MUX — CARACTERÍSTICAS PRINCIPALES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Gorilla Mux es un router potente con variables de ruta, subrouters
+  y middleware. Se instala con: `go get github.com/gorilla/mux`
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "net/http"
+      "github.com/gorilla/mux"
+  )
+
+  func main() {
+      r := mux.NewRouter()
+
+      // Variables de ruta
+      r.HandleFunc("/usuarios/{id}", obtenerUsuario).Methods("GET")
+      r.HandleFunc("/usuarios/{id}", actualizarUsuario).Methods("PUT")
+      r.HandleFunc("/usuarios/{id}", eliminarUsuario).Methods("DELETE")
+
+      // Expresiones regulares en variables
+      r.HandleFunc("/usuarios/{id:[0-9]+}", obtenerUsuarioPorID)
+
+      // Query parameters opcionales
+      r.HandleFunc("/productos", listarProductos).
+          Methods("GET").
+          Queries("categoria", "{categoria}")
+
+      // Subrouters
+      api := r.PathPrefix("/api").Subrouter()
+      api.HandleFunc("/tareas", listarTareas).Methods("GET")
+      api.HandleFunc("/tareas", crearTarea).Methods("POST")
+
+      http.ListenAndServe(":8080", r)
+  }
+
+  func obtenerUsuario(w http.ResponseWriter, r *http.Request) {
+      vars := mux.Vars(r)
+      id := vars["id"]
+
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(map[string]string{
+          "id":   id,
+          "nombre": "Usuario " + id,
+      })
+  }
+
+  func actualizarUsuario(w http.ResponseWriter, r *http.Request) {
+      vars := mux.Vars(r)
+      fmt.Fprintf(w, "Actualizando usuario %s", vars["id"])
+  }
+
+  func eliminarUsuario(w http.ResponseWriter, r *http.Request) {
+      vars := mux.Vars(r)
+      w.WriteHeader(http.StatusNoContent)
+  }
+
+  func obtenerUsuarioPorID(w http.ResponseWriter, r *http.Request) {
+      vars := mux.Vars(r)
+      fmt.Fprintf(w, "Usuario con ID numérico: %s", vars["id"])
+  }
+
+  func listarProductos(w http.ResponseWriter, r *http.Request) {
+      categoria := r.URL.Query().Get("categoria")
+      fmt.Fprintf(w, "Listando productos de categoría: %s", categoria)
+  }
+
+  func listarTareas(w http.ResponseWriter, r *http.Request) {
+      json.NewEncoder(w).Encode([]string{"Tarea 1", "Tarea 2"})
+  }
+
+  func crearTarea(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusCreated)
+      fmt.Fprintf(w, "Tarea creada")
+  }
+  ```
+
+  7. GORILLA MUX — MIDDLEWARE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+      "github.com/gorilla/mux"
+  )
+
+  func loggingMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+          next.ServeHTTP(w, r)
+          log.Printf("%s %s %v", r.Method, r.RequestURI, time.Since(inicio))
+      })
+  }
+
+  func autenticacionMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          token := r.Header.Get("Authorization")
+          if token != "Bearer mi-token-secreto" {
+              http.Error(w, "No autorizado", http.StatusUnauthorized)
+              return
+          }
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func main() {
+      r := mux.NewRouter()
+
+      // Middleware global
+      r.Use(loggingMiddleware)
+
+      // Rutas públicas (sin autenticación)
+      r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Página pública")
+      })
+
+      // Subrouter con autenticación
+      api := r.PathPrefix("/api").Subrouter()
+      api.Use(autenticacionMiddleware)
+      api.HandleFunc("/usuarios", listarUsuarios)
+
+      http.ListenAndServe(":8080", r)
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Usuarios secretos")
+  }
+  ```
+
+  8. GORILLA MUX — STRICT SLASH Y OTRAS OPCIONES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  r := mux.NewRouter()
+
+  // Redirigir /ruta a /ruta/ (o viceversa)
+  r.StrictSlash(true)
+
+  // No redirigir automáticamente
+  r.SkipClean(true)
+
+  // Manejar rutas no encontradas
+  r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      w.WriteHeader(http.StatusNotFound)
+      json.NewEncoder(w).Encode(map[string]string{
+          "error": "Ruta no encontrada",
+      })
+  })
+
+  // Manejar métodos no permitidos
+  r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      w.WriteHeader(http.StatusMethodNotAllowed)
+      json.NewEncoder(w).Encode(map[string]string{
+          "error": "Método no permitido",
+      })
+  })
+  ```
+
+  9. CHI ROUTER — INTRODUCCIÓN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Chi es un router ligero, rápido y compatible con net/http.
+  Se instala con: `go get github.com/go-chi/chi/v5`
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "net/http"
+      "github.com/go-chi/chi/v5"
+      "github.com/go-chi/chi/v5/middleware"
+  )
+
+  func main() {
+      r := chi.NewRouter()
+
+      // Middleware global
+      r.Use(middleware.Logger)
+      r.Use(middleware.Recoverer)
+      r.Use(middleware.RequestID)
+      r.Use(middleware.RealIP)
+
+      // Rutas
+      r.Get("/", homeHandler)
+      r.Get("/usuarios", listarUsuarios)
+      r.Post("/usuarios", crearUsuario)
+      r.Get("/usuarios/{id}", obtenerUsuario)
+      r.Put("/usuarios/{id}", actualizarUsuario)
+      r.Delete("/usuarios/{id}", eliminarUsuario)
+
+      // Grupo de rutas con prefijo
+      r.Route("/api", func(r chi.Router) {
+          r.Use(middleware.BasicAuth("restringido", map[string]string{
+              "admin": "1234",
+          }))
+
+          r.Get("/tareas", listarTareas)
+          r.Post("/tareas", crearTarea)
+      })
+
+      fmt.Println("Chi router en :8080")
+      http.ListenAndServe(":8080", r)
+  }
+
+  func homeHandler(w http.ResponseWriter, r *http.Request) {
+      json.NewEncoder(w).Encode(map[string]string{
+          "mensaje": "Bienvenido a Chi",
+      })
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      json.NewEncoder(w).Encode([]string{"Ana", "Luis", "María"})
+  }
+
+  func crearUsuario(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusCreated)
+      fmt.Fprintf(w, "Creado")
+  }
+
+  func obtenerUsuario(w http.ResponseWriter, r *http.Request) {
+      id := chi.URLParam(r, "id")
+      json.NewEncoder(w).Encode(map[string]string{"id": id})
+  }
+
+  func actualizarUsuario(w http.ResponseWriter, r *http.Request) {
+      id := chi.URLParam(r, "id")
+      fmt.Fprintf(w, "Actualizando usuario %s", id)
+  }
+
+  func eliminarUsuario(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusNoContent)
+  }
+
+  func listarTareas(w http.ResponseWriter, r *http.Request) {
+      json.NewEncoder(w).Encode([]string{"Tarea X", "Tarea Y"})
+  }
+
+  func crearTarea(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusCreated)
+      fmt.Fprintf(w, "Tarea creada")
+  }
+  ```
+
+  10. CHI — MIDDLEWARE Y COMPOSICIÓN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+      "time"
+
+      "github.com/go-chi/chi/v5"
+      "github.com/go-chi/chi/v5/middleware"
+  )
+
+  func main() {
+      r := chi.NewRouter()
+
+      // Middleware personalizado
+      r.Use(miMiddleware)
+
+      r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Hola desde Chi")
+      })
+
+      // Middleware específico para grupo
+      r.Group(func(r chi.Router) {
+          r.Use(middleware.BasicAuth("admin", map[string]string{
+              "admin": "secreto",
+          }))
+
+          r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
+              fmt.Fprintf(w, "Panel de administración")
+          })
+      })
+
+      http.ListenAndServe(":8080", r)
+  }
+
+  func miMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+          log.Printf("[%s] %s %s", r.Method, r.URL.Path, r.RemoteAddr)
+          next.ServeHTTP(w, r)
+          log.Printf("[%s] %s completado en %v", r.Method, r.URL.Path, time.Since(inicio))
+      })
+  }
+  ```
+
+  11. CHI — ROUTE GROUPS Y SUBDOMINIOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+      "github.com/go-chi/chi/v5"
+  )
+
+  func main() {
+      r := chi.NewRouter()
+
+      // Grupos de rutas
+      r.Route("/api/v1", func(r chi.Router) {
+          r.Get("/usuarios", listarUsuarios)
+          r.Post("/usuarios", crearUsuario)
+          r.Get("/usuarios/{id}", obtenerUsuario)
+      })
+
+      r.Route("/api/v2", func(r chi.Router) {
+          r.Get("/usuarios", listarUsuariosV2)
+          r.Post("/usuarios", crearUsuarioV2)
+      })
+
+      // Subdominios
+      r.Route("/api", func(r chi.Router) {
+          r.Get("/status", func(w http.ResponseWriter, r *http.Request) {
+              fmt.Fprintf(w, "API funcionando")
+          })
+      })
+
+      http.ListenAndServe(":8080", r)
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Lista v1 de usuarios")
+  }
+
+  func crearUsuario(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusCreated)
+      fmt.Fprintf(w, "Usuario creado v1")
+  }
+
+  func obtenerUsuario(w http.ResponseWriter, r *http.Request) {
+      id := chi.URLParam(r, "id")
+      fmt.Fprintf(w, "Usuario v1: %s", id)
+  }
+
+  func listarUsuariosV2(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Lista v2 de usuarios")
+  }
+
+  func crearUsuarioV2(w http.ResponseWriter, r *http.Request) {
+      w.WriteHeader(http.StatusCreated)
+      fmt.Fprintf(w, "Usuario creado v2")
+  }
+  ```
+
+  12. COMPARATIVA DE ROUTERS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Característica          | ServeMux (1.22+) | Gorilla Mux | Chi         |
+  |------------------------|------------------|-------------|-------------|
+  | Variables de ruta      | Sí (PathValue)   | Sí          | Sí          |
+  | Método específico      | Sí               | Sí          | Sí          |
+  | Expresiones regulares  | No               | Sí          | No          |
+  | Subrouters             | Limitado         | Sí          | Sí          |
+  | Middleware             | Manual           | Sí          | Sí          |
+  | Compatibilidad net/http| Nativa           | Sí          | Sí          |
+  | Dependencias           | Ninguna          | gorilla/mux | chi         |
+  | Rendimiento            | Excelente        | Muy bueno   | Excelente   |
+  | Community              | Oficial          | Mantenimiento | Activa    |
+
+  13. PROGRAMA COMPLETO — API CON CHI
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "log"
+      "net/http"
+      "os"
+      "strconv"
+      "sync"
+      "time"
+
+      "github.com/go-chi/chi/v5"
+      "github.com/go-chi/chi/v5/middleware"
+      "github.com/go-chi/cors"
+  )
+
+  type Tarea struct {
+      ID        int       `json:"id"`
+      Titulo    string    `json:"titulo"`
+      Completada bool     `json:"completada"`
+      CreadaEn  time.Time `json:"creada_en"`
+  }
+
+  type TareasAPI struct {
+      mu     sync.RWMutex
+      tareas []Tarea
+      nextID int
+  }
+
+  func NewTareasAPI() *TareasAPI {
+      return &TareasAPI{
+          tareas: []Tarea{
+              {ID: 1, Titulo: "Aprender Chi Router", Completada: false, CreadaEn: time.Now()},
+          },
+          nextID: 2,
+      }
+  }
+
+  func (api *TareasAPI) listar(w http.ResponseWriter, r *http.Request) {
+      api.mu.RLock()
+      defer api.mu.RUnlock()
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(api.tareas)
+  }
+
+  func (api *TareasAPI) obtener(w http.ResponseWriter, r *http.Request) {
+      idStr := chi.URLParam(r, "id")
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.RLock()
+      defer api.mu.RUnlock()
+
+      for _, t := range api.tareas {
+          if t.ID == id {
+              json.NewEncoder(w).Encode(t)
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"no encontrada"}`, http.StatusNotFound)
+  }
+
+  func (api *TareasAPI) crear(w http.ResponseWriter, r *http.Request) {
+      var tarea Tarea
+      if err := json.NewDecoder(r.Body).Decode(&tarea); err != nil {
+          http.Error(w, `{"error":"JSON inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      tarea.ID = api.nextID
+      api.nextID++
+      tarea.CreadaEn = time.Now()
+      api.tareas = append(api.tareas, tarea)
+      api.mu.Unlock()
+
+      w.Header().Set("Content-Type", "application/json")
+      w.WriteHeader(http.StatusCreated)
+      json.NewEncoder(w).Encode(tarea)
+  }
+
+  func (api *TareasAPI) actualizar(w http.ResponseWriter, r *http.Request) {
+      idStr := chi.URLParam(r, "id")
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      var actualizada Tarea
+      if err := json.NewDecoder(r.Body).Decode(&actualizada); err != nil {
+          http.Error(w, `{"error":"JSON inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      defer api.mu.Unlock()
+
+      for i, t := range api.tareas {
+          if t.ID == id {
+              if actualizada.Titulo != "" {
+                  api.tareas[i].Titulo = actualizada.Titulo
+              }
+              api.tareas[i].Completada = actualizada.Completada
+              json.NewEncoder(w).Encode(api.tareas[i])
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"no encontrada"}`, http.StatusNotFound)
+  }
+
+  func (api *TareasAPI) eliminar(w http.ResponseWriter, r *http.Request) {
+      idStr := chi.URLParam(r, "id")
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      defer api.mu.Unlock()
+
+      for i, t := range api.tareas {
+          if t.ID == id {
+              api.tareas = append(api.tareas[:i], api.tareas[i+1:]...)
+              w.WriteHeader(http.StatusNoContent)
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"no encontrada"}`, http.StatusNotFound)
+  }
+
+  func (api *TareasAPI) Router() http.Handler {
+      r := chi.NewRouter()
+
+      // Middleware global
+      r.Use(middleware.Logger)
+      r.Use(middleware.Recoverer)
+      r.Use(middleware.RequestID)
+      r.Use(middleware.RealIP)
+      r.Use(middleware.Timeout(30 * time.Second))
+
+      // CORS
+      r.Use(cors.Handler(cors.Options{
+          AllowedOrigins:   []string{"*"},
+          AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+          AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+          MaxAge:           300,
+      }))
+
+      // Health check
+      r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+      })
+
+      // API v1
+      r.Route("/api/v1", func(r chi.Router) {
+          r.Get("/tareas", api.listar)
+          r.Post("/tareas", api.crear)
+          r.Get("/tareas/{id}", api.obtener)
+          r.Put("/tareas/{id}", api.actualizar)
+          r.Delete("/tareas/{id}", api.eliminar)
+      })
+
+      return r
+  }
+
+  func main() {
+      api := NewTareasAPI()
+
+      port := os.Getenv("PORT")
+      if port == "" {
+          port = "8080"
+      }
+
+      server := &http.Server{
+          Addr:         ":" + port,
+          Handler:      api.Router(),
+          ReadTimeout:  15 * time.Second,
+          WriteTimeout: 15 * time.Second,
+          IdleTimeout:  60 * time.Second,
+      }
+
+      log.Printf("API iniciada en :%s", port)
+      log.Printf("Endpoints:")
+      log.Printf("  GET    /health")
+      log.Printf("  GET    /api/v1/tareas")
+      log.Printf("  POST   /api/v1/tareas")
+      log.Printf("  GET    /api/v1/tareas/{id}")
+      log.Printf("  PUT    /api/v1/tareas/{id}")
+      log.Printf("  DELETE /api/v1/tareas/{id}")
+
+      if err := server.ListenAndServe(); err != nil {
+          log.Fatal("Error:", err)
+      }
+  }
+  ```
+
+  14. CREANDO UN ROUTER PERSONALIZADO SIMPLE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+      "strings"
+  )
+
+  type Ruta struct {
+      Metodo  string
+      Patron  string
+      Handler http.HandlerFunc
+  }
+
+  type RouterPersonalizado struct {
+      rutas []Ruta
+  }
+
+  func (r *RouterPersonalizado) HandleFunc(metodo, patron string, handler http.HandlerFunc) {
+      r.rutas = append(r.rutas, Ruta{Metodo: metodo, Patron: patron, Handler: handler})
+  }
+
+  func (r *RouterPersonalizado) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+      for _, ruta := range r.rutas {
+          if ruta.Metodo != req.Method {
+              continue
+          }
+
+          if params, ok := matchPatron(ruta.Patron, req.URL.Path); ok {
+              // Guardar parámetros en el contexto
+              for k, v := range params {
+                  req.SetPathValue(k, v)
+              }
+              ruta.Handler(w, req)
+              return
+          }
+      }
+
+      http.NotFound(w, req)
+  }
+
+  func matchPatron(patron, path string) (map[string]string, bool) {
+      partesPatron := strings.Split(strings.Trim(patron, "/"), "/")
+      partesPath := strings.Split(strings.Trim(path, "/"), "/")
+
+      if len(partesPatron) != len(partesPath) {
+          return nil, false
+      }
+
+      params := make(map[string]string)
+      for i := range partesPatron {
+          if strings.HasPrefix(partesPatron[i], "{") && strings.HasSuffix(partesPatron[i], "}") {
+              nombre := strings.Trim(partesPatron[i], "{}")
+              params[nombre] = partesPath[i]
+          } else if partesPatron[i] != partesPath[i] {
+              return nil, false
+          }
+      }
+
+      return params, true
+  }
+
+  func main() {
+      router := &RouterPersonalizado{}
+      router.HandleFunc("GET", "/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Inicio")
+      })
+      router.HandleFunc("GET", "/usuarios/{id}", func(w http.ResponseWriter, r *http.Request) {
+          id := r.PathValue("id")
+          fmt.Fprintf(w, "Usuario ID: %s", id)
+      })
+
+      http.ListenAndServe(":8080", router)
+  }
+  ```
+
+  15. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Usa ServeMux estándar para proyectos simples (Go 1.22+).
+  2. Usa Chi para proyectos que necesiten middleware y organización.
+  3. Usa Gorilla Mux si necesitas expresiones regulares en rutas.
+  4. Organiza las rutas en grupos lógicos (usuarios, productos, etc.).
+  5. Usa subrouters para versionar la API (/v1, /v2).
+  6. Implementa un handler para 404 y 405 personalizado.
+  7. No mezcles lógica de negocio con routing.
+  8. Documenta las rutas con comentarios o generación automática.
+  9. Usa constantes para las rutas en lugar de strings literales.
+  10. Valida los parámetros de ruta inmediatamente.
+
+  16. CONSTANTES DE RUTAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  const (
+      RutaHome      = "/"
+      RutaUsuarios  = "/usuarios"
+      RutaUsuarioID = "/usuarios/{id}"
+      RutaProductos = "/productos"
+      RutaLogin     = "/auth/login"
+  )
+  ```
+
+  17. TESTING DE RUTAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+      "net/http/httptest"
+      "testing"
+      "github.com/go-chi/chi/v5"
+  )
+
+  func TestListarUsuarios(t *testing.T) {
+      r := chi.NewRouter()
+      r.Get("/usuarios", func(w http.ResponseWriter, r *http.Request) {
+          json.NewEncoder(w).Encode([]string{"Ana", "Luis"})
+      })
+
+      req := httptest.NewRequest("GET", "/usuarios", nil)
+      rec := httptest.NewRecorder()
+      r.ServeHTTP(rec, req)
+
+      if rec.Code != http.StatusOK {
+          t.Errorf("esperado 200, obtenido %d", rec.Code)
+      }
+
+      var usuarios []string
+      json.NewDecoder(rec.Body).Decode(&usuarios)
+      if len(usuarios) != 2 {
+          t.Errorf("esperado 2 usuarios, obtenido %d", len(usuarios))
+      }
+  }
+  ```
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • ServeMux es el router estándar (desde Go 1.22 con patrones).
+  • PathValue extrae variables de ruta.
+  • Gorilla Mux ofrece expresiones regulares y subrouters.
+  • Chi es ligero, rápido y compatible con net/http.
+  • Los subrouters organizan rutas por dominio o versión.
+  • El middleware se aplica a nivel de router o subrouter.
+  • El router personalizado implementa http.Handler.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un servidor con ServeMux que tenga rutas GET /saludo
+    y GET /despedida, cada una con su handler.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Usando ServeMux de Go 1.22, crea una ruta GET /productos/{id}
+    que devuelva un JSON con el ID recibido.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Implementa un router con Chi que tenga un grupo /admin con
+    autenticación básica y otro grupo /public sin autenticación.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Crea un router personalizado que soporte rutas con parámetros
+    como :id y :slug.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Usando Gorilla Mux, crea una API REST completa con 5 recursos
+    y middleware de logging y autenticación.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Implementa un sistema de plugins para un router que permita
+    agregar rutas dinámicamente desde archivos externos.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Crea un router con soporte para WebSocket y HTTP, usando Chi.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Implementa un "router reverso" que genere URLs a partir de
+    nombres de rutas y parámetros (como url_for de Flask).
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Qué router debo usar para un proyecto nuevo?
+  R: Si usas Go 1.22+, el ServeMux estándar es suficiente para la
+  mayoría de proyectos. Para más funcionalidad, Chi es la mejor
+  opción por su rendimiento y compatibilidad.
+
+  ❓ ¿Gorilla Mux está deprecado?
+  R: El repositorio gorilla/mux está en modo de mantenimiento. Ya
+  no recibe nuevas características pero seguirá funcionando.
+  Chi es la alternativa recomendada.
+
+  ❓ ¿Cómo obtengo parámetros de ruta en Chi?
+  R: Con chi.URLParam(r, "nombre").
+
+  ❓ ¿Cómo obtengo parámetros de ruta en ServeMux (1.22+)?
+  R: Con r.PathValue("nombre").
+
+  ❓ ¿Puedo usar middleware con ServeMux?
+  R: Sí, envuelve el mux con un handler que implemente el middleware.
+  Ejemplo: http.ListenAndServe(":8080", miMiddleware(mux)).
+
+  ❓ ¿Cuál es la diferencia entre r.PathPrefix("/api") y r.Route("/api")?
+  R: PathPrefix crea un subrouter con un prefijo en la ruta.
+  Route hace lo mismo pero con una sintaxis más limpia en Chi.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 FRAMEWORK DE ROUTING CON DESCRUBRIMIENTO AUTOMÁTICO
+
+  Diseña e implementa un framework de routing que:
+
+  1. Descubra handlers automáticamente en un directorio usando
+     reflection o convenciones de nombres.
+  2. Genere la documentación OpenAPI 3.0 automáticamente.
+  3. Implemente versionado de API (/v1, /v2) con coexistencia.
+  4. Valide parámetros de ruta automáticamente (tipos, rangos).
+  5. Genere clientes HTTP a partir de las rutas definidas.
+  6. Tenga middleware composable con orden explícito.
+  7. Soporte WebSocket, gRPC y HTTP en el mismo router.
+
+  Ejemplo de uso:
+  ```go
+  type UsuariosAPI struct{}
+
+  func (api *UsuariosAPI) Listar(w http.ResponseWriter, r *http.Request) {}
+  func (api *UsuariosAPI) Obtener(w http.ResponseWriter, r *http.Request) {}
+  func (api *UsuariosAPI) Crear(w http.ResponseWriter, r *http.Request) {}
+  ```
+
+  Requisitos técnicos:
+  - Usa reflection para analizar structs y métodos.
+  - Genera documentación en formato OpenAPI JSON.
+  - Implementa validación de parámetros con tags.
+  - Usa http.Handler como interfaz base.
+  - Soporta middlewares a nivel de API, recurso y método.
+
+  Este desafío integra:
+  - Routing avanzado
+  - Reflection y metaprogramación
+  - Generación de documentación
+  - Diseño de APIs RESTful
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 58. Ahora conoces las principales
+  opciones de routing en Go: desde el ServeMux estándar hasta
+  Gorilla Mux y Chi. Sabes elegir el router adecuado para cada
+  proyecto, organizar rutas con subrouters y aplicar middleware.
+
+  El routing es la columna vertebral de cualquier API. Un buen
+  diseño de rutas hace que tu API sea predecible, mantenible
+  y fácil de documentar.
+
+  En el próximo capítulo, profundizaremos en el patrón middleware,
+  una técnica esencial para construir pipelines de procesamiento
+  HTTP reutilizables.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 59: MIDDLEWARE
+    Aprenderás el patrón middleware en Go: cómo construir, componer
+    y aplicar middlewares para logging, autenticación, recuperación
+    de panics, compresión y más.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 58 — FIN DEL CAPÍTULO
+================================================================================

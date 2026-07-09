@@ -1,0 +1,347 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                         MÓDULO VII
+##                        CAPÍTULO 70
+##          PROYECTO: APP DEL CLIMA CON FETCH
+################################################################################
+################################################################################
+
+"La mejor forma de dominar la asincronía es construir
+una aplicación que depende de datos externos en tiempo real."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+Has completado el Módulo VII.
+
+Ahora construirás una APP DEL CLIMA que usa:
+- Fetch para obtener datos de una API real.
+- Async/await para manejar asincronía.
+- Manejo de errores robusto.
+- localStorage para guardar preferencias.
+- Geolocalización para clima automático.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Construir una app que consume API externa.
+✓ Integrar async/await, fetch, try/catch.
+✓ Usar geolocalización para ubicación automática.
+✓ Persistir ciudad favorita en localStorage.
+✓ Manejar todos los estados: carga, éxito, error.
+
+===============================================================================
+1. CLIMA API - ESTRUCTURA
+===============================================================================
+
+```javascript
+// Usaremos la API gratuita: https://open-meteo.com/
+// (No necesita API key)
+
+// URL de ejemplo:
+// https://api.open-meteo.com/v1/forecast?
+// latitude=40.4168&longitude=-3.7038&
+// current_weather=true&
+// daily=temperature_max,temperature_min&
+// timezone=auto
+
+class ClimaAPI {
+    #baseURL = "https://api.open-meteo.com/v1/forecast";
+
+    async obtenerClimaActual(lat, lon) {
+        let url = this.#baseURL + "?" +
+            "latitude=" + lat +
+            "&longitude=" + lon +
+            "&current_weather=true" +
+            "&daily=temperature_max,temperature_min,precipitation_sum" +
+            "&timezone=auto";
+
+        try {
+            let respuesta = await fetch(url);
+
+            if (!respuesta.ok) {
+                throw new Error("HTTP " + respuesta.status);
+            }
+
+            return await respuesta.json();
+        } catch (error) {
+            if (error.message.startsWith("HTTP")) {
+                throw new Error("Servicio de clima no disponible");
+            }
+            throw new Error("Error de conexión: verifica tu internet");
+        }
+    }
+
+    // Coordenadas de ciudades famosas
+    static ciudades = {
+        "Madrid": { lat: 40.4168, lon: -3.7038 },
+        "Barcelona": { lat: 41.3874, lon: 2.1686 },
+        "Buenos Aires": { lat: -34.6037, lon: -58.3816 },
+        "México DF": { lat: 19.4326, lon: -99.1332 },
+        "Bogotá": { lat: 4.7110, lon: -74.0721 },
+        "Lima": { lat: -12.0464, lon: -77.0428 },
+        "Santiago": { lat: -33.4489, lon: -70.6693 },
+        "Londres": { lat: 51.5074, lon: -0.1278 },
+        "Nueva York": { lat: 40.7128, lon: -74.0060 },
+        "Tokio": { lat: 35.6762, lon: 139.6503 }
+    };
+}
+```
+
+===============================================================================
+2. PROCESADOR DE DATOS
+===============================================================================
+
+```javascript
+class ProcesadorClima {
+    procesarRespuesta(datos) {
+        let actual = datos.current_weather;
+        let diario = datos.daily;
+
+        return {
+            // Clima actual
+            temperatura: actual.temperature,
+            viento: actual.windspeed,
+            codigoClima: actual.weathercode,
+            // Pronóstico
+            maxHoy: diario.temperature_max[0],
+            minHoy: diario.temperature_min[0],
+            precipitacion: diario.precipitation_sum[0] || 0,
+            // Info extra
+            unidad: "°C",
+            actualizado: new Date().toLocaleTimeString("es-ES")
+        };
+    }
+
+    obtenerIcono(codigo) {
+        // Códigos WMO
+        if (codigo === 0) return "☀️";       // Despejado
+        if (codigo <= 3) return "⛅";         // Parcialmente nublado
+        if (codigo <= 48) return "☁️";        // Nublado
+        if (codigo <= 57) return "🌧️";        // Llovizna
+        if (codigo <= 67) return "🌧️";        // Lluvia
+        if (codigo <= 77) return "❄️";        // Nieve
+        if (codigo <= 82) return "🌦️";        // Chubascos
+        return "🌈";                           // Otro
+    }
+
+    obtenerDescripcion(codigo) {
+        let desc = {
+            0: "Despejado", 1: "Mayormente despejado",
+            2: "Parcialmente nublado", 3: "Nublado",
+            45: "Niebla", 51: "Llovizna", 61: "Lluvia",
+            71: "Nieve", 95: "Tormenta"
+        };
+        return desc[codigo] || "Condición variable";
+    }
+}
+```
+
+===============================================================================
+3. APLICACIÓN PRINCIPAL
+===============================================================================
+
+```javascript
+class AppClima {
+    #api = new ClimaAPI();
+    #procesador = new ProcesadorClima();
+    #ciudadActual = null;
+
+    constructor() {
+        this.#cargarPreferencias();
+    }
+
+    #cargarPreferencias() {
+        try {
+            let ciudad = localStorage.getItem("clima-ciudad");
+            if (ciudad && ClimaAPI.ciudades[ciudad]) {
+                this.#ciudadActual = ciudad;
+            }
+        } catch { /* ignorar */ }
+    }
+
+    #guardarPreferencias() {
+        if (this.#ciudadActual) {
+            localStorage.setItem("clima-ciudad", this.#ciudadActual);
+        }
+    }
+
+    async obtenerPorCiudad(nombre) {
+        let coords = ClimaAPI.ciudades[nombre];
+        if (!coords) {
+            throw new Error("Ciudad no encontrada: " + nombre);
+        }
+
+        this.#ciudadActual = nombre;
+        this.#guardarPreferencias();
+        return this.obtenerPorCoordenadas(coords.lat, coords.lon);
+    }
+
+    async obtenerPorCoordenadas(lat, lon) {
+        let datos = await this.#api.obtenerClimaActual(lat, lon);
+        return this.#procesador.procesarRespuesta(datos);
+    }
+
+    async obtenerUbicacionAutomatica() {
+        return new Promise(function(resolve, reject) {
+            if (!navigator.geolocation) {
+                reject("Geolocalización no soportada");
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    resolve({
+                        lat: pos.coords.latitude,
+                        lon: pos.coords.longitude
+                    });
+                },
+                function(error) {
+                    let msgs = {
+                        1: "Permiso denegado",
+                        2: "No disponible",
+                        3: "Timeout"
+                    };
+                    reject(msgs[error.code] || "Error desconocido");
+                },
+                { timeout: 10000 }
+            );
+        });
+    }
+
+    async iniciarConGeolocalizacion() {
+        try {
+            let coords = await this.obtenerUbicacionAutomatica();
+            return await this.obtenerPorCoordenadas(coords.lat, coords.lon);
+        } catch (error) {
+            console.log("⚠️ Geolocalización:", error);
+            // Fallback a Madrid
+            return this.obtenerPorCiudad("Madrid");
+        }
+    }
+
+    listarCiudades() {
+        return Object.keys(ClimaAPI.ciudades);
+    }
+
+    get ciudad() { return this.#ciudadActual; }
+}
+```
+
+===============================================================================
+4. INTERFAZ DE CONSOLA
+===============================================================================
+
+```javascript
+async function mostrarClima(nombreCiudad) {
+    let app = new AppClima();
+
+    try {
+        console.log("⏳ Consultando clima...");
+
+        let clima = nombreCiudad
+            ? await app.obtenerPorCiudad(nombreCiudad)
+            : await app.iniciarConGeolocalizacion();
+
+        let icono = app._procesador?.obtenerIcono(clima.codigoClima) || "🌤️";
+        let desc = app._procesador?.obtenerDescripcion(clima.codigoClima) || "";
+
+        console.log("==================================");
+        console.log(icono + " CLIMA EN " + (app.ciudad || "Ubicación actual").toUpperCase());
+        console.log("==================================");
+        console.log("🌡️ Temperatura: " + clima.temperatura + clima.unidad);
+        console.log("📊 Mín/Máx: " + clima.minHoy + "/" + clima.maxHoy + clima.unidad);
+        console.log("🌬️ Viento: " + clima.viento + " km/h");
+        console.log("🌧️ Precipitación: " + clima.precipitacion + " mm");
+        console.log("🕐 Actualizado: " + clima.actualizado);
+        console.log("==================================");
+
+    } catch (error) {
+        console.log("❌ Error:", error.message);
+    }
+}
+
+// Uso:
+// mostrarClima("Madrid");
+// mostrarClima("Tokio");
+// mostrarClima();  // Geolocalización automática
+```
+
+===============================================================================
+5. FUNCIONALIDAD EXTRA: COMPARAR CIUDADES
+===============================================================================
+
+```javascript
+async function compararClima(...ciudades) {
+    if (ciudades.length === 0) {
+        ciudades = ["Madrid", "Barcelona", "Londres"];
+    }
+
+    let app = new AppClima();
+
+    try {
+        console.log("=== COMPARATIVA DE CLIMA ===");
+        console.log("Ciudad".padEnd(15) + "Temp".padEnd(8) + "Mín".padEnd(8) +
+            "Máx".padEnd(8) + "Viento".padEnd(8) + "Condición");
+
+        let promesas = ciudades.map(function(c) {
+            return app.obtenerPorCiudad(c)
+                .then(function(clima) {
+                    let desc = app._procesador?.obtenerDescripcion(clima.codigoClima) || "";
+                    console.log(
+                        c.padEnd(15) +
+                        (clima.temperatura + "°C").padEnd(8) +
+                        (clima.minHoy + "°C").padEnd(8) +
+                        (clima.maxHoy + "°C").padEnd(8) +
+                        (clima.viento + "km/h").padEnd(8) +
+                        desc
+                    );
+                })
+                .catch(function(e) {
+                    console.log(c.padEnd(15) + "❌ " + e.message);
+                });
+        });
+
+        await Promise.all(promesas);
+
+    } catch (error) {
+        console.log("❌ Error general:", error.message);
+    }
+}
+
+// compararClima("Madrid", "Londres", "Tokio", "Buenos Aires");
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ App del clima: consume API real (Open-Meteo).
+✔ Clases: ClimaAPI, ProcesadorClima, AppClima.
+✔ async/await + try/catch para flujo asíncrono.
+✔ Geolocalización para ubicación automática.
+✔ localStorage para persistir ciudad favorita.
+✔ Manejo de errores: fallback a Madrid si falla geolocalización.
+✔ Comparativa de clima en múltiples ciudades.
+
+===============================================================================
+FIN DEL CAPÍTULO 70
+===============================================================================
+
+"Las APIs externas son el latido de las aplicaciones modernas.
+Con fetch, async/await y un buen manejo de errores,
+puedes traer el mundo exterior a tu código."
+— Profesor Búho AI
+
+🔚 FIN DEL MÓDULO VII - ASINCRONÍA Y PETICIONES HTTP
+
+===============================================================================

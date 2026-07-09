@@ -1,0 +1,990 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO IV
+##
+##                       CAPÍTULO 34
+##
+##                      ENCAPSULACIÓN
+##
+################################################################################
+################################################################################
+
+"El encapsulamiento no es ocultar información, es proteger la integridad
+del objeto y exponer solo lo necesario." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, guardián de la integridad de los datos! El encapsulamiento
+es uno de los cuatro pilares fundamentales de la Programación Orientada
+a Objetos, junto con la herencia, el polimorfismo y la abstracción.
+En este capítulo aprenderás a controlar el acceso a las propiedades y
+métodos de tus clases utilizando los modificadores de visibilidad
+public, protected y private. También dominarás los getters y setters
+(accesores y mutadores), las propiedades readonly de PHP 8.1, los
+métodos mágicos __get() y __set(), y las mejores prácticas para diseñar
+interfaces limpias. El encapsulamiento bien aplicado es la diferencia
+entre un código que funciona y un código que es mantenible, extensible
+y seguro. ¡Protege tus datos como un arquitecto protege sus planos!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La verdadera fortaleza de una clase no está en lo que muestra, sino en
+lo que protege y cómo lo protege." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender el principio de encapsulamiento y su importancia en la POO.
+✓ Dominar los modificadores de visibilidad: public, protected y private.
+✓ Implementar getters y setters para acceder y modificar propiedades
+  privadas de forma controlada.
+✓ Utilizar el modificador `readonly` (PHP 8.1+) para inmutabilidad.
+✓ Aplicar type hints y validaciones en setters para garantizar datos
+  consistentes.
+✓ Conocer los métodos mágicos __get(), __set(), __isset(), __unset().
+✓ Diseñar interfaces públicas limpias y minimalistas (Principio de
+  Mínima Exposición).
+
+===============================================================================
+1. MODIFICADORES DE VISIBILIDAD
+===============================================================================
+
+Los modificadores de visibilidad controlan desde dónde se puede acceder
+a las propiedades y métodos de una clase. PHP ofrece tres niveles:
+
+- `public`: Accesible desde cualquier lugar (dentro y fuera de la clase,
+  desde clases hijas y desde código externo).
+- `protected`: Accesible desde la propia clase y desde clases hijas
+  (herederas), pero NO desde código externo.
+- `private`: Accesible SOLO desde la propia clase. Ni siquiera las clases
+  hijas pueden acceder a miembros privados.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+class CuentaBancaria
+{
+    public string $titular;
+    protected string $numeroCuenta;
+    private float $saldo;
+    private string $claveAcceso;
+
+    public function __construct(string $titular, string $numeroCuenta, float $saldoInicial)
+    {
+        $this->titular = $titular;
+        $this->numeroCuenta = $numeroCuenta;
+        $this->saldo = $saldoInicial;
+        $this->claveAcceso = bin2hex(random_bytes(16));
+    }
+
+    public function depositar(float $monto): void
+    {
+        if ($monto > 0) {
+            $this->saldo += $monto;
+        }
+    }
+
+    public function obtenerSaldo(): float
+    {
+        return $this->saldo;
+    }
+
+    private function generarTokenSeguridad(): string
+    {
+        return hash('sha256', $this->claveAcceso . time());
+    }
+
+    protected function obtenerNumeroCuenta(): string
+    {
+        return substr($this->numeroCuenta, -4);
+    }
+}
+
+class CuentaAhorro extends CuentaBancaria
+{
+    public function mostrarInfoProtegida(): string
+    {
+        // Podemos acceder a protected (no a private)
+        return "Cuenta terminada en: " . $this->obtenerNumeroCuenta();
+    }
+
+    // Esto NO funciona: $this->saldo es private en la clase padre
+    // public function mostrarSaldo() { return $this->saldo; }
+}
+
+$cuenta = new CuentaAhorro('Ana García', '1234567890', 5000.00);
+
+// public: accesible
+echo $cuenta->titular; // Ana García
+
+// protected: NO accesible desde fuera
+// echo $cuenta->numeroCuenta; // Error
+
+// private: NO accesible desde fuera
+// echo $cuenta->saldo; // Error
+
+// Métodos públicos funcionan
+echo $cuenta->obtenerSaldo(); // 5000
+$cuenta->depositar(1000);
+echo $cuenta->obtenerSaldo(); // 6000
+
+// Método protegido accesible desde clase hija
+echo $cuenta->mostrarInfoProtegida(); // Cuenta terminada en: 7890
+```
+
+Jerarquía de visibilidad:
+```
+              public    protected   private
+Misma clase     ✓          ✓          ✓
+Clase hija      ✓          ✓          ✗
+Externo         ✓          ✗          ✗
+```
+
+La regla general es: "todo lo que pueda ser privado, debe ser privado".
+Esto minimiza la superficie de contacto con el exterior y permite cambiar
+la implementación interna sin afectar a los consumidores de la clase.
+
+===============================================================================
+2. GETTERS Y SETTERS (ACCESORES Y MUTADORES)
+===============================================================================
+
+Los getters y setters son métodos públicos que permiten acceder (get)
+y modificar (set) propiedades privadas o protegidas de manera controlada.
+Proporcionan una capa de abstracción que permite validar, transformar
+o disparar eventos cuando se accede a las propiedades.
+
+```php
+<?php
+
+class Usuario
+{
+    private string $nombre;
+    private string $email;
+    private int $edad;
+    private bool $activo = true;
+
+    // Constructor con property promotion no es posible aquí porque
+    // necesitamos lógica en setters, así que usamos constructor tradicional
+    public function __construct(string $nombre, string $email, int $edad)
+    {
+        $this->setNombre($nombre);
+        $this->setEmail($email);
+        $this->setEdad($edad);
+    }
+
+    // Getter
+    public function getNombre(): string
+    {
+        return $this->nombre;
+    }
+
+    // Setter con validación
+    public function setNombre(string $nombre): void
+    {
+        $nombre = trim($nombre);
+        if (strlen($nombre) < 2) {
+            throw new InvalidArgumentException(
+                'El nombre debe tener al menos 2 caracteres.'
+            );
+        }
+        if (strlen($nombre) > 100) {
+            throw new InvalidArgumentException(
+                'El nombre no puede exceder 100 caracteres.'
+            );
+        }
+        $this->nombre = $nombre;
+    }
+
+    // Getter
+    public function getEmail(): string
+    {
+        return $this->email;
+    }
+
+    // Setter con validación de formato
+    public function setEmail(string $email): void
+    {
+        $email = strtolower(trim($email));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException(
+                'El formato del email no es válido.'
+            );
+        }
+        $this->email = $email;
+    }
+
+    // Getter
+    public function getEdad(): int
+    {
+        return $this->edad;
+    }
+
+    // Setter con validación de rango
+    public function setEdad(int $edad): void
+    {
+        if ($edad < 0 || $edad > 150) {
+            throw new InvalidArgumentException(
+                'La edad debe estar entre 0 y 150 años.'
+            );
+        }
+        $this->edad = $edad;
+    }
+
+    // Getter para booleano (con prefijo "is")
+    public function isActivo(): bool
+    {
+        return $this->activo;
+    }
+
+    public function activar(): void
+    {
+        $this->activo = true;
+    }
+
+    public function desactivar(): void
+    {
+        $this->activo = false;
+    }
+}
+
+try {
+    $usuario = new Usuario('Ana', 'ana@example.com', 28);
+    echo $usuario->getNombre(); // Ana
+
+    $usuario->setEdad(29);
+    echo $usuario->getEdad();   // 29
+
+    // Esto lanza excepción por edad inválida
+    $usuario->setEdad(-5);
+} catch (InvalidArgumentException $e) {
+    echo $e->getMessage(); // La edad debe estar entre 0 y 150 años.
+}
+```
+
+Convenciones de nomenclatura para getters y setters:
+
+- `getPropiedad()` — Para obtener el valor (devuelve el tipo).
+- `setPropiedad($valor)` — Para establecer el valor (void o self).
+- `isPropiedad()` — Para booleanos (devuelve bool).
+- `hasPropiedad()` — Para booleanos que indican posesión.
+- `withPropiedad($valor)` — Para objetos inmutables (devuelve nueva instancia).
+
+Ejemplo con tipo de retorno `self` para encadenamiento (fluent setters):
+
+```php
+<?php
+
+class Producto
+{
+    private string $nombre;
+    private float $precio;
+    private string $categoria;
+    private bool $disponible = true;
+
+    public function setNombre(string $nombre): self
+    {
+        $this->nombre = $nombre;
+        return $this;
+    }
+
+    public function setPrecio(float $precio): self
+    {
+        if ($precio < 0) {
+            throw new InvalidArgumentException('El precio no puede ser negativo.');
+        }
+        $this->precio = $precio;
+        return $this;
+    }
+
+    public function setCategoria(string $categoria): self
+    {
+        $this->categoria = $categoria;
+        return $this;
+    }
+
+    public function marcarDisponible(): self
+    {
+        $this->disponible = true;
+        return $this;
+    }
+
+    public function marcarNoDisponible(): self
+    {
+        $this->disponible = false;
+        return $this;
+    }
+
+    // Getters
+    public function getNombre(): string { return $this->nombre; }
+    public function getPrecio(): float { return $this->precio; }
+    public function getCategoria(): string { return $this->categoria; }
+    public function isDisponible(): bool { return $this->disponible; }
+}
+
+// Uso con fluent interface (encadenamiento)
+$producto = (new Producto())
+    ->setNombre('Laptop Gamer')
+    ->setPrecio(25000.00)
+    ->setCategoria('Electrónica')
+    ->marcarDisponible();
+
+echo $producto->getNombre(); // Laptop Gamer
+```
+
+Los setters no siempre deben estar presentes. Algunas propiedades pueden
+ser de solo lectura (solo getter) si no deben modificarse después de la
+creación del objeto.
+
+===============================================================================
+3. PROPIEDADES READONLY (PHP 8.1+)
+===============================================================================
+
+PHP 8.1 introdujo el modificador `readonly` para propiedades, que
+garantiza que una propiedad solo pueda ser asignada una vez (típicamente
+en el constructor) y no pueda ser modificada después. Esto es fundamental
+para la inmutabilidad de objetos.
+
+```php
+<?php
+
+class ConfiguracionServidor
+{
+    public readonly string $host;
+    public readonly int $puerto;
+    public readonly string $protocolo;
+
+    public function __construct(string $host, int $puerto, string $protocolo = 'https')
+    {
+        $this->host = $host;
+        $this->puerto = $puerto;
+        $this->protocolo = $protocolo;
+    }
+}
+
+$config = new ConfiguracionServidor('api.example.com', 443);
+echo $config->host; // api.example.com
+
+// Esto NO funciona: la propiedad es readonly
+// $config->host = 'otro.com';
+// Error: Cannot modify readonly property ConfiguracionServidor::$host
+```
+
+Las propiedades `readonly` se pueden combinar perfectamente con la
+promoción de propiedades del constructor (PHP 8.0+):
+
+```php
+<?php
+
+class Punto3D
+{
+    public function __construct(
+        public readonly float $x,
+        public readonly float $y,
+        public readonly float $z
+    ) {}
+}
+
+$punto = new Punto3D(x: 1.0, y: 2.0, z: 3.0);
+
+// Inmutabilidad total
+// $punto->x = 5.0; // Error
+```
+
+Restricciones de `readonly`:
+
+- Solo puede usarse en propiedades tipadas (desde PHP 8.1).
+- No puede combinarse con `static`.
+- La propiedad solo puede asignarse en la declaración o en el constructor.
+- Si se asigna en el constructor, no puede modificarse después, ni
+  siquiera desde otro método de la misma clase.
+- Desde PHP 8.2, las clases pueden declararse como `readonly`:
+  todas sus propiedades de instancia serán implícitamente readonly.
+
+```php
+<?php
+
+// PHP 8.2+: Clase readonly (todas las propiedades de instancia son readonly)
+readonly class DatosPersonales
+{
+    public function __construct(
+        public string $nombre,
+        public string $apellido,
+        public DateTime $fechaNacimiento
+    ) {}
+
+    public function nombreCompleto(): string
+    {
+        return "{$this->nombre} {$this->apellido}";
+    }
+
+    // Las propiedades son readonly, pero los métodos pueden operar con ellas
+}
+```
+
+Las propiedades `readonly` son ideales para:
+
+- Value Objects (objetos de valor inmutables).
+- DTOs (Data Transfer Objects).
+- Configuraciones que no deben cambiar.
+- Entidades donde ciertos campos (como ID o fechaCreacion) son inmutables.
+
+Cuando necesitas algunas propiedades mutables y otras readonly, puedes
+mezclarlas:
+
+```php
+<?php
+
+class Pedido
+{
+    public function __construct(
+        public readonly string $id,
+        public readonly string $cliente,
+        public readonly DateTime $fechaCreacion,
+        public string $estado,
+        public ?DateTime $fechaEnvio = null
+    ) {}
+
+    public function marcarEnviado(): void
+    {
+        $this->estado = 'enviado';
+        $this->fechaEnvio = new DateTime();
+        // $this->id = 'otro'; // Error: readonly
+    }
+}
+```
+
+El uso de `readonly` mejora la seguridad del código al prevenir
+modificaciones accidentales y hace explícitas las intenciones de diseño.
+
+===============================================================================
+4. MÉTODOS MÁGICOS: __get(), __set(), __isset(), __unset()
+===============================================================================
+
+PHP proporciona métodos mágicos (que comienzan con `__`) que se
+disparan automáticamente al interactuar con propiedades inaccesibles
+(privadas, protegidas o inexistentes).
+
+```php
+<?php
+
+class PropiedadesMagicas
+{
+    private array $datos = [];
+
+    // Se llama al leer propiedades inaccesibles/inexistentes
+    public function __get(string $nombre): mixed
+    {
+        echo "Accediendo a: $nombre\n";
+        return $this->datos[$nombre] ?? null;
+    }
+
+    // Se llama al escribir propiedades inaccesibles/inexistentes
+    public function __set(string $nombre, mixed $valor): void
+    {
+        echo "Asignando $nombre = " . (is_scalar($valor) ? $valor : 'objeto') . "\n";
+        $this->datos[$nombre] = $valor;
+    }
+
+    // Se llama al usar isset()/empty() en propiedades inaccesibles
+    public function __isset(string $nombre): bool
+    {
+        echo "Verificando isset($nombre)\n";
+        return isset($this->datos[$nombre]);
+    }
+
+    // Se llama al usar unset() en propiedades inaccesibles
+    public function __unset(string $nombre): void
+    {
+        echo "Eliminando $nombre\n";
+        unset($this->datos[$nombre]);
+    }
+}
+
+$obj = new PropiedadesMagicas();
+$obj->nombre = 'Juan';           // Asignando nombre = Juan
+echo $obj->nombre;               // Accediendo a: nombre -> Juan
+var_dump(isset($obj->nombre));   // Verificando isset(nombre) -> bool(true)
+unset($obj->nombre);             // Eliminando nombre
+```
+
+Un ejemplo más práctico: una clase que almacena propiedades dinámicas
+pero con validación específica para ciertas propiedades conocidas:
+
+```php
+<?php
+
+class UsuarioFlexible
+{
+    private array $propiedades = [];
+    private array $propiedadesConocidas = [
+        'nombre', 'email', 'edad', 'telefono'
+    ];
+
+    public function __set(string $nombre, mixed $valor): void
+    {
+        if (in_array($nombre, $this->propiedadesConocidas)) {
+            $this->validarPropiedad($nombre, $valor);
+        }
+        $this->propiedades[$nombre] = $valor;
+    }
+
+    public function __get(string $nombre): mixed
+    {
+        return $this->propiedades[$nombre] ?? throw new \RuntimeException(
+            "La propiedad '$nombre' no existe."
+        );
+    }
+
+    private function validarPropiedad(string $nombre, mixed $valor): void
+    {
+        match ($nombre) {
+            'email' => $this->validarEmail($valor),
+            'edad' => $this->validarEdad($valor),
+            default => null,
+        };
+    }
+
+    private function validarEmail(mixed $email): void
+    {
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("Email inválido.");
+        }
+    }
+
+    private function validarEdad(mixed $edad): void
+    {
+        if (!is_int($edad) || $edad < 0 || $edad > 150) {
+            throw new InvalidArgumentException("Edad inválida.");
+        }
+    }
+}
+
+$user = new UsuarioFlexible();
+$user->nombre = 'Ana';
+$user->email = 'ana@example.com';
+$user->edad = 28;
+$user->colorFavorito = 'Azul'; // Propiedad dinámica, permitida
+
+echo $user->nombre; // Ana
+echo $user->colorFavorito; // Azul
+// $user->email = 'no-es-email'; // Lanza InvalidArgumentException
+```
+
+Los métodos mágicos son poderosos pero deben usarse con moderación.
+Pueden hacer que el código sea más difícil de entender y depurar, ya que
+la lógica de acceso a propiedades no es explícita. Prefiere siempre
+getters y setters explícitos cuando las propiedades son conocidas.
+
+===============================================================================
+5. INMUTABILIDAD Y OBJETOS DE VALOR
+===============================================================================
+
+La inmutabilidad es un concepto avanzado de encapsulamiento donde un
+objeto, una vez creado, no puede cambiar su estado. Para modificar sus
+valores, se crea una nueva instancia con los cambios deseados. Esto
+elimina una clase entera de bugs relacionados con efectos secundarios.
+
+```php
+<?php
+
+// Objeto de valor (Value Object) inmutable
+class Dinero
+{
+    public function __construct(
+        public readonly float $cantidad,
+        public readonly string $moneda
+    ) {
+        if ($cantidad < 0) {
+            throw new InvalidArgumentException('La cantidad no puede ser negativa.');
+        }
+        if (!in_array($moneda, ['MXN', 'USD', 'EUR', 'GBP'])) {
+            throw new InvalidArgumentException('Moneda no soportada.');
+        }
+    }
+
+    // En lugar de mutar, creamos una nueva instancia
+    public function sumar(Dinero $otro): Dinero
+    {
+        if ($this->moneda !== $otro->moneda) {
+            throw new InvalidArgumentException(
+                'No se pueden sumar monedas diferentes sin conversión.'
+            );
+        }
+        return new Dinero(
+            cantidad: $this->cantidad + $otro->cantidad,
+            moneda: $this->moneda
+        );
+    }
+
+    public function multiplicar(float $factor): Dinero
+    {
+        return new Dinero(
+            cantidad: $this->cantidad * $factor,
+            moneda: $this->moneda
+        );
+    }
+
+    public function formatear(): string
+    {
+        $simbMoneda = match ($this->moneda) {
+            'MXN' => '$',
+            'USD' => 'US$',
+            'EUR' => '€',
+            'GBP' => '£',
+        };
+
+        return $simbMoneda . number_format($this->cantidad, 2);
+    }
+}
+
+$precio = new Dinero(cantidad: 250.50, moneda: 'MXN');
+$iva = $precio->multiplicar(0.16);
+$total = $precio->sumar($iva);
+
+echo $precio->formatear(); // $250.50
+echo $iva->formatear();    // $40.08
+echo $total->formatear();  // $290.58
+
+// El objeto original no ha cambiado
+echo $precio->cantidad; // 250.50
+```
+
+Beneficios de la inmutabilidad:
+
+- **Seguridad en concurrencia**: Los objetos inmutables son thread-safe.
+- **Predecibilidad**: Un método no puede modificar accidentalmente el
+  objeto que recibe.
+- **Cacheo**: Los objetos inmutables pueden ser cacheados sin riesgo.
+- **Razonabilidad**: Es más fácil razonar sobre código donde los objetos
+  no cambian después de creados.
+
+La combinación de `readonly`, property promotion y clases `readonly`
+(PHP 8.2) hacen que PHP sea un lenguaje muy adecuado para programación
+inmutable moderna.
+
+===============================================================================
+6. DISEÑO DE INTERFACES PÚBLICAS LIMPIAS
+===============================================================================
+
+El encapsulamiento no solo se trata de ocultar datos, sino de diseñar
+interfaces públicas (API) limpias, coherentes y minimalistas. Cada clase
+debe exponer solo lo necesario para que otros componentes interactúen
+con ella, ocultando los detalles de implementación.
+
+Principios para diseñar buenas interfaces públicas:
+
+1. **Principio de Mínima Exposición**: Expón solo lo que otros necesitan.
+   Cuanto más pequeño sea el API pública, más fácil será mantener la
+   clase.
+
+2. **Consistencia en nomenclatura**: Usa nombres coherentes. Si tienes
+   `getNombre()`, no llames `obtenerEdad()`. Si usas ingles, usa inglés
+   en todo.
+
+3. **No expongas detalles de implementación**: Si un método existe solo
+   para apoyar a otro método interno, debe ser privado.
+
+4. **Diseña para el uso, no para el implementador**: La interfaz pública
+   debe reflejar cómo los consumidores usarán la clase, no cómo está
+   implementada internamente.
+
+5. **Documenta el comportamiento, no la implementación**: Los PHPDoc
+   deben describir qué hace el método, no cómo lo hace.
+
+```php
+<?php
+
+// MAL: Expone demasiados detalles internos
+class GestorArchivosMal
+{
+    public string $rutaBase;
+    public array $archivosAbiertos = [];
+    public function abrirArchivo(string $ruta): resource { /* ... */ }
+    public function leerLinea(resource $archivo): string { /* ... */ }
+    public function parsearDirectorio(string $path): array { /* ... */ }
+    public function limpiarBuffer(): void { /* ... */ }
+    public function calcularHashInterno(string $data): string { /* ... */ }
+}
+
+// BIEN: Interfaz limpia que oculta complejidad
+class GestorArchivos
+{
+    private string $rutaBase;
+    private array $archivosAbiertos = [];
+
+    public function __construct(string $rutaBase)
+    {
+        if (!is_dir($rutaBase)) {
+            throw new InvalidArgumentException("La ruta no existe: $rutaBase");
+        }
+        $this->rutaBase = rtrim($rutaBase, '/');
+    }
+
+    /**
+     * Lee el contenido completo de un archivo.
+     *
+     * @param string $nombreArchivo Nombre relativo del archivo.
+     * @return string Contenido del archivo.
+     * @throws RuntimeException Si el archivo no existe o no se puede leer.
+     */
+    public function leer(string $nombreArchivo): string
+    {
+        $rutaCompleta = $this->resolverRuta($nombreArchivo);
+        $this->validarArchivo($rutaCompleta);
+
+        $contenido = file_get_contents($rutaCompleta);
+        if ($contenido === false) {
+            throw new RuntimeException("No se pudo leer: $nombreArchivo");
+        }
+
+        return $contenido;
+    }
+
+    /**
+     * Escribe contenido en un archivo (sobrescribe o crea).
+     */
+    public function escribir(string $nombreArchivo, string $contenido): void
+    {
+        $rutaCompleta = $this->resolverRuta($nombreArchivo);
+        $this->asegurarDirectorio(dirname($rutaCompleta));
+
+        $resultado = file_put_contents($rutaCompleta, $contenido);
+        if ($resultado === false) {
+            throw new RuntimeException("No se pudo escribir: $nombreArchivo");
+        }
+    }
+
+    /**
+     * Lista los archivos en un directorio, filtrados por patrón opcional.
+     *
+     * @param string $subdirectorio Directorio relativo a listar.
+     * @param string $patron        Patrón glob (ej: '*.txt').
+     * @return array Lista de nombres de archivo.
+     */
+    public function listar(string $subdirectorio = '', string $patron = '*'): array
+    {
+        $ruta = $this->resolverRuta($subdirectorio);
+        $archivos = glob("$ruta/$patron");
+        return array_map(fn($a) => basename($a), $archivos);
+    }
+
+    // Métodos privados: ocultos del exterior
+    private function resolverRuta(string $nombre): string
+    {
+        return $this->rutaBase . '/' . ltrim($nombre, '/');
+    }
+
+    private function validarArchivo(string $ruta): void
+    {
+        if (!file_exists($ruta)) {
+            throw new RuntimeException("Archivo no encontrado: $ruta");
+        }
+        if (!is_readable($ruta)) {
+            throw new RuntimeException("Archivo no legible: $ruta");
+        }
+    }
+
+    private function asegurarDirectorio(string $directorio): void
+    {
+        if (!is_dir($directorio)) {
+            mkdir($directorio, 0755, true);
+        }
+    }
+}
+
+// Uso limpio
+$gestor = new GestorArchivos('/tmp/datos');
+$contenido = $gestor->leer('config.json');
+$gestor->escribir('salida.txt', 'Hola mundo');
+$archivos = $gestor->listar('logs', '*.log');
+```
+
+El encapsulamiento bien aplicado reduce el acoplamiento entre clases,
+facilita las pruebas unitarias (puedes cambiar implementaciones internas
+sin afectar tests), y mejora la mantenibilidad general del proyecto.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Los modificadores de visibilidad (public, protected, private) controlan
+  el acceso a propiedades y métodos desde diferentes contextos.
+- Los getters y setters son métodos que exponen propiedades privadas con
+  control de acceso, validación y transformación.
+- Las propiedades readonly (PHP 8.1+) garantizan que un valor se asigne
+  una sola vez, promoviendo la inmutabilidad.
+- Las clases readonly (PHP 8.2+) hacen que todas las propiedades de
+  instancia sean readonly.
+- Los métodos mágicos __get(), __set(), __isset() y __unset() permiten
+  interceptar el acceso a propiedades inaccesibles o dinámicas.
+- La inmutabilidad (Value Objects) evita efectos secundarios y mejora
+  la seguridad del código.
+- El diseño de interfaces públicas limpias sigue el Principio de Mínima
+  Exposición: oculta los detalles de implementación.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea una clase `Temperatura` con una propiedad privada
+`$gradosCelsius`. Implementa getters y setters para Celsius, Fahrenheit
+y Kelvin. El getter de Fahrenheit debe convertir de Celsius, el de Kelvin
+también. El setter debe aceptar cualquier escala y almacenar internamente
+en Celsius. Incluye validación de límites ( cero absoluto: -273.15 °C).
+
+🧩 **Ejercicio 2:** Diseña una clase `ContraseñaSegura` con una propiedad
+privada `$valor`. El constructor recibe un string y lo almacena hasheado
+(password_hash con PASSWORD_BCRYPT). Implementa un método `verificar
+(string $contraseña): bool` que use password_verify(). La propiedad
+nunca debe ser accesible directamente (ni con getter). No implementes
+setter (la contraseña no debe cambiarse).
+
+🧩 **Ejercicio 3:** Crea una clase `Factura` con propiedades privadas:
+`$numero`, `$fechaEmision`, `$cliente`, `$lineas` (array de objetos
+LineaFactura), `$tasaIVA`. Implementa getters para todas. Los setters
+solo para: `$cliente`, `$lineas`, `$tasaIVA`. `$numero` y `$fechaEmision`
+son readonly después del constructor. Añade un getter `getTotal(): float`
+que calcule el total con IVA. `LineaFactura` debe tener: concepto,
+cantidad, precioUnitario (privadas, con getters).
+
+🧩 **Ejercicio 4:** Diseña una clase `ConfiguracionTema` usando métodos
+mágicos __get() y __set() para almacenar propiedades de tema (colorPrimario,
+colorSecundario, fuente, tamanoFuente, borderRadius). Valida que los
+colores tengan formato hexadecimal (#RRGGBB) y que borderRadius sea un
+número positivo. Si se intenta leer una propiedad inexistente, devuelve
+el valor por defecto de la misma.
+
+🧩 **Ejercicio 5:** Implementa una clase `Libro` usando una clase readonly
+(PHP 8.2+) con property promotion para: titulo, autor, isbn, anio,
+genero, numPaginas, editorial, idioma. Crea un método `conNuevoPrecio
+(float $precio): self` que devuelva un nuevo objeto con todos los mismos
+valores excepto el precio (demostrando inmutabilidad). Luego crea una
+clase `Biblioteca` que gestione una colección de libros inmutables.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo siempre crear getters y setters para todas las propiedades?**
+No. Si una propiedad es inmutable y se define en el constructor, puedes
+hacerla pública con readonly en lugar de crear un getter. Si una propiedad
+no necesita ser accesible desde fuera, no crees getter. Crea setters solo
+cuando la modificación externa tenga sentido y puedas validarla.
+
+❓ **¿Qué es mejor, métodos mágicos o getters/setters explícitos?**
+Para propiedades conocidas, los getters/setters explícitos son mejores
+porque son más predecibles, tienen type hints, y son más fáciles de
+documentar y depurar. Los métodos mágicos son útiles para propiedades
+dinámicas, DTOs genéricos, o cuando no conoces las propiedades en tiempo
+de diseño.
+
+❓ **¿Puedo cambiar la visibilidad de una propiedad en una clase hija?**
+PHP permite aumentar la visibilidad (de protected a public) pero no
+disminuirla (de protected a private). Una propiedad private en el padre
+no es accesible en el hijo, pero el hijo puede redefinir una propiedad
+con el mismo nombre.
+
+❓ **¿Qué significa "Fatal error: Uncaught Error: Cannot access private property"?**
+Significa que estás intentando acceder a una propiedad privada desde
+fuera de la clase donde fue definida. Solo métodos de la misma clase
+pueden acceder a propiedades privadas.
+
+❓ **¿Las propiedades readonly se pueden modificar mediante reflexión?**
+Técnicamente sí, usando ReflectionProperty::setValue(). Esto es útil
+en casos de testing o deserialización, pero en código normal debe
+evitarse. La restricción readonly es una protección a nivel del lenguaje,
+no una barrera de seguridad infranqueable.
+
+❓ **¿Es buena práctica usar setters que devuelvan $this?**
+Sí, es un patrón llamado fluent interface (interfaz fluida). Permite
+encadenar llamadas como `$obj->setA()->setB()->setC()`. Es muy común
+en builders y configuraciones. Solo asegúrate de que el tipo de retorno
+sea `self` (o `static`) y no `void`.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Gestión de Empleados con Encapsulamiento Avanzado** —
+Diseña un sistema completo de gestión de empleados que demuestre todas
+las técnicas de encapsulamiento: visibilidad, getters/setters, readonly,
+métodos mágicos, value objects e inmutabilidad.
+
+Clases requeridas:
+
+1. `DNI` — Value Object inmutable (clase readonly). Almacena número y
+   letra. El constructor valida el formato (8 dígitos + letra) y la
+   letra es correcta según el algoritmo de módulo 23. Métodos: numero(),
+   letra(), toString(), equals(DNI $otro): bool.
+
+2. `Salario` — Value Object inmutable. Almacena cantidad (float) y
+   moneda (string). Métodos: cantidad(), moneda(), formatear(): string,
+   incrementar(float $porcentaje): Salario, sumar(Salario $otro): Salario
+   (lanza excepción si moneda diferente).
+
+3. `Empleado` — Clase principal con encapsulamiento. Propiedades privadas:
+   dni (DNI), nombre, apellidos, email, fechaNacimiento (DateTimeImmutable),
+   fechaContratacion (DateTimeImmutable), salario (Salario), activo (bool),
+   departamento (?string), cargo (?string). Getters para todas. Setters
+   solo para: nombre, apellidos, email (con validación), salario, activo,
+   departamento, cargo. DNI y fechas son readonly (solo getter). Incluye
+   métodos: activar(), desactivar(), antiguedad(): string, edad(): int,
+   esMayorQue(Empleado $otro): bool.
+
+4. `Departamento` — Clase con propiedad privada `$empleados` (array de
+   Empleado). Métodos: agregar(Empleado $e): void, remover(DNI $dni): void,
+   obtener(DNI $dni): ?Empleado, listar(): array, salarioTotal(): Salario,
+   contar(): int. Implementa __get() para acceder a estadísticas
+   (promedioEdad, totalActivos, etc.) usando propiedades virtuales.
+
+5. `Nominas` — Clase que utiliza los setters de Empleado para procesar
+   incrementos salariales. Métodos: aplicarIncrementoAnual(Empleado $e,
+   float $porcentaje): void, aplicarBono(Empleado $e, float $bono): void,
+   generarReporte(Departamento $depto): array. Esta clase demuestra que
+   el acceso controlado a través de setters permite operaciones complejas
+   sin violar el encapsulamiento.
+
+Requisitos adicionales:
+
+- DNI y Salario deben ser inmutables (readonly class PHP 8.2+).
+- Los setters de Empleado deben validar todos los datos (email formato,
+  nombre no vacío, salario positivo, etc.).
+- Los departamentos deben poder listar solo sus propiedades públicas
+  mediante foreach (implementa IteratorAggregate o recorre propiedades
+  públicas).
+- El sistema debe incluir un script de demostración que:
+  - Cree 5+ empleados con diferentes datos y salarios.
+  - Los asigne a 2+ departamentos.
+  - Calcule nóminas con incrementos y bonos.
+  - Demuestre que los value objects son inmutables (intento de cambio
+    lanza error).
+  - Muestre informes de departamentos usando propiedades virtuales.
+
+Este desafío integra todos los aspectos del encapsulamiento y produce un
+sistema robusto, mantenible y profesional que demuestra por qué la POO
+y el encapsulamiento son pilares esenciales en el desarrollo de software.
+
+===============================================================================
+FIN DEL CAPÍTULO 34
+===============================================================================
+
+"El mejor encapsulamiento es aquel que pasa desapercibido: el usuario
+de la clase obtiene lo que necesita sin saber cómo se hace internamente."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+35_CAPITULO_35_HERENCIA.txt
+===============================================================================

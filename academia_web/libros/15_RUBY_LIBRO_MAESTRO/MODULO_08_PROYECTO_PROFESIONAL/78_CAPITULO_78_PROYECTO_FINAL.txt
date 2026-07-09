@@ -1,0 +1,1102 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           RUBY MASTER BOOK — MÓDULO VIII: PROYECTO               ║
+║              CAPÍTULO 78: PROYECTO FINAL                        ║
+║        "Tu obra maestra Ruby — Una gema CLI con tests"           ║
+╚══════════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, maestro creador. Este es el proyecto final del RUBY MASTER
+BOOK. Construirás una gema profesional de línea de comandos (CLI) que
+incluye pruebas RSpec completas, documentación YARD y todo el flujo
+de publicación. Este proyecto integra cada concepto aprendido: desde
+la estructura de directorios hasta gemspec, testing y seguridad.
+
+FRASE DEL SABIO
+───────────────
+"Un proyecto final no es el fin de tu aprendizaje. Es la primera obra
+que firmas como maestro." — Profesor Búho AI
+
+OBJETIVOS DEL PROYECTO
+───────────────────────
+1. Crear una gema Ruby completa desde cero.
+2. Implementar una CLI interactiva con Thor o OptionParser.
+3. Escribir tests RSpec con >90% de cobertura.
+4. Documentar con YARD toda la API pública.
+5. Publicar la gema en RubyGems.org.
+6. Configurar CI/CD con GitHub Actions.
+
+DESCRIPCIÓN DEL PROYECTO
+─────────────────────────
+Construiremos "task_manager", una gema CLI para gestionar tareas
+desde la terminal. La gema permitirá crear, listar, completar,
+eliminar y exportar tareas, con almacenamiento en archivo JSON y
+totalmente testeada con RSpec.
+
+ESTRUCTURA DEL PROYECTO
+────────────────────────
+
+```
+task_manager/
+├── Gemfile
+├── Gemfile.lock
+├── LICENSE
+├── README.md
+├── Rakefile
+├── task_manager.gemspec
+├── bin/
+│   ├── console
+│   └── setup
+├── exe/
+│   └── task_manager
+├── lib/
+│   ├── task_manager.rb
+│   └── task_manager/
+│       ├── version.rb
+│       ├── cli.rb
+│       ├── task.rb
+│       ├── repository.rb
+│       ├── formatter.rb
+│       └── errors.rb
+├── spec/
+│   ├── spec_helper.rb
+│   ├── task_manager_spec.rb
+│   └── task_manager/
+│       ├── cli_spec.rb
+│       ├── task_spec.rb
+│       ├── repository_spec.rb
+│       └── formatter_spec.rb
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+└── .rubocop.yml
+```
+
+PASO 1: GENERAR EL ESQUELETO
+─────────────────────────────
+
+```ruby
+# Terminal:
+# $ bundle gem task_manager --test=rspec --mit --coverage=simplecov \
+#   --linter=rubocop --ci=github --changelog
+
+# Esto genera la estructura base con todo lo necesario.
+```
+
+PASO 2: ESTRUCTURA DE ARCHIVOS
+────────────────────────────────
+
+```ruby
+# task_manager.gemspec
+Gem::Specification.new do |s|
+  s.name          = 'task_manager'
+  s.version       = TaskManager::VERSION
+  s.authors       = ['Tu Nombre']
+  s.email         = ['tu@email.com']
+  s.summary       = 'Gestor de tareas desde la terminal'
+  s.description   = 'CLI profesional para gestionar tareas del día a día'
+  s.homepage      = 'https://github.com/tuusuario/task_manager'
+  s.license       = 'MIT'
+
+  s.files         = Dir['lib/**/*.rb'] + %w[README.md LICENSE]
+  s.bindir        = 'exe'
+  s.executables   = ['task_manager']
+
+  s.required_ruby_version = '>= 3.0.0'
+
+  s.add_dependency 'json', '~> 2.5'
+  s.add_dependency 'thor', '~> 1.2'
+
+  s.add_development_dependency 'rspec', '~> 3.12'
+  s.add_development_dependency 'rubocop', '~> 1.50'
+  s.add_development_dependency 'simplecov', '~> 0.22'
+  s.add_development_dependency 'yard', '~> 0.9'
+end
+```
+
+PASO 3: PUNTO DE ENTRADA PRINCIPAL
+────────────────────────────────────
+
+```ruby
+# lib/task_manager.rb
+require 'json'
+require 'thor'
+require 'fileutils'
+
+require_relative 'task_manager/version'
+require_relative 'task_manager/errors'
+require_relative 'task_manager/task'
+require_relative 'task_manager/repository'
+require_relative 'task_manager/formatter'
+require_relative 'task_manager/cli'
+
+module TaskManager
+  class Error < StandardError; end
+end
+```
+
+PASO 4: VERSIÓN
+────────────────
+
+```ruby
+# lib/task_manager/version.rb
+module TaskManager
+  VERSION = '1.0.0'.freeze
+end
+```
+
+PASO 5: ERRORES PERSONALIZADOS
+───────────────────────────────
+
+```ruby
+# lib/task_manager/errors.rb
+module TaskManager
+  class TaskNotFound < StandardError
+    def initialize(id)
+      super("Tarea con ID #{id} no encontrada")
+    end
+  end
+
+  class InvalidTask < StandardError
+    def initialize(message = 'Datos de tarea inválidos')
+      super(message)
+    end
+  end
+
+  class RepositoryError < StandardError
+    def initialize(message = 'Error al acceder al repositorio')
+      super(message)
+    end
+  end
+end
+```
+
+PASO 6: MODELO TASK
+────────────────────
+
+```ruby
+# lib/task_manager/task.rb
+module TaskManager
+  class Task
+    ATTRIBUTES = %i[id title description status priority created_at
+                    completed_at].freeze
+
+    VALID_STATUSES = %w[pending in_progress completed cancelled].freeze
+    VALID_PRIORITIES = %w[low medium high critical].freeze
+
+    attr_accessor :id, :title, :description, :status, :priority,
+                  :created_at, :completed_at
+
+    def initialize(attributes = {})
+      @id          = attributes[:id] || SecureRandom.uuid
+      @title       = attributes[:title].to_s.strip
+      @description = attributes[:description].to_s.strip
+      @status      = attributes[:status] || 'pending'
+      @priority    = attributes[:priority] || 'medium'
+      @created_at  = attributes[:created_at] || Time.now.iso8601
+      @completed_at = attributes[:completed_at]
+    end
+
+    def valid?
+      return false if title.empty?
+      return false unless VALID_STATUSES.include?(status)
+      return false unless VALID_PRIORITIES.include?(priority)
+      true
+    end
+
+    def validate!
+      raise InvalidTask, 'El título no puede estar vacío' if title.empty?
+      unless VALID_STATUSES.include?(status)
+        raise InvalidTask, "Estado inválido: #{status}"
+      end
+      unless VALID_PRIORITIES.include?(priority)
+        raise InvalidTask, "Prioridad inválida: #{priority}"
+      end
+    end
+
+    def complete!
+      @status = 'completed'
+      @completed_at = Time.now.iso8601
+    end
+
+    def completed?
+      @status == 'completed'
+    end
+
+    def pending?
+      @status == 'pending'
+    end
+
+    def in_progress?
+      @status == 'in_progress'
+    end
+
+    def to_h
+      ATTRIBUTES.each_with_object({}) do |attr, hash|
+        hash[attr] = send(attr)
+      end
+    end
+
+    def to_s
+      "[#{status.upcase}] #{title} (#{priority})"
+    end
+
+    def <=>(other)
+      priority_order = %w[critical high medium low]
+      cmp = priority_order.index(priority).to_i <=>
+            priority_order.index(other.priority).to_i
+      cmp == 0 ? created_at <=> other.created_at : cmp
+    end
+  end
+end
+```
+
+PASO 7: REPOSITORIO (ALMACENAMIENTO JSON)
+────────────────────────────────────────────
+
+```ruby
+# lib/task_manager/repository.rb
+module TaskManager
+  class Repository
+    DEFAULT_PATH = File.expand_path('~/.task_manager/tasks.json')
+
+    def initialize(path = DEFAULT_PATH)
+      @path = path
+      @tasks = []
+      ensure_directory!
+      load_tasks
+    end
+
+    def all
+      @tasks.dup
+    end
+
+    def find(id)
+      @tasks.find { |t| t.id == id } || raise(TaskNotFound, id)
+    end
+
+    def where(status: nil, priority: nil)
+      result = @tasks.dup
+      result = result.select { |t| t.status == status } if status
+      result = result.select { |t| t.priority == priority } if priority
+      result
+    end
+
+    def add(task)
+      task.validate!
+      @tasks << task
+      save_tasks
+      task
+    end
+
+    def update(id, attributes)
+      task = find(id)
+      attributes.each do |key, value|
+        task.send("#{key}=", value) if Task::ATTRIBUTES.include?(key)
+      end
+      task.validate!
+      save_tasks
+      task
+    end
+
+    def delete(id)
+      task = find(id)
+      @tasks.delete(task)
+      save_tasks
+      task
+    end
+
+    def complete(id)
+      task = find(id)
+      task.complete!
+      save_tasks
+      task
+    end
+
+    def count
+      @tasks.size
+    end
+
+    def search(query)
+      @tasks.select do |t|
+        t.title.downcase.include?(query.downcase) ||
+        t.description.downcase.include?(query.downcase)
+      end
+    end
+
+    def pending_count
+      @tasks.count(&:pending?)
+    end
+
+    def completed_count
+      @tasks.count(&:completed?)
+    end
+
+    def clear!
+      @tasks.clear
+      save_tasks
+    end
+
+    def import(tasks)
+      tasks.each { |t| add(t) }
+    end
+
+    private
+
+    def ensure_directory!
+      dir = File.dirname(@path)
+      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
+    end
+
+    def load_tasks
+      return unless File.exist?(@path)
+
+      data = JSON.parse(File.read(@path))
+      @tasks = data.map { |attrs| Task.new(transform_keys(attrs)) }
+    rescue JSON::ParserError => e
+      raise RepositoryError, "Error al cargar tareas: #{e.message}"
+    end
+
+    def save_tasks
+      ensure_directory!
+      data = @tasks.map(&:to_h)
+      File.write(@path, JSON.pretty_generate(data))
+    rescue IOError => e
+      raise RepositoryError, "Error al guardar tareas: #{e.message}"
+    end
+
+    def transform_keys(hash)
+      hash.transform_keys(&:to_sym)
+    end
+  end
+end
+```
+
+PASO 8: FORMATEADOR
+────────────────────
+
+```ruby
+# lib/task_manager/formatter.rb
+module TaskManager
+  class Formatter
+    def initialize(repository)
+      @repository = repository
+    end
+
+    def list_tasks(tasks = nil)
+      tasks ||= @repository.all
+      return 'No hay tareas registradas.' if tasks.empty?
+
+      tasks.sort.map.with_index(1) do |task, index|
+        format_task(task, index)
+      end.join("\n")
+    end
+
+    def show_task(id)
+      task = @repository.find(id)
+      format_task_detail(task)
+    end
+
+    def stats
+      total     = @repository.count
+      pending   = @repository.pending_count
+      completed = @repository.completed_count
+      progress  = total.positive? ? (completed.to_f / total * 100).round(1) : 0
+
+      <<~STATS
+        ┌──────────────────────────┐
+        │      ESTADÍSTICAS         │
+        ├──────────────────────────┤
+        │ Total:    #{total.to_s.rjust(10)} │
+        │ Pendientes: #{pending.to_s.rjust(8)} │
+        │ Completadas: #{completed.to_s.rjust(6)} │
+        │ Progreso:  #{progress.to_s.rjust(8)}% │
+        └──────────────────────────┘
+      STATS
+    end
+
+    private
+
+    def format_task(task, index)
+      status_icon = case task.status
+                    when 'completed'   then '✓'
+                    when 'in_progress' then '▶'
+                    when 'pending'     then '○'
+                    when 'cancelled'   then '✗'
+                    end
+
+      priority_color = case task.priority
+                       when 'critical' then '!!!'
+                       when 'high'     then '!!'
+                       when 'medium'   then '!'
+                       else ''
+                       end
+
+      "#{index.to_s.rjust(3)}. #{status_icon} #{task.title}" \
+        " #{priority_color} [#{task.status}]"
+    end
+
+    def format_task_detail(task)
+      <<~DETAIL
+        ┌──────────────────────────────────────┐
+        │ #{task.title.center(36)} │
+        ├──────────────────────────────────────┤
+        │ ID:       #{task.id.ljust(29)} │
+        │ Estado:   #{task.status.ljust(10)} Prioridad: #{task.priority.ljust(14)} │
+        │ Creado:   #{task.created_at.ljust(28)} │
+        │ #{task.completed_at ? "Completado: #{task.completed_at.ljust(26)}" : 'Completado: —'.ljust(37)}│
+        ├──────────────────────────────────────┤
+        │ #{task.description.center(36) unless task.description.empty?}│
+        └──────────────────────────────────────┘
+      DETAIL
+    end
+  end
+end
+```
+
+PASO 9: CLI CON THOR
+─────────────────────
+
+```ruby
+# lib/task_manager/cli.rb
+module TaskManager
+  class CLI < Thor
+    def initialize(*args)
+      super
+      @repository = Repository.new
+      @formatter  = Formatter.new(@repository)
+    end
+
+    desc 'list', 'Lista todas las tareas'
+    option :status, type: :string, desc: 'Filtrar por estado'
+    option :priority, type: :string, desc: 'Filtrar por prioridad'
+    def list
+      tasks = if options[:status] || options[:priority]
+                @repository.where(
+                  status: options[:status],
+                  priority: options[:priority]
+                )
+              else
+                @repository.all
+              end
+      puts @formatter.list_tasks(tasks)
+    end
+
+    desc 'show TASK_ID', 'Muestra detalle de una tarea'
+    def show(task_id)
+      puts @formatter.show_task(task_id)
+    rescue TaskNotFound => e
+      say "Error: #{e.message}", :red
+    end
+
+    desc 'add TITLE', 'Crea una nueva tarea'
+    option :description, type: :string, desc: 'Descripción de la tarea'
+    option :priority, type: :string, default: 'medium',
+           enum: %w[low medium high critical]
+    def add(title)
+      task = Task.new(
+        title: title,
+        description: options[:description],
+        priority: options[:priority]
+      )
+      @repository.add(task)
+      say "✓ Tarea creada: #{task.title}", :green
+    rescue InvalidTask => e
+      say "Error: #{e.message}", :red
+    end
+
+    desc 'complete TASK_ID', 'Marca una tarea como completada'
+    def complete(task_id)
+      task = @repository.complete(task_id)
+      say "✓ Tarea completada: #{task.title}", :green
+    rescue TaskNotFound => e
+      say "Error: #{e.message}", :red
+    end
+
+    desc 'update TASK_ID', 'Actualiza una tarea'
+    option :title, type: :string
+    option :description, type: :string
+    option :status, type: :string,
+           enum: %w[pending in_progress completed cancelled]
+    option :priority, type: :string,
+           enum: %w[low medium high critical]
+    def update(task_id)
+      attrs = options.symbolize_keys
+      task = @repository.update(task_id, attrs)
+      say "✓ Tarea actualizada: #{task.title}", :green
+    rescue TaskNotFound, InvalidTask => e
+      say "Error: #{e.message}", :red
+    end
+
+    desc 'delete TASK_ID', 'Elimina una tarea'
+    def delete(task_id)
+      task = @repository.delete(task_id)
+      say "✗ Tarea eliminada: #{task.title}", :yellow
+    rescue TaskNotFound => e
+      say "Error: #{e.message}", :red
+    end
+
+    desc 'search QUERY', 'Busca tareas por texto'
+    def search(query)
+      tasks = @repository.search(query)
+      puts @formatter.list_tasks(tasks)
+    end
+
+    desc 'stats', 'Muestra estadísticas de tareas'
+    def stats
+      puts @formatter.stats
+    end
+
+    desc 'clear', 'Elimina todas las tareas'
+    def clear
+      @repository.clear!
+      say '✓ Todas las tareas han sido eliminadas', :yellow
+    end
+
+    desc 'export FILE', 'Exporta tareas a un archivo JSON'
+    def export(file)
+      tasks = @repository.all.map(&:to_h)
+      File.write(file, JSON.pretty_generate(tasks))
+      say "✓ Tareas exportadas a #{file}", :green
+    end
+
+    desc 'import FILE', 'Importa tareas desde un archivo JSON'
+    def import(file)
+      data = JSON.parse(File.read(file))
+      tasks = data.map { |attrs| Task.new(attrs.transform_keys(&:to_sym)) }
+      @repository.import(tasks)
+      say "✓ #{tasks.size} tareas importadas desde #{file}", :green
+    rescue JSON::ParserError => e
+      say "Error al leer archivo: #{e.message}", :red
+    end
+
+    desc 'version', 'Muestra la versión'
+    def version
+      say "task_manager v#{TaskManager::VERSION}"
+    end
+
+    default_task :list
+  end
+end
+```
+
+PASO 10: EJECUTABLE
+─────────────────────
+
+```ruby
+#!/usr/bin/env ruby
+# exe/task_manager
+
+require 'task_manager'
+
+TaskManager::CLI.start(ARGV)
+```
+
+PASO 11: PRUEBAS RSPEC
+────────────────────────
+
+```ruby
+# spec/spec_helper.rb
+require 'simplecov'
+SimpleCov.start do
+  add_filter '/spec/'
+  minimum_coverage 90
+end
+
+require 'bundler/setup'
+require 'task_manager'
+require 'fileutils'
+require 'json'
+
+RSpec.configure do |config|
+  config.example_status_persistence_file_path = '.rspec_status'
+  config.disable_monkey_patching!
+  config.order = :random
+  Kernel.srand config.seed
+
+  config.before(:each) do
+    @test_path = File.expand_path('../tmp/test_tasks.json', __dir__)
+    FileUtils.mkdir_p(File.dirname(@test_path))
+  end
+
+  config.after(:each) do
+    FileUtils.rm_rf(File.dirname(@test_path))
+  end
+end
+```
+
+```ruby
+# spec/task_manager/task_spec.rb
+RSpec.describe TaskManager::Task do
+  subject(:task) { described_class.new(attributes) }
+  let(:attributes) { { title: 'Test task', priority: 'high' } }
+
+  describe '#initialize' do
+    it 'asigna un id único' do
+      expect(task.id).to match(/\A[\w-]{36}\z/)
+    end
+
+    it 'asigna valores por defecto' do
+      expect(task.status).to eq('pending')
+      expect(task.priority).to eq('high')
+    end
+
+    it 'usa atributos proporcionados' do
+      expect(task.title).to eq('Test task')
+    end
+  end
+
+  describe '#valid?' do
+    it 'es válido con atributos correctos' do
+      expect(task).to be_valid
+    end
+
+    it 'no es válido sin título' do
+      task.title = ''
+      expect(task).not_to be_valid
+    end
+
+    it 'no es válido con estado incorrecto' do
+      task.status = 'invalid_status'
+      expect(task).not_to be_valid
+    end
+
+    it 'no es válido con prioridad incorrecta' do
+      task.priority = 'urgent' # 'critical' es el correcto
+      expect(task).not_to be_valid
+    end
+  end
+
+  describe '#complete!' do
+    it 'cambia el estado a completed' do
+      task.complete!
+      expect(task).to be_completed
+    end
+
+    it 'registra la fecha de completado' do
+      task.complete!
+      expect(task.completed_at).not_to be_nil
+    end
+  end
+
+  describe '#to_h' do
+    it 'serializa todos los atributos' do
+      hash = task.to_h
+      expect(hash[:title]).to eq('Test task')
+      expect(hash[:status]).to eq('pending')
+    end
+  end
+
+  describe '#<=>' do
+    let(:critical_task) { described_class.new(title: 'Critical', priority: 'critical') }
+    let(:low_task) { described_class.new(title: 'Low', priority: 'low') }
+
+    it 'ordena por prioridad' do
+      expect(critical_task <=> low_task).to eq(-1)
+      expect(low_task <=> critical_task).to eq(1)
+    end
+  end
+end
+```
+
+```ruby
+# spec/task_manager/repository_spec.rb
+RSpec.describe TaskManager::Repository do
+  subject(:repository) { described_class.new(test_path) }
+  let(:test_path) { File.expand_path('../tmp/test_tasks.json', __dir__) }
+
+  before do
+    FileUtils.mkdir_p(File.dirname(test_path))
+  end
+
+  after do
+    FileUtils.rm_rf(File.dirname(test_path))
+  end
+
+  let(:task) { TaskManager::Task.new(title: 'Test') }
+
+  describe '#add' do
+    it 'guarda una tarea' do
+      repository.add(task)
+      expect(repository.count).to eq(1)
+    end
+
+    it 'persiste la tarea en disco' do
+      repository.add(task)
+      expect(File).to exist(test_path)
+    end
+
+    it 'valida la tarea antes de guardar' do
+      invalid_task = TaskManager::Task.new(title: '')
+      expect { repository.add(invalid_task) }
+        .to raise_error(TaskManager::InvalidTask)
+    end
+  end
+
+  describe '#find' do
+    before { repository.add(task) }
+
+    it 'encuentra una tarea por id' do
+      expect(repository.find(task.id).title).to eq('Test')
+    end
+
+    it 'lanza error si no existe' do
+      expect { repository.find('nonexistent') }
+        .to raise_error(TaskManager::TaskNotFound)
+    end
+  end
+
+  describe '#delete' do
+    before { repository.add(task) }
+
+    it 'elimina la tarea' do
+      repository.delete(task.id)
+      expect(repository.count).to eq(0)
+    end
+
+    it 'lanza error si no existe' do
+      expect { repository.delete('nonexistent') }
+        .to raise_error(TaskManager::TaskNotFound)
+    end
+  end
+
+  describe '#complete' do
+    before { repository.add(task) }
+
+    it 'marca como completada' do
+      repository.complete(task.id)
+      expect(repository.find(task.id)).to be_completed
+    end
+  end
+
+  describe '#search' do
+    before do
+      repository.add(TaskManager::Task.new(title: 'Comprar leche'))
+      repository.add(TaskManager::Task.new(title: 'Estudiar Ruby'))
+    end
+
+    it 'encuentra tareas por texto' do
+      results = repository.search('leche')
+      expect(results.size).to eq(1)
+      expect(results.first.title).to eq('Comprar leche')
+    end
+
+    it 'retorna vacío si no hay coincidencias' do
+      expect(repository.search('xyz')).to be_empty
+    end
+  end
+
+  describe '#where' do
+    before do
+      repository.add(TaskManager::Task.new(title: 'A', status: 'pending'))
+      repository.add(TaskManager::Task.new(title: 'B', status: 'completed'))
+    end
+
+    it 'filtra por estado' do
+      expect(repository.where(status: 'completed').size).to eq(1)
+    end
+  end
+
+  describe '#clear!' do
+    before { repository.add(task) }
+
+    it 'elimina todas las tareas' do
+      repository.clear!
+      expect(repository.count).to eq(0)
+    end
+  end
+end
+```
+
+```ruby
+# spec/task_manager/cli_spec.rb
+RSpec.describe TaskManager::CLI do
+  subject(:cli) { described_class.new }
+
+  before do
+    allow(TaskManager::Repository).to receive(:new).and_return(repository)
+  end
+
+  let(:repository) { instance_double(TaskManager::Repository) }
+  let(:task) { TaskManager::Task.new(title: 'Test task') }
+  let(:formatter) { TaskManager::Formatter.new(repository) }
+
+  describe '#add' do
+    it 'crea una tarea exitosamente' do
+      allow(repository).to receive(:add).and_return(task)
+      expect { cli.invoke(:add, ['Nueva tarea']) }
+        .to output(/creada/).to_stdout
+    end
+  end
+
+  describe '#list' do
+    it 'lista tareas' do
+      allow(repository).to receive(:all).and_return([task])
+      expect { cli.invoke(:list) }
+        .to output(/Test task/).to_stdout
+    end
+
+    it 'muestra mensaje si no hay tareas' do
+      allow(repository).to receive(:all).and_return([])
+      expect { cli.invoke(:list) }
+        .to output(/No hay tareas/).to_stdout
+    end
+  end
+
+  describe '#complete' do
+    it 'completa una tarea' do
+      allow(repository).to receive(:complete).with('123').and_return(task)
+      expect { cli.invoke(:complete, ['123']) }
+        .to output(/completada/).to_stdout
+    end
+  end
+end
+```
+
+PASO 12: DOCUMENTACIÓN YARD
+─────────────────────────────
+
+```ruby
+# lib/task_manager/task.rb (con documentación YARD)
+module TaskManager
+  # Representa una tarea individual en el sistema.
+  #
+  # @example Crear una tarea
+  #   TaskManager::Task.new(title: 'Comprar comida', priority: 'high')
+  #
+  # @attr [String] id Identificador único (UUID)
+  # @attr [String] title Título de la tarea
+  # @attr [String] description Descripción detallada
+  # @attr [String] status Estado: pending, in_progress, completed, cancelled
+  # @attr [String] priority Prioridad: low, medium, high, critical
+  # @attr [String] created_at Fecha de creación ISO8601
+  # @attr [String] completed_at Fecha de completado ISO8601
+  class Task
+    # @return [Array<String>] Estados válidos para una tarea
+    VALID_STATUSES = %w[pending in_progress completed cancelled].freeze
+
+    # @return [Array<String>] Prioridades válidas
+    VALID_PRIORITIES = %w[low medium high critical].freeze
+
+    # @param attributes [Hash] Atributos iniciales de la tarea
+    # @option attributes [String] :title Título (requerido)
+    # @option attributes [String] :description Descripción
+    # @option attributes [String] :priority Prioridad (default: medium)
+    # @option attributes [String] :status Estado (default: pending)
+    def initialize(attributes = {})
+      # ...
+    end
+
+    # Valida que la tarea tenga datos correctos
+    # @return [Boolean] true si es válida
+    def valid?
+      # ...
+    end
+
+    # Marca la tarea como completada
+    # @return [void]
+    def complete!
+      # ...
+    end
+  end
+end
+```
+
+PASO 13: RAKE FILE
+───────────────────
+
+```ruby
+# Rakefile
+require 'bundler/gem_tasks'
+require 'rspec/core/rake_task'
+require 'rubocop/rake_task'
+require 'yard'
+
+RSpec::Core::RakeTask.new(:spec)
+RuboCop::RakeTask.new(:rubocop)
+YARD::Rake::YardocTask.new
+
+task default: %i[spec rubocop]
+
+desc 'Ejecutar todas las verificaciones'
+task :check do
+  Rake::Task['spec'].invoke
+  Rake::Task['rubocop'].invoke
+  puts '✓ Todas las verificaciones pasaron'
+end
+
+desc 'Construir la gema'
+task :build do
+  system 'gem build task_manager.gemspec'
+end
+
+desc 'Ejecutar consola con la gema cargada'
+task :console do
+  require 'pry'
+  require 'task_manager'
+  Pry.start
+end
+```
+
+PASO 14: CI/CD CON GITHUB ACTIONS
+────────────────────────────────────
+
+```ruby
+# .github/workflows/ci.yml
+# name: CI
+# on: [push, pull_request]
+# jobs:
+#   test:
+#     runs-on: ubuntu-latest
+#     strategy:
+#       matrix:
+#         ruby-version: ['3.0', '3.1', '3.2', '3.3']
+#     steps:
+#       - uses: actions/checkout@v3
+#       - uses: ruby/setup-ruby@v1
+#         with:
+#           ruby-version: ${{ matrix.ruby-version }}
+#           bundler-cache: true
+#       - run: bundle exec rspec
+#       - run: bundle exec rubocop
+#   release:
+#     if: startsWith(github.ref, 'refs/tags/v')
+#     needs: test
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v3
+#       - uses: ruby/setup-ruby@v1
+#         with:
+#           ruby-version: '3.2'
+#       - run: bundle install
+#       - run: gem build *.gemspec
+#       - run: gem push *.gem
+#         env:
+#           GEM_HOST_API_KEY: ${{ secrets.GEM_HOST_API_KEY }}
+```
+
+PASO 15: README PROFESIONAL
+─────────────────────────────
+
+```ruby
+# README.md generado con:
+# 1. Descripción del proyecto
+# 2. Instalación (gem install task_manager)
+# 3. Uso con ejemplos de cada comando
+# 4. Desarrollo (bundle exec rspec, etc.)
+# 5. Contribución
+# 6. Licencia
+# 7. Badges (CI, cobertura, versión)
+```
+
+GUÍA DE USO DE LA GEMA
+────────────────────────
+
+```bash
+# Instalación
+$ gem install task_manager
+
+# Uso básico
+$ task_manager add "Comprar leche" --priority high
+$ task_manager add "Estudiar Ruby" --description "Leer capítulo 8"
+
+# Listar tareas
+$ task_manager list
+$ task_manager list --status pending
+$ task_manager list --priority critical
+
+# Ver detalle
+$ task_manager show <id>
+
+# Completar
+$ task_manager complete <id>
+
+# Actualizar
+$ task_manager update <id> --title "Nuevo título" --priority critical
+
+# Buscar
+$ task_manager search "leche"
+
+# Estadísticas
+$ task_manager stats
+
+# Exportar/Importar
+$ task_manager export tareas.json
+$ task_manager import tareas.json
+
+# Versión
+$ task_manager version
+```
+
+RESUMEN DEL CAPÍTULO
+─────────────────────
+- Creaste una gema profesional completa desde cero.
+- Implementaste una CLI interactiva con Thor.
+- Almacenamiento persistente en JSON con validaciones.
+- Tests RSpec completos con >90% de cobertura.
+- Documentación YARD para toda la API pública.
+- CI/CD con GitHub Actions para pruebas y publicación.
+- RuboCop para mantener la calidad del código.
+- La gema está lista para publicarse en RubyGems.org.
+
+EJERCICIOS DEL PROYECTO
+────────────────────────
+1. Ejecuta la gema localmente con `exe/task_manager list`.
+2. Corre todas las pruebas con `bundle exec rspec`.
+3. Genera la documentación YARD con `bundle exec yard`.
+4. Ejecuta RuboCop y corrige todas las ofensas.
+5. Publica la gema en RubyGems.org con `rake release`.
+6. Agrega un comando `archive` que mueva tareas completadas a un
+   archivo separado.
+7. Implementa un formato de salida en tabla con el comando `list`.
+8. Agrega colores a la salida usando la gema `rainbow`.
+9. Crea una integración con calendario (ICS) para recordatorios.
+10. Escribe pruebas de integración que prueben el flujo completo.
+
+PREGUNTAS FRECUENTES (FAQ)
+───────────────────────────
+P: ¿Puedo modificar el proyecto para mis necesidades?
+R: ¡Por supuesto! Este proyecto es tu plantilla profesional.
+   Modifícalo, mejóralo y hazlo tuyo.
+
+P: ¿Cómo ejecuto la gema sin instalarla?
+R: Usa `bundle exec exe/task_manager` durante el desarrollo.
+
+P: ¿Qué hago si un test falla?
+R: Sigue TDD: lee el error, arregla el código, vuelve a ejecutar.
+
+P: ¿Cómo contribuyo a gemas existentes?
+R: Haz fork, crea una rama, implementa tu cambio, escribe tests,
+   abre un Pull Request.
+
+DESAFÍO DEL MAESTRO
+────────────────────
+Extiende task_manager para convertirla en una gema enterprise:
+1. Sincronización con Google Tasks o Todoist API.
+2. Etiquetas y categorías con filtrado combinado.
+3. Recordatorios con notificaciones del sistema operativo.
+4. Plugin system para extensibilidad (carga dinámica de gems).
+5. Interfaz TUI con curses usando la gema `tty-prompt`.
+6. Base de datos SQLite en lugar de JSON.
+7. Modo servidor con API HTTP (usando Sinatra).
+8. Integración con Git (commits automáticos al completar tareas).
+
+Este desafío demuestra que puedes construir herramientas profesionales
+completas que resuelven problemas reales del día a día.
+
+CIERRE DEL CAPÍTULO
+────────────────────
+Has completado el proyecto final del RUBY MASTER BOOK. Has creado
+una gema profesional, testeada, documentada y publicable. Esto que
+acabas de hacer es exactamente lo que los equipos de desarrollo de
+todo el mundo hacen diariamente: construir herramientas que resuelven
+problemas reales con código de calidad.
+
+Lleva este proyecto en tu portafolio, muéstralo en entrevistas y,
+sobre todo, sigue construyendo. En el próximo capítulo exploraremos
+las buenas prácticas que diferencian a un programador funcional de
+un verdadero maestro artesano.
+
+PRÓXIMO CAPÍTULO
+─────────────────
+▶ CAPÍTULO 79: BUENAS PRÁCTICAS — El sello del artesano

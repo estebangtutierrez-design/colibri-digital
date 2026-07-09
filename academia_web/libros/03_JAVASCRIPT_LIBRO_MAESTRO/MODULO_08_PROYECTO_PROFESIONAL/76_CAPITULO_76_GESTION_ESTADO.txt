@@ -1,0 +1,376 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                        MÓDULO VIII
+##                        CAPÍTULO 76
+##       GESTIÓN DEL ESTADO DE LA APLICACIÓN
+################################################################################
+################################################################################
+
+"El estado es la fuente de verdad de tu aplicación.
+Gestionarlo bien es la clave para una app predecible."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+El ESTADO es todos los datos que tu aplicación necesita
+en un momento dado: usuario logueado, lista de proyectos,
+tareas visibles, filtros activos, etc.
+
+Hoy aprenderás a:
+- Centralizar el estado.
+- Notificar cambios a la UI.
+- Manejar estado optimista.
+- Sincronizar múltiples vistas.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Centralizar el estado de la aplicación.
+✓ Implementar patrón Observer (pub/sub).
+✓ Estado optimista para mejor UX.
+✓ Separar estado del servidor del estado local.
+
+===============================================================================
+1. PATRÓN OBSERVER (PUB/SUB)
+===============================================================================
+
+```javascript
+// store.js - Mejora con Observer
+
+const EventBus = {
+    _eventos: {},
+
+    on(evento, callback) {
+        if (!this._eventos[evento]) {
+            this._eventos[evento] = [];
+        }
+        this._eventos[evento].push(callback);
+
+        // Retornar función para desuscribirse
+        return () => {
+            this._eventos[evento] = this._eventos[evento]
+                .filter(cb => cb !== callback);
+        };
+    },
+
+    emit(evento, datos) {
+        (this._eventos[evento] || []).forEach(function(callback) {
+            callback(datos);
+        });
+    },
+
+    // Eventos del sistema:
+    // "auth:login" - usuario inició sesión
+    // "auth:logout" - usuario cerró sesión
+    // "proyectos:creado" - nuevo proyecto
+    // "proyectos:eliminado" - proyecto eliminado
+    // "tareas:actualizado" - tarea cambió
+    // "store:change" - cambio genérico
+};
+
+// Uso:
+// let unsub = EventBus.on("tareas:actualizado", (datos) => {
+//     console.log("Tarea actualizada:", datos);
+//     renderizarProyecto(datos.proyectoId);
+// });
+// EventBus.emit("tareas:actualizado", { tareaId: "t1", proyectoId: "p1" });
+```
+
+===============================================================================
+2. STORE MEJORADO CON EVENTOS
+===============================================================================
+
+```javascript
+// store.js mejorado
+
+const storeAvanzado = {
+    _state: {
+        usuario: null,
+        proyectos: [],
+        tareas: [],
+        cargando: false,
+        error: null,
+        filtro: "todas",
+        busqueda: ""
+    },
+
+    _listeners: [],
+
+    // Suscripción al estado
+    subscribe(listener) {
+        this._listeners.push(listener);
+        return () => {
+            this._listeners = this._listeners.filter(l => l !== listener);
+        };
+    },
+
+    // Notificar cambios
+    _notify() {
+        this._listeners.forEach(function(listener) {
+            listener(this._state);
+        });
+    },
+
+    // Getters
+    getState() {
+        return { ...this._state };
+    },
+
+    // ===== ACCIONES =====
+
+    setCargando(valor) {
+        this._state.cargando = valor;
+        this._notify();
+    },
+
+    setError(error) {
+        this._state.error = error;
+        this._notify();
+    },
+
+    // Usuario
+    setUsuario(usuario) {
+        this._state.usuario = usuario;
+        this._notify();
+        EventBus.emit(usuario ? "auth:login" : "auth:logout", usuario);
+    },
+
+    // Proyectos
+    setProyectos(proyectos) {
+        this._state.proyectos = proyectos;
+        this._notify();
+    },
+
+    agregarProyecto(proyecto) {
+        this._state.proyectos.push(proyecto);
+        this._notify();
+        EventBus.emit("proyectos:creado", proyecto);
+    },
+
+    eliminarProyecto(id) {
+        this._state.proyectos = this._state.proyectos.filter(p => p.id !== id);
+        this._state.tareas = this._state.tareas.filter(t => t.proyectoId !== id);
+        this._notify();
+        EventBus.emit("proyectos:eliminado", id);
+    },
+
+    // Tareas
+    setTareas(tareas) {
+        this._state.tareas = tareas;
+        this._notify();
+    },
+
+    agregarTarea(tarea) {
+        this._state.tareas.push(tarea);
+        this._notify();
+        EventBus.emit("tareas:actualizado", { tareaId: tarea.id, proyectoId: tarea.proyectoId });
+    },
+
+    actualizarTarea(tareaId, cambios) {
+        let idx = this._state.tareas.findIndex(t => t.id === tareaId);
+        if (idx !== -1) {
+            this._state.tareas[idx] = { ...this._state.tareas[idx], ...cambios };
+            this._notify();
+            EventBus.emit("tareas:actualizado", {
+                tareaId: tareaId,
+                proyectoId: this._state.tareas[idx].proyectoId
+            });
+        }
+    },
+
+    // Filtros y búsqueda
+    setFiltro(filtro) {
+        this._state.filtro = filtro;
+        this._notify();
+    },
+
+    setBusqueda(texto) {
+        this._state.busqueda = texto;
+        this._notify();
+    },
+
+    // Tareas filtradas para un proyecto
+    getTareasFiltradas(proyectoId) {
+        let tareas = this._state.tareas.filter(t => t.proyectoId === proyectoId);
+
+        // Filtro por estado
+        if (this._state.filtro !== "todas") {
+            tareas = tareas.filter(t => t.estado === this._state.filtro);
+        }
+
+        // Búsqueda
+        if (this._state.busqueda) {
+            let q = this._state.busqueda.toLowerCase();
+            tareas = tareas.filter(t =>
+                t.titulo.toLowerCase().includes(q) ||
+                (t.descripcion || "").toLowerCase().includes(q)
+            );
+        }
+
+        return tareas;
+    }
+};
+```
+
+===============================================================================
+3. ESTADO OPTIMISTA
+===============================================================================
+
+```javascript
+// Estado optimista: la UI se actualiza ANTES de la respuesta del servidor
+// Si falla: se revierte el cambio
+
+async function cambiarEstadoOptimista(tareaId, nuevoEstado) {
+    // 1. Guardar estado anterior
+    let tarea = store._tareas.find(t => t.id === tareaId);
+    let estadoAnterior = tarea?.estado;
+
+    // 2. Actualizar UI inmediatamente (optimista)
+    store.cambiarEstadoTarea(tareaId, nuevoEstado);
+    let proyectoId = window.location.hash.split("/").pop();
+    renderizarProyecto(proyectoId);
+
+    // 3. Enviar al servidor
+    try {
+        let res = await fetch(`/api/tareas/${tareaId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ estado: nuevoEstado })
+        });
+
+        if (!res.ok) throw new Error("Error al guardar");
+
+    } catch (error) {
+        // 4. Revertir si falló
+        console.log("❌ Error al guardar, revirtiendo...");
+        store.cambiarEstadoTarea(tareaId, estadoAnterior);
+        renderizarProyecto(proyectoId);
+
+        modal.mostrar("Error", `
+            <p style="color:var(--danger)">No se pudo guardar el cambio.
+            Se ha revertido el estado.</p>
+            <button onclick="modal.cerrar()" class="btn-primary">OK</button>
+        `);
+    }
+}
+```
+
+===============================================================================
+4. SELECTORES COMPUTADOS
+===============================================================================
+
+```javascript
+// store.js - Selectores (datos computados)
+
+const selectores = {
+    // Estadísticas del dashboard
+    getDashboardStats() {
+        let proyectos = store.getProyectos();
+        let todasTareas = store._tareas;
+
+        return {
+            totalProyectos: proyectos.length,
+            totalTareas: todasTareas.length,
+            tareasPendientes: todasTareas.filter(t => t.estado === "pendiente").length,
+            tareasProgreso: todasTareas.filter(t => t.estado === "progreso").length,
+            tareasCompletadas: todasTareas.filter(t => t.estado === "hecho").length,
+            progresoGeneral: todasTareas.length > 0
+                ? Math.round((todasTareas.filter(t => t.estado === "hecho").length /
+                    todasTareas.length) * 100)
+                : 0
+        };
+    },
+
+    // Proyectos con resumen
+    getProyectosConResumen() {
+        return store.getProyectos().map(function(p) {
+            let tareas = store.getTareas(p.id);
+            return {
+                ...p,
+                totalTareas: tareas.length,
+                completadas: tareas.filter(t => t.estado === "hecho").length,
+                progreso: tareas.length > 0
+                    ? Math.round((tareas.filter(t => t.estado === "hecho").length /
+                        tareas.length) * 100) : 0
+            };
+        });
+    },
+
+    // Tareas urgentes (alta prioridad, pendientes)
+    getTareasUrgentes() {
+        return store._tareas.filter(t =>
+            t.prioridad === "alta" && t.estado !== "hecho"
+        ).sort((a, b) => new Date(b.creado) - new Date(a.creado));
+    }
+};
+```
+
+===============================================================================
+5. PERSISTENCIA DEL ESTADO
+===============================================================================
+
+```javascript
+// Persistencia automática con Proxy
+
+function crearStorePersistente(clave, estadoInicial) {
+    let datosGuardados = (function() {
+        try {
+            let d = localStorage.getItem("store-" + clave);
+            return d ? JSON.parse(d) : null;
+        } catch { return null; }
+    })();
+
+    let state = datosGuardados || estadoInicial;
+
+    let handler = {
+        set(target, prop, valor) {
+            target[prop] = valor;
+            try {
+                localStorage.setItem("store-" + clave, JSON.stringify(target));
+            } catch { /* ignorar errores de cuota */ }
+            return true;
+        }
+    };
+
+    return new Proxy(state, handler);
+}
+
+// Uso:
+// let preferencias = crearStorePersistente("prefs", {
+//     tema: "claro",
+//     vista: "tablero",
+//     ultimoProyecto: null
+// });
+// preferencias.tema = "oscuro";  // Se guarda automáticamente en localStorage
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ Estado centralizado: store único como fuente de verdad.
+✔ EventBus: pub/sub para comunicación entre componentes.
+✔ Estado optimista: UI responde antes que el servidor.
+✔ Reversión: si falla el servidor, se deshace el cambio.
+✔ Selectores: datos computados a partir del estado.
+✔ Persistencia automática con Proxy.
+✔ Listeners: UI se suscribe a cambios de estado.
+
+===============================================================================
+FIN DEL CAPÍTULO 76
+===============================================================================
+
+"El estado es el corazón de tu aplicación.
+Un corazón que late correctamente mantiene vivo todo el sistema."
+— Profesor Búho AI
+
+===============================================================================

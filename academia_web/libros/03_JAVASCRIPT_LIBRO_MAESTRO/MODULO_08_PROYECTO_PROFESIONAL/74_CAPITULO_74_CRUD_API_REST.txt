@@ -1,0 +1,341 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                        MÓDULO VIII
+##                        CAPÍTULO 74
+##            CRUD CON API REST
+################################################################################
+################################################################################
+
+"CRUD es la base de toda aplicación de datos:
+Crear, Leer, Actualizar, Eliminar.
+Con API REST, cada operación tiene su método HTTP."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+Hoy implementamos el CRUD completo de proyectos.
+
+Usaremos:
+- API REST simulada (json-server) o localStorage.
+- Métodos HTTP: GET, POST, PUT, DELETE.
+- Async/await para peticiones.
+- Manejo de estados: carga, éxito, error.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Implementar CRUD de proyectos.
+✓ Conectar con API usando fetch.
+✓ Manejar estados de carga.
+✓ Actualizar la UI después de cada operación.
+
+===============================================================================
+1. API CLIENT
+===============================================================================
+
+```javascript
+// api.js - Cliente API REST
+
+const API_BASE = "http://localhost:3000"; // json-server
+
+const api = {
+    // ===== PROYECTOS =====
+
+    async getProyectos() {
+        try {
+            let res = await fetch(API_BASE + "/proyectos");
+            if (!res.ok) throw new Error("Error al obtener proyectos");
+            return await res.json();
+        } catch (error) {
+            console.log("⚠️ API no disponible, usando localStorage");
+            return store._proyectos || [];
+        }
+    },
+
+    async getProyecto(id) {
+        try {
+            let res = await fetch(API_BASE + "/proyectos/" + id);
+            if (!res.ok) throw new Error("Proyecto no encontrado");
+            return await res.json();
+        } catch (error) {
+            console.log("⚠️ Buscando en local...");
+            return store._proyectos.find(p => p.id === id);
+        }
+    },
+
+    async crearProyecto(datos) {
+        try {
+            let res = await fetch(API_BASE + "/proyectos", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(datos)
+            });
+            return await res.json();
+        } catch (error) {
+            console.log("⚠️ Guardando en local...");
+            return store.crearProyecto(datos.nombre, datos.descripcion);
+        }
+    },
+
+    async actualizarProyecto(id, datos) {
+        try {
+            let res = await fetch(API_BASE + "/proyectos/" + id, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(datos)
+            });
+            return await res.json();
+        } catch (error) {
+            console.log("⚠️ Actualizando en local...");
+            let idx = store._proyectos.findIndex(p => p.id === id);
+            if (idx !== -1) {
+                store._proyectos[idx] = { ...store._proyectos[idx], ...datos };
+                // Guardar en localStorage
+            }
+            return store._proyectos.find(p => p.id === id);
+        }
+    },
+
+    async eliminarProyecto(id) {
+        try {
+            let res = await fetch(API_BASE + "/proyectos/" + id, {
+                method: "DELETE"
+            });
+            return res.ok;
+        } catch (error) {
+            console.log("⚠️ Eliminando en local...");
+            store._proyectos = store._proyectos.filter(p => p.id !== id);
+            return true;
+        }
+    }
+};
+```
+
+===============================================================================
+2. VISTA DE LISTA DE PROYECTOS
+===============================================================================
+
+```javascript
+// Componente: Lista de proyectos
+
+async function renderizarProyectos() {
+    let main = document.querySelector("#main-content");
+    main.innerHTML = '<div class="loading">⏳ Cargando proyectos...</div>';
+
+    try {
+        let proyectos = await api.getProyectos();
+
+        if (proyectos.length === 0) {
+            main.innerHTML = `
+                <div class="card" style="text-align:center;padding:40px">
+                    <h2>📋 Mis Proyectos</h2>
+                    <p style="color:var(--text-light);margin:20px 0">
+                        No tienes proyectos aún. ¡Crea tu primer proyecto!
+                    </p>
+                    <button onclick="mostrarFormularioNuevo()"
+                            class="btn-primary">+ Nuevo Proyecto</button>
+                </div>
+            `;
+            return;
+        }
+
+        let html = `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        margin-bottom:20px">
+                <h2>📋 Mis Proyectos (${proyectos.length})</h2>
+                <button onclick="mostrarFormularioNuevo()"
+                        class="btn-primary">+ Nuevo</button>
+            </div>
+            <div class="proyectos-grid" style="display:grid;
+                 grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:15px">
+        `;
+
+        proyectos.forEach(function(p) {
+            let tareas = store.getTareas(p.id);
+            let hechas = tareas.filter(t => t.estado === "hecho").length;
+            let progreso = tareas.length > 0
+                ? Math.round((hechas / tareas.length) * 100) : 0;
+
+            html += `
+                <div class="card proyecto-card"
+                     onclick="router.irA('/proyecto/${p.id}')"
+                     style="cursor:pointer">
+                    <h3>${p.nombre}</h3>
+                    <p style="color:var(--text-light);font-size:13px">
+                        ${p.descripcion || "Sin descripción"}
+                    </p>
+                    <div style="margin-top:10px;font-size:12px;color:var(--text-light)">
+                        📌 ${tareas.length} tareas
+                        ${tareas.length > 0 ? `(${progreso}% completado)` : ''}
+                    </div>
+                    <div style="margin-top:8px;height:4px;background:#eee;border-radius:2px">
+                        <div style="height:100%;background:var(--success);border-radius:2px;
+                             width:${progreso}%"></div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += "</div>";
+        main.innerHTML = html;
+
+    } catch (error) {
+        main.innerHTML = `
+            <div class="card" style="text-align:center;padding:40px;color:var(--danger)">
+                <h2>❌ Error</h2>
+                <p>${error.message}</p>
+                <button onclick="renderizarProyectos()"
+                        class="btn-primary" style="margin-top:15px">Reintentar</button>
+            </div>
+        `;
+    }
+}
+
+router.registrar("/proyectos", renderizarProyectos, true);
+```
+
+===============================================================================
+3. FORMULARIO CREAR/EDITAR
+===============================================================================
+
+```javascript
+function mostrarFormularioNuevo(proyectoExistente) {
+    let esEdicion = !!proyectoExistente;
+    let titulo = esEdicion ? "Editar Proyecto" : "Nuevo Proyecto";
+    let nombre = esEdicion ? proyectoExistente.nombre : "";
+    let desc = esEdicion ? (proyectoExistente.descripcion || "") : "";
+    let id = esEdicion ? proyectoExistente.id : "";
+
+    let html = `
+        <div class="card">
+            <h2>${titulo}</h2>
+            <form id="${esEdicion ? 'editar' : 'nuevo'}-proyecto-form">
+                ${esEdicion ? `<input type="hidden" id="proyecto-id" value="${id}">` : ''}
+                <div class="form-group">
+                    <label>Nombre del proyecto</label>
+                    <input type="text" id="proyecto-nombre" value="${nombre}" required>
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="proyecto-descripcion" rows="3">${desc}</textarea>
+                </div>
+                <button type="submit" class="btn-primary">
+                    ${esEdicion ? "Guardar Cambios" : "Crear Proyecto"}
+                </button>
+                <button type="button" onclick="router.irA('/proyectos')"
+                        style="margin-left:10px;background:#95a5a6;color:white">
+                    Cancelar
+                </button>
+            </form>
+        </div>
+    `;
+
+    let main = document.querySelector("#main-content");
+    main.innerHTML = html;
+}
+
+// Manejador del formulario
+document.addEventListener("submit", async function(e) {
+    if (e.target.id === "nuevo-proyecto-form") {
+        e.preventDefault();
+        let nombre = document.querySelector("#proyecto-nombre").value;
+        let desc = document.querySelector("#proyecto-descripcion").value;
+
+        let proyecto = await api.crearProyecto({ nombre, descripcion: desc });
+        router.irA("/proyecto/" + proyecto.id);
+    }
+
+    if (e.target.id === "editar-proyecto-form") {
+        e.preventDefault();
+        let id = document.querySelector("#proyecto-id").value;
+        let nombre = document.querySelector("#proyecto-nombre").value;
+        let desc = document.querySelector("#proyecto-descripcion").value;
+
+        await api.actualizarProyecto(id, { nombre, descripcion: desc });
+        router.irA("/proyecto/" + id);
+    }
+});
+```
+
+===============================================================================
+4. VISTA DE DETALLE DE PROYECTO
+===============================================================================
+
+```javascript
+async function renderizarProyecto(id) {
+    let main = document.querySelector("#main-content");
+    main.innerHTML = '<div class="loading">⏳ Cargando...</div>';
+
+    try {
+        let proyecto = await api.getProyecto(id);
+        if (!proyecto) {
+            main.innerHTML = "<h2>❌ Proyecto no encontrado</h2>";
+            return;
+        }
+
+        let tareas = store.getTareas(id);
+        let html = `
+            <div style="display:flex;justify-content:space-between;align-items:start;
+                        margin-bottom:20px">
+                <div>
+                    <h2>${proyecto.nombre}</h2>
+                    <p style="color:var(--text-light)">${proyecto.descripcion || ""}</p>
+                </div>
+                <div>
+                    <button onclick="mostrarFormularioNuevo({
+                        id:'${id}', nombre:'${proyecto.nombre}',
+                        descripcion:'${proyecto.descripcion || ""}'})"
+                        class="btn-primary">✏️ Editar</button>
+                    <button onclick="eliminarProyecto('${id}')"
+                            class="btn-danger" style="margin-left:5px">🗑️</button>
+                </div>
+            </div>
+            <button onclick="mostrarFormTarea('${id}')"
+                    class="btn-success">+ Nueva Tarea</button>
+            <div id="tablero" style="margin-top:20px">
+                ${renderizarTablero(tareas)}
+            </div>
+        `;
+
+        main.innerHTML = html;
+
+    } catch (error) {
+        main.innerHTML = `<h2>❌ Error: ${error.message}</h2>`;
+    }
+}
+
+router.registrar("/proyecto/:id", function() {
+    let id = window.location.hash.split("/").pop();
+    renderizarProyecto(id);
+}, true);
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ API Client: CRUD con fetch + fallback a localStorage.
+✔ Lista de proyectos con progreso visual.
+✔ Formulario para crear y editar proyectos.
+✔ Vista de detalle con tablero de tareas.
+✔ Manejo de estados: carga, éxito, error.
+✔ Operaciones asíncronas con async/await.
+
+===============================================================================
+FIN DEL CAPÍTULO 74
+===============================================================================
+
+"CRUD es el latido de cualquier aplicación de datos.
+Con API REST, cada operación tiene un lugar y un método."
+— Profesor Búho AI
+
+===============================================================================

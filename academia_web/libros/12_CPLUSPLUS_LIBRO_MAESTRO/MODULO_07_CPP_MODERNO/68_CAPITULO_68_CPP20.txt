@@ -1,0 +1,1077 @@
+================================================================================
+  CAPÍTULO 68: C++20
+  MÓDULO VII: C++ MODERNO
+  C++ MASTER BOOK
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo sobre C++20, la versión más ambiciosa del
+lenguaje desde C++11. C++20 introduce concepts, ranges, coroutines,
+modules, el operador spaceship (<=>), std::format, y mejoras masivas
+en expresividad y seguridad.
+
+FRASE DEL CAPÍTULO
+------------------
+"C++20 es el estándar más grande de la historia de C++. Concepts,
+Ranges, Coroutines y Modules cambian fundamentalmente el lenguaje."
+— Herb Sutter
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Definir y usar concepts para restringir templates.
+2. Programar con ranges: vistas, adaptadores, composición.
+3. Comprender el modelo de coroutines en C++20.
+4. Usar módulos como alternativa a headers.
+5. Aplicar el operador <=> (spaceship) para comparaciones.
+6. Emplear std::format para formateo de cadenas moderno.
+7. Explorar otras características de C++20.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+--- 1. CONCEPTS ---
+
+Concepts restringen los tipos que pueden usarse con templates.
+
+```cpp
+#include <iostream>
+#include <concepts>
+#include <vector>
+#include <string>
+#include <type_traits>
+
+// Definición de conceptos
+template<typename T>
+concept Integral = std::is_integral_v<T>;
+
+template<typename T>
+concept FloatingPoint = std::is_floating_point_v<T>;
+
+template<typename T>
+concept Numeric = Integral<T> || FloatingPoint<T>;
+
+template<typename T>
+concept Printable = requires(T t) {
+    std::cout << t;
+};
+
+template<typename T>
+concept Hashable = requires(T t) {
+    { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
+};
+
+// Uso de concepts con template
+template<Integral T>
+T cuadrado(T x) {
+    return x * x;
+}
+
+// Uso con auto (abreviado)
+void imprimir(Printable auto const& valor) {
+    std::cout << valor << "\n";
+}
+
+// Uso con requires clause
+template<typename T>
+    requires Numeric<T>
+T suma(T a, T b) {
+    return a + b;
+}
+
+// Conceptos más complejos
+template<typename Container>
+concept Contenedor = requires(Container c) {
+    typename Container::value_type;
+    typename Container::iterator;
+    { c.begin() } -> std::same_as<typename Container::iterator>;
+    { c.end() } -> std::same_as<typename Container::iterator>;
+    { c.size() } -> std::convertible_to<std::size_t>;
+};
+
+template<typename Iter>
+concept IteradorAleatorio =
+    std::random_access_iterator<Iter>;
+
+// Combinación de concepts
+template<typename T>
+concept Comparable = requires(T a, T b) {
+    { a < b } -> std::convertible_to<bool>;
+    { a == b } -> std::convertible_to<bool>;
+};
+
+template<Comparable T>
+const T& minimo(const T& a, const T& b) {
+    return a < b ? a : b;
+}
+
+int main() {
+    std::cout << "=== CONCEPTS ===\n";
+
+    std::cout << cuadrado(5) << "\n";
+    // std::cout << cuadrado(3.14) << "\n";  // Error: double no es Integral
+
+    std::cout << suma(10, 20) << "\n";
+    std::cout << suma(3.14, 2.86) << "\n";
+
+    imprimir(42);
+    imprimir(3.14);
+    imprimir("Hola");
+    // imprimir(std::vector<int>{});  // Error: vector no es Printable
+
+    std::cout << "minimo(10, 20): " << minimo(10, 20) << "\n";
+    std::cout << "minimo(3.14, 2.71): " << minimo(3.14, 2.71) << "\n";
+
+    // Verificar concepts
+    static_assert(Integral<int>);
+    static_assert(FloatingPoint<double>);
+    static_assert(Numeric<int>);
+    static_assert(!Numeric<std::string>);
+    static_assert(Printable<int>);
+    static_assert(Contenedor<std::vector<int>>);
+
+    return 0;
+}
+```
+
+--- 2. RANGES ---
+
+La biblioteca de ranges revoluciona la manipulación de secuencias.
+
+```cpp
+#include <iostream>
+#include <ranges>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <numeric>
+
+namespace views = std::views;
+namespace ranges = std::ranges;
+
+int main() {
+    std::cout << "=== RANGES ===\n";
+
+    std::vector<int> numeros = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+
+    // Vistas (lazy, no copian datos)
+    auto pares = numeros | views::filter([](int n) { return n % 2 == 0; });
+    std::cout << "Pares: ";
+    for (int n : pares) std::cout << n << " ";
+    std::cout << "\n";
+
+    // Composición de vistas
+    auto resultado = numeros
+        | views::filter([](int n) { return n % 2 == 1; })
+        | views::transform([](int n) { return n * n; })
+        | views::take(3);
+
+    std::cout << "Primeros 3 impares al cuadrado: ";
+    for (int n : resultado) std::cout << n << " ";
+    std::cout << "\n";
+
+    // views::iota (generador de secuencias)
+    std::cout << "Iota(1, 10): ";
+    for (int n : views::iota(1, 10)) std::cout << n << " ";
+    std::cout << "\n";
+
+    // views::reverse
+    std::cout << "Reverse: ";
+    for (int n : numeros | views::reverse) std::cout << n << " ";
+    std::cout << "\n";
+
+    // views::split
+    std::string texto = "Hola,Mundo,C++20,Ranges";
+    std::cout << "Split por ',': ";
+    for (auto palabra : texto | views::split(',')) {
+        std::cout << std::string_view(palabra.begin(), palabra.end()) << " ";
+    }
+    std::cout << "\n";
+
+    // views::join
+    std::vector<std::string> palabras = {"Hello", "World", "C++20"};
+    auto junto = palabras | views::join | views::transform([](char c) {
+        return std::toupper(c);
+    });
+    std::cout << "Join + uppercase: ";
+    for (char c : junto) std::cout << c;
+    std::cout << "\n";
+
+    // ranges::actions (modifican el contenedor)
+    std::vector<int> datos = {5, 3, 1, 4, 2, 6};
+    ranges::sort(datos);
+    std::cout << "Sort: ";
+    for (int n : datos) std::cout << n << " ";
+    std::cout << "\n";
+
+    // ranges::algorithms
+    auto [min, max] = ranges::minmax(datos);
+    std::cout << "Min: " << min << ", Max: " << max << "\n";
+
+    auto sum = ranges::accumulate(datos, 0);
+    std::cout << "Sum: " << sum << "\n";
+
+    // Vistas infinitas (lazy)
+    auto cuadrados = views::iota(1)
+        | views::transform([](int n) { return n * n; })
+        | views::take(10);
+    std::cout << "Primeros 10 cuadrados: ";
+    for (int n : cuadrados) std::cout << n << " ";
+    std::cout << "\n";
+
+    return 0;
+}
+```
+
+--- 3. COROUTINES ---
+
+Coroutines permiten funciones que pueden suspenderse y reanudarse.
+
+```cpp
+#include <iostream>
+#include <coroutine>
+#include <optional>
+#include <generator>
+#include <vector>
+
+// Generador simple (C++20)
+std::generator<int> fibonacci(int max) {
+    int a = 0, b = 1;
+    while (a <= max) {
+        co_yield a;
+        auto next = a + b;
+        a = b;
+        b = next;
+    }
+}
+
+std::generator<int> rango(int inicio, int fin, int paso = 1) {
+    for (int i = inicio; i < fin; i += paso) {
+        co_yield i;
+    }
+}
+
+std::generator<std::string> leerLineas(const std::vector<std::string>& lineas) {
+    for (const auto& linea : lineas) {
+        co_yield linea;
+    }
+}
+
+// Task simple (implementación básica de coroutine)
+struct Task {
+    struct promise_type {
+        int valor;
+
+        Task get_return_object() {
+            return Task{std::coroutine_handle<promise_type>::from_promise(*this)};
+        }
+        std::suspend_always initial_suspend() { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        void unhandled_exception() { std::terminate(); }
+        std::suspend_always yield_value(int v) {
+            valor = v;
+            return {};
+        }
+        void return_void() {}
+    };
+
+    std::coroutine_handle<promise_type> handle;
+    explicit Task(std::coroutine_handle<promise_type> h) : handle(h) {}
+    ~Task() { if (handle) handle.destroy(); }
+    bool resume() {
+        if (!handle || handle.done()) return false;
+        handle.resume();
+        return !handle.done();
+    }
+    int getValue() { return handle.promise().valor; }
+};
+
+Task contador(int max) {
+    for (int i = 0; i < max; ++i) {
+        co_yield i;
+    }
+}
+
+int main() {
+    std::cout << "=== COROUTINES ===\n";
+
+    // Generador de Fibonacci
+    std::cout << "Fibonacci hasta 100: ";
+    for (int n : fibonacci(100)) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    // Rango
+    std::cout << "Rango(0, 10, 2): ";
+    for (int n : rango(0, 10, 2)) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    // Leer líneas
+    std::vector<std::string> datos = {"Linea 1", "Linea 2", "Linea 3"};
+    std::cout << "Lineas:\n";
+    for (const auto& linea : leerLineas(datos)) {
+        std::cout << "  " << linea << "\n";
+    }
+
+    // Task manual
+    std::cout << "\nTask coroutine:\n";
+    Task t = contador(5);
+    while (t.resume()) {
+        std::cout << "Valor: " << t.getValue() << "\n";
+    }
+
+    return 0;
+}
+```
+
+--- 4. OPERADOR SPACESHIP (<=>) ---
+
+El operador de tres vías genera automáticamente todos los operadores.
+
+```cpp
+#include <iostream>
+#include <compare>
+#include <string>
+#include <vector>
+#include <algorithm>
+
+struct Punto {
+    int x, y;
+
+    // Genera ==, !=, <, <=, >, >= automáticamente
+    auto operator<=>(const Punto&) const = default;
+
+    // También puede ser personalizado:
+    // auto operator<=>(const Punto& otro) const {
+    //     if (auto cmp = x <=> otro.x; cmp != 0) return cmp;
+    //     return y <=> otro.y;
+    // }
+};
+
+struct Version {
+    int major, minor, patch;
+
+    auto operator<=>(const Version&) const = default;
+};
+
+// Orden parcial (para doubles con NaN)
+struct Precio {
+    double valor;
+
+    std::partial_ordering operator<=>(const Precio& otro) const {
+        return valor <=> otro.valor;
+    }
+};
+
+struct Persona {
+    std::string nombre;
+    int edad;
+
+    // Personalizado: comparar por edad, luego nombre
+    auto operator<=>(const Persona& otro) const {
+        if (auto cmp = edad <=> otro.edad; cmp != 0) return cmp;
+        return nombre <=> otro.nombre;
+    }
+
+    bool operator==(const Persona& otro) const {
+        return edad == otro.edad && nombre == otro.nombre;
+    }
+};
+
+int main() {
+    std::cout << "=== OPERADOR SPACESHIP ===\n";
+
+    // Comparación de puntos
+    Punto a{1, 2};
+    Punto b{1, 3};
+    Punto c{1, 2};
+
+    std::cout << "a < b: " << (a < b) << "\n";
+    std::cout << "a > b: " << (a > b) << "\n";
+    std::cout << "a == b: " << (a == b) << "\n";
+    std::cout << "a <= b: " << (a <= b) << "\n";
+    std::cout << "a >= b: " << (a >= b) << "\n";
+    std::cout << "a == c: " << (a == c) << "\n";
+    std::cout << "a != b: " << (a != b) << "\n";
+
+    // Ordenamiento con <=>
+    std::vector<Punto> puntos = {{3, 1}, {1, 2}, {2, 3}, {1, 1}};
+    std::sort(puntos.begin(), puntos.end());
+    std::cout << "Puntos ordenados: ";
+    for (const auto& p : puntos) {
+        std::cout << "(" << p.x << "," << p.y << ") ";
+    }
+    std::cout << "\n";
+
+    // Versiones
+    Version v1{1, 2, 3};
+    Version v2{1, 3, 0};
+    std::cout << "v1 < v2: " << (v1 < v2) << "\n";
+    std::cout << "v1 == v1: " << (v1 == v1) << "\n";
+
+    // Personas
+    Persona p1{"Ana", 25};
+    Persona p2{"Luis", 30};
+    Persona p3{"Ana", 25};
+
+    std::cout << "p1 == p3: " << (p1 == p3) << "\n";
+    std::cout << "p1 < p2: " << (p1 < p2) << "\n";
+
+    // std::is_eq, std::is_lt, etc.
+    auto cmp = a <=> b;
+    std::cout << "a <=> b is lt: " << std::is_lt(cmp) << "\n";
+    std::cout << "a <=> b is eq: " << std::is_eq(cmp) << "\n";
+    std::cout << "a <=> b is gt: " << std::is_gt(cmp) << "\n";
+
+    return 0;
+}
+```
+
+--- 5. STD::FORMAT ---
+
+Formateo de cadenas moderno y type-safe.
+
+```cpp
+#include <iostream>
+#include <format>
+#include <string>
+#include <vector>
+#include <chrono>
+#include <numbers>
+
+int main() {
+    std::cout << "=== STD::FORMAT ===\n";
+
+    // Formateo básico
+    std::cout << std::format("Hola, {}!\n", "Mundo");
+    std::cout << std::format("Entero: {}, Double: {:.2f}\n", 42, 3.14159);
+
+    // Posicional
+    std::cout << std::format("{1} {0} {2}\n", "a", "b", "c");
+
+    // Especificadores de formato
+    std::cout << std::format("|{:10}|{:>10}|{:^10}|{:<10}|\n",
+                              "izq", "der", "cent", "izq2");
+
+    // Números
+    std::cout << std::format("Hex: {:X}, Bin: {:b}, Oct: {:o}\n",
+                              255, 255, 255);
+    std::cout << std::format("Cientifico: {:.2e}, Fijo: {:.2f}\n",
+                              1234.5678, 1234.5678);
+
+    // Relleno y alineación
+    std::cout << std::format("{:*<10}, {:*>10}, {:*^10}\n",
+                              10, 20, 30);
+
+    // Signo
+    std::cout << std::format("{:+} {:+} {: } {: }\n",
+                              5, -5, 5, -5);
+
+    // Fechas (C++20)
+    auto ahora = std::chrono::system_clock::now();
+    // std::cout << std::format("Fecha: {:%Y-%m-%d %H:%M:%S}\n", ahora);
+
+    // Números con separadores
+    std::cout << std::format("Separadores: {:L}\n", 1234567890);
+
+    // Bool
+    std::cout << std::format("Bool: {:b}, {:B}\n", true, false);
+
+    // Formateo de contenedores
+    std::vector<int> nums = {1, 2, 3, 4, 5};
+    // En C++23/26 se puede formatear rangos directamente
+
+    // std::format_to (escribe a un iterador)
+    std::string buffer;
+    std::format_to(std::back_inserter(buffer), "Formateo a buffer: {} y {}", 1, 2);
+    std::cout << buffer << "\n";
+
+    // std::format_to_n (con límite)
+    char arr[100];
+    auto result = std::format_to_n(arr, 10, "Texto largo a truncar", 42);
+    *result.out = '\0';
+    std::cout << "Truncado: " << arr << "\n";
+
+    // std::formatted_size
+    auto size = std::formatted_size("Tamano: {}", 12345);
+    std::cout << "Tamano formateado: " << size << " chars\n";
+
+    return 0;
+}
+```
+
+--- 6. MODULES ---
+
+Los módulos reemplazan a los headers tradicionales.
+
+```cpp
+// Este archivo demuestra la sintaxis de módulos
+// Nota: Los módulos requieren soporte del compilador (C++20)
+
+// En un archivo .cppm (module interface):
+// export module Matematicas;
+//
+// export auto suma(auto a, auto b) { return a + b; }
+// export auto producto(auto a, auto b) { return a * b; }
+//
+// namespace detail {  // No exportado → no visible
+//     int interno() { return 42; }
+// }
+
+// En otro archivo:
+// import Matematicas;
+// int main() {
+//     std::cout << suma(3, 4) << "\n";
+// }
+
+// Particiones de módulos:
+// export module Biblioteca:Algoritmos;
+// export module Biblioteca:Utilidades;
+// export module Biblioteca;
+// export import :Algoritmos;
+// export import :Utilidades;
+
+// Simulación para compilación sin módulos:
+namespace Matematicas {
+    template<typename T>
+    T suma(T a, T b) { return a + b; }
+
+    template<typename T>
+    T producto(T a, T b) { return a * b; }
+}
+
+int main() {
+    std::cout << "=== MODULES ===\n";
+    std::cout << "Los modulos requieren soporte del compilador.\n";
+    std::cout << "Simulacion con namespace:\n";
+    std::cout << "suma: " << Matematicas::suma(3, 4) << "\n";
+    std::cout << "producto: " << Matematicas::producto(5, 6) << "\n";
+    return 0;
+}
+```
+
+--- 7. CONSTEVAL Y CONSTINIT ---
+
+Nuevos especificadores para evaluación en tiempo de compilación.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <array>
+
+// consteval: función que DEBE evaluarse en tiempo de compilación
+consteval int cuadradoCompileTime(int x) {
+    return x * x;
+}
+
+// constinit: variable que se inicializa en tiempo de compilación
+// pero puede modificarse en runtime
+constinit int contador_global = 0;
+
+// constinit para variables estáticas
+struct Logger {
+    static constinit std::string* buffer;
+};
+constinit std::string* Logger::buffer = nullptr;
+
+// consteval con lambdas
+constexpr auto factorial = [](int n) consteval {
+    int r = 1;
+    for (int i = 2; i <= n; ++i) r *= i;
+    return r;
+};
+
+// Diferencia entre constexpr y consteval
+constexpr int maybeRuntime(int x) {
+    return x * x;  // Puede ser runtime o compile-time
+}
+
+consteval int mustBeCompileTime(int x) {
+    return x * x;  // Solo compile-time
+}
+
+// constinit con tipos complejos
+class Config {
+public:
+    Config() : valor(42) {}
+    int get() const { return valor; }
+private:
+    int valor;
+};
+
+constinit Config config_global;
+
+int main() {
+    std::cout << "=== CONSTEVAL Y CONSTINIT ===\n";
+
+    // consteval fuerza evaluación en tiempo de compilación
+    constexpr int result = cuadradoCompileTime(25);
+    static_assert(result == 625);
+    std::cout << "cuadradoCompileTime(25): " << result << "\n";
+
+    // Error si no es constante:
+    // int x = 10;
+    // auto r = cuadradoCompileTime(x);  // Error!
+
+    // constinit
+    contador_global = 100;
+    std::cout << "contador_global: " << contador_global << "\n";
+
+    // consteval lambda
+    static_assert(factorial(5) == 120);
+    std::cout << "factorial(5): " << factorial(5) << "\n";
+
+    // constinit con objetos
+    std::cout << "config_global: " << config_global.get() << "\n";
+
+    // Comparación constexpr vs consteval
+    constexpr int a = maybeRuntime(5);     // OK: compile-time
+    int b = maybeRuntime(5);               // OK: runtime
+
+    constexpr int c = mustBeCompileTime(5);  // OK
+    // int d = mustBeCompileTime(5);         // Error!
+
+    // Uso en templates
+    auto createArray = []<typename T>(T value) consteval {
+        return std::array<T, 10>{};
+    };
+
+    auto arr = createArray(42);
+    std::cout << "Array size: " << arr.size() << "\n";
+
+    return 0;
+}
+```
+
+--- 8. MEJORAS EN LAMBDAS (C++20) ---
+
+C++20 trae varias mejoras a lambdas.
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <functional>
+
+int main() {
+    std::cout << "=== MEJORAS EN LAMBDAS ===\n";
+
+    // 1. Lambdas template explícitas (C++20)
+    auto lambda = []<typename T>(T a, T b) {
+        return a + b;
+    };
+    std::cout << "Lambda template: " << lambda(5, 3) << "\n";
+
+    // 2. Captura de variadic packs por move
+    auto variadicCapture = [...args = std::make_tuple(1, 2, 3, 4)]() {
+        std::apply([](auto... ns) {
+            ((std::cout << ns << " "), ...);
+        }, args);
+        std::cout << "\n";
+    };
+    variadicCapture();
+
+    // 3. Lambdas en contextos no-evaluados
+    std::function<int(int, int)> f = [](int a, int b) { return a + b; };
+
+    // 4. constexpr y consteval lambdas
+    constexpr auto cuadrado = [](int x) { return x * x; };
+    static_assert(cuadrado(5) == 25);
+
+    consteval auto factorial = [](int n) {
+        int r = 1;
+        for (int i = 2; i <= n; ++i) r *= i;
+        return r;
+    };
+    static_assert(factorial(6) == 720);
+
+    // 5. Lambdas con conceptos
+    auto sumarNumeros = []<Numeric T>(T a, T b) {
+        return a + b;
+    };
+
+    std::cout << "Suma numerica: " << sumarNumeros(5, 3) << "\n";
+
+    // 6. this en lambdas (C++20: captura de *this por copia)
+    struct Objeto {
+        int id = 42;
+
+        auto getLambda() {
+            // C++20: [*this] captura por copia
+            return [*this]() { return id; };
+        }
+
+        auto getLambdaRef() {
+            // [this] captura por referencia (C++11)
+            return [this]() { return id; };
+        }
+    };
+
+    Objeto obj;
+    auto l1 = obj.getLambda();
+    auto l2 = obj.getLambdaRef();
+    obj.id = 100;
+    std::cout << "Copia *this: " << l1() << ", Ref this: " << l2() << "\n";
+
+    // 7. Lambdas como argumentos de conceptos
+    auto apply = []<typename F, typename... Args>(F f, Args&&... args)
+        requires std::invocable<F, Args...> {
+        return std::invoke(f, std::forward<Args>(args)...);
+    };
+    std::cout << "apply: " << apply([](int x) { return x * 2; }, 21) << "\n";
+
+    return 0;
+}
+```
+
+--- 9. MEJORAS EN CONSTEXPR Y MISCELÁNEA ---
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <memory>
+#include <algorithm>
+#include <span>
+
+// constexpr virtual (C++20)
+struct Base {
+    constexpr virtual int getValor() const { return 1; }
+};
+struct Derivada : Base {
+    constexpr int getValor() const override { return 2; }
+};
+
+constexpr int testVirtual() {
+    Derivada d;
+    Base& b = d;
+    return b.getValor();
+}
+
+// std::span (vista contigua)
+void procesarSpan(std::span<int> sp) {
+    std::cout << "Span size: " << sp.size() << "\n";
+    for (int& x : sp) x *= 2;
+}
+
+// std::erase, std::erase_if (C++20)
+void demoErase() {
+    std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8};
+    std::erase(v, 5);                   // Eliminar valor específico
+    std::erase_if(v, [](int x) { return x % 2 == 0; });  // Eliminar pares
+    std::cout << "After erase: ";
+    for (int x : v) std::cout << x << " ";
+    std::cout << "\n";
+}
+
+// starts_with / ends_with
+void demoStringPrefix() {
+    std::string s = "HelloWorld.cpp";
+    std::cout << "Starts with Hello: " << s.starts_with("Hello") << "\n";
+    std::cout << "Ends with .cpp: " << s.ends_with(".cpp") << "\n";
+    std::cout << "Starts with World: " << s.starts_with("World") << "\n";
+}
+
+// contains (C++20 para map/set)
+void demoContains() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::cout << "Contains 3: " << std::ranges::contains(v, 3) << "\n";
+    std::cout << "Contains 10: " << std::ranges::contains(v, 10) << "\n";
+}
+
+int main() {
+    std::cout << "=== CONSTEXPR VIRTUAL Y MISC ===\n";
+
+    constexpr int v = testVirtual();
+    static_assert(v == 2);
+    std::cout << "Virtual constexpr: " << v << "\n";
+
+    // std::span
+    std::vector<int> vec = {1, 2, 3, 4, 5};
+    procesarSpan(vec);
+    std::cout << "After span: ";
+    for (int x : vec) std::cout << x << " ";
+    std::cout << "\n";
+
+    // erase
+    demoErase();
+
+    // starts/ends with
+    demoStringPrefix();
+
+    // contains
+    demoContains();
+
+    // constexpr vector y string (parcial)
+    constexpr auto buildString = []() {
+        std::string s = "constexpr";
+        s += " string";
+        return s.size();
+    };
+    constexpr auto len = buildString();
+    std::cout << "Constexpr string size: " << len << "\n";
+
+    // source_location (C++20)
+    auto loc = std::source_location::current();
+    std::cout << "File: " << loc.file_name() << "\n";
+    std::cout << "Line: " << loc.line() << "\n";
+    std::cout << "Function: " << loc.function_name() << "\n";
+
+    // likely / unlikely attributes
+    [[likely]] if (len > 0) {
+        std::cout << "Cadena no vacia\n";
+    } [[unlikely]] else {
+        std::cout << "Cadena vacia (improbable)\n";
+    }
+
+    return 0;
+}
+```
+
+--- 10. EJEMPLO INTEGRADOR ---
+
+```cpp
+#include <iostream>
+#include <ranges>
+#include <concepts>
+#include <format>
+#include <compare>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <numbers>
+
+namespace views = std::views;
+namespace ranges = std::ranges;
+
+// Conceptos del dominio
+template<typename T>
+concept Temperatura = std::floating_point<T>;
+
+template<typename T>
+concept Medicion = requires(T t) {
+    { t.valor } -> std::convertible_to<double>;
+    { t.timestamp } -> std::convertible_to<std::string>;
+};
+
+// Clase con operator<=>
+struct Sensor {
+    std::string nombre;
+    double valor{0.0};
+    std::string timestamp;
+
+    auto operator<=>(const Sensor&) const = default;
+};
+
+// Procesamiento de datos de sensores
+template<Temperatura T>
+struct Lectura {
+    T valor;
+    std::string timestamp;
+
+    void print() const {
+        std::cout << std::format("[{}] Temperatura: {:.2f}°C\n",
+                                  timestamp, valor);
+    }
+};
+
+int main() {
+    std::cout << "=== EJEMPLO INTEGRADOR C++20 ===\n";
+
+    // Datos de sensores
+    std::vector<Sensor> sensores = {
+        {"SensorA", 23.5, "2024-01-01 10:00"},
+        {"SensorB", 25.1, "2024-01-01 10:01"},
+        {"SensorA", 24.8, "2024-01-01 10:02"},
+        {"SensorC", 22.3, "2024-01-01 10:03"},
+        {"SensorB", 26.0, "2024-01-01 10:04"},
+    };
+
+    // Ordenar con spaceship
+    ranges::sort(sensores);
+    std::cout << "Sensores ordenados:\n";
+
+    // Procesar con ranges
+    auto procesados = sensores
+        | views::filter([](const Sensor& s) { return s.valor > 24.0; })
+        | views::transform([](const Sensor& s) {
+            return std::format("{}: {:.2f}", s.nombre, s.valor);
+        });
+
+    for (const auto& s : procesados) {
+        std::cout << "  " << s << "\n";
+    }
+
+    // Generar datos con ranges
+    std::cout << "\nRango de temperaturas:\n";
+    auto temperaturas = views::iota(20, 31)
+        | views::transform([](int t) {
+            return Lectura<double>{static_cast<double>(t), "2024-01-01 12:00"};
+        });
+
+    for (const auto& t : temperaturas | views::take(5)) {
+        t.print();
+    }
+
+    // Concept + ranges
+    auto filtrarTemperaturas = []<Temperatura T>(
+        const std::vector<T>& datos, T limite) {
+        return datos
+            | views::filter([limite](T v) { return v > limite; });
+    };
+
+    std::vector<double> mediciones = {22.5, 25.3, 18.9, 30.1, 27.8, 21.4};
+    std::cout << "\nMediciones > 25°C: ";
+    for (auto m : filtrarTemperaturas(mediciones, 25.0)) {
+        std::cout << std::format("{:.1f} ", m);
+    }
+    std::cout << "\n";
+
+    // Formateo avanzado
+    std::cout << "\nReporte:\n";
+    constexpr double PI = std::numbers::pi;
+    std::cout << std::format("Pi: {:.10f}\n", PI);
+    std::cout << std::format("Pi cientifico: {:.5e}\n", PI);
+
+    // consteval para configuración
+    consteval auto calcularFactor() {
+        return 1.8;  // Celsius a Fahrenheit
+    }
+
+    auto celsiusToFahrenheit = [](double c) {
+        return c * calcularFactor() + 32.0;
+    };
+
+    std::cout << std::format("25°C = {:.1f}°F\n", celsiusToFahrenheit(25.0));
+
+    // source_location para logging
+    auto log = [](std::string_view msg,
+                  std::source_location loc = std::source_location::current()) {
+        std::cout << std::format("[{}:{}] {}\n",
+                                  loc.file_name(), loc.line(), msg);
+    };
+
+    log("Sensor initialized");
+    log("Reading temperature...");
+
+    return 0;
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+C++20 es el estándar más grande de C++ con:
+
+• Concepts: restricciones para templates (Integral, Numeric, etc.).
+• Ranges: vistas (filter, transform, take) y algoritmos composables.
+• Coroutines: generadores, tasks, y funciones suspendibles.
+• Modules: alternativa a headers (export/import).
+• Operador <=>: genera automáticamente todos los operadores de comparación.
+• std::format: formateo type-safe como Python's format.
+• consteval: funciones que DEBEN evaluarse en compile-time.
+• constinit: variables con inicialización en compile-time.
+• std::span: vista contigua de arrays/vectors.
+• std::erase/erase_if: eliminación directa de contenedores.
+• starts_with/ends_with: para strings.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+1. Define un concept "Entero" y úsalo para restringir una función
+   template que calcule el factorial.
+
+2. Usa ranges para filtrar números pares, elevarlos al cuadrado,
+   y tomar los primeros 5 resultados.
+
+3. Implementa un generador de números primos usando una coroutine.
+
+4. Crea una clase "Vector3D" con operator<=> default.
+
+5. Usa std::format para generar una tabla de multiplicar formateada.
+
+6. Implementa una función consteval que calcule el máximo común
+   divisor en tiempo de compilación.
+
+7. Usa std::span para implementar una función que procese arrays
+   de tamaño fijo y vectores por igual.
+
+8. Crea un concept "Imprimible" que requiera operator<< y úsalo
+   para restringir una función template.
+
+9. Usa ranges::views::iota para generar una secuencia infinita
+   de números pares y tomar los primeros 20.
+
+10. Implementa un logger que use source_location para reportar
+    la ubicación exacta de cada mensaje.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Los concepts son como traits de C++11?
+R: Los concepts son una forma más limpia y directa de restringir
+templates. Los traits (type_traits) aún existen, pero concepts
+es la forma moderna.
+
+P: ¿Ranges reemplaza a los algoritmos de la STL?
+R: No los reemplaza, los complementa. ranges tiene versiones
+proyectadas de los algoritmos y vistas composables.
+
+P: ¿Los módulos son obligatorios?
+R: No, pero son el futuro. Reemplazan a los #include tradicionales
+con mejor aislamiento y tiempos de compilación más rápidos.
+
+P: ¿Puedo usar <=> con cualquier tipo?
+R: Sí, si está definido. auto operator<=>(const T&) = default genera
+automáticamente ==, !=, <, <=, >, >=.
+
+P: ¿std::format es mejor que printf o iostream?
+R: Sí, es más seguro, más rápido, y más expresivo que ambos.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseña una "Biblioteca de Procesamiento de Señales" en C++20 que:
+
+1. Use concepts para restringir tipos de señales (Digital, Analog, etc.).
+2. Use ranges para componer pipelines de filtros.
+3. Use coroutines para generar señales (generador de ondas).
+4. Use operator<=> para comparar señales por amplitud/frecuencia.
+5. Use std::format para generar reportes de análisis.
+6. Use consteval para calcular coeficientes de filtros en compile-time.
+7. Use std::span para procesar buffers sin copiar.
+8. Use source_location para logging de depuración.
+
+La biblioteca debe ser eficiente, expresiva, y demostrar el poder
+combinado de todas las características de C++20.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+C++20 es el estándar más ambicioso hasta la fecha. Concepts, ranges,
+coroutines, modules, <=>, std::format, consteval y constinit cambian
+fundamentalmente cómo escribimos C++. Dominar estas características
+te convierte en un programador de C++ moderno de élite.
+
+En el próximo capítulo exploraremos la concurrencia en C++ moderno:
+threads, mutexes, futures, y programación concurrente.
+
+================================================================================
+  PRÓXIMO CAPÍTULO: CONCURRENCIA
+================================================================================
+
+La concurrencia en C++ moderno con std::thread, std::async,
+std::future, std::mutex, y patrones de programación concurrente.
+
+================================================================================
+  FIN DEL CAPÍTULO 68
+================================================================================

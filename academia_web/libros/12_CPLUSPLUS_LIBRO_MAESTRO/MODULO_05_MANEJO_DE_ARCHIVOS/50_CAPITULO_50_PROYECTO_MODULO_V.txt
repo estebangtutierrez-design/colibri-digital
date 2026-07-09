@@ -1,0 +1,1023 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 50: PROYECTO MÓDULO V
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al proyecto final del Módulo V! Ha llegado el momento de integrar
+todo lo aprendido: fstream, lectura, escritura, archivos binarios, estados,
+stringstream, serialización, configuración y manejo de errores. Construiremos
+juntos un sistema completo de base de datos de registros de estudiantes con
+persistencia en archivos.
+
+FRASE
+-----
+"El conocimiento sin práctica es como un archivo sin datos: existe pero no
+sirve." — Anónimo
+
+OBJETIVOS
+---------
+• Integrar todos los conceptos del módulo en un proyecto real.
+• Diseñar una arquitectura limpia con separación de responsabilidades.
+• Implementar un sistema de persistencia con archivos binarios y texto.
+• Manejar errores de forma profesional en todos los niveles.
+• Producir código listo para extender y mantener.
+
+DESCRIPCIÓN DEL PROYECTO
+------------------------
+Desarrollaremos un "Sistema de Gestión de Estudiantes" (SGE) que permita:
+
+  - Registrar estudiantes con: ID, nombre, edad, promedio, materias.
+  - Almacenar los datos en un archivo binario con cabecera y versionado.
+  - Exportar/importar a formato CSV (texto).
+  - Cargar configuración desde un archivo INI.
+  - Manejar errores con logging y transacciones.
+  - Buscar, listar, agregar y eliminar estudiantes.
+  - Generar reportes estadísticos básicos.
+
+ESTRUCTURA DEL PROYECTO
+-----------------------
+  ├── main.cpp              ← Punto de entrada y menú interactivo
+  ├── Estudiante.h/cpp      ← Clase Estudiante y serialización
+  ├── BaseDatos.h/cpp       ← Gestor de archivos binarios
+  ├── Configuracion.h/cpp   ← Lector de configuración INI
+  ├── Exportador.h/cpp      ← Exportación/importación CSV
+  ├── Logger.h/cpp          ← Sistema de logging
+  └── Errores.h/cpp         ← Jerarquía de excepciones
+
+================================================================================
+CÓDIGO COMPLETO DEL PROYECTO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <map>
+#include <cstdint>
+#include <cstring>
+#include <iomanip>
+#include <algorithm>
+
+using namespace std;
+
+//==============================================================================
+// 1. SISTEMA DE LOGGING
+//==============================================================================
+
+class Logger
+{
+    ofstream archivo_;
+    bool consola_ = true;
+
+public:
+    Logger() {}
+
+    bool abrir(const string& nombre)
+    {
+        archivo_.open(nombre, ios::app);
+        return archivo_.is_open();
+    }
+
+    void info(const string& msg)
+    {
+        string entrada = "[INFO] " + msg;
+        if (archivo_.is_open()) archivo_ << entrada << "\n";
+        if (consola_) cout << "  " << entrada << "\n";
+    }
+
+    void warn(const string& msg)
+    {
+        string entrada = "[WARN] " + msg;
+        if (archivo_.is_open()) archivo_ << entrada << "\n";
+        if (consola_) cout << "  " << entrada << "\n";
+    }
+
+    void error(const string& msg)
+    {
+        string entrada = "[ERROR] " + msg;
+        if (archivo_.is_open()) archivo_ << entrada << "\n";
+        if (consola_) cerr << "  " << entrada << "\n";
+    }
+
+    void cerrar()
+    {
+        if (archivo_.is_open())
+            archivo_.close();
+    }
+};
+
+Logger log;
+
+//==============================================================================
+// 2. JERARQUÍA DE EXCEPCIONES
+//==============================================================================
+
+class ErrorEstudiante : public runtime_error
+{
+public:
+    using runtime_error::runtime_error;
+};
+
+class ErrorNoEncontrado : public ErrorEstudiante
+{
+public:
+    explicit ErrorNoEncontrado(int id)
+        : ErrorEstudiante("Estudiante con ID " + to_string(id) + " no encontrado") {}
+};
+
+class ErrorArchivoCorrupto : public ErrorEstudiante
+{
+public:
+    explicit ErrorArchivoCorrupto(const string& detalle)
+        : ErrorEstudiante("Archivo corrupto: " + detalle) {}
+};
+
+class ErrorValidacion : public ErrorEstudiante
+{
+public:
+    explicit ErrorValidacion(const string& campo)
+        : ErrorEstudiante("Validación fallida: " + campo) {}
+};
+
+//==============================================================================
+// 3. CLASE ESTUDIANTE
+//==============================================================================
+
+struct Materia
+{
+    string nombre;
+    double nota;
+
+    string serializar() const
+    {
+        ostringstream ss;
+        ss << nombre << ":" << fixed << setprecision(2) << nota;
+        return ss.str();
+    }
+
+    static Materia deserializar(const string& s)
+    {
+        Materia m;
+        size_t pos = s.find(':');
+        if (pos != string::npos)
+        {
+            m.nombre = s.substr(0, pos);
+            m.nota = stod(s.substr(pos + 1));
+        }
+        return m;
+    }
+};
+
+class Estudiante
+{
+    static constexpr size_t MAX_NOMBRE = 64;
+    static constexpr size_t MAX_MATERIAS = 20;
+
+public:
+    int32_t id = 0;
+    char nombre[MAX_NOMBRE]{};
+    int32_t edad = 0;
+    double promedio = 0.0;
+    uint32_t num_materias = 0;
+    Materia materias[MAX_MATERIAS];
+
+    Estudiante() = default;
+
+    Estudiante(int id_, const string& nombre_, int edad_)
+        : id(id_), edad(edad_)
+    {
+        strncpy(nombre, nombre_.c_str(), MAX_NOMBRE - 1);
+        nombre[MAX_NOMBRE - 1] = '\0';
+        recalcularPromedio();
+    }
+
+    void agregarMateria(const string& nom, double nota)
+    {
+        if (num_materias >= MAX_MATERIAS)
+            throw ErrorValidacion("Máximo de materias alcanzado");
+        if (nota < 0.0 || nota > 10.0)
+            throw ErrorValidacion("Nota fuera de rango (0-10)");
+
+        materias[num_materias++] = {nom, nota};
+        recalcularPromedio();
+    }
+
+    void recalcularPromedio()
+    {
+        if (num_materias == 0) { promedio = 0.0; return; }
+        double suma = 0.0;
+        for (uint32_t i = 0; i < num_materias; ++i)
+            suma += materias[i].nota;
+        promedio = suma / num_materias;
+    }
+
+    string toString() const
+    {
+        ostringstream ss;
+        ss << "ID: " << id
+           << " | Nombre: " << nombre
+           << " | Edad: " << edad
+           << " | Promedio: " << fixed << setprecision(2) << promedio;
+        if (num_materias > 0)
+        {
+            ss << " | Materias: ";
+            for (uint32_t i = 0; i < num_materias; ++i)
+            {
+                if (i > 0) ss << ", ";
+                ss << materias[i].nombre << "(" << materias[i].nota << ")";
+            }
+        }
+        return ss.str();
+    }
+
+    string toCSV() const
+    {
+        ostringstream ss;
+        ss << id << "," << nombre << "," << edad << "," << promedio;
+        for (uint32_t i = 0; i < num_materias; ++i)
+            ss << "," << materias[i].serializar();
+        return ss.str();
+    }
+
+    static Estudiante fromCSV(const string& linea)
+    {
+        istringstream ss(linea);
+        string campo;
+        Estudiante e;
+
+        getline(ss, campo, ','); e.id = stoi(campo);
+        getline(ss, campo, ','); strncpy(e.nombre, campo.c_str(), MAX_NOMBRE - 1);
+        getline(ss, campo, ','); e.edad = stoi(campo);
+        getline(ss, campo, ','); e.promedio = stod(campo);
+
+        e.num_materias = 0;
+        while (getline(ss, campo, ','))
+        {
+            if (e.num_materias >= MAX_MATERIAS) break;
+            e.materias[e.num_materias++] = Materia::deserializar(campo);
+        }
+
+        return e;
+    }
+};
+
+//==============================================================================
+// 4. GESTOR DE ARCHIVOS BINARIOS (BASE DE DATOS)
+//==============================================================================
+
+class BaseDatosEstudiantes
+{
+    static constexpr uint32_t MAGIC = 0x45535444; // "ESTD"
+    static constexpr uint32_t VERSION = 1;
+
+    struct Cabecera
+    {
+        uint32_t magic;
+        uint32_t version;
+        uint64_t num_estudiantes;
+        uint64_t timestamp;
+        uint32_t checksum;
+        char reservado[32];
+    };
+
+    string archivo_;
+    vector<Estudiante> estudiantes_;
+
+    uint32_t calcularChecksum() const
+    {
+        uint32_t sum = 0;
+        for (const auto& e : estudiantes_)
+        {
+            const char* data = reinterpret_cast<const char*>(&e);
+            for (size_t i = 0; i < sizeof(Estudiante); ++i)
+                sum += static_cast<unsigned char>(data[i]);
+        }
+        return sum;
+    }
+
+public:
+    explicit BaseDatosEstudiantes(const string& archivo)
+        : archivo_(archivo) {}
+
+    bool cargar()
+    {
+        ifstream in(archivo_, ios::binary);
+        if (!in)
+        {
+            log.warn("No existe base de datos. Se creará una nueva.");
+            return false;
+        }
+
+        Cabecera cab;
+        in.read(reinterpret_cast<char*>(&cab), sizeof(Cabecera));
+
+        if (in.gcount() != sizeof(Cabecera))
+            throw ErrorArchivoCorrupto("Cabecera incompleta");
+
+        if (cab.magic != MAGIC)
+            throw ErrorArchivoCorrupto("Magic number inválido");
+
+        if (cab.version != VERSION)
+            throw ErrorArchivoCorrupto("Versión no soportada: " + to_string(cab.version));
+
+        estudiantes_.resize(cab.num_estudiantes);
+        for (auto& e : estudiantes_)
+        {
+            in.read(reinterpret_cast<char*>(&e), sizeof(Estudiante));
+            if (in.gcount() != sizeof(Estudiante))
+                throw ErrorArchivoCorrupto("Registro incompleto");
+        }
+
+        uint32_t checksum_calc = calcularChecksum();
+        if (cab.checksum != checksum_calc)
+            throw ErrorArchivoCorrupto("Checksum no coincide");
+
+        log.info("Cargados " + to_string(estudiantes_.size()) + " estudiantes");
+        return true;
+    }
+
+    void guardar()
+    {
+        string temporal = archivo_ + ".tmp";
+
+        ofstream out(temporal, ios::binary);
+        if (!out)
+            throw ErrorEstudiante("No se pudo crear archivo temporal");
+
+        Cabecera cab;
+        cab.magic = MAGIC;
+        cab.version = VERSION;
+        cab.num_estudiantes = estudiantes_.size();
+        cab.timestamp = time(nullptr);
+        cab.checksum = calcularChecksum();
+        memset(cab.reservado, 0, sizeof(cab.reservado));
+
+        out.write(reinterpret_cast<char*>(&cab), sizeof(Cabecera));
+
+        for (const auto& e : estudiantes_)
+            out.write(reinterpret_cast<const char*>(&e), sizeof(Estudiante));
+
+        out.close();
+
+        if (out.fail())
+        {
+            remove(temporal.c_str());
+            throw ErrorEstudiante("Error al escribir archivo temporal");
+        }
+
+        if (rename(temporal.c_str(), archivo_.c_str()) != 0)
+        {
+            remove(temporal.c_str());
+            throw ErrorEstudiante("Error al renombrar archivo temporal");
+        }
+
+        log.info("Guardados " + to_string(estudiantes_.size()) + " estudiantes");
+    }
+
+    void agregar(const Estudiante& e)
+    {
+        estudiantes_.push_back(e);
+        log.info("Agregado: " + string(e.nombre));
+    }
+
+    Estudiante& buscarPorID(int id)
+    {
+        for (auto& e : estudiantes_)
+            if (e.id == id)
+                return e;
+        throw ErrorNoEncontrado(id);
+    }
+
+    bool eliminar(int id)
+    {
+        auto it = remove_if(estudiantes_.begin(), estudiantes_.end(),
+            [id](const Estudiante& e) { return e.id == id; });
+
+        if (it == estudiantes_.end())
+            return false;
+
+        estudiantes_.erase(it, estudiantes_.end());
+        log.info("Eliminado estudiante ID " + to_string(id));
+        return true;
+    }
+
+    vector<Estudiante> buscarPorNombre(const string& nombre) const
+    {
+        vector<Estudiante> resultado;
+        for (const auto& e : estudiantes_)
+        {
+            string nom(e.nombre);
+            if (nom.find(nombre) != string::npos)
+                resultado.push_back(e);
+        }
+        return resultado;
+    }
+
+    void listarTodos() const
+    {
+        if (estudiantes_.empty())
+        {
+            cout << "  No hay estudiantes registrados.\n";
+            return;
+        }
+
+        cout << "  " << string(80, '-') << "\n";
+        cout << "  " << left << setw(5) << "ID"
+             << setw(30) << "Nombre"
+             << setw(8) << "Edad"
+             << setw(10) << "Promedio"
+             << setw(15) << "Materias"
+             << "\n";
+        cout << "  " << string(80, '-') << "\n";
+
+        for (const auto& e : estudiantes_)
+        {
+            cout << "  " << setw(5) << e.id
+                 << setw(30) << e.nombre
+                 << setw(8) << e.edad
+                 << setw(10) << fixed << setprecision(2) << e.promedio
+                 << setw(15) << e.num_materias
+                 << "\n";
+        }
+        cout << "  " << string(80, '-') << "\n";
+        cout << "  Total: " << estudiantes_.size() << " estudiantes\n";
+    }
+
+    void mostrarEstadisticas() const
+    {
+        if (estudiantes_.empty())
+        {
+            cout << "  No hay datos para estadísticas.\n";
+            return;
+        }
+
+        double suma_prom = 0, max_prom = 0, min_prom = 10;
+        int suma_edad = 0;
+        map<string, int> materia_count;
+
+        for (const auto& e : estudiantes_)
+        {
+            suma_prom += e.promedio;
+            suma_edad += e.edad;
+
+            if (e.promedio > max_prom) max_prom = e.promedio;
+            if (e.promedio < min_prom) min_prom = e.promedio;
+
+            for (uint32_t i = 0; i < e.num_materias; ++i)
+                materia_count[e.materias[i].nombre]++;
+        }
+
+        cout << "  --- Estadísticas ---\n";
+        cout << "  Total estudiantes: " << estudiantes_.size() << "\n";
+        cout << "  Edad promedio: "
+             << fixed << setprecision(1)
+             << (double)suma_edad / estudiantes_.size() << "\n";
+        cout << "  Promedio general: "
+             << suma_prom / estudiantes_.size() << "\n";
+        cout << "  Mejor promedio: " << max_prom << "\n";
+        cout << "  Peor promedio: " << min_prom << "\n";
+        cout << "  Materias más cursadas:\n";
+
+        vector<pair<string, int>> ordenado(materia_count.begin(), materia_count.end());
+        sort(ordenado.begin(), ordenado.end(),
+             [](auto& a, auto& b) { return a.second > b.second; });
+
+        for (size_t i = 0; i < min(size_t(5), ordenado.size()); ++i)
+            cout << "    " << ordenado[i].first << ": "
+                 << ordenado[i].second << " estudiantes\n";
+    }
+};
+
+//==============================================================================
+// 5. EXPORTADOR CSV
+//==============================================================================
+
+class ExportadorCSV
+{
+public:
+    static void exportar(const string& archivo,
+                         const vector<Estudiante>& estudiantes)
+    {
+        ofstream out(archivo);
+        if (!out)
+            throw ErrorEstudiante("No se pudo crear " + archivo);
+
+        out << "ID,Nombre,Edad,Promedio,Materias\n";
+        for (const auto& e : estudiantes)
+            out << e.toCSV() << "\n";
+
+        out.close();
+        log.info("Exportados " + to_string(estudiantes.size()) +
+                 " estudiantes a " + archivo);
+    }
+
+    static vector<Estudiante> importar(const string& archivo)
+    {
+        ifstream in(archivo);
+        if (!in)
+            throw ErrorEstudiante("No se pudo abrir " + archivo);
+
+        vector<Estudiante> resultado;
+        string linea;
+
+        getline(in, linea); // cabecera
+
+        int num_linea = 1;
+        while (getline(in, linea))
+        {
+            num_linea++;
+            try
+            {
+                resultado.push_back(Estudiante::fromCSV(linea));
+            }
+            catch (const exception& e)
+            {
+                log.warn("Línea " + to_string(num_linea) +
+                         ": error al importar: " + e.what());
+            }
+        }
+
+        log.info("Importados " + to_string(resultado.size()) +
+                 " estudiantes desde " + archivo);
+        return resultado;
+    }
+};
+
+//==============================================================================
+// 6. CONFIGURACIÓN INI
+//==============================================================================
+
+class Configuracion
+{
+    map<string, string> datos_;
+
+public:
+    void cargar(const string& archivo)
+    {
+        ifstream in(archivo);
+        if (!in)
+        {
+            log.warn("No se encontró " + archivo + ", usando valores por defecto");
+            datos_["db.archivo"] = "estudiantes.dat";
+            datos_["csv.exportar"] = "estudiantes.csv";
+            datos_["csv.importar"] = "estudiantes_import.csv";
+            datos_["log.archivo"] = "sge.log";
+            return;
+        }
+
+        string linea;
+        while (getline(in, linea))
+        {
+            size_t eq = linea.find('=');
+            if (eq == string::npos) continue;
+            string k = linea.substr(0, eq);
+            string v = linea.substr(eq + 1);
+
+            auto trim = [](string& s) {
+                s.erase(0, s.find_first_not_of(" \t"));
+                s.erase(s.find_last_not_of(" \t") + 1);
+            };
+            trim(k); trim(v);
+            datos_[k] = v;
+        }
+        log.info("Configuración cargada desde " + archivo);
+    }
+
+    string get(const string& clave, const string& def = "") const
+    {
+        auto it = datos_.find(clave);
+        return (it != datos_.end()) ? it->second : def;
+    }
+};
+
+//==============================================================================
+// 7. MENÚ INTERACTIVO
+//==============================================================================
+
+class Menu
+{
+    BaseDatosEstudiantes db_;
+    Configuracion config_;
+    int next_id_ = 1;
+
+    void mostrarBienvenida()
+    {
+        cout << "\n";
+        cout << "  ========================================\n";
+        cout << "    SISTEMA DE GESTIÓN DE ESTUDIANTES\n";
+        cout << "    C++ Master Book  Módulo V\n";
+        cout << "  ========================================\n";
+    }
+
+    void mostrarOpciones()
+    {
+        cout << "\n";
+        cout << "  1. Listar todos los estudiantes\n";
+        cout << "  2. Agregar estudiante\n";
+        cout << "  3. Buscar estudiante por ID\n";
+        cout << "  4. Buscar estudiante por nombre\n";
+        cout << "  5. Agregar materia a estudiante\n";
+        cout << "  6. Eliminar estudiante\n";
+        cout << "  7. Mostrar estadísticas\n";
+        cout << "  8. Exportar a CSV\n";
+        cout << "  9. Importar desde CSV\n";
+        cout << "  10. Guardar y salir\n";
+        cout << "  0. Salir sin guardar\n";
+        cout << "  Opción: ";
+    }
+
+    void opcionListar()
+    {
+        db_.listarTodos();
+    }
+
+    void opcionAgregar()
+    {
+        cout << "  Nombre: ";
+        string nombre; getline(cin, nombre);
+
+        cout << "  Edad: ";
+        string edad_str; getline(cin, edad_str);
+
+        try
+        {
+            int edad = stoi(edad_str);
+            if (edad < 1 || edad > 120)
+                throw ErrorValidacion("Edad fuera de rango");
+
+            Estudiante e(next_id_++, nombre, edad);
+            db_.agregar(e);
+            cout << "  Estudiante agregado con ID " << e.id << "\n";
+        }
+        catch (const ErrorValidacion& e)
+        {
+            log.error(e.what());
+        }
+        catch (...)
+        {
+            log.error("Edad inválida");
+        }
+    }
+
+    void opcionBuscarID()
+    {
+        cout << "  ID: ";
+        string id_str; getline(cin, id_str);
+
+        try
+        {
+            int id = stoi(id_str);
+            auto& e = db_.buscarPorID(id);
+            cout << "  " << e.toString() << "\n";
+        }
+        catch (const ErrorNoEncontrado& e)
+        {
+            log.error(e.what());
+        }
+        catch (...)
+        {
+            log.error("ID inválido");
+        }
+    }
+
+    void opcionBuscarNombre()
+    {
+        cout << "  Nombre (o parte): ";
+        string nombre; getline(cin, nombre);
+
+        auto resultados = db_.buscarPorNombre(nombre);
+        if (resultados.empty())
+        {
+            cout << "  No se encontraron estudiantes.\n";
+            return;
+        }
+
+        cout << "  Resultados:\n";
+        for (const auto& e : resultados)
+            cout << "    " << e.toString() << "\n";
+    }
+
+    void opcionAgregarMateria()
+    {
+        cout << "  ID del estudiante: ";
+        string id_str; getline(cin, id_str);
+
+        try
+        {
+            int id = stoi(id_str);
+            auto& e = db_.buscarPorID(id);
+
+            cout << "  Nombre de la materia: ";
+            string materia; getline(cin, materia);
+
+            cout << "  Nota (0-10): ";
+            string nota_str; getline(cin, nota_str);
+            double nota = stod(nota_str);
+
+            e.agregarMateria(materia, nota);
+            e.recalcularPromedio();
+            cout << "  Materia agregada. " << e.toString() << "\n";
+        }
+        catch (const exception& e)
+        {
+            log.error(e.what());
+        }
+    }
+
+    void opcionEliminar()
+    {
+        cout << "  ID del estudiante a eliminar: ";
+        string id_str; getline(cin, id_str);
+
+        try
+        {
+            int id = stoi(id_str);
+            if (db_.eliminar(id))
+                cout << "  Estudiante eliminado.\n";
+            else
+                cout << "  Estudiante no encontrado.\n";
+        }
+        catch (...)
+        {
+            log.error("ID inválido");
+        }
+    }
+
+    void opcionEstadisticas()
+    {
+        db_.mostrarEstadisticas();
+    }
+
+    void opcionExportar()
+    {
+        try
+        {
+            string archivo = config_.get("csv.exportar", "estudiantes.csv");
+            ExportadorCSV::exportar(archivo, db_);
+            cout << "  Exportación completada.\n";
+        }
+        catch (const exception& e)
+        {
+            log.error(e.what());
+        }
+    }
+
+    void opcionImportar()
+    {
+        try
+        {
+            string archivo = config_.get("csv.importar", "estudiantes_import.csv");
+            auto importados = ExportadorCSV::importar(archivo);
+
+            for (auto& e : importados)
+            {
+                e.id = next_id_++;
+                db_.agregar(e);
+            }
+
+            cout << "  Importación completada: " << importados.size()
+                 << " estudiantes.\n";
+        }
+        catch (const exception& e)
+        {
+            log.error(e.what());
+        }
+    }
+
+    void opcionGuardarSalir()
+    {
+        try
+        {
+            db_.guardar();
+            log.info("Datos guardados. ¡Hasta luego!");
+        }
+        catch (const exception& e)
+        {
+            log.error("Error al guardar: " + string(e.what()));
+        }
+    }
+
+public:
+    Menu() : db_("estudiantes.dat") {}
+
+    void ejecutar()
+    {
+        config_.cargar("sge.conf");
+        log.abrir(config_.get("log.archivo", "sge.log"));
+
+        log.info("=== INICIO DEL SISTEMA ===");
+
+        try
+        {
+            db_.cargar();
+            // Calcular next_id
+            try
+            {
+                for (int id = 1; ; ++id)
+                {
+                    db_.buscarPorID(id);
+                    next_id_ = id + 1;
+                }
+            }
+            catch (const ErrorNoEncontrado&)
+            {
+                // Primer ID disponible
+            }
+        }
+        catch (const ErrorArchivoCorrupto& e)
+        {
+            log.error("Base de datos corrupta: " + string(e.what()));
+            log.info("Se creará una nueva base de datos.");
+        }
+
+        mostrarBienvenida();
+
+        while (true)
+        {
+            mostrarOpciones();
+            string opcion_str;
+            getline(cin, opcion_str);
+
+            if (opcion_str.empty()) continue;
+
+            try
+            {
+                switch (opcion_str[0])
+                {
+                    case '1': opcionListar(); break;
+                    case '2': opcionAgregar(); break;
+                    case '3': opcionBuscarID(); break;
+                    case '4': opcionBuscarNombre(); break;
+                    case '5': opcionAgregarMateria(); break;
+                    case '6': opcionEliminar(); break;
+                    case '7': opcionEstadisticas(); break;
+                    case '8': opcionExportar(); break;
+                    case '9': opcionImportar(); break;
+                    case '0':
+                        log.info("Saliendo sin guardar.");
+                        log.cerrar();
+                        return;
+                    case '10':
+                    case 'S':
+                    case 's':
+                        opcionGuardarSalir();
+                        log.cerrar();
+                        return;
+                    default:
+                        cout << "  Opción inválida.\n";
+                }
+            }
+            catch (const exception& e)
+            {
+                log.error("Error en operación: " + string(e.what()));
+            }
+        }
+    }
+};
+
+//==============================================================================
+// 8. MAIN
+//==============================================================================
+
+int main()
+{
+    try
+    {
+        Menu menu;
+        menu.ejecutar();
+    }
+    catch (const exception& e)
+    {
+        cerr << "Error fatal del sistema: " << e.what() << "\n";
+        return 1;
+    }
+
+    cout << "\n  ========================================\n";
+    cout << "    PROYECTO MÓDULO V COMPLETADO\n";
+    cout << "    ¡Felicidades!\n";
+    cout << "  ========================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN DEL PROYECTO
+--------------------
+El Sistema de Gestión de Estudiantes integra todos los conceptos del módulo:
+
+  • Fstream (Cap. 41): flujos RAII para archivos binarios y texto.
+  • Lectura (Cap. 42): getline, operator>> para CSV y menú interactivo.
+  • Escritura (Cap. 43): operator<<, write(), manipulación con setw.
+  • Archivos Binarios (Cap. 44): struct POD, cabecera con magic number,
+    versionado, checksum, escritura atómica con temporal + rename.
+  • Estados (Cap. 45): verificación con good(), fail(), bad() en cada
+    operación; excepciones configuradas para badbit.
+  • Stringstream (Cap. 46): serialización CSV, construcción de mensajes,
+    parseo de campos, toCSV() y fromCSV().
+  • Serialización (Cap. 47): struct Estudiante serializado directamente,
+    cabecera con versión, checksum, import/export CSV.
+  • Configuración (Cap. 48): parser INI con valores por defecto.
+  • Errores (Cap. 49): jerarquía de excepciones, logging, transacciones
+    con archivo temporal, recuperación de errores.
+
+EJERCICIOS DE EXTENSIÓN
+-----------------------
+1. Añade un campo "fecha de ingreso" a Estudiante y actualiza la
+   serialización a versión 2 del formato binario.
+
+2. Implementa búsqueda por rango de edad o rango de promedio.
+
+3. Añade ordenación: listar por nombre, por promedio, o por ID.
+
+4. Implementa un sistema de autenticación simple (login con usuario y
+   contraseña guardados en un archivo cifrado).
+
+5. Añade paginación al listado (mostrar de a 10 estudiantes).
+
+6. Implementa un reporte en HTML que liste todos los estudiantes.
+
+7. Añade un sistema de backups automáticos cada vez que se guarda.
+
+8. Implementa un modo "solo lectura" que cargue los datos pero no permita
+   modificarlos.
+
+9. Añade un histórico de cambios (audit log) que registre cada operación
+   con timestamp, usuario y detalle.
+
+10. Implementa un módulo de búsqueda avanzada con filtros combinados:
+    (nombre contiene "x" AND edad > 20) OR promedio > 8.5.
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: Por qué usamos un archivo temporal y rename en lugar de escribir directo?
+R: Para garantizar atomicidad. Si el programa se interrumpe mientras escribe
+   el archivo principal, este quedaría corrupto. Con el temporal + rename,
+   el archivo original solo se reemplaza cuando la escritura está completa.
+
+P: Por qué la struct Estudiante tiene tamaño fijo?
+R: Para poder usar write()/read() directamente con sizeof(Estudiante). Los
+   strings de tamaño fijo (char[]) garantizan que el struct sea POD y que
+   el tamaño sea conocido y constante.
+
+P: Cómo podría hacer que el nombre sea de longitud variable?
+R: Usando serialización manual: escribir primero la longitud y luego los
+   caracteres (como hicimos en capítulos anteriores). Esto haría que el
+   archivo no tenga registros de tamaño fijo.
+
+P: Por qué separar el código en tantas clases?
+R: Separación de responsabilidades: logger, base de datos, exportador,
+   configuración y menú son conceptos independientes. Esto facilita el
+   mantenimiento, las pruebas y la extensión.
+
+P: Cómo añado un nuevo campo sin romper la compatibilidad?
+R: Incrementa el número de versión en la cabecera. El cargador debe
+   detectar la versión y leer el formato correspondiente.
+
+DESAFÍO DEL ARQUITECTO (EXTRA)
+------------------------------
+Extiende el SGE para convertirte en un "Sistema de Gestión Académica
+Completo" (SIGAC) con:
+
+  - Múltiples tablas: Estudiantes, Profesores, Cursos, Inscripciones.
+  - Relaciones entre tablas con índices (un estudiante se inscribe en
+    varios cursos, un curso tiene varios estudiantes).
+  - Archivos de índice separados para búsquedas rápidas por ID y nombre.
+  - Un sistema de consultas estilo SQL: SELECT, WHERE, ORDER BY.
+  - Transacciones multi-tabla: si falla una operación, todas las tablas
+    involucradas se revierten.
+  - Caché en memoria para lecturas frecuentes.
+  - Compactación: eliminar registros marcados como borrados.
+  - Integridad referencial: no se puede eliminar un curso con estudiantes
+    inscritos.
+  - Exportación/importación del esquema completo.
+
+Este desafío integra TODO el Módulo V y te prepara para construir sistemas
+de bases de datos reales.
+
+CIERRE DEL MÓDULO
+-----------------
+¡Felicidades! Has completado el Módulo V de C++ Master Book. Has recorrido
+un largo camino desde la apertura básica de archivos hasta la construcción
+de un sistema completo de persistencia. Ahora sabes:
+
+  • Leer y escribir archivos de texto y binarios con ifstream/ofstream.
+  • Manejar estados de flujo y errores profesionalmente.
+  • Serializar objetos complejos con versionado y checksum.
+  • Parsear configuraciones en múltiples formatos.
+  • Construir sistemas robustos con transacciones y logging.
+
+Estas habilidades son fundamentales para cualquier aplicación del mundo real.
+En los siguientes módulos exploraremos temas avanzados como programación
+orientada a objetos profunda, templates, y la biblioteca estándar de C++.
+
+PRÓXIMO MÓDULO
+--------------
+Módulo VI: PROGRAMACIÓN ORIENTADA A OBJETOS AVANZADA
+
+================================================================================
+  FIN DEL MÓDULO V  C++ MASTER BOOK
+================================================================================

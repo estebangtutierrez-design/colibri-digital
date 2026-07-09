@@ -1,0 +1,1022 @@
+================================================================================
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 73: DEBUGGING CON GDB
+================================================================================
+
+________________________________________________________________________________
+  BIENVENIDA
+________________________________________________________________________________
+
+Bienvenido al Capítulo 73. Hasta ahora hemos aprendido a construir
+software con buena arquitectura y módulos bien diseñados. Pero incluso
+el mejor código tiene bugs. La diferencia entre un programador amateur
+y un profesional es cómo encuentra y corrige esos bugs.
+
+GDB (GNU Debugger) es la herramienta de depuración más poderosa para
+C en sistemas Unix. En este capítulo aprenderás a usarlo como un
+verdadero detective de software: estableciendo puntos de ruptura,
+inspeccionando memoria, analizando la pila de llamadas, y mucho más.
+
+Depurar no es un arte oscuro. Es una ciencia que se aprende con
+práctica y con las herramientas adecuadas.
+
+________________________________________________________________________________
+  FRASE DEL CAPÍTULO
+________________________________________________________________________________
+
+"Depurar es como ser el detective en una película de crimen donde
+tú también eres el asesino. No busques culpables: busca entender."
+— Lucas Ega
+
+________________________________________________________________________________
+  OBJETIVOS DEL CAPÍTULO
+________________________________________________________________________________
+
+  ✅ Dominar los comandos esenciales de GDB.
+  ✅ Establecer breakpoints, watchpoints y catchpoints.
+  ✅ Navegar por la pila de llamadas (backtrace).
+  ✅ Inspeccionar variables, memoria y registros.
+  ✅ Depurar programas con múltiples hilos y procesos.
+
+________________________________________________________________________________
+  CONTENIDO
+________________________________________________________________________________
+
+=== 1. INTRODUCCIÓN A GDB ===
+
+GDB (GNU Debugger) es un depurador interactivo que te permite:
+
+  - Ejecutar un programa paso a paso.
+  - Detener la ejecución en puntos específicos.
+  - Inspeccionar el valor de variables y memoria.
+  - Modificar variables en tiempo de ejecución.
+  - Analizar la pila de llamadas cuando ocurre un crash.
+
+Compilación para depuración:
+
+```bash
+# El flag -g incluye información de depuración en el ejecutable
+gcc -g -o programa programa.c
+
+# Para optimización mínima con información de depuración
+gcc -g -Og -o programa programa.c
+
+# NUNCA uses -g con -O2/-O3 para depurar (las variables pueden
+# desaparecer y el código se reordena)
+```
+
+Inicio de GDB:
+
+```bash
+# Iniciar con un ejecutable
+gdb ./programa
+
+# Iniciar con un core dump (post-mortem)
+gdb ./programa core
+
+# Adjuntarse a un proceso en ejecución
+gdb -p 1234
+```
+
+=== 2. COMANDOS ESENCIALES DE GDB ===
+
+```c
+// programa_ejemplo.c - Para nuestras demostraciones
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    char  nombre[64];
+    int   edad;
+    float altura;
+} Persona;
+
+void saludar(Persona* p) {
+    printf("Hola, soy %s y tengo %d años.\n",
+           p->nombre, p->edad);
+}
+
+int calcular_imc(Persona* p) {
+    // IMC = peso / (altura * altura)
+    // Bug: no hay verificación de altura > 0
+    float imc = 75.0f / (p->altura * p->altura);
+    return (int)imc;
+}
+
+int main(void) {
+    Persona* p = malloc(sizeof(Persona));
+    if (!p) return 1;
+
+    strcpy(p->nombre, "Lucas");
+    p->edad = 30;
+    p->altura = 1.75f;
+
+    saludar(p);
+
+    int imc = calcular_imc(p);
+    printf("IMC: %d\n", imc);
+
+    free(p);
+    return 0;
+}
+```
+
+Compilar y depurar:
+
+```bash
+gcc -g -o prog programa_ejemplo.c
+gdb ./prog
+```
+
+Comandos básicos dentro de GDB:
+
+```
+(gdb) break main          # Poner breakpoint en main
+(gdb) run                 # Ejecutar el programa
+(gdb) next                # Ejecutar siguiente línea (sin entrar en funciones)
+(gdb) step                # Ejecutar siguiente línea (entrando en funciones)
+(gdb) continue            # Continuar hasta el siguiente breakpoint
+(gdb) print variable      # Mostrar valor de variable
+(gdb) print *p            # Mostrar contenido apuntado por p
+(gdb) list                # Mostrar código fuente alrededor de la línea actual
+(gdb) info locals         # Mostrar variables locales
+(gdb) backtrace           # Mostrar pila de llamadas
+(gdb) quit                # Salir de GDB
+```
+
+Sesión de depuración paso a paso:
+
+```
+$ gdb ./prog
+(gdb) break main
+Punto de ruptura 1 en 0x1234: archivo programa_ejemplo.c, línea 28.
+(gdb) run
+Iniciando programa: ./prog
+
+Breakpoint 1, main () at programa_ejemplo.c:28
+28	    Persona* p = malloc(sizeof(Persona));
+
+(gdb) next
+29	    if (!p) return 1;
+
+(gdb) print p
+$1 = (Persona *) 0x5555555592a0
+
+(gdb) next
+30	    strcpy(p->nombre, "Lucas");
+
+(gdb) print *p
+$2 = {nombre = "\000", edad = 0, altura = 0}
+
+(gdb) next
+31	    p->edad = 30;
+
+(gdb) print p->nombre
+$3 = "Lucas"
+
+(gdb) next
+32	    p->altura = 1.75f;
+
+(gdb) next
+34	    saludar(p);
+
+(gdb) step
+saludar (p=0x5555555592a0) at programa_ejemplo.c:11
+11	    printf("Hola, soy %s y tengo %d años.\n", p->nombre, p->edad);
+
+(gdb) print p->nombre
+$4 = "Lucas"
+
+(gdb) print p->edad
+$5 = 30
+
+(gdb) finish
+Run till exit from #0  saludar (p=0x5555555592a0) at programa_ejemplo.c:11
+Hola, soy Lucas y tengo 30 años.
+0x00005555555551bf in main () at programa_ejemplo.c:35
+
+(gdb) next
+36	    int imc = calcular_imc(p);
+
+(gdb) step
+calcular_imc (p=0x5555555592a0) at programa_ejemplo.c:18
+18	    float imc = 75.0f / (p->altura * p->altura);
+
+(gdb) print p->altura
+$6 = 1.75
+
+(gdb) next
+19	    return (int)imc;
+
+(gdb) print imc
+$7 = 24.4897957
+
+(gdb) continue
+Continuando.
+IMC: 24
+[Inferior 1 (process 12345) exited normally]
+(gdb) quit
+```
+
+=== 3. BREAKPOINTS AVANZADOS ===
+
+Los breakpoints (puntos de ruptura) son la herramienta más usada en GDB.
+
+TIPOS DE BREAKPOINTS:
+
+```bash
+# Breakpoint en una línea específica
+break programa.c:42
+
+# Breakpoint en una función
+break calcular_imc
+
+# Breakpoint condicional
+break programa.c:42 if x > 10
+
+# Breakpoint temporal (se elimina después de la primera vez)
+tbreak main
+
+# Breakpoint con ignorar (no se detiene las primeras N veces)
+ignore 1 5
+
+# Breakpoint en una dirección de memoria
+break *0x555555555151
+```
+
+WATCHPOINTS: Se detienen cuando una variable cambia.
+
+```bash
+# Detenerse cuando 'x' cambie
+watch x
+
+# Detenerse cuando 'x' se lea
+rwatch x
+
+# Detenerse cuando 'x' cambie o se lea
+awatch x
+
+# Watchpoint condicional
+watch x if x > 100
+```
+
+CATCHPOINTS: Se detienen en eventos específicos.
+
+```bash
+# Detenerse en llamadas a malloc
+catch syscall malloc
+
+# Detenerse cuando se lanza una señal
+catch signal SIGSEGV
+
+# Detenerse cuando se lanza una excepción de C++
+catch throw
+
+# Detenerse en fork/clone
+catch fork
+catch vfork
+catch clone
+```
+
+=== 4. NAVEGACIÓN POR LA PILA (BACKTRACE) ===
+
+Cuando un programa falla, la pila de llamadas muestra el camino
+que llevó al error.
+
+```c
+// crash.c - Programa con fallo
+#include <stdio.h>
+
+void funcion_c() {
+    int* p = NULL;
+    *p = 42;  // Segmentation fault!
+}
+
+void funcion_b() {
+    funcion_c();
+}
+
+void funcion_a() {
+    funcion_b();
+}
+
+int main() {
+    funcion_a();
+    return 0;
+}
+```
+
+Depuración post-mortem:
+
+```bash
+$ gcc -g -o crash crash.c
+$ ./crash
+Segmentation fault (core dumped)
+
+$ gdb ./crash core
+```
+
+Sesión GDB:
+
+```
+(gdb) core core
+[New LWP 12345]
+Core was generated by `./crash`.
+Program terminated with signal SIGSEGV, Segmentation fault.
+#0  0x0000555555555156 in funcion_c () at crash.c:5
+5	    *p = 42;
+
+(gdb) backtrace
+#0  funcion_c () at crash.c:5
+#1  0x0000555555555166 in funcion_b () at crash.c:9
+#2  0x0000555555555176 in funcion_a () at crash.c:13
+#3  0x0000555555555186 in main () at crash.c:17
+
+(gdb) info frame
+Stack level 0, frame at 0x7fffffffe220:
+ rip = 0x555555555156 in funcion_c (crash.c:5)
+ saved rip = 0x555555555166 in funcion_b (crash.c:9)
+ called by frame at 0x7fffffffe230
+ Arglist at 0x7fffffffe210, args:
+ Locals at 0x7fffffffe210, Previous frame's sp is 0x7fffffffe220
+
+(gdb) frame 2
+#2  0x0000555555555176 in funcion_a () at crash.c:13
+13	    funcion_b();
+
+(gdb) list
+13	    funcion_b();
+14	}
+15	
+16	int main() {
+17	    funcion_a();
+18	    return 0;
+19	}
+
+(gdb) up
+#3  0x0000555555555186 in main () at crash.c:17
+17	    funcion_a();
+
+(gdb) down
+#2  0x0000555555555176 in funcion_a () at crash.c:13
+13	    funcion_b();
+
+(gdb) info locals
+No locals.
+```
+
+=== 5. INSPECCIÓN DE MEMORIA ===
+
+Una de las características más poderosas de GDB es la capacidad
+de inspeccionar memoria directamente.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() {
+    int arr[] = {10, 20, 30, 40, 50};
+    char str[] = "Hola, GDB!";
+    char* heap = malloc(32);
+
+    strcpy(heap, "Memoria dinámica");
+
+    printf("%s\n", str);
+
+    free(heap);
+    return 0;
+}
+```
+
+Comandos de inspección de memoria:
+
+```
+(gdb) break main
+(gdb) run
+(gdb) next 4
+
+(gdb) print arr
+$1 = {10, 20, 30, 40, 50}
+
+(gdb) print &arr
+$2 = (int (*)[5]) 0x7fffffffe210
+
+(gdb) x/5wd 0x7fffffffe210
+0x7fffffffe210:	10	20	30	40	50
+
+(gdb) x/10cb str
+0x7fffffffe200:	72 'H'	111 'o'	108 'l'	97 'a'	44 ','	32 ' '	71 'G'	68 'D'
+
+(gdb) x/s str
+0x7fffffffe200:	"Hola, GDB!"
+
+(gdb) x/8gx heap
+0x5555555592a0:	0x6d614d206174616d	0x696e616d696e2061
+0x5555555592b0:	0x0000000000000061	0x0000000000000000
+
+(gdb) x/s heap
+0x5555555592a0:	"Memoria dinámica"
+```
+
+Formato de x (examine):
+- x: hexadecimal
+- d: decimal
+- u: unsigned decimal
+- o: octal
+- t: binario
+- c: carácter
+- s: string
+- i: instrucción
+- f: float
+
+Tamaños:
+- b: 1 byte
+- h: 2 bytes
+- w: 4 bytes (word)
+- g: 8 bytes (giant)
+
+=== 6. DEPURACIÓN DE FUGAS DE MEMORIA ===
+
+GDB combinado con técnicas de interceptación puede ayudar a
+encontrar fugas de memoria.
+
+```c
+// leaks.c - Programa con fuga de memoria
+#include <stdio.h>
+#include <stdlib.h>
+
+void crear_fuga() {
+    int* datos = malloc(100 * sizeof(int));
+    // No hay free(datos) -> FUGA
+}
+
+int main() {
+    for (int i = 0; i < 100; i++) {
+        crear_fuga();
+    }
+    printf("Creadas 100 fugas\n");
+    return 0;
+}
+```
+
+Técnica: breakpoint en malloc con seguimiento:
+
+```
+(gdb) break main
+(gdb) run
+
+# Configurar seguimiento de malloc
+(gdb) break malloc
+(gdb) commands
+> silent
+> printf "malloc(%zu) en %p\n", $rdi, $rax
+> continue
+> end
+
+(gdb) break free
+(gdb) commands
+> silent
+> printf "free(%p)\n", $rdi
+> continue
+> end
+
+(gdb) continue
+malloc(400) en 0x5555555592a0
+malloc(400) en 0x5555555596b0
+malloc(400) en 0x555555559ab0
+...
+```
+
+Para un análisis más profundo, podemos registrar todas las
+asignaciones y liberaciones:
+
+```bash
+# Usar gdb con logging
+gdb -batch -ex "run" -ex "bt" ./leaks 2>&1 | tee gdb.log
+```
+
+=== 7. DEPURACIÓN DE CONDICIONES DE CARRERA ===
+
+Para programas multihilo, GDB permite controlar la ejecución de
+cada hilo individualmente.
+
+```c
+// race.c - Condición de carrera
+#include <stdio.h>
+#include <pthread.h>
+
+int contador = 0;
+
+void* incrementar(void* arg) {
+    for (int i = 0; i < 100000; i++) {
+        contador++;  // Race condition!
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, incrementar, NULL);
+    pthread_create(&t2, NULL, incrementar, NULL);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    printf("Contador: %d (esperado: 200000)\n", contador);
+    return 0;
+}
+```
+
+Depuración multihilo:
+
+```
+$ gcc -g -pthread -o race race.c
+$ gdb ./race
+
+(gdb) break incrementar
+(gdb) run
+
+(gdb) info threads
+  Id   Target Id         Frame
+  1    Thread 0x7ffff7fc1740 (LWP 12345) "race" incrementar (arg=0x0) at race.c:8
+  2    Thread 0x7ffff7fc0700 (LWP 12346) "race" incrementar (arg=0x0) at race.c:8
+* 3    Thread 0x7ffff7fbf700 (LWP 12347) "race" incrementar (arg=0x0) at race.c:8
+
+(gdb) thread 2
+[Switching to thread 2 (Thread 0x7ffff7fc0700)]
+(gdb) print contador
+$1 = 52341
+
+(gdb) thread 3
+[Switching to thread 3 (Thread 0x7ffff7fbf700)]
+(gdb) print contador
+$2 = 52341
+
+# Aplicar lock para ejecutar solo un hilo
+(gdb) set scheduler-locking on
+
+(gdb) next
+(gdb) print contador
+$3 = 52342
+```
+
+=== 8. DEPURACIÓN AVANZADA: SCRIPTS PERSONALIZADOS ===
+
+GDB soporta scripts para automatizar tareas repetitivas.
+
+```gdb
+# .gdbinit o script.gdb
+set print pretty on
+set pagination off
+set confirm off
+
+define rastrear_malloc
+    break malloc
+    commands
+        silent
+        printf "malloc(%zu) = %p\n", $rdi, $rax
+        continue
+    end
+end
+
+define rastrear_free
+    break free
+    commands
+        silent
+        printf "free(%p)\n", $rdi
+        continue
+    end
+end
+
+define reporte_fugas
+    printf "=== REPORTE DE MEMORIA ===\n"
+    info registers rsp
+    maintenance info sections
+end
+
+document rastrear_malloc
+    Configura un breakpoint en malloc que imprime cada asignación.
+end
+```
+
+Uso:
+
+```bash
+$ gdb -x script.gdb ./programa
+(gdb) rastrear_malloc
+(gdb) rastrear_free
+(gdb) run
+```
+
+=== 9. DEPURACIÓN DE PROGRAMAS OPTIMIZADOS ===
+
+Cuando un programa está compilado con optimización (-O2, -O3),
+GDB puede mostrar información confusa porque las variables pueden
+haber sido optimizadas a registros o eliminadas.
+
+```c
+// optimizado.c
+#include <stdio.h>
+
+int main() {
+    int a = 10;
+    int b = 20;
+    int c = a + b;  // El compilador puede calcular esto en tiempo de compilación
+    printf("Resultado: %d\n", c);
+    return 0;
+}
+```
+
+```
+$ gcc -g -O2 -o opt optimizado.c
+$ gdb ./opt
+
+(gdb) break main
+(gdb) run
+
+(gdb) print a
+$1 = <optimized out>
+
+(gdb) print b
+$2 = <optimized out>
+
+(gdb) info locals
+No symbol table info available for a
+```
+
+Para depurar programas optimizados:
+
+```bash
+# Compilar con -Og (optimización amigable para depuración)
+gcc -g -Og -o opt optimizado.c
+
+# Forzar que las variables no se optimicen con volatile en el código
+```
+
+=== 10. DEPURACIÓN DE CORRUPCIÓN DE MEMORIA ===
+
+La corrupción de memoria produce los bugs más difíciles de encontrar.
+GDB puede ayudar a identificar dónde ocurre la corrupción.
+
+```c
+// corruption.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() {
+    char buffer[16];
+    int  flag = 0;
+
+    // Bug: escribir más allá del buffer
+    strcpy(buffer, "ESTE STRING ES DEMASIADO LARGO PARA EL BUFFER");
+    // En este punto, flag está corrupto
+
+    if (flag == 0) {
+        printf("flag sigue siendo 0\n");
+    } else {
+        printf("flag está corrupto: %d\n", flag);
+    }
+
+    return 0;
+}
+```
+
+Depuración:
+
+```
+$ gcc -g -fstack-protector-all -o corruption corruption.c
+$ gdb ./corruption
+
+(gdb) break 11
+(gdb) run
+
+(gdb) print &buffer
+$1 = (char (*)[16]) 0x7fffffffe210
+
+(gdb) print &flag
+$2 = (int *) 0x7fffffffe220
+
+(gdb) x/32cb buffer
+0x7fffffffe210:	0	0	0	0	0	0	0	0
+...
+
+(gdb) next  // ejecutar strcpy
+
+(gdb) x/32cb buffer
+0x7fffffffe210:	69 'E'	83 'S'	84 'T'	69 'E'	32 ' '	83 'S'	84 'T'	82 'R'
+0x7fffffffe218:	73 'I'	78 'N'	71 'G'	32 ' '	69 'E'	83 'S'	32 ' '	68 'D'
+0x7fffffffe220:	69 'E'	77 'M'	65 'A'	83 'S'	73 'I'	65 'A'	68 'D'	79 'O'
+
+(gdb) print flag
+$3 = 1179403649  // Corrupto! (0x53414945 en hex)
+```
+
+Hardware watchpoints para detectar corrupción:
+
+```
+(gdb) watch *(int*)0x7fffffffe220
+Hardware watchpoint 2: *(int*)0x7fffffffe220
+
+(gdb) continue
+Continuing.
+
+Hardware watchpoint 2: *(int*)0x7fffffffe220
+
+Old value = 0
+New value = 1179403649
+strcpy (p=0x7fffffffe210 "ESTE STRING ES DEMASIADO LARGO PARA EL BUFFER",
+       q=0x7fffffffe210) at /usr/include/string.h:138
+```
+
+=== 11. REVERSE DEBUGGING ===
+
+GDB 7.0+ soporta depuración inversa, permitiendo retroceder en
+la ejecución.
+
+```
+(gdb) target record-full  # Activar registro de ejecución
+
+(gdb) break corruption.c:11
+(gdb) run
+
+(gdb) reverse-next  # Retroceder una línea
+
+(gdb) reverse-step   # Retroceder entrando en funciones
+
+(gdb) reverse-continue  # Retroceder hasta el breakpoint anterior
+
+(gdb) print flag
+$1 = 0  # Antes de la corrupción
+```
+
+=== 12. DEPURACIÓN REMOTA CON GDBSERVER ===
+
+Para depurar programas en sistemas embebidos o remotos:
+
+```bash
+# En el dispositivo remoto
+gdbserver :2345 ./programa
+
+# En la máquina local
+gdb ./programa
+(gdb) target remote 192.168.1.100:2345
+(gdb) continue
+```
+
+=== 13. TUI (INTERFAZ DE TEXTO) ===
+
+GDB tiene un modo de interfaz de texto que muestra código y
+terminal simultáneamente.
+
+```
+(gdb) tui enable
+
+  +- main.c -------------------------+
+  | 5     void funcion_c() {         |
+  | 6         int* p = NULL;         |
+  >|7         *p = 42;  // Crash!    |
+  | 8     }                          |
+  | 9                                |
+  | 10    void funcion_b() {         |
+  | 11        funcion_c();           |
+  +----------------------------------+
+  | (gdb) backtrace                  |
+  | #0  funcion_c at crash.c:7       |
+  | #1  funcion_b at crash.c:11      |
+  | #2  funcion_a at crash.c:15      |
+  +----------------------------------+
+
+Comandos TUI:
+- C-x a: Alternar TUI
+- C-x 1: Una ventana
+- C-x 2: Dos ventanas
+- C-l: Refrescar pantalla
+```
+
+=== 14. CASO PRÁCTICO: DEBUGGEANDO UN SERVIDOR WEB ===
+
+```c
+// mini_servidor.c - Con bugs intencionales
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 256
+
+void manejar_cliente(int client_fd) {
+    char buffer[BUFFER_SIZE];
+    char respuesta[512];
+
+    // Bug 1: No se verifica el valor de retorno de read()
+    read(client_fd, buffer, BUFFER_SIZE);  // Podría leer -1
+
+    // Bug 2: No se valida que buffer tenga terminación nula
+    if (strstr(buffer, "GET /") != NULL) {
+        strcpy(respuesta, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
+        strcat(respuesta, "Hola Mundo!");
+        write(client_fd, respuesta, strlen(respuesta));
+    }
+
+    // Bug 3: No se cierra el socket
+}
+
+int main() {
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(8080),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 5);
+
+    while (1) {
+        int client_fd = accept(server_fd, NULL, NULL);
+        manejar_cliente(client_fd);
+        close(client_fd);  // Bug 4: close debería estar dentro de manejar_cliente
+    }
+}
+```
+
+Sesión de depuración:
+
+```
+$ gcc -g -o servidor mini_servidor.c
+$ gdb ./servidor
+
+(gdb) break manejar_cliente
+(gdb) run &
+[1] 12345
+Starting program: ./servidor
+
+(gdb) # El servidor está corriendo, conectarse con curl
+(gdb) shell curl http://localhost:8080
+
+(gdb) # GDB se detiene en el breakpoint
+Breakpoint 1, manejar_cliente (client_fd=4) at mini_servidor.c:11
+11	    char buffer[BUFFER_SIZE];
+
+(gdb) next
+12	    char respuesta[512];
+
+(gdb) next
+14	    read(client_fd, buffer, BUFFER_SIZE);
+
+(gdb) print client_fd
+$1 = 4
+
+(gdb) next
+16	    if (strstr(buffer, "GET /") != NULL) {
+
+(gdb) print buffer
+$2 = "GET / HTTP/1.1\r\nHost: localhost:8080\r\n..."
+
+(gdb) next
+17	        strcpy(respuesta, "HTTP/1.1 200 OK...");
+
+(gdb) continue
+Continuing.
+[Inferior 1 (process 12345) exited normally]
+```
+
+________________________________________________________________________________
+  RESUMEN
+________________________________________________________________________________
+
+En este capítulo hemos aprendido:
+
+  ✅ GDB es el depurador estándar para C en sistemas Unix.
+  ✅ break, next, step, continue son los comandos básicos.
+  ✅ Los breakpoints condicionales y watchpoints son herramientas
+     poderosas para bugs complejos.
+  ✅ backtrace permite navegar la pila de llamadas tras un crash.
+  ✅ x/ permite examinar memoria en cualquier formato.
+  ✅ GDB soporta depuración multihilo con control de scheduling.
+  ✅ Los scripts de GDB automatizan tareas repetitivas.
+  ✅ La depuración inversa permite retroceder en la ejecución.
+
+Depurar es una habilidad que se perfecciona con la práctica. Cada
+bug que resuelves te hace un mejor programador.
+
+________________________________________________________________________________
+  EJERCICIOS
+________________________________________________________________________________
+
+1. EJERCICIO BÁSICO: Escribe un programa con un error de
+   segmentación. Compílalo con -g y usa GDB para encontrar la
+   línea exacta donde ocurre el error. Usa backtrace para ver
+   la pila de llamadas.
+
+2. EJERCICIO PRÁCTICO: Crea un programa que procese un archivo
+   de texto y tenga un bug lógico (por ejemplo, contar mal las
+   palabras). Usa breakpoints condicionales y watchpoints para
+   encontrar el error.
+
+3. EJERCICIO AVANZADO: Implementa una lista enlazada con una fuga
+   de memoria. Usa la técnica de breakpoints en malloc/free para
+   identificar qué nodos no se liberan correctamente.
+
+4. EJERCICIO DE ANÁLISIS: Dado el siguiente código con bugs,
+   usa GDB para encontrar y corregir todos los errores:
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+int dividir(int a, int b) {
+    return a / b;
+}
+
+int main() {
+    int x = 10;
+    int y = 0;
+    char* msg = NULL;
+
+    int r = dividir(x, y);
+    printf("Resultado: %d\n", r);
+
+    strcpy(msg, "Hola");  // ¿Qué pasa aquí?
+
+    int arr[5];
+    for (int i = 0; i <= 5; i++) {  // ¿Error?
+        arr[i] = i * 10;
+    }
+
+    return 0;
+}
+```
+
+5. EJERCICIO CREATIVO: Escribe un script de GDB que automáticamente
+   detecte fugas de memoria en cualquier programa, generando un
+   reporte de todas las asignaciones no liberadas.
+
+________________________________________________________________________________
+  PREGUNTAS FRECUENTES
+________________________________________________________________________________
+
+P: ¿Por qué GDB dice "variable optimized out"?
+R: El compilador optimizó la variable. Compila con -Og en lugar
+de -O2/-O3 para preservar las variables durante la depuración.
+
+P: ¿Cómo depuro un programa que ya se colgó?
+R: Si tienes un core dump, usa: gdb ./programa core. Si no,
+configura el sistema para generar core dumps con: ulimit -c unlimited.
+
+P: ¿Cómo salgo de un bucle infinito en GDB?
+R: Presiona Ctrl+C para interrumpir la ejecución y volver al
+prompt de GDB.
+
+P: ¿Puedo cambiar el valor de una variable mientras depuro?
+R: Sí, usa: set variable = nuevo_valor. Esto es muy útil para
+probar correcciones sin recompilar.
+
+P: ¿GDB funciona con programas en C++?
+R: Sí, GDB soporta C++, incluyendo namespaces, templates y
+excepciones. Usa comandos como break MyClass::method.
+
+________________________________________________________________________________
+  DESAFÍO DEL ARQUITECTO
+________________________________________________________________________________
+
+Crea un programa multihilo con al menos 3 bugs intencionales:
+una condición de carrera, un deadlock y una corrupción de memoria.
+Luego, documenta paso a paso cómo usarías GDB para encontrar y
+corregir cada bug.
+
+Requisitos:
+  - El programa debe tener al menos 200 líneas de código.
+  - Debe usar pthreads, memoria dinámica y archivos.
+  - Documenta cada bug, cómo se manifiesta y cómo usar GDB
+    para encontrarlo.
+  - Incluye comandos exactos de GDB para cada caso.
+
+Este desafío integra todo lo aprendido en el capítulo y te
+prepara para depurar programas reales en entornos profesionales.
+
+________________________________________________________________________________
+  CIERRE DEL CAPÍTULO
+________________________________________________________________________________
+
+GDB es una de las herramientas más valiosas en el arsenal de
+cualquier programador de C. La capacidad de detener un programa
+en cualquier punto, inspeccionar su estado y modificar variables
+en caliente es increíblemente poderosa.
+
+Recuerda: un buen debugger no es el que encuentra bugs rápido,
+sino el que entiende profundamente lo que el programa está
+haciendo. GDB te da esa visibilidad. Úsala sabiamente.
+
+En el próximo capítulo exploraremos Valgrind, la herramienta
+definitiva para encontrar fugas de memoria y accesos inválidos,
+problemas que GDB por sí solo no puede detectar fácilmente.
+
+¡Nos vemos en el Capítulo 74, donde la memoria no tendrá
+dónde esconderse!
+
+================================================================================
+  FIN DEL CAPÍTULO 73
+================================================================================

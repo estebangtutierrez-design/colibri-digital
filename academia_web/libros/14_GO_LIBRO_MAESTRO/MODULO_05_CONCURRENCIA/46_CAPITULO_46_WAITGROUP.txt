@@ -1,0 +1,1291 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 46: WAITGROUP
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A WAITGROUP
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la coordinación de gorutinas. En capítulos
+anteriores aprendiste a comunicar gorutinas con channels. Pero a veces
+no necesitas comunicar datos: solo necesitas esperar a que un conjunto de
+gorutinas terminen su trabajo.
+
+Ahí entra sync.WaitGroup. Es el mecanismo más simple y directo para esperar
+a que múltiples gorutinas completen su ejecución. Sin channels, sin datos,
+sin complicaciones. Solo una cuenta atrás que indica cuántas gorutinas están
+trabajando y cuándo han terminado.
+
+WaitGroup es una de las herramientas más usadas en programas concurrentes
+de Go. Aparece en prácticamente todos los proyectos: workers, tests,
+coordinación de servicios, pipelines, etc.
+
+En este capítulo dominarás WaitGroup y el patrón worker pool, una de las
+arquitecturas concurrentes más importantes y versátiles.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"WaitGroup es el semáforo de la sincronización simple: cuenta, espera,
+avanza." — Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender qué es sync.WaitGroup y para qué sirve.
+  • Aprender los 3 métodos fundamentales: Add, Done, Wait.
+  • Entender el patrón Add justo antes de lanzar la gorutina.
+  • Implementar el patrón worker pool con WaitGroup.
+  • Coordinar gorutinas con WaitGroup y channels combinados.
+  • Evitar errores comunes: Add olvidado, Done de más, Wait mal ubicado.
+  • Conocer el funcionamiento interno del contador atómico.
+  • Usar WaitGroup con funciones anónimas y defer.
+  • Implementar pipelines con WaitGroup.
+  • Usar WaitGroup en tests de concurrencia.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — WAITGROUP
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ¿QUÉ ES SYNC.WAITGROUP?
+----------------------------------------------------------------------
+
+sync.WaitGroup es un contador de gorutinas pendientes. Cuando el contador
+llega a cero, todas las gorutinas que estaban esperando en Wait() se
+desbloquean.
+
+Es útil cuando:
+  • Lanzas N gorutinas y necesitas esperar a que todas terminen.
+  • Implementas un worker pool con número fijo de workers.
+  • Coordinas la finalización de fases en un pipeline.
+  • En tests, esperas a que operaciones concurrentes terminen.
+
+----------------------------------------------------------------------
+  2. LOS 3 MÉTODOS ESENCIALES
+----------------------------------------------------------------------
+
+  • Add(delta int): Incrementa el contador en delta. Normalmente Add(1)
+    justo antes de lanzar la gorutina.
+
+  • Done(): Decrementa el contador en 1. Normalmente llamado con defer
+    al inicio de la gorutina.
+
+  • Wait(): Bloquea hasta que el contador llegue a cero.
+
+Patrón estándar:
+    var wg sync.WaitGroup
+
+    for i := 0; i < N; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            // trabajo
+        }()
+    }
+
+    wg.Wait()
+
+----------------------------------------------------------------------
+  3. ERRORES COMUNES
+----------------------------------------------------------------------
+
+  • Add fuera del bucle: Si haces Add(N) fuera del bucle y el bucle
+    termina antes de lanzar gorutinas, Wait puede desbloquearse antes
+    de tiempo.
+
+  • Add después de lanzar la gorutina: Si la gorutina se ejecuta
+    inmediatamente y llama a Done antes de que el Add se ejecute,
+    el contador podría llegar a cero prematuramente.
+
+  • Done de más: Si se llama a Done más veces que Add, el contador
+    se vuelve negativo y causa panic: "negative WaitGroup counter".
+
+  • Pasar WaitGroup por copia: sync.WaitGroup no debe copiarse. Siempre
+    pásalo por puntero (*sync.WaitGroup).
+
+----------------------------------------------------------------------
+  4. EL PATRÓN WORKER POOL
+----------------------------------------------------------------------
+
+El worker pool es un patrón donde un número fijo de gorutinas (workers)
+procesan tareas de una cola compartida (channel). WaitGroup coordina
+la finalización de los workers.
+
+    workers := 5
+    var wg sync.WaitGroup
+
+    for i := 0; i < workers; i++ {
+        wg.Add(1)
+        go worker(id, tareas, resultados, &wg)
+    }
+
+    wg.Wait()       // Espera a todos los workers
+    close(resultados) // Cierra el canal de resultados
+
+----------------------------------------------------------------------
+  5. WAITGROUP INTERNO: CONTADOR ATÓMICO
+----------------------------------------------------------------------
+
+Internamente, WaitGroup usa un contador atómico de 64 bits (state1) que
+almacena tanto el contador como el número de gorutinas esperando.
+
+  • Add: Incrementa/Decrementa atómicamente.
+  • Done: Llama a Add(-1).
+  • Wait: Incrementa el contador de espera y bloquea hasta que el
+    contador principal llegue a 0.
+
+Cuando el contador llega a 0, se despiertan todas las gorutinas en Wait().
+
+----------------------------------------------------------------------
+  6. REUSABILIDAD DE WAITGROUP
+----------------------------------------------------------------------
+
+Un WaitGroup puede reutilizarse: después de que Wait() retorna, puedes
+volver a llamar a Add para un nuevo grupo de gorutinas. Pero asegúrate
+de que todas las Wait() anteriores hayan retornado antes de reutilizarlo.
+
+----------------------------------------------------------------------
+  7. WAITGROUP EN TESTS
+----------------------------------------------------------------------
+
+En tests, WaitGroup es esencial para sincronizar gorutinas:
+
+    func TestConcurrente(t *testing.T) {
+        var wg sync.WaitGroup
+        for i := 0; i < 10; i++ {
+            wg.Add(1)
+            go func() {
+                defer wg.Done()
+                // operación concurrente
+            }()
+        }
+        wg.Wait()
+    }
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: WAITGROUP BÁSICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func trabajador(id int, wg *sync.WaitGroup) {
+    defer wg.Done() // Avisa que terminó
+
+    fmt.Printf("Trabajador %d iniciando\n", id)
+    time.Sleep(time.Duration(id) * 100 * time.Millisecond)
+    fmt.Printf("Trabajador %d finalizando\n", id)
+}
+
+func main() {
+    var wg sync.WaitGroup
+
+    for i := 1; i <= 5; i++ {
+        wg.Add(1)          // Incrementa el contador
+        go trabajador(i, &wg) // Pasa por puntero
+    }
+
+    wg.Wait() // Espera a que todos terminen
+    fmt.Println("Todos los trabajadores han finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 2: ERROR — PASAR WAITGROUP POR COPIA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func trabajador(id int, wg sync.WaitGroup) { // ← ERROR: copia
+    defer wg.Done()
+    fmt.Printf("Trabajador %d iniciando\n", id)
+    time.Sleep(100 * time.Millisecond)
+    fmt.Printf("Trabajador %d finalizando\n", id)
+}
+
+func main() {
+    var wg sync.WaitGroup
+
+    for i := 1; i <= 5; i++ {
+        wg.Add(1)
+        go trabajador(i, wg) // ← Pasa copia
+    }
+
+    wg.Wait() // ¡Nunca termina! Las Done se llaman en las copias
+    fmt.Println("Esto nunca se imprime") // deadlock
+}
+```
+
+Siempre pasa *sync.WaitGroup como puntero.
+
+----------------------------------------------------------------------
+  EJEMPLO 3: WORKER POOL CON WAITGROUP + CHANNEL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func worker(id int, tareas <-chan int, resultados chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for tarea := range tareas {
+        fmt.Printf("Worker %d procesando tarea %d\n", id, tarea)
+        time.Sleep(100 * time.Millisecond)
+        resultados <- tarea * 2
+    }
+    fmt.Printf("Worker %d finalizado\n", id)
+}
+
+func main() {
+    const numTareas = 10
+    const numWorkers = 3
+
+    tareas := make(chan int, numTareas)
+    resultados := make(chan int, numTareas)
+    var wg sync.WaitGroup
+
+    // Lanzamos workers
+    for w := 1; w <= numWorkers; w++ {
+        wg.Add(1)
+        go worker(w, tareas, resultados, &wg)
+    }
+
+    // Enviamos tareas
+    for i := 1; i <= numTareas; i++ {
+        tareas <- i
+    }
+    close(tareas) // Los workers terminan cuando se cierra el canal
+
+    // Esperamos a que todos los workers terminen
+    wg.Wait()
+    close(resultados) // Cerramos resultados
+
+    // Recolectamos resultados
+    total := 0
+    for r := range resultados {
+        total += r
+        fmt.Printf("Resultado parcial: %d\n", r)
+    }
+
+    fmt.Printf("Total: %d\n", total)
+}
+```
+
+Este es el patrón worker pool clásico. WaitGroup espera a que todos los
+workers procesen todas las tareas.
+
+----------------------------------------------------------------------
+  EJEMPLO 4: WAITGROUP CON FUNCIÓN ANÓNIMA Y DEFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var wg sync.WaitGroup
+
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        id := i
+        go func() {
+            defer wg.Done()
+            defer fmt.Printf("Gorutina %d: defer ejecutado\n", id)
+            fmt.Printf("Gorutina %d: trabajando...\n", id)
+            time.Sleep(time.Duration(id) * 50 * time.Millisecond)
+        }()
+    }
+
+    wg.Wait()
+    fmt.Println("Todas las gorutinas finalizadas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: WAITGROUP CON MÚLTIPLES FASES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func fase1(id int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    fmt.Printf("Fase 1 - Worker %d: iniciando\n", id)
+    time.Sleep(100 * time.Millisecond)
+    fmt.Printf("Fase 1 - Worker %d: completado\n", id)
+}
+
+func fase2(id int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    fmt.Printf("Fase 2 - Worker %d: iniciando\n", id)
+    time.Sleep(50 * time.Millisecond)
+    fmt.Printf("Fase 2 - Worker %d: completado\n", id)
+}
+
+func main() {
+    var wg sync.WaitGroup
+
+    fmt.Println("=== FASE 1 ===")
+    for i := 1; i <= 3; i++ {
+        wg.Add(1)
+        go fase1(i, &wg)
+    }
+    wg.Wait()
+    fmt.Println("Fase 1 completada\n")
+
+    fmt.Println("=== FASE 2 ===")
+    for i := 1; i <= 3; i++ {
+        wg.Add(1)
+        go fase2(i, &wg)
+    }
+    wg.Wait()
+    fmt.Println("Fase 2 completada\n")
+
+    fmt.Println("Todas las fases completadas")
+}
+```
+
+WaitGroup es reutilizable: después de un Wait(), puedes volver a Add.
+
+----------------------------------------------------------------------
+  EJEMPLO 6: WAITGROUP + CHANNEL PARA RESULTADOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func calcular(id int, wg *sync.WaitGroup, resultados chan<- string) {
+    defer wg.Done()
+    time.Sleep(time.Duration(id) * 50 * time.Millisecond)
+    resultados <- fmt.Sprintf("Resultado de worker %d", id)
+}
+
+func main() {
+    var wg sync.WaitGroup
+    resultados := make(chan string, 5)
+
+    for i := 1; i <= 5; i++ {
+        wg.Add(1)
+        go calcular(i, &wg, resultados)
+    }
+
+    // Esperamos en una gorutina separada
+    go func() {
+        wg.Wait()
+        close(resultados)
+    }()
+
+    // Leemos resultados
+    for r := range resultados {
+        fmt.Println("Recibido:", r)
+    }
+
+    fmt.Println("Procesamiento completado")
+}
+```
+
+Importante: Wait() se llama en una gorutina separada para que el canal
+de resultados pueda ser leído concurrentemente.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: WAITGROUP CON ERRORES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+    "errors"
+)
+
+type Resultado struct {
+    ID    int
+    Valor int
+    Err   error
+}
+
+func procesar(id int, wg *sync.WaitGroup, resultados chan<- Resultado) {
+    defer wg.Done()
+
+    time.Sleep(50 * time.Millisecond)
+
+    if id == 3 {
+        resultados <- Resultado{ID: id, Err: errors.New("error simulado")}
+        return
+    }
+
+    resultados <- Resultado{ID: id, Valor: id * 10}
+}
+
+func main() {
+    var wg sync.WaitGroup
+    resultados := make(chan Resultado, 5)
+
+    for i := 1; i <= 5; i++ {
+        wg.Add(1)
+        go procesar(i, &wg, resultados)
+    }
+
+    go func() {
+        wg.Wait()
+        close(resultados)
+    }()
+
+    for r := range resultados {
+        if r.Err != nil {
+            fmt.Printf("ERROR en worker %d: %v\n", r.ID, r.Err)
+        } else {
+            fmt.Printf("Worker %d: %d\n", r.ID, r.Valor)
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 8: NEGATIVE WAITGROUP COUNTER — PANIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var wg sync.WaitGroup
+
+    wg.Add(1)
+    wg.Done()
+    wg.Done() // ¡Segundo Done sin Add! → panic
+
+    fmt.Println("Esto nunca se imprime")
+}
+```
+
+Salida: panic: sync: negative WaitGroup counter
+
+Siempre debe haber correspondencia entre Add y Done.
+
+----------------------------------------------------------------------
+  EJEMPLO 9: RECUPERACIÓN DE PANIC EN WAITGROUP
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var wg sync.WaitGroup
+
+    // Versión segura con recover
+    func() {
+        defer func() {
+            if r := recover(); r != nil {
+                fmt.Printf("Recuperado: %v\n", r)
+            }
+        }()
+
+        wg.Add(1)
+        wg.Done()
+        wg.Done() // Esto panic, pero recuperamos
+    }()
+
+    fmt.Println("El programa continúa")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: WORKER POOL CON TIMEOUT
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func worker(id int, tareas <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for tarea := range tareas {
+        fmt.Printf("Worker %d: tarea %d\n", id, tarea)
+        time.Sleep(100 * time.Millisecond)
+    }
+}
+
+func main() {
+    tareas := make(chan int, 20)
+    var wg sync.WaitGroup
+
+    // Lanzamos 2 workers
+    for w := 1; w <= 2; w++ {
+        wg.Add(1)
+        go worker(w, tareas, &wg)
+    }
+
+    // Enviamos tareas en una gorutina
+    go func() {
+        for i := 0; i < 10; i++ {
+            tareas <- i
+        }
+        close(tareas)
+    }()
+
+    // Esperamos con timeout
+    done := make(chan struct{})
+    go func() {
+        wg.Wait()
+        close(done)
+    }()
+
+    select {
+    case <-done:
+        fmt.Println("Todos los workers terminaron")
+    case <-time.After(1 * time.Second):
+        fmt.Println("Timeout: los workers no terminaron a tiempo")
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: WAITGROUP DENTRO DE ESTRUCTURA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Pool struct {
+    wg       sync.WaitGroup
+    sem      chan struct{}
+}
+
+func NewPool(maxConcurrentes int) *Pool {
+    return &Pool{
+        sem: make(chan struct{}, maxConcurrentes),
+    }
+}
+
+func (p *Pool) Ejecutar(tarea func()) {
+    p.sem <- struct{}{}
+    p.wg.Add(1)
+    go func() {
+        defer p.wg.Done()
+        defer func() { <-p.sem }()
+        tarea()
+    }()
+}
+
+func (p *Pool) Esperar() {
+    p.wg.Wait()
+}
+
+func main() {
+    pool := NewPool(3)
+
+    for i := 1; i <= 10; i++ {
+        id := i
+        pool.Ejecutar(func() {
+            fmt.Printf("Tarea %d ejecutándose\n", id)
+            time.Sleep(200 * time.Millisecond)
+        })
+    }
+
+    pool.Esperar()
+    fmt.Println("Todas las tareas completadas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: WAITGROUP CON MAPA COMPARTIDO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var (
+        wg    sync.WaitGroup
+        mu    sync.Mutex
+        total int
+    )
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            time.Sleep(10 * time.Millisecond)
+            mu.Lock()
+            total += n
+            mu.Unlock()
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Printf("Total acumulado: %d\n", total)
+}
+```
+
+Combinación de WaitGroup (esperar gorutinas) y Mutex (proteger datos).
+
+----------------------------------------------------------------------
+  EJEMPLO 13: COMPARACIÓN WAITGROUP vs CHANNEL PARA SINCRONIZACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    const N = 10000
+
+    // Método 1: WaitGroup
+    inicio := time.Now()
+    var wg sync.WaitGroup
+    for i := 0; i < N; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            _ = i * i
+        }()
+    }
+    wg.Wait()
+    fmt.Printf("WaitGroup: %v\n", time.Since(inicio))
+
+    // Método 2: Channel
+    inicio = time.Now()
+    ch := make(chan struct{}, N)
+    for i := 0; i < N; i++ {
+        go func() {
+            _ = i * i
+            ch <- struct{}{}
+        }()
+    }
+    for i := 0; i < N; i++ {
+        <-ch
+    }
+    fmt.Printf("Channel:   %v\n", time.Since(inicio))
+}
+```
+
+WaitGroup es más eficiente que un channel para sincronización simple.
+
+----------------------------------------------------------------------
+  EJEMPLO 14: WAITGROUP ANIDADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var wgGlobal sync.WaitGroup
+
+    for equipo := 1; equipo <= 3; equipo++ {
+        wgGlobal.Add(1)
+
+        go func(idEquipo int) {
+            defer wgGlobal.Done()
+
+            var wgEquipo sync.WaitGroup
+            for miembro := 1; miembro <= 2; miembro++ {
+                wgEquipo.Add(1)
+                go func(id, miembro int) {
+                    defer wgEquipo.Done()
+                    fmt.Printf("Equipo %d, miembro %d trabajando\n", id, miembro)
+                    time.Sleep(100 * time.Millisecond)
+                }(idEquipo, miembro)
+            }
+
+            wgEquipo.Wait()
+            fmt.Printf("Equipo %d completado\n", idEquipo)
+        }(equipo)
+    }
+
+    wgGlobal.Wait()
+    fmt.Println("Todos los equipos completados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: PIPELINE CON WAITGROUP
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func etapa1(entrada []int, salida chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    defer close(salida)
+    for _, v := range entrada {
+        time.Sleep(20 * time.Millisecond)
+        salida <- v * 2
+    }
+}
+
+func etapa2(entrada <-chan int, salida chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    defer close(salida)
+    for v := range entrada {
+        time.Sleep(30 * time.Millisecond)
+        salida <- v + 10
+    }
+}
+
+func etapa3(entrada <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for v := range entrada {
+        fmt.Printf("Resultado final: %d\n", v)
+    }
+}
+
+func main() {
+    datos := []int{1, 2, 3, 4, 5}
+
+    ch1 := make(chan int, 5)
+    ch2 := make(chan int, 5)
+
+    var wg sync.WaitGroup
+
+    wg.Add(1)
+    go etapa1(datos, ch1, &wg)
+
+    wg.Add(1)
+    go etapa2(ch1, ch2, &wg)
+
+    wg.Add(1)
+    go etapa3(ch2, &wg)
+
+    wg.Wait()
+    fmt.Println("Pipeline completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: ADD ANTES DE LA GORUTINA (BUENA PRÁCTICA)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var wg sync.WaitGroup
+
+    for i := 0; i < 5; i++ {
+        wg.Add(1) // ← Add antes de la gorutina
+        go func(id int) {
+            defer wg.Done()
+            time.Sleep(time.Duration(id) * 50 * time.Millisecond)
+            fmt.Printf("Gorutina %d terminada\n", id)
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Todas terminadas")
+}
+```
+
+Add se llama en la gorutina principal ANTES de que la gorutina hija
+comience a ejecutarse. Esto evita condiciones de carrera.
+
+----------------------------------------------------------------------
+  EJEMPLO 17: WAITGROUP CON CONTEO DINÁMICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var wg sync.WaitGroup
+    tareas := []int{}
+
+    // Simulamos tareas que llegan dinámicamente
+    go func() {
+        for i := 0; i < 5; i++ {
+            tareas = append(tareas, i)
+        }
+    }()
+
+    time.Sleep(50 * time.Millisecond) // Esperamos que lleguen las tareas
+
+    for _, t := range tareas {
+        wg.Add(1)
+        go func(tarea int) {
+            defer wg.Done()
+            fmt.Printf("Procesando tarea %d\n", tarea)
+            time.Sleep(100 * time.Millisecond)
+        }(t)
+    }
+
+    wg.Wait()
+    fmt.Println("Todas las tareas procesadas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: WAITGROUP CON CANCELACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func worker(id int, wg *sync.WaitGroup, cancel <-chan struct{}) {
+    defer wg.Done()
+    select {
+    case <-cancel:
+        fmt.Printf("Worker %d cancelado\n", id)
+        return
+    case <-time.After(time.Duration(id) * 100 * time.Millisecond):
+        fmt.Printf("Worker %d completado\n", id)
+    }
+}
+
+func main() {
+    var wg sync.WaitGroup
+    cancel := make(chan struct{})
+
+    for i := 1; i <= 5; i++ {
+        wg.Add(1)
+        go worker(i, &wg, cancel)
+    }
+
+    // Cancelamos después de 250ms
+    time.Sleep(250 * time.Millisecond)
+    close(cancel)
+
+    wg.Wait()
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: RECOLECTOR DE RESULTADOS CON WAITGROUP
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func productor(id int, ch chan<- int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for i := 0; i < 4; i++ {
+        ch <- id*10 + i
+        time.Sleep(20 * time.Millisecond)
+    }
+}
+
+func recolector(ch <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    total := 0
+    count := 0
+    for v := range ch {
+        total += v
+        count++
+        fmt.Printf("Recolector: v=%d, parcial=%d\n", v, total)
+    }
+    fmt.Printf("Recolector: %d elementos, total=%d\n", count, total)
+}
+
+func main() {
+    ch := make(chan int, 10)
+    var prodWg sync.WaitGroup
+
+    // 3 productores
+    for p := 1; p <= 3; p++ {
+        prodWg.Add(1)
+        go productor(p, ch, &prodWg)
+    }
+
+    var recWg sync.WaitGroup
+    recWg.Add(1)
+
+    // Recolector en gorutina separada
+    go func() {
+        prodWg.Wait()
+        close(ch)
+    }()
+
+    go recolector(ch, &recWg)
+    recWg.Wait()
+
+    fmt.Println("Procesamiento completado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SISTEMA DE PROCESAMIENTO DE ARCHIVOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "math/rand"
+    "sync"
+    "time"
+)
+
+type Archivo struct {
+    Nombre string
+    Tamanio int
+}
+
+type ResultadoArchivo struct {
+    Archivo
+    Procesado bool
+    Lineas    int
+    Tiempo    time.Duration
+}
+
+func escanearArchivo(archivo Archivo, resultados chan<- ResultadoArchivo, wg *sync.WaitGroup) {
+    defer wg.Done()
+
+    inicio := time.Now()
+    time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond)
+
+    resultado := ResultadoArchivo{
+        Archivo:   archivo,
+        Procesado: true,
+        Lineas:    archivo.Tamanio / 10,
+        Tiempo:    time.Since(inicio),
+    }
+
+    fmt.Printf("[ESCANER] %s: %d bytes, %d líneas, en %v\n",
+        archivo.Nombre, archivo.Tamanio, resultado.Lineas, resultado.Tiempo)
+
+    resultados <- resultado
+}
+
+func procesarArchivo(resultado ResultadoArchivo, wg *sync.WaitGroup) {
+    defer wg.Done()
+
+    time.Sleep(time.Duration(30+rand.Intn(70)) * time.Millisecond)
+    fmt.Printf("[PROCESADOR] %s procesado (líneas: %d)\n",
+        resultado.Nombre, resultado.Lineas)
+}
+
+func main() {
+    rand.Seed(time.Now().UnixNano())
+
+    archivos := []Archivo{
+        {"main.go", 1024},
+        {"handlers.go", 2048},
+        {"models.go", 512},
+        {"routes.go", 1536},
+        {"config.go", 768},
+        {"utils.go", 3072},
+        {"middleware.go", 896},
+        {"database.go", 4096},
+    }
+
+    resultados := make(chan ResultadoArchivo, len(archivos))
+    var escanerWg sync.WaitGroup
+    var procesadorWg sync.WaitGroup
+
+    fmt.Println("=== INICIANDO ESCANEO DE ARCHIVOS ===")
+
+    // Fase 1: Escanear archivos
+    for _, archivo := range archivos {
+        escanerWg.Add(1)
+        go escanearArchivo(archivo, resultados, &escanerWg)
+    }
+
+    // Fase 2: Recolectar resultados del escaneo y procesar
+    go func() {
+        escanerWg.Wait()
+        close(resultados)
+    }()
+
+    for res := range resultados {
+        procesadorWg.Add(1)
+        go procesarArchivo(res, &procesadorWg)
+    }
+
+    procesadorWg.Wait()
+
+    fmt.Println("\n=== PROCESAMIENTO COMPLETADO ===")
+    fmt.Printf("Total archivos: %d\n", len(archivos))
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • WaitGroup es un contador de gorutinas pendientes.
+  • Add(delta) incrementa el contador antes de lanzar la gorutina.
+  • Done() decrementa el contador, normalmente con defer.
+  • Wait() bloquea hasta que el contador llegue a cero.
+  • Nunca pases WaitGroup por copia; usa *sync.WaitGroup.
+  • El patrón worker pool combina WaitGroup con channels.
+  • WaitGroup es reutilizable después de Wait().
+  • Llamar a Done() más veces que Add() causa panic.
+  • Add debe ejecutarse antes o justo al lanzar la gorutina.
+  • WaitGroup es más eficiente que channels para sincronización simple.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Lanza 10 gorutinas que impriman su ID. Usa WaitGroup para
+   esperar a que todas terminen antes de que main finalice.
+
+2. INTERMEDIO — Implementa un worker pool con 4 workers que procesen
+   20 tareas. Cada tarea es un entero. El worker lo multiplica por 2
+   y lo envía a un canal de resultados.
+
+3. AVANZADO — Crea un sistema de fases: Fase A (3 workers), Fase B
+   (2 workers), Fase C (1 worker). Cada fase espera a la anterior
+   usando WaitGroup.
+
+4. BÁSICO — Demuestra el error de pasar WaitGroup por copia. Muestra
+   cómo se produce el deadlock y cómo solucionarlo.
+
+5. INTERMEDIO — Escribe un programa que lance N gorutinas que incrementen
+   un contador compartido protegido con Mutex. Usa WaitGroup para esperar.
+
+6. AVANZADO — Implementa un pipeline de 4 etapas usando WaitGroup para
+   coordinar cada etapa. Cada etapa tiene su propio WaitGroup.
+
+7. INTERMEDIO — Crea un programa que demuestre que WaitGroup es
+   reutilizable: ejecuta dos tandas de 5 gorutinas cada una.
+
+8. AVANZADO — Implementa un sistema de workers que pueda ser cancelado
+   mediante un channel. Los workers usan select para detectar la
+   cancelación. WaitGroup espera a que todos terminen.
+
+9. BÁSICO — ¿Qué ocurre si llamas a Wait() antes de llamar a Add()?
+   Demuéstralo. (Pista: Wait() retorna inmediatamente si el contador es 0).
+
+10. INTERMEDIO — Compara el rendimiento de esperar 1000 gorutinas usando
+    WaitGroup vs usando un channel de struct{}.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Puedo reutilizar un WaitGroup?
+R: Sí. Después de que Wait() retorna, puedes llamar a Add() nuevamente.
+Pero asegúrate de que no haya llamadas Wait() pendientes.
+
+❓ ¿Qué pasa si llamo a Wait() con contador 0?
+R: Wait() retorna inmediatamente. No hay bloqueo.
+
+❓ ¿Puedo usar WaitGroup sin gorutinas?
+R: Técnicamente sí, pero no tiene sentido. Done() solo decrementa el
+contador; no hay sincronización especial.
+
+❓ ¿WaitGroup es seguro para concurrencia?
+R: Sí. Todos sus métodos están diseñados para ser llamados desde múltiples
+gorutinas simultáneamente.
+
+❓ ¿Cuándo usar WaitGroup vs channel para sincronización?
+R: Usa WaitGroup cuando solo necesites esperar que terminen. Usa channels
+cuando necesites comunicar datos o señalizar eventos específicos.
+
+❓ ¿Cómo sé cuántas gorutinas están esperando en Wait()?
+R: No hay API pública para eso. Internamente se lleva la cuenta, pero no
+es accesible.
+
+❓ ¿WaitGroup tiene límite de contador?
+R: El contador es un int64, por lo que el límite es 2^63-1. Más que
+suficiente para cualquier caso práctico.
+
+❓ ¿Puedo llamar a Add() con número negativo?
+R: Sí. Add(-1) es equivalente a Done(). Add(-2) decrementa en 2. Pero
+si el contador se vuelve negativo, hay panic.
+
+❓ ¿Debo llamar a Add() dentro de la gorutina o fuera?
+R: Fuera, antes de lanzar la gorutina. Esto asegura que el Add ocurre
+antes de que la gorutina pueda llamar a Done().
+
+❓ ¿Qué es mejor, WaitGroup o errgroup?
+R: errgroup (golang.org/x/sync/errgroup) extiende WaitGroup con propagación
+de errores y cancelación. Úsalo cuando necesites manejar errores.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: SISTEMA DE PROCESAMIENTO DE DATOS CON WORKER POOL             │
+│                                                                          │
+│  Diseña un sistema de procesamiento de datos financieros que use        │
+│  un worker pool con WaitGroup para coordinar el trabajo.                │
+│                                                                          │
+│  CONTEXTO:                                                               │
+│  Una empresa financiera recibe lotes de transacciones cada segundo.     │
+│  Cada lote contiene entre 50 y 200 transacciones.                        │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│                                                                          │
+│  1. GENERADOR DE LOTES: Produce 10 lotes de transacciones. Cada         │
+│     transacción tiene: ID, Tipo ("compra"/"venta"), Activo, Cantidad,  │
+│     Precio, Timestamp. Genera entre 50 y 200 transacciones por lote.    │
+│                                                                          │
+│  2. PROCESADOR DE LOTES (Worker Pool):                                   │
+│     - Pool de 5 workers que procesan lotes concurrentemente.            │
+│     - Cada worker procesa todas las transacciones de un lote.           │
+│     - Calcula: valor total, cantidad total, número de compras/ventas.  │
+│     - Si una transacción tiene cantidad negativa, la rechaza y la       │
+│       cuenta como error.                                                │
+│     - Reporta estadísticas del lote procesado.                          │
+│                                                                          │
+│  3. RECOLECTOR:                                                          │
+│     - Recibe los resultados de los workers a través de un channel.      │
+│     - Acumula estadísticas globales.                                    │
+│     - Muestra un resumen final: total lotes, transacciones, errores,   │
+│       valor total procesado, tiempo total.                              │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Usa WaitGroup para esperar a que los workers terminen.               │
+│  • El canal de tareas debe cerrarse cuando ya no hay más lotes.         │
+│  • El canal de resultados debe cerrarse cuando todos los workers        │
+│    terminan (coordina con WaitGroup).                                   │
+│  • Implementa un timeout global de 5 segundos.                          │
+│  • Usa Mutex o channels para proteger las estadísticas del recolector.  │
+│  • Documenta: tamaño del buffer de tareas, número de workers,           │
+│    estrategia de balanceo.                                              │
+│                                                                          │
+│  PISTAS:                                                                 │
+│  • El generador puede usar un WaitGroup interno.                        │
+│  • Los workers usan range sobre el canal de tareas.                     │
+│  • Un gorutina separada espera el WaitGroup de workers y cierra         │
+│    el canal de resultados.                                              │
+│  • Usa time.After en un select para el timeout global.                  │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra WaitGroup, worker pool, canales, timeouts, y manejo
+de errores. Es una réplica de un sistema real de procesamiento financiero.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dominado sync.WaitGroup, la herramienta fundamental para la coordinación
+de gorutinas. Con ella puedes lanzar ejércitos de gorutinas y esperar
+ordenadamente a que todas completen su misión.
+
+El patrón worker pool combinando WaitGroup y channels es uno de los más
+útiles y recurrentes en Go. Lo encontrarás en servidores web, procesadores
+de datos, sistemas ETL, y prácticamente cualquier aplicación concurrente.
+
+En el próximo capítulo exploraremos sync.Mutex, el mecanismo clásico para
+proteger datos compartidos. Aunque Go promueva "compartir memoria mediante
+comunicación", a veces necesitas el enfoque tradicional del lock.
+
+"WaitGroup es la forma más educada de decir 'espera a que termine' en Go."
+— Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 47: MUTEX → Exclusión mutua para datos compartidos
+
+══════════════════════════════════════════════════════════════════════════════

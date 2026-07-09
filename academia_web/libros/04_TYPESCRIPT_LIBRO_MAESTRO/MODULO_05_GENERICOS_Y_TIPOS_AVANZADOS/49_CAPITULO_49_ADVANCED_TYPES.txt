@@ -1,0 +1,881 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MODULO V
+##
+##                       CAPITULO 49
+##
+##                   TIPOS AVANZADOS
+##
+################################################################################
+################################################################################
+
+"Lo avanzado no es complicado: es la combinacion
+de lo simple de formas que nadie habia imaginado."
+                                  — Profesor Buho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BUHO
+===============================================================================
+
+Querido estudiante,
+
+Has llegado al penultimo capitulo del Modulo V. Has dominado genericos,
+constraints, utility types, keyof, typeof, mapped types, conditional types
+y template literals. Ahora es momento de unir todo ese conocimiento en
+patrones avanzados que se usan en aplicaciones reales y librerias
+profesionales.
+
+En este capitulo exploraremos:
+
+- **Branded Types**: tipos nominales en un sistema estructural
+- **El operador `satisfies`**: verificacion sin perdida de precision
+- **Tipos recursivos avanzados**: arboles, JSON, rutas
+- **Patrones de seguridad**: tipos para proteger IDs y strings
+- **Varianza**: covarianza, contravarianza e invarianza
+- **Tipos distribuidos condicionalmente**: patrones con never y any
+- **Pattern matching avanzado**: con infer y recursividad
+
+Estos patrones separan a un desarrollador competente de un maestro de
+TypeScript. Preparate para elevar tu nivel.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El conocimiento avanzado no es para presumir:
+es para resolver problemas que otros ni siquiera pueden nombrar."
+                              — Profesor Buho AI
+
+===============================================================================
+OBJETIVOS DEL CAPITULO
+===============================================================================
+
+Al finalizar este capitulo seras capaz de:
+
+✓ Implementar Branded Types para identificadores seguros
+✓ Usar el operador `satisfies` para verificacion precisa
+✓ Crear tipos recursivos para estructuras complejas
+✓ Aplicar patrones de varianza en tipos genericos
+✓ Disenar APIs que previenen errores comunes con el sistema de tipos
+✓ Combinar patrones avanzados en ejemplos reales
+✓ Escribir tipos que protegen contra errores de dominio
+
+===============================================================================
+1. BRANDED TYPES (TIPOS NOMINALES)
+===============================================================================
+
+TypeScript usa un sistema de tipos **estructural** (duck typing). Dos
+tipos con la misma forma son compatibles aunque representen conceptos
+diferentes. Los Branded Types anaden una marca artificial para simular
+tipado nominal.
+
+```typescript
+// El problema: dos conceptos diferentes, misma representacion
+type UserId = string;
+type ProductId = string;
+type Email = string;
+
+function getUser(id: UserId): void { /* ... */ }
+function getProduct(id: ProductId): void { /* ... */ }
+
+const userId: UserId = "u123";
+getProduct(userId);  // Sin error! Pero es incorrecto!
+```
+
+**Solucion: Branded Types**
+
+```typescript
+// Marca unica usando interseccion con un objeto literal
+type Brand<T, B extends string> = T & { __brand: B };
+
+type UserId = Brand<string, "UserId">;
+type ProductId = Brand<string, "ProductId">;
+type Email = Brand<string, "Email">;
+
+function getUser(id: UserId): void {
+  console.log(`Buscando usuario con ID: ${id}`);
+}
+
+function getProduct(id: ProductId): void {
+  console.log(`Buscando producto con ID: ${id}`);
+}
+
+function sendEmail(to: Email): void {
+  console.log(`Enviando email a: ${to}`);
+}
+
+const userId = "u123" as UserId;
+const productId = "p456" as ProductId;
+
+getUser(userId);      // OK
+getProduct(productId); // OK
+
+// getUser(productId); // Error! ProductId no es asignable a UserId
+// getProduct(userId); // Error! UserId no es asignable a ProductId
+// sendEmail(userId);  // Error! UserId no es asignable a Email
+```
+
+**Branded Types con numeros:**
+
+```typescript
+type Brand<T, B extends string> = T & { __brand: B };
+
+type UserId = Brand<string, "UserId">;
+type OrderId = Brand<number, "OrderId">;
+type Age = Brand<number, "Age">;
+
+function createUser(name: string): UserId {
+  return `user_${Date.now()}` as UserId;
+}
+
+function createOrder(userId: UserId): OrderId {
+  return Date.now() as OrderId;
+}
+
+function processOrder(orderId: OrderId, userId: UserId): void {
+  console.log(`Procesando orden ${orderId} para usuario ${userId}`);
+}
+
+const uid = createUser("Ana");
+const oid = createOrder(uid);
+
+processOrder(oid, uid);  // OK
+// processOrder(uid, oid);  // Error! UserId vs OrderId
+```
+
+===============================================================================
+2. FUNCIONES CREADORAS CON VALIDACION
+===============================================================================
+
+Para evitar el uso excesivo de `as`, creamos funciones factory:
+
+```typescript
+type Brand<T, B extends string> = T & { __brand: B };
+
+type UserId = Brand<string, "UserId">;
+type Email = Brand<string, "Email">;
+
+// Factory con validacion
+function createUserId(value: string): UserId {
+  if (!value.startsWith("user_")) {
+    throw new Error("UserId debe comenzar con 'user_'");
+  }
+  return value as UserId;
+}
+
+function createEmail(value: string): Email {
+  if (!value.includes("@")) {
+    throw new Error("Email invalido");
+  }
+  return value as Email;
+}
+
+function registerUser(email: Email): UserId {
+  return createUserId(`user_${Date.now()}`);
+}
+
+const email = createEmail("ana@test.com");
+const userId = registerUser(email);
+// registerUser(createUserId("user_123")); // Error: UserId no es Email
+```
+
+**Branded Types con objetos:**
+
+```typescript
+type Validado<T> = T & { __validated: true };
+
+type UsuarioValidado = Validado<{
+  id: string;
+  nombre: string;
+  email: string;
+}>;
+
+function validarUsuario(usuario: {
+  id: string;
+  nombre: string;
+  email: string;
+}): UsuarioValidado {
+  if (!usuario.email.includes("@")) {
+    throw new Error("Email invalido");
+  }
+  return { ...usuario, __validated: true };
+}
+
+function guardarUsuario(usuario: UsuarioValidado): void {
+  console.log(`Guardando usuario validado: ${usuario.nombre}`);
+}
+
+const usuario = { id: "1", nombre: "Ana", email: "ana@test.com" };
+// guardarUsuario(usuario); // Error: falta __validated
+
+const validado = validarUsuario(usuario);
+guardarUsuario(validado); // OK!
+```
+
+===============================================================================
+3. EL OPERADOR SATISFIES
+===============================================================================
+
+Introducido en TypeScript 4.9, `satisfies` permite verificar que un valor
+cumple con un tipo sin cambiar el tipo inferido:
+
+```typescript
+// Sin satisfies: perdemos precision
+const colores: Record<string, string> = {
+  rojo: "#ff0000",
+  verde: "#00ff00",
+  azul: "#0000ff"
+};
+
+colores.rojo; // tipo: string (no sabemos que es "#ff0000")
+
+// Con satisfies: verificamos pero preservamos el tipo exacto
+const colores2 = {
+  rojo: "#ff0000",
+  verde: "#00ff00",
+  azul: "#0000ff"
+} satisfies Record<string, string>;
+
+colores2.rojo; // tipo: "#ff0000" (literal exacto!)
+```
+
+**Caso de uso: validar estructura sin perder literales**
+
+```typescript
+type Palette = {
+  primary: string;
+  secondary: string;
+  accent: string;
+  error: string;
+};
+
+const palette = {
+  primary: "#1a1a2e",
+  secondary: "#16213e",
+  accent: "#e94560",
+  error: "#ff0000"
+} satisfies Palette;
+
+// palette.primary es "#1a1a2e" (literal), no string
+// Si falta una propiedad, error en compilacion
+
+// Tambien verifica valores:
+const coloresRGB = {
+  rojo: "rgb(255, 0, 0)",
+  verde: "rgb(0, 255, 0)",
+  azul: "rgb(0, 0, 255)"
+} satisfies Record<string, `rgb(${number}, ${number}, ${number})`>;
+```
+
+**satisfies con uniones discriminadas:**
+
+```typescript
+type Evento =
+  | { tipo: "click"; x: number; y: number }
+  | { tipo: "keypress"; tecla: string }
+  | { tipo: "focus"; elemento: string };
+
+const evento = {
+  tipo: "click",
+  x: 100,
+  y: 200
+} satisfies Evento;
+
+// evento.tipo es "click" (literal), no "click" | "keypress" | "focus"
+// evento.x es number, evento.y es number
+// Si hubieramos puesto tipo: "click" sin x, daria error
+```
+
+===============================================================================
+4. VARIANTZA: COVARIANZA, CONTRAVARIANZA E INVARIANZA
+===============================================================================
+
+La **varianza** describe como los tipos genericos se relacionan con sus
+parametros de tipo en terminos de asignabilidad.
+
+**Covarianza (position de salida / return):**
+
+```typescript
+// Producer<T> es covariante en T
+interface Producer<T> {
+  produce(): T;
+}
+
+// Si T extends U, entonces Producer<T> extends Producer<U>
+// Producer<Dog> extends Producer<Animal> (si Dog extends Animal)
+```
+
+**Contravarianza (position de entrada / parametros):**
+
+```typescript
+// Consumer<T> es contravariante en T
+interface Consumer<T> {
+  consume(value: T): void;
+}
+
+// Si T extends U, entonces Consumer<U> extends Consumer<T>
+// Consumer<Animal> extends Consumer<Dog> (inverso!)
+```
+
+**Invarianza (ambas posiciones):**
+
+```typescript
+// Box<T> es invariante en T
+interface Box<T> {
+  produce(): T;
+  consume(value: T): void;
+}
+
+// Box<T> y Box<U> no son asignables entre si aunque T y U se relacionen
+```
+
+**En la practica:**
+
+```typescript
+class Animal { hacerSonido(): void {} }
+class Perro extends Animal { ladrar(): void {} }
+class Gato extends Animal { maullar(): void {} }
+
+// Arrays en TypeScript son covariantes (por razones practicas)
+const perros: Perro[] = [new Perro()];
+const animales: Animal[] = perros;  // Permitido (aunque inseguro)
+
+// Funciones: los parametros son contravariantes (con strictFunctionTypes)
+type Handler<T> = (valor: T) => void;
+
+const handlerPerro: Handler<Perro> = (p) => p.ladrar();
+const handlerAnimal: Handler<Animal> = (a) => a.hacerSonido();
+
+// Con strictFunctionTypes:
+// handlerAnimal = handlerPerro; // Error (contravariante seguro)
+// handlerPerro = handlerAnimal; // OK (contravariante)
+```
+
+===============================================================================
+5. TIPOS RECURSIVOS AVANZADOS
+===============================================================================
+
+**Tipo JSON recursivo:**
+
+```typescript
+type JSONValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JSONValue[]
+  | { [key: string]: JSONValue };
+
+const data: JSONValue = {
+  nombre: "Ana",
+  edad: 30,
+  direccion: {
+    calle: "Av. Principal",
+    numeros: [1, 2, 3]
+  },
+  activo: true,
+  notas: null
+};
+
+// Funcion que procesa JSON recursivamente
+function procesarJSON(
+  valor: JSONValue,
+  ruta: string = "$"
+): void {
+  if (Array.isArray(valor)) {
+    valor.forEach((item, i) => procesarJSON(item, `${ruta}[${i}]`));
+  } else if (typeof valor === "object" && valor !== null) {
+    for (const key in valor) {
+      procesarJSON(valor[key], `${ruta}.${key}`);
+    }
+  } else {
+    console.log(`${ruta}: ${String(valor)}`);
+  }
+}
+```
+
+**Arbol recursivo tipado:**
+
+```typescript
+type Arbol<T> = {
+  valor: T;
+  hijos?: Arbol<T>[];
+};
+
+function crearNodo<T>(valor: T, hijos?: Arbol<T>[]): Arbol<T> {
+  return { valor, hijos };
+}
+
+function recorrerArbol<T>(
+  nodo: Arbol<T>,
+  callback: (valor: T, profundidad: number) => void,
+  profundidad: number = 0
+): void {
+  callback(nodo.valor, profundidad);
+  if (nodo.hijos) {
+    for (const hijo of nodo.hijos) {
+      recorrerArbol(hijo, callback, profundidad + 1);
+    }
+  }
+}
+
+interface NodoFileSystem {
+  nombre: string;
+  tipo: "archivo" | "directorio";
+  hijos?: NodoFileSystem[];
+}
+
+const sistema: NodoFileSystem = {
+  nombre: "root",
+  tipo: "directorio",
+  hijos: [
+    { nombre: "docs", tipo: "directorio", hijos: [{ nombre: "readme.md", tipo: "archivo" }] },
+    { nombre: "src", tipo: "directorio", hijos: [{ nombre: "index.ts", tipo: "archivo" }] }
+  ]
+};
+```
+
+===============================================================================
+6. PATRON: RESULT TYPE (RUST-INSPIRED)
+===============================================================================
+
+```typescript
+// Tipo Resultado al estilo Rust
+type Ok<T> = { success: true; value: T };
+type Err<E> = { success: false; error: E };
+type Result<T, E = Error> = Ok<T> | Err<E>;
+
+// Funciones que retornan Result
+function dividir(a: number, b: number): Result<number, string> {
+  if (b === 0) {
+    return { success: false, error: "Division por cero" };
+  }
+  return { success: true, value: a / b };
+}
+
+function parseJSON<T>(json: string): Result<T, SyntaxError> {
+  try {
+    const value = JSON.parse(json) as T;
+    return { success: true, value };
+  } catch (e) {
+    return { success: false, error: e as SyntaxError };
+  }
+}
+
+// Funciones de utilidad
+function isOk<T, E>(result: Result<T, E>): result is Ok<T> {
+  return result.success;
+}
+
+function isErr<T, E>(result: Result<T, E>): result is Err<E> {
+  return !result.success;
+}
+
+function unwrap<T, E>(result: Result<T, E>, mensaje?: string): T {
+  if (isErr(result)) {
+    throw new Error(mensaje ?? result.error as string);
+  }
+  return result.value;
+}
+
+// Uso
+const r1 = dividir(10, 2);
+if (isOk(r1)) {
+  console.log(`Resultado: ${r1.value}`);
+}
+
+const r2 = parseJSON<{ nombre: string }>('{"nombre": "Ana"}');
+if (isOk(r2)) {
+  console.log(r2.value.nombre);
+}
+```
+
+===============================================================================
+7. PATRON: PROTOTIPO DE SINGLETON CON TIPOS
+===============================================================================
+
+```typescript
+interface Singleton<T> {
+  getInstance(): T;
+}
+
+function crearSingleton<T>(factory: () => T): Singleton<T> {
+  let instancia: T | null = null;
+
+  return {
+    getInstance(): T {
+      if (!instancia) {
+        instancia = factory();
+      }
+      return instancia;
+    }
+  };
+}
+
+// Uso con tipos
+interface Config {
+  apiUrl: string;
+  timeout: number;
+}
+
+const configSingleton = crearSingleton<Config>(() => ({
+  apiUrl: "https://api.com",
+  timeout: 5000
+}));
+
+const config1 = configSingleton.getInstance();
+const config2 = configSingleton.getInstance();
+console.log(config1 === config2); // true
+```
+
+===============================================================================
+8. PATRON: TIPOS PARA ESTADOS FINITOS (FSM)
+===============================================================================
+
+```typescript
+// Maquina de estados finitos tipada
+type EstadoApp = "cargando" | "autenticado" | "noAutenticado" | "error";
+
+type Transiciones = {
+  cargando: "autenticado" | "noAutenticado" | "error";
+  autenticado: "noAutenticado";
+  noAutenticado: "autenticado" | "cargando";
+  error: "cargando" | "noAutenticado";
+};
+
+type EstadoValido<S extends EstadoApp> = Transiciones[S];
+
+class StateMachine {
+  private estado: EstadoApp;
+
+  constructor(initial: EstadoApp) {
+    this.estado = initial;
+  }
+
+  getEstado(): EstadoApp {
+    return this.estado;
+  }
+
+  transicion<S extends EstadoApp>(
+    from: S,
+    to: EstadoValido<S>
+  ): void {
+    if (this.estado !== from) {
+      throw new Error(
+        `Estado actual ${this.estado} no coincide con ${from}`
+      );
+    }
+    console.log(`Transicion: ${from} -> ${to}`);
+    this.estado = to;
+  }
+}
+
+const fsm = new StateMachine("cargando");
+fsm.transicion("cargando", "autenticado");
+// fsm.transicion("cargando", "cargando"); // Error!
+// fsm.transicion("autenticado", "cargando"); // Error en runtime
+```
+
+===============================================================================
+9. PATRON: DTO (DATA TRANSFER OBJECT) CON VALIDACION
+===============================================================================
+
+```typescript
+// Definicion base con marcas de validacion
+type Validado<T> = T & { __validado: true };
+type SinValidar<T> = T;
+
+// DTOs
+interface CrearUsuarioDTO {
+  nombre: string;
+  email: string;
+  password: string;
+}
+
+type CrearUsuarioValidado = Validado<CrearUsuarioDTO>;
+
+// Funcion de validacion
+function validarCrearUsuario(
+  dto: SinValidar<CrearUsuarioDTO>
+): CrearUsuarioValidado {
+  const errores: string[] = [];
+
+  if (!dto.nombre || dto.nombre.length < 2) {
+    errores.push("Nombre debe tener al menos 2 caracteres");
+  }
+  if (!dto.email || !dto.email.includes("@")) {
+    errores.push("Email invalido");
+  }
+  if (!dto.password || dto.password.length < 6) {
+    errores.push("Password debe tener al menos 6 caracteres");
+  }
+
+  if (errores.length > 0) {
+    throw new Error(`Validacion fallida: ${errores.join(", ")}`);
+  }
+
+  return { ...dto, __validado: true };
+}
+
+// Servicio que solo acepta DTOs validados
+class UsuarioService {
+  crear(dto: CrearUsuarioValidado): void {
+    console.log(`Creando usuario: ${dto.nombre}`);
+    // dto esta validado, podemos confiar en sus campos
+  }
+}
+
+// Uso
+const service = new UsuarioService();
+// service.crear({ nombre: "A", email: "invalido", password: "123" });
+// Error: falta __validado
+
+const dtoValidado = validarCrearUsuario({
+  nombre: "Ana",
+  email: "ana@test.com",
+  password: "secreta123"
+});
+service.crear(dtoValidado); // OK
+```
+
+===============================================================================
+10. PATRON: DEPENDENCIA INYECTADA CON TIPOS
+===============================================================================
+
+```typescript
+// Contenedor de dependencias tipado
+type RegistroDependencias = Record<string, new (...args: any[]) => any>;
+
+class Container<T extends RegistroDependencias> {
+  private instancias = new Map<keyof T, InstanceType<T[keyof T]>>();
+  private factories = new Map<keyof T, () => InstanceType<T[keyof T]>>();
+
+  registrar<K extends keyof T>(
+    clave: K,
+    factory: () => InstanceType<T[K]>
+  ): void {
+    this.factories.set(clave, factory);
+  }
+
+  obtener<K extends keyof T>(clave: K): InstanceType<T[K]> {
+    if (!this.instancias.has(clave)) {
+      const factory = this.factories.get(clave);
+      if (!factory) {
+        throw new Error(`Dependencia ${String(clave)} no registrada`);
+      }
+      this.instancias.set(clave, factory());
+    }
+    return this.instancias.get(clave) as InstanceType<T[K]>;
+  }
+}
+
+// Definir dependencias
+interface Logger {
+  log(mensaje: string): void;
+}
+
+interface Database {
+  conectar(): void;
+  query(sql: string): Promise<any[]>;
+}
+
+class ConsoleLogger implements Logger {
+  log(mensaje: string): void {
+    console.log(`[LOG] ${mensaje}`);
+  }
+}
+
+class PostgresDB implements Database {
+  conectar(): void { console.log("Conectando a PostgreSQL..."); }
+  async query(sql: string): Promise<any[]> {
+    console.log(`Ejecutando: ${sql}`);
+    return [];
+  }
+}
+
+// Configurar contenedor
+type MisDeps = {
+  logger: Logger;
+  database: Database;
+};
+
+const container = new Container<MisDeps>();
+container.registrar("logger", () => new ConsoleLogger());
+container.registrar("database", () => new PostgresDB());
+
+const logger = container.obtener("logger");
+logger.log("Aplicacion iniciada");
+
+const db = container.obtener("database");
+db.conectar();
+```
+
+===============================================================================
+11. EJEMPLO INTEGRADOR: SISTEMA DE VALIDACION Y TRANSFORMACION
+===============================================================================
+
+```typescript
+// === Tipos base ===
+type Brand<T, B extends string> = T & { __brand: B };
+
+type UserId = Brand<string, "UserId">;
+type Email = Brand<string, "Email">;
+
+interface UsuarioInput {
+  nombre: string;
+  email: string;
+  edad: number;
+}
+
+// === Marcas de validacion ===
+type Validado<T> = T & { __validated: true };
+type Transformado<T, R> = R;
+
+// === Validador ===
+function validarUsuario(
+  input: UsuarioInput
+): Validado<UsuarioInput> {
+  if (input.nombre.length < 2) throw new Error("Nombre muy corto");
+  if (!input.email.includes("@")) throw new Error("Email invalido");
+  if (input.edad < 0 || input.edad > 150) throw new Error("Edad invalida");
+  return { ...input, __validated: true };
+}
+
+// === Transformador ===
+interface UsuarioOutput {
+  id: UserId;
+  nombreCompleto: string;
+  correo: Email;
+  mayorEdad: boolean;
+}
+
+function transformarUsuario(
+  input: Validado<UsuarioInput>
+): UsuarioOutput {
+  return {
+    id: `user_${Date.now()}` as UserId,
+    nombreCompleto: input.nombre.trim(),
+    correo: input.email.toLowerCase() as Email,
+    mayorEdad: input.edad >= 18
+  };
+}
+
+// === Servicio ===
+class UsuarioService {
+  private usuarios: UsuarioOutput[] = [];
+
+  crear(input: UsuarioInput): UsuarioOutput {
+    const validado = validarUsuario(input);
+    const output = transformarUsuario(validado);
+    this.usuarios.push(output);
+    return output;
+  }
+
+  buscarPorId(id: UserId): UsuarioOutput | undefined {
+    return this.usuarios.find(u => u.id === id);
+  }
+
+  buscarPorEmail(email: Email): UsuarioOutput | undefined {
+    return this.usuarios.find(u => u.correo === email);
+  }
+}
+
+// === Uso del sistema ===
+const service = new UsuarioService();
+
+const ana = service.crear({
+  nombre: "Ana Lopez",
+  email: "Ana@Test.COM",
+  edad: 25
+});
+
+console.log(ana);
+// { id: "user_1740000000", nombreCompleto: "Ana Lopez",
+//   correo: "ana@test.com", mayorEdad: true }
+
+// Busqueda tipada
+const encontrada = service.buscarPorId(ana.id);
+if (encontrada) {
+  console.log(`Encontrada: ${encontrada.nombreCompleto}`);
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPITULO
+===============================================================================
+
+- Los Branded Types simulan tipado nominal anadiendo marcas unicas.
+- `satisfies` verifica tipos sin perder precision de literales.
+- La varianza describe como los tipos genericos se relacionan (co, contra,
+  invariante).
+- Los tipos recursivos permiten modelar JSON, arboles y rutas.
+- Los patrones Result, Singleton, FSM y DTO elevan el tipado a nivel
+  de diseno de software.
+- La combinacion de marcas de validacion con tipos garantiza flujos
+  seguros de datos.
+
+===============================================================================
+EJERCICIOS DE PRACTICA
+===============================================================================
+
+**Ejercicio 1:**
+Define Branded Types para `DNI`, `Telefono`, `CodigoPostal` y crea
+funciones factory con validacion basica.
+
+**Ejercicio 2:**
+Usa `satisfies` para crear un objeto `config` que cumpla con
+`Record<string, string | number>` pero preserve los tipos literales.
+
+**Ejercicio 3:**
+Implementa un tipo `DeepPartial<T>` recursivo que haga todas las
+propiedades opcionales en todos los niveles de anidacion.
+
+**Ejercicio 4:**
+Crea un tipo `ArbolBinario<T>` con valor, izquierda y derecha (opcionales).
+Implementa una funcion `enOrden<T>` que recorra el arbol.
+
+**Ejercicio 5:**
+Implementa un sistema de Result tipado con los metodos `map`, `flatMap`,
+y `getOrElse` usando tipos genericos y condicionales.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+**Que es un Branded Type?**
+Es un tipo que anade una marca unica (`__brand`) para distinguir tipos
+con la misma representacion estructural pero diferente significado.
+
+**Cuando debo usar `satisfies` vs anotacion de tipo?**
+Usa `satisfies` cuando quieras verificar que un valor cumple con un tipo
+pero preservar su tipo inferido. Usa anotacion cuando quieras forzar el
+tipo y no necesites los detalles literales.
+
+**Que es la varianza y por que importa?**
+La varianza determina como los tipos genericos se relacionan en terminos
+de subtipado. Es crucial para disenar APIs que sean seguras y
+intuitivas.
+
+**Son los Branded Types seguros en runtime?**
+No. La marca es solo de TypeScript y se elimina en compilacion. La
+seguridad solo existe en tiempo de compilacion. La validacion en
+runtime debe hacerse por separado.
+
+===============================================================================
+FIN DEL CAPITULO 49
+===============================================================================
+
+"Lo avanzado no es un destino: es un peldaño mas
+en la escalera infinita del conocimiento."
+                              — Profesor Buho AI
+
+===============================================================================
+PROXIMO CAPITULO:
+
+50_CAPITULO_50_PROYECTO_MODULO_V.txt
+===============================================================================

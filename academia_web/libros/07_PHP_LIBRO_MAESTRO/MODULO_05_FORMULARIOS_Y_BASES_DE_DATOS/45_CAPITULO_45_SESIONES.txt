@@ -1,0 +1,876 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO V
+##
+##                       CAPÍTULO 45
+##
+##                          SESIONES
+##
+################################################################################
+################################################################################
+
+"La sesión es la memoria del servidor; sin ella, cada clic sería un reencuentro
+con un desconocido." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, maestro de la persistencia! Hasta ahora, cada petición a tu
+servidor PHP ha sido independiente: el script se ejecuta, responde y muere. El
+servidor no recuerda quién eres ni qué hiciste en la petición anterior.
+
+Las sesiones resuelven este problema. Con session_start() y $_SESSION, puedes
+almacenar información que persiste a través de múltiples peticiones del mismo
+usuario: su identidad, sus preferencias, los productos en su carrito de compras,
+su estado de autenticación.
+
+En este capítulo aprenderás cómo funcionan las sesiones en PHP, cómo iniciarlas,
+cómo almacenar y recuperar datos, cómo destruirlas y cómo implementar un sistema
+de login básico. Las sesiones son la base de cualquier aplicación web que
+recuerde a sus usuarios.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El estado no es un lujo; es la diferencia entre una página estática y una
+experiencia personalizada." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender el concepto de sesión y el problema de la falta de estado en HTTP.
+✓ Iniciar y configurar sesiones con session_start().
+✓ Almacenar, modificar y eliminar datos en $_SESSION.
+✓ Implementar un sistema de login y logout con sesiones.
+✓ Configurar parámetros de sesión (tiempo de vida, cookie, ruta).
+✓ Manejar la seguridad básica de sesiones.
+✓ Destruir sesiones correctamente con session_destroy().
+
+===============================================================================
+1. EL PROBLEMA DE LA FALTA DE ESTADO
+===============================================================================
+
+HTTP es un protocolo sin estado. Cada petición es independiente. El servidor no
+sabe si dos peticiones vienen del mismo usuario o de usuarios diferentes.
+
+Sin sesiones:
+
+  - Petición 1: Usuario hace login con usuario/clave.
+  - Petición 2: Usuario visita su perfil.
+  - Servidor: "¿Quién eres? No tengo idea."
+
+Con sesiones:
+
+  - Petición 1: Usuario hace login. Servidor crea una sesión y asigna un ID
+    único. Envía el ID al navegador como cookie.
+  - Petición 2: Navegador envía el ID de sesión. Servidor recupera los datos
+    almacenados: "Ah, eres el usuario 42, ya estás autenticado."
+
+El flujo técnico:
+
+  1. session_start() crea una sesión nueva o reanuda la existente.
+  2. PHP genera un ID de sesión único (ej. 2b0k3m4n5a6b7c8d9e0f).
+  3. PHP envía una cookie (PHPSESSID) al navegador con ese ID.
+  4. En peticiones siguientes, el navegador devuelve la cookie.
+  5. PHP lee el ID, localiza el archivo de sesión y carga $_SESSION.
+
+Sin cookies, PHP puede pasar el ID de sesión por URL (PHPSESSID=...), pero
+esto es inseguro y está desaconsejado.
+
+===============================================================================
+2. SESSION_START() Y $_SESSION
+===============================================================================
+
+session_start() es la función que inicia o reanuda una sesión. Debe llamarse
+antes de cualquier salida HTML.
+
+```php
+<?php
+// config.php
+session_start(); // Obligatorio al inicio
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mi Aplicación</title>
+</head>
+<body>
+    <?php
+    if (isset($_SESSION['usuario'])) {
+        echo "Bienvenido, " . htmlspecialchars($_SESSION['usuario']);
+    } else {
+        echo "Bienvenido, visitante.";
+    }
+    ?>
+</body>
+</html>
+```
+
+$_SESSION es un arreglo asociativo. Puedes guardar cualquier tipo de dato
+serializable: strings, enteros, arreglos, objetos (si implementan
+Serializable).
+
+```php
+<?php
+session_start();
+
+// Guardar datos en sesión
+$_SESSION['usuario_id'] = 42;
+$_SESSION['nombre'] = 'Ana García';
+$_SESSION['roles'] = ['admin', 'editor'];
+$_SESSION['preferencias'] = [
+    'idioma' => 'es',
+    'tema' => 'oscuro',
+    'notificaciones' => true
+];
+
+echo "Sesión iniciada para: " . $_SESSION['nombre'];
+?>
+```
+
+Acceder a datos de sesión:
+
+```php
+<?php
+session_start();
+
+if (isset($_SESSION['usuario_id'])) {
+    $id = $_SESSION['usuario_id'];
+    $nombre = $_SESSION['nombre'];
+    $roles = $_SESSION['roles'];
+
+    echo "ID: $id<br>";
+    echo "Nombre: " . htmlspecialchars($nombre) . "<br>";
+    echo "Rol principal: " . htmlspecialchars($roles[0]);
+} else {
+    echo "No has iniciado sesión.";
+}
+?>
+```
+
+Modificar datos existentes:
+
+```php
+<?php
+session_start();
+
+// Actualizar preferencia
+$_SESSION['preferencias']['tema'] = 'claro';
+
+// Incrementar contador de visitas
+$_SESSION['visitas'] = ($_SESSION['visitas'] ?? 0) + 1;
+echo "Has visitado esta página " . $_SESSION['visitas'] . " veces.";
+?>
+```
+
+Eliminar un dato específico:
+
+```php
+<?php
+session_start();
+
+unset($_SESSION['roles']); // Elimina 'roles' pero mantiene la sesión
+?>
+```
+
+Sobrescribir todos los datos:
+
+```php
+<?php
+session_start();
+
+$_SESSION = []; // Vacía todos los datos de la sesión
+?>
+```
+
+===============================================================================
+3. CICLO DE VIDA DE UNA SESIÓN
+===============================================================================
+
+Las sesiones tienen un ciclo de vida que debes entender para manejarlas
+correctamente.
+
+Creación:
+
+```php
+<?php
+session_start(); // Primera vez: crea la sesión
+$_SESSION['usuario'] = 'juan';
+?>
+```
+
+Las sesiones se crean en el servidor. PHP guarda los datos de sesión en
+archivos temporales (por defecto en /tmp/) con nombres como sess_XXXXX.
+
+Persistencia:
+
+  - Los datos de $_SESSION viven en el servidor, no en el cliente.
+  - La cookie PHPSESSID solo contiene el ID de sesión, no los datos.
+  - Los datos persisten hasta que la sesión se destruye o expira.
+
+Expiración:
+
+  - Por defecto, las sesiones expiran cuando se cierra el navegador (cookie de
+    sesión sin tiempo de vida).
+  - Se puede configurar un tiempo de vida con session_set_cookie_params().
+  - También hay un tiempo de vida en el servidor (gc_maxlifetime).
+
+Destrucción:
+
+```php
+<?php
+session_start();
+
+// 1. Vaciar los datos
+$_SESSION = [];
+
+// 2. Eliminar la cookie de sesión
+if (ini_get('session.use_cookies')) {
+    $params = session_get_cookie_params();
+    setcookie(session_name(), '', time() - 42000,
+        $params['path'], $params['domain'],
+        $params['secure'], $params['httponly']
+    );
+}
+
+// 3. Destruir la sesión en el servidor
+session_destroy();
+
+// 4. Redirigir al login
+header('Location: login.php');
+exit;
+?>
+```
+
+El orden correcto es: vaciar $_SESSION, eliminar la cookie, llamar a
+session_destroy(). Saltarse algún paso puede dejar residuos.
+
+Sesión en acción: contador de visitas:
+
+```php
+<?php
+session_start();
+
+$contador = $_SESSION['contador'] ?? 0;
+$contador++;
+$_SESSION['contador'] = $contador;
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Contador de Visitas</title>
+</head>
+<body>
+    <h1>Has visitado esta página <?= $contador ?> veces.</h1>
+    <?php if ($contador === 1): ?>
+        <p>¡Bienvenido! Esta es tu primera visita.</p>
+    <?php endif; ?>
+    <a href="?reset=1">Reiniciar contador</a>
+
+    <?php
+    if (isset($_GET['reset'])) {
+        session_destroy();
+        header('Location: ' . str_replace('?reset=1', '', $_SERVER['REQUEST_URI']));
+        exit;
+    }
+    ?>
+</body>
+</html>
+```
+
+===============================================================================
+4. SISTEMA DE LOGIN CON SESIONES
+===============================================================================
+
+El caso de uso más común de las sesiones es mantener el estado de autenticación.
+
+login.php:
+
+```php
+<?php
+session_start();
+
+$error = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $usuario = trim($_POST['usuario'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    // Simular verificación (en producción: consultar BD con password_verify)
+    $usuariosRegistrados = [
+        'admin' => password_hash('123456', PASSWORD_DEFAULT),
+        'juan'  => password_hash('abc123', PASSWORD_DEFAULT),
+    ];
+
+    if (isset($usuariosRegistrados[$usuario]) &&
+        password_verify($password, $usuariosRegistrados[$usuario])) {
+
+        // Autenticación exitosa: guardar en sesión
+        $_SESSION['usuario'] = $usuario;
+        $_SESSION['login_time'] = time();
+        $_SESSION['ip'] = $_SERVER['REMOTE_ADDR'];
+
+        header('Location: dashboard.php');
+        exit;
+    } else {
+        $error = 'Usuario o contraseña incorrectos.';
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Iniciar Sesión</title>
+</head>
+<body>
+    <h1>Iniciar Sesión</h1>
+
+    <?php if ($error !== ''): ?>
+        <p style="color:red"><?= htmlspecialchars($error) ?></p>
+    <?php endif; ?>
+
+    <form method="POST">
+        <p>
+            <label for="usuario">Usuario:</label>
+            <input type="text" id="usuario" name="usuario" required>
+        </p>
+        <p>
+            <label for="password">Contraseña:</label>
+            <input type="password" id="password" name="password" required>
+        </p>
+        <p>
+            <button type="submit">Entrar</button>
+        </p>
+    </form>
+</body>
+</html>
+```
+
+dashboard.php (página protegida):
+
+```php
+<?php
+session_start();
+
+// Verificar autenticación
+if (!isset($_SESSION['usuario'])) {
+    header('Location: login.php');
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard</title>
+</head>
+<body>
+    <h1>Bienvenido, <?= htmlspecialchars($_SESSION['usuario']) ?></h1>
+    <p>Iniciaste sesión el <?= date('d/m/Y H:i:s', $_SESSION['login_time']) ?></p>
+    <p>IP de conexión: <?= htmlspecialchars($_SESSION['ip']) ?></p>
+
+    <a href="logout.php">Cerrar sesión</a>
+</body>
+</html>
+```
+
+logout.php:
+
+```php
+<?php
+session_start();
+
+$_SESSION = [];
+
+if (ini_get('session.use_cookies')) {
+    $params = session_get_cookie_params();
+    setcookie(session_name(), '', time() - 42000,
+        $params['path'], $params['domain'],
+        $params['secure'], $params['httponly']
+    );
+}
+
+session_destroy();
+
+header('Location: login.php?mensaje=sesion_cerrada');
+exit;
+?>
+```
+
+Este es el patrón más básico de autenticación con sesiones. En un sistema real,
+las credenciales se verifican contra una base de datos.
+
+===============================================================================
+5. CONFIGURACIÓN DE SESIONES
+===============================================================================
+
+PHP permite configurar el comportamiento de las sesiones mediante funciones y
+directivas de php.ini.
+
+Configuración de la cookie de sesión:
+
+```php
+<?php
+session_set_cookie_params([
+    'lifetime' => 3600,        // 1 hora en segundos (0 = hasta cerrar navegador)
+    'path'     => '/',         // Disponible en todo el sitio
+    'domain'   => 'ejemplo.com', // Dominio
+    'secure'   => true,        // Solo enviar por HTTPS
+    'httponly' => true,        // No accesible desde JavaScript
+    'samesite' => 'Strict',    // Protección CSRF
+]);
+
+session_start();
+?>
+```
+
+Directivas php.ini relevantes:
+
+```ini
+; Archivo php.ini o .user.ini o .htaccess
+session.name = PHPSESSID
+session.save_path = /tmp
+session.use_cookies = 1
+session.use_only_cookies = 1
+session.use_strict_mode = 1
+session.cookie_lifetime = 0
+session.cookie_path = /
+session.cookie_domain =
+session.cookie_secure = 1
+session.cookie_httponly = 1
+session.cookie_samesite = "Strict"
+session.gc_maxlifetime = 1440
+session.gc_probability = 1
+session.gc_divisor = 100
+session.sid_length = 48
+session.sid_bits_per_character = 6
+```
+
+Explicación de las más importantes:
+
+  - session.use_strict_mode: Rechaza ID de sesión no inicializados (previene
+    fijación de sesión).
+  - session.cookie_httponly: La cookie no es accesible por JavaScript (previene
+    XSS session hijacking).
+  - session.cookie_secure: La cookie solo se envía por HTTPS.
+  - session.cookie_samesite: Previene CSRF (Lax o Strict).
+  - session.gc_maxlifetime: Tiempo máximo de vida de los datos de sesión en el
+    servidor (1440 segundos = 24 minutos por defecto).
+  - session.sid_length: Longitud del ID de sesión (más largo = más seguro).
+
+Configuración por script (antes de session_start()):
+
+```php
+<?php
+ini_set('session.use_only_cookies', 1);
+ini_set('session.cookie_httponly', 1);
+ini_set('session.cookie_secure', 1);
+ini_set('session.gc_maxlifetime', 3600); // 1 hora
+ini_set('session.sid_length', 48);
+
+session_start();
+?>
+```
+
+===============================================================================
+6. SEGURIDAD EN SESIONES
+===============================================================================
+
+Las sesiones son un vector de ataque común. Estas son las principales amenazas
+y cómo mitigarlas.
+
+Fijación de sesión (Session Fixation):
+
+  - El atacante obtiene o establece un ID de sesión y engaña al usuario para
+    que lo use.
+  - Mitigación: regenerar el ID después del login.
+
+```php
+<?php
+session_start();
+
+if ($loginExitoso) {
+    session_regenerate_id(true); // Destruye el ID anterior y crea uno nuevo
+    $_SESSION['usuario'] = $usuario;
+}
+?>
+```
+
+Secuestro de sesión (Session Hijacking):
+
+  - El atacante roba el ID de sesión y lo usa para hacerse pasar por el usuario.
+  - Mitigación: usar HTTPS, cookie httponly, validar IP y User-Agent.
+
+```php
+<?php
+session_start();
+
+// Validar que la IP y User-Agent coincidan
+$ip = $_SERVER['REMOTE_ADDR'];
+$ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+if (!isset($_SESSION['ip']) || !isset($_SESSION['user_agent'])) {
+    $_SESSION['ip'] = $ip;
+    $_SESSION['user_agent'] = $ua;
+} elseif ($_SESSION['ip'] !== $ip || $_SESSION['user_agent'] !== $ua) {
+    session_destroy();
+    header('Location: login.php?error=sesion_invalida');
+    exit;
+}
+?>
+```
+
+Expiración automática:
+
+```php
+<?php
+session_start();
+
+$tiempoLimite = 1800; // 30 minutos
+
+if (isset($_SESSION['ultimo_acceso'])) {
+    $inactividad = time() - $_SESSION['ultimo_acceso'];
+    if ($inactividad > $tiempoLimite) {
+        session_destroy();
+        header('Location: login.php?error=sesion_expirada');
+        exit;
+    }
+}
+
+$_SESSION['ultimo_acceso'] = time();
+?>
+```
+
+Renovación periódica del ID:
+
+```php
+<?php
+session_start();
+
+// Regenerar ID cada 5 minutos para prevenir fijación
+$intervaloRegeneracion = 300; // 5 minutos
+
+if (!isset($_SESSION['ultima_regeneracion'])) {
+    $_SESSION['ultima_regeneracion'] = time();
+} elseif (time() - $_SESSION['ultima_regeneracion'] > $intervaloRegeneracion) {
+    session_regenerate_id(true);
+    $_SESSION['ultima_regeneracion'] = time();
+}
+?>
+```
+
+Mejores prácticas de seguridad para sesiones:
+
+  1. Usa session_set_cookie_params() con httponly, secure y samesite.
+  2. Regenera el ID de sesión después del login (session_regenerate_id()).
+  3. Establece un tiempo máximo de inactividad.
+  4. Valida IP y User-Agent (con cuidado si los usuarios usan redes móviles).
+  5. Usa HTTPS siempre.
+  6. Nunca almacenes IDs de sesión en URLs.
+  7. Destruye la sesión explícitamente al hacer logout.
+  8. Para aplicaciones críticas, implementa autenticación de dos factores.
+
+===============================================================================
+7. SESIONES CON ARCHIVOS Y BASES DE DATOS
+===============================================================================
+
+Por defecto, PHP guarda las sesiones en archivos en /tmp/. Esto funciona para
+un solo servidor, pero en aplicaciones con múltiples servidores (balanceo de
+carga), los archivos no se comparten.
+
+Solución: almacenar sesiones en una base de datos o en Redis/Memcached.
+
+PHP permite definir un manejador de sesiones personalizado mediante
+session_set_save_handler(). Implementaremos un guardado en base de datos con
+PDO:
+
+```php
+<?php
+class SesionBaseDeDatos
+{
+    private PDO $pdo;
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+    }
+
+    public function abrir(string $ruta, string $nombre): bool
+    {
+        return true;
+    }
+
+    public function cerrar(): bool
+    {
+        return true;
+    }
+
+    public function leer(string $id): string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT datos FROM sesiones WHERE id = :id AND expira > :ahora'
+        );
+        $stmt->execute([
+            ':id' => $id,
+            ':ahora' => time()
+        ]);
+        $fila = $stmt->fetch();
+        return $fila ? $fila['datos'] : '';
+    }
+
+    public function escribir(string $id, string $datos): bool
+    {
+        $expira = time() + (int)ini_get('session.gc_maxlifetime');
+        $stmt = $this->pdo->prepare(
+            'REPLACE INTO sesiones (id, datos, expira) VALUES (:id, :datos, :expira)'
+        );
+        return $stmt->execute([
+            ':id' => $id,
+            ':datos' => $datos,
+            ':expira' => $expira
+        ]);
+    }
+
+    public function destruir(string $id): bool
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM sesiones WHERE id = :id');
+        return $stmt->execute([':id' => $id]);
+    }
+
+    public function limpiar(int $maxlifetime): bool
+    {
+        $expirado = time() - $maxlifetime;
+        $stmt = $this->pdo->prepare('DELETE FROM sesiones WHERE expira < :expirado');
+        return $stmt->execute([':expirado' => $expirado]);
+    }
+}
+
+// Uso
+$pdo = new PDO('mysql:host=localhost;dbname=aplicacion', 'root', '');
+$manejador = new SesionBaseDeDatos($pdo);
+
+session_set_save_handler(
+    [$manejador, 'abrir'],
+    [$manejador, 'cerrar'],
+    [$manejador, 'leer'],
+    [$manejador, 'escribir'],
+    [$manejador, 'destruir'],
+    [$manejador, 'limpiar']
+);
+
+session_start();
+?>
+```
+
+La tabla SQL correspondiente:
+
+```sql
+CREATE TABLE sesiones (
+    id VARCHAR(128) PRIMARY KEY,
+    datos LONGTEXT NOT NULL,
+    expira INT UNSIGNED NOT NULL,
+    INDEX idx_expira (expira)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+===============================================================================
+8. MENSAJES FLASH CON SESIONES
+===============================================================================
+
+Un patrón muy útil es el mensaje flash: un mensaje que se muestra una sola vez
+y luego se elimina de la sesión.
+
+```php
+<?php
+session_start();
+
+function mensajeFlash(string $tipo, string $mensaje): void
+{
+    $_SESSION['flash'][] = ['tipo' => $tipo, 'mensaje' => $mensaje];
+}
+
+function mostrarFlash(): string
+{
+    if (!isset($_SESSION['flash'])) {
+        return '';
+    }
+
+    $html = '';
+    foreach ($_SESSION['flash'] as $flash) {
+        $clase = $flash['tipo'] === 'exito' ? 'green' : 'red';
+        $html .= "<div style='color:white;background:$clase;padding:10px;'>";
+        $html .= htmlspecialchars($flash['mensaje']);
+        $html .= "</div>";
+    }
+
+    // Limpiar mensajes flash
+    unset($_SESSION['flash']);
+
+    return $html;
+}
+
+// En cualquier página:
+mensajeFlash('exito', 'Registro completado correctamente.');
+header('Location: listado.php');
+exit;
+
+// En la página de destino:
+echo mostrarFlash();
+?>
+```
+
+Este patrón es especialmente útil con PRG (Post-Redirect-Get) para mostrar
+mensajes después de una redirección.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- HTTP es un protocolo sin estado; las sesiones añaden persistencia entre
+  peticiones.
+- session_start() debe llamarse antes de cualquier salida HTML.
+- $_SESSION es un arreglo asociativo para almacenar datos entre peticiones.
+- El ID de sesión se transmite mediante cookies (PHPSESSID).
+- Para hacer logout: vaciar $_SESSION, eliminar cookie, session_destroy().
+- session_regenerate_id() previene la fijación de sesión.
+- Configura las cookies de sesión con httponly, secure y samesite.
+- Las sesiones expiran por cierre del navegador o por tiempo de inactividad.
+- Para múltiples servidores, almacena sesiones en BD o Redis.
+- Los mensajes flash son un patrón útil para feedback transitorio.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un contador de visitas que muestre cuántas veces has
+visitado la página y la fecha de la primera visita.
+
+🧩 **Ejercicio 2:** Implementa un sistema de login con usuario y contraseña
+(usa un arreglo fijo). Protege dashboard.php para que solo usuarios
+autenticados puedan acceder.
+
+🧩 **Ejercicio 3:** Agrega expiración por inactividad de 5 minutos. Si el
+usuario está inactivo, redirige al login con un mensaje.
+
+🧩 **Ejercicio 4:** Implementa regeneración del ID de sesión después del
+login y cada 2 minutos de actividad.
+
+🧩 **Ejercicio 5:** Crea un sistema de mensajes flash: después de una
+redirección, muestra un mensaje de éxito o error que desaparezca al recargar.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué session_start() debe ir antes de cualquier HTML?** Porque PHP
+envía cookies mediante headers HTTP, y los headers deben enviarse antes que
+cualquier contenido HTML. Si hay HTML antes, PHP muestra un warning.
+
+❓ **¿Puedo tener múltiples sesiones simultáneas?** No. session_start() maneja
+una sesión por visitante. Pero puedes tener múltiples variables en $_SESSION.
+
+❓ **¿Dónde se almacenan físicamente los datos de sesión?** Por defecto en
+archivos en /tmp/. La ubicación se configura con session.save_path.
+
+❓ **¿Qué pasa si el usuario desactiva las cookies?** Las sesiones no
+funcionarán con cookies desactivadas. Una alternativa es pasar el ID por URL,
+pero es inseguro y está desaconsejado.
+
+❓ **¿Cuánto dura una sesión?** La cookie de sesión expira al cerrar el
+navegador (lifetime=0). Los datos en el servidor expiran según
+session.gc_maxlifetime (1440 segundos por defecto).
+
+❓ **¿Es seguro almacenar la contraseña en $_SESSION?** Nunca almacenes la
+contraseña del usuario en la sesión. Guarda el ID de usuario, nombre y roles.
+La contraseña solo debe verificarse en el login.
+
+❓ **¿Qué es session_regenerate_id()?** Genera un nuevo ID de sesión
+manteniendo los datos. Debe llamarse después del login para prevenir fijación
+de sesión.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Autenticación Completo con Roles, Registro y Gestión de Sesión**
+
+Diseña y construye un sistema de autenticación completo que incluya:
+
+  1. Página de registro (registro.php):
+     - Campos: nombre, email, usuario, contraseña (con confirmación), rol
+       (select: usuario, editor, administrador).
+     - Validación completa del lado del servidor.
+     - Almacenamiento de usuarios en un archivo JSON (simulado).
+     - Verificación de unicidad de email y usuario.
+     - Hash de contraseña con password_hash().
+     - Implementación PRG + mensajes flash.
+
+  2. Página de login (login.php):
+     - Verificación con password_verify().
+     - Al iniciar sesión: session_regenerate_id(true).
+     - Guardar en sesión: id de usuario, nombre, usuario, rol, email,
+       login_time, ip, user_agent.
+     - Si el usuario ya está logueado, redirigir al dashboard.
+
+  3. Páginas protegidas con diferentes niveles de acceso:
+     - dashboard.php: cualquier usuario autenticado.
+     - admin/panel.php: solo rol administrador.
+     - editor/crear.php: solo roles editor y administrador.
+     - Cada página debe verificar autenticación y rol antes de mostrar
+       contenido.
+     - Si el usuario no tiene permiso, mostrar página 403.
+
+  4. Gestión de sesión avanzada:
+     - Expiracion por inactividad: 15 minutos para usuarios normales, 30
+       para administradores.
+     - Regeneración periódica del ID de sesión cada 5 minutos.
+     - Verificación de IP y User-Agent en cada petición.
+     - Almacenar en la sesión la hora del último acceso y mostrar en el
+       dashboard "Última actividad: ...".
+
+  5. Logout (logout.php):
+     - Vaciar $_SESSION.
+     - Eliminar cookie de sesión.
+     - session_destroy().
+     - Redirigir al login con mensaje flash "Sesión cerrada correctamente".
+
+  6. Recuperación de contraseña simulada:
+     - Formulario que pide el email.
+     - Si el email existe, mostrar un mensaje "Se ha enviado un enlace de
+       recuperación a su correo" (simulado).
+     - No revelar si el email existe o no (seguridad por oscuridad).
+
+  7. Bonus: registrar en un archivo JSON los intentos de login fallidos con
+     IP, usuario intentado y timestamp. Bloquear temporalmente por 5 minutos
+     si hay más de 5 intentos fallidos desde la misma IP.
+
+  Criterios de evaluación:
+  - Arquitectura modular con archivos separados (login, registro, logout,
+    funciones de autenticación).
+  - Seguridad exhaustiva: regeneración de ID, tiempo de inactividad, CSRF,
+    protección de rutas, hash de contraseñas.
+  - Manejo correcto de roles con verificación en cada página protegida.
+  - Experiencia de usuario: mensajes flash, preservación de formularios.
+  - Código legible y bien estructurado, sin vulnerabilidades evidentes.
+
+===============================================================================
+FIN DEL CAPÍTULO 45
+===============================================================================
+
+"La sesión es el hilo invisible que teje las peticiones sueltas en una
+conversación continua con el usuario." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+46_CAPITULO_46_COOKIES.txt
+===============================================================================

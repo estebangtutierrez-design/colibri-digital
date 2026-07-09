@@ -1,0 +1,1169 @@
+===============================================================================
+  GO MASTER BOOK — MODULO IV: POO EN GO
+  CAPITULO 38: ERRORES (ERROR INTERFACE)
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capitulo 38. Si hay un tema central en Go, es el manejo
+de errores. A diferencia de lenguajes que usan excepciones (try/catch),
+Go trata los errores como VALORES que se retornan y se verifican
+explicitamente.
+
+En el corazon de este sistema esta la interfaz error:
+
+    type error interface {
+        Error() string
+   }
+
+Todo lo que implemente Error() string es un error en Go. Esto incluye
+errores simples con errors.New, errores formateados con fmt.Errorf,
+y errores personalizados con campos adicionales.
+
+En este capitulo veras desde lo mas basico hasta tecnicas avanzadas:
+wrapping con %w, la funcion errors.Is, errors.As, sentinel errors,
+y como disenar jerarquias de error sin excepciones.
+
+Aprende a abrazar los errores como valores!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"En Go, los errores no se lanzan: se entregan. Y cada error entregado
+es una oportunidad para decidir, no para colapsar."
+
+  - E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Entender la interfaz error y su metodo Error().
+  * Crear errores simples con errors.New.
+  * Formatear errores con fmt.Errorf.
+  * Usar %w para wrapping de errores (Go 1.13+).
+  * Inspeccionar errores con errors.Is y errors.As.
+  * Disenar sentinel errors y tipos de error personalizados.
+  * Aplicar buenas practicas de manejo de errores.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPITULO
+--------------------------------------------------------------------------------
+
+--- 1. LA INTERFAZ error ----------------------------------------------------
+
+La interfaz mas importante de Go:
+
+    type error interface {
+        Error() string
+    }
+
+Cualquier tipo que tenga el metodo Error() string es un error y puede
+ser retornado como error.
+
+--- 2. errors.New: ERRORES SIMPLES ------------------------------------------
+
+La forma mas basica de crear un error:
+
+    err := errors.New("algo salio mal")
+
+Crea un error con un mensaje fijo.
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+)
+
+func Dividir(a, b float64) (float64, error) {
+    if b == 0 {
+        return 0, errors.New("division por cero")
+    }
+    return a / b, nil
+}
+
+func main() {
+    resultado, err := Dividir(10, 0)
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println("Resultado:", resultado)
+}
+--------------------------------------------------------------------------------
+
+--- 3. fmt.Errorf: ERRORES FORMATEADOS ---------------------------------------
+
+Para errores con informacion variable:
+
+    err := fmt.Errorf("usuario %d no encontrado", id)
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func BuscarUsuario(id int) (string, error) {
+    if id <= 0 {
+        return "", fmt.Errorf("ID invalido: %d", id)
+    }
+    if id > 100 {
+        return "", fmt.Errorf("usuario %d no existe en el sistema", id)
+    }
+    return fmt.Sprintf("Usuario_%d", id), nil
+}
+
+func main() {
+    for _, id := range []int{0, 50, 200} {
+        nombre, err := BuscarUsuario(id)
+        if err != nil {
+            fmt.Println("Error:", err)
+            continue
+        }
+        fmt.Println("Usuario:", nombre)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 4. SENTINEL ERRORS ------------------------------------------------------
+
+Un sentinel error es un error predefinido que se usa para comparar:
+
+    var ErrNotFound = errors.New("recurso no encontrado")
+
+Esto permite al llamador comparar errores especificos:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+)
+
+var (
+    ErrNotFound = errors.New("usuario no encontrado")
+    ErrNoAutorizado = errors.New("no autorizado")
+    ErrDatosInvalidos = errors.New("datos invalidos")
+)
+
+type Repositorio struct {
+    datos map[int]string
+}
+
+func (r *Repositorio) Obtener(id int) (string, error) {
+    if id <= 0 {
+        return "", ErrDatosInvalidos
+    }
+    valor, ok := r.datos[id]
+    if !ok {
+        return "", ErrNotFound
+    }
+    return valor, nil
+}
+
+func main() {
+    repo := &Repositorio{datos: map[int]string{
+        1: "Lucas",
+        2: "Ana",
+    }}
+
+    for _, id := range []int{1, 3, -1} {
+        nombre, err := repo.Obtener(id)
+        if err != nil {
+            switch {
+            case errors.Is(err, ErrNotFound):
+                fmt.Printf("ID %d: %v\n", id, err)
+            case errors.Is(err, ErrDatosInvalidos):
+                fmt.Printf("ID %d: error grave - %v\n", id, err)
+            default:
+                fmt.Printf("ID %d: error inesperado - %v\n", id, err)
+            }
+            continue
+        }
+        fmt.Printf("ID %d: %s\n", id, nombre)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 5. ERROR WRAPPING CON %w ------------------------------------------------
+
+Go 1.13 introdujo el wrapping de errores con %w en fmt.Errorf:
+
+    err2 := fmt.Errorf("contexto: %w", err1)
+
+Esto crea una cadena de errores que puedes inspeccionar con
+errors.Is y errors.As.
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+    "os"
+)
+
+var ErrNotFound = errors.New("archivo no encontrado")
+
+func LeerConfig(ruta string) (string, error) {
+    datos, err := os.ReadFile(ruta)
+    if err != nil {
+        if errors.Is(err, os.ErrNotExist) {
+            return "", fmt.Errorf("configuracion: %w", ErrNotFound)
+        }
+        return "", fmt.Errorf("error leyendo %s: %w", ruta, err)
+    }
+    return string(datos), nil
+}
+
+func main() {
+    _, err := LeerConfig("/tmp/no_existe.conf")
+    if err != nil {
+        fmt.Println("Error:", err)
+
+        if errors.Is(err, ErrNotFound) {
+            fmt.Println("El archivo de configuracion no existe")
+        }
+
+        if errors.Is(err, os.ErrNotExist) {
+            fmt.Println("Error original: archivo no existe en disco")
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 6. errors.Is: COMPARAR CADENAS DE ERROR ----------------------------------
+
+errors.Is recorre la cadena de errores buscando un error especifico:
+
+    if errors.Is(err, ErrNotFound) { ... }
+
+Funciona con:
+  * Errores simples (errors.New)
+  * Errores con %w (wrapping)
+  * Tipos personalizados (si implementan Is() method)
+
+--- 7. errors.As: EXTRAER TIPO DE ERROR --------------------------------------
+
+errors.As extrae el primer error en la cadena que coincide con un tipo:
+
+    var target *PathError
+    if errors.As(err, &target) {
+        fmt.Println("Path:", target.Path)
+    }
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+    "os"
+)
+
+type ErrorValidacion struct {
+    Campo string
+    Valor any
+    Motivo string
+}
+
+func (e *ErrorValidacion) Error() string {
+    return fmt.Sprintf("validacion: campo %s con valor %v: %s",
+        e.Campo, e.Valor, e.Motivo)
+}
+
+func ValidarEdad(edad int) error {
+    if edad < 0 {
+        return &ErrorValidacion{
+            Campo:  "edad",
+            Valor:  edad,
+            Motivo: "la edad no puede ser negativa",
+        }
+    }
+    if edad > 150 {
+        return &ErrorValidacion{
+            Campo:  "edad",
+            Valor:  edad,
+            Motivo: "la edad no puede superar 150",
+        }
+    }
+    return nil
+}
+
+func ProcesarPersona(edad int) error {
+    if err := ValidarEdad(edad); err != nil {
+        return fmt.Errorf("procesar persona: %w", err)
+    }
+    return nil
+}
+
+func main() {
+    err := ProcesarPersona(-5)
+    if err != nil {
+        fmt.Println("Error:", err)
+
+        var valErr *ErrorValidacion
+        if errors.As(err, &valErr) {
+            fmt.Printf("Campo invalido: %s\n", valErr.Campo)
+            fmt.Printf("Valor: %v\n", valErr.Valor)
+            fmt.Printf("Motivo: %s\n", valErr.Motivo)
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 8. TIPOS DE ERROR PERSONALIZADOS ----------------------------------------
+
+Puedes crear errores con campos adicionales implementando error:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "net"
+    "time"
+)
+
+type ErrorRed struct {
+    Operacion string
+    Direccion string
+    Puerto    int
+    Err       error
+    Timestamp time.Time
+}
+
+func (e *ErrorRed) Error() string {
+    return fmt.Sprintf("error de red [%s] %s:%d - %v",
+        e.Operacion, e.Direccion, e.Puerto, e.Err)
+}
+
+func (e *ErrorRed) Unwrap() error {
+    return e.Err
+}
+
+func Conectar(direccion string, puerto int) error {
+    addr := fmt.Sprintf("%s:%d", direccion, puerto)
+    conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+    if err != nil {
+        return &ErrorRed{
+            Operacion: "dial",
+            Direccion: direccion,
+            Puerto:    puerto,
+            Err:       err,
+            Timestamp: time.Now(),
+        }
+    }
+    conn.Close()
+    return nil
+}
+
+func main() {
+    err := Conectar("192.168.1.1", 9999)
+    if err != nil {
+        fmt.Println("Error completo:", err)
+
+        var redErr *ErrorRed
+        if errors.As(err, &redErr) {
+            fmt.Printf("Timestamp: %s\n", redErr.Timestamp)
+            fmt.Printf("Puerto: %d\n", redErr.Puerto)
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 9. ERRORES Y DEFER -------------------------------------------------------
+
+Combinacion de defer con manejo de errores:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "os"
+)
+
+func CopiarArchivo(origen, destino string) (err error) {
+    src, err := os.Open(origen)
+    if err != nil {
+        return fmt.Errorf("abriendo origen: %w", err)
+    }
+    defer func() {
+        if cerr := src.Close(); cerr != nil && err == nil {
+            err = cerr
+        }
+    }()
+
+    dst, err := os.Create(destino)
+    if err != nil {
+        return fmt.Errorf("creando destino: %w", err)
+    }
+    defer func() {
+        if cerr := dst.Close(); cerr != nil && err == nil {
+            err = cerr
+        }
+    }()
+
+    buf := make([]byte, 1024)
+    for {
+        n, err := src.Read(buf)
+        if n > 0 {
+            if _, err := dst.Write(buf[:n]); err != nil {
+                return fmt.Errorf("escribiendo: %w", err)
+            }
+        }
+        if err != nil {
+            break
+        }
+    }
+    return nil
+}
+
+func main() {
+    err := CopiarArchivo("/tmp/no_existe", "/tmp/destino")
+    if err != nil {
+        fmt.Println("Error al copiar:", err)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 10. ERRORES Y CANALES ----------------------------------------------------
+
+Los errores tambien se transmiten por canales:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Resultado struct {
+    Valor string
+    Error error
+}
+
+func Trabajar(id int, ch chan<- Resultado) {
+    time.Sleep(time.Duration(id) * 100 * time.Millisecond)
+    if id%2 == 0 {
+        ch <- Resultado{Error: fmt.Errorf("error en tarea %d", id)}
+    } else {
+        ch <- Resultado{Valor: fmt.Sprintf("resultado %d", id)}
+    }
+}
+
+func main() {
+    ch := make(chan Resultado)
+
+    for i := 1; i <= 5; i++ {
+        go Trabajar(i, ch)
+    }
+
+    for i := 1; i <= 5; i++ {
+        r := <-ch
+        if r.Error != nil {
+            fmt.Println("Error recibido:", r.Error)
+        } else {
+            fmt.Println("Valor recibido:", r.Valor)
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 11. ERRORES Y MULTIPLES VALORES DE RETORNO -------------------------------
+
+Patron comun: funcion que retorna varios valores y un error:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type DatosPersona struct {
+    Nombre   string
+    Edad     int
+    Email    string
+    Telefono string
+}
+
+func ParsearCSV(linea string) (DatosPersona, error) {
+    if len(linea) == 0 {
+        return DatosPersona{}, fmt.Errorf("linea vacia")
+    }
+    // Simulacion simple
+    return DatosPersona{
+        Nombre:   linea,
+        Edad:     30,
+        Email:    "test@example.com",
+        Telefono: "+123456789",
+    }, nil
+}
+
+type LoteProcesamiento struct {
+    Exitosos int
+    Fallidos int
+    Errores  []error
+}
+
+func ProcesarLote(lineas []string) LoteProcesamiento {
+    resultado := LoteProcesamiento{}
+    for _, linea := range lineas {
+        _, err := ParsearCSV(linea)
+        if err != nil {
+            resultado.Fallidos++
+            resultado.Errores = append(resultado.Errores, err)
+        } else {
+            resultado.Exitosos++
+        }
+    }
+    return resultado
+}
+
+func main() {
+    lineas := []string{"Lucas,30,lucas@example.com", "", "Ana,25,ana@example.com"}
+    lote := ProcesarLote(lineas)
+    fmt.Printf("Exitosos: %d, Fallidos: %d\n", lote.Exitosos, lote.Fallidos)
+    for _, err := range lote.Errores {
+        fmt.Println("  Error:", err)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 12. ERRORES Y PANICS (CUANDO NO USAR) ------------------------------------
+
+No uses panic para errores normales. El manejo de errores en Go
+es explicito:
+
+    // MAL
+    if err != nil {
+        panic(err)
+    }
+
+    // BIEN
+    if err != nil {
+        return err
+    }
+
+Panic es solo para casos excepcionales (errores de programador).
+
+--- 13. ERRORES CON METADATOS ADICIONALES ------------------------------------
+
+Puedes enriquecer errores con informacion contextual:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type ErrorOperacion struct {
+    Codigo      int
+    Mensaje     string
+    Detalle     string
+    Timestamp   time.Time
+    Usuario     string
+    Reintentable bool
+}
+
+func (e *ErrorOperacion) Error() string {
+    return fmt.Sprintf("[%d] %s", e.Codigo, e.Mensaje)
+}
+
+func (e *ErrorOperacion) EsReintentable() bool {
+    return e.Reintentable
+}
+
+type ServicioPago struct{}
+
+func (s *ServicioPago) Cobrar(usuario string, monto float64) error {
+    // Simular error
+    return &ErrorOperacion{
+        Codigo:      5001,
+        Mensaje:     "timeout al procesar pago",
+        Detalle:     "El servicio de pagos no respondio en 30s",
+        Timestamp:   time.Now(),
+        Usuario:     usuario,
+        Reintentable: true,
+    }
+}
+
+func main() {
+    svc := &ServicioPago{}
+    err := svc.Cobrar("lucas", 99.99)
+    if err != nil {
+        fmt.Println("Error:", err)
+
+        var opErr *ErrorOperacion
+        if errors.As(err, &opErr) {
+            fmt.Printf("Codigo: %d\n", opErr.Codigo)
+            fmt.Printf("Detalle: %s\n", opErr.Detalle)
+            fmt.Printf("Reintentable: %v\n", opErr.Reintentable)
+
+            if opErr.Reintentable {
+                fmt.Println("Reintentando operacion...")
+            }
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 14. ERRORES Y LOGGING ESTRUCTURADO ---------------------------------------
+
+Combinacion con logging:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+)
+
+type ErrorLoggeable struct {
+    Operacion string
+    Err       error
+    Severidad string
+}
+
+func (e *ErrorLoggeable) Error() string {
+    return fmt.Sprintf("[%s] %s: %v", e.Severidad, e.Operacion, e.Err)
+}
+
+func (e *ErrorLoggeable) Unwrap() error {
+    return e.Err
+}
+
+func OperacionRiesgosa() error {
+    return &ErrorLoggeable{
+        Operacion: "lectura_db",
+        Err:       fmt.Errorf("conexion rechazada"),
+        Severidad: "CRITICAL",
+    }
+}
+
+func main() {
+    logger := log.New(os.Stdout, "APP: ", log.LstdFlags|log.Lshortfile)
+
+    err := OperacionRiesgosa()
+    if err != nil {
+        logger.Printf("Error: %v", err)
+
+        var logErr *ErrorLoggeable
+        if errors.As(err, &logErr) {
+            logger.Printf("Severidad: %s, Operacion: %s",
+                logErr.Severidad, logErr.Operacion)
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 15. EJEMPLO COMPLETO: SISTEMA DE ARCHIVOS CON ERRORES ----------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+    "os"
+    "strings"
+)
+
+var (
+    ErrArchivoNoEncontrado = errors.New("archivo no encontrado")
+    ErrPermisoDenegado     = errors.New("permiso denegado")
+    ErrArchivoCorrupto     = errors.New("archivo corrupto")
+    ErrDirectorioLleno     = errors.New("directorio lleno")
+)
+
+type ErrorSistemaArchivos struct {
+    Operacion string
+    Ruta      string
+    Err       error
+}
+
+func (e *ErrorSistemaArchivos) Error() string {
+    return fmt.Sprintf("sistema de archivos: %s %s: %v",
+        e.Operacion, e.Ruta, e.Err)
+}
+
+func (e *ErrorSistemaArchivos) Unwrap() error {
+    return e.Err
+}
+
+type ArchivoVirtual struct {
+    Nombre    string
+    Tamano    int
+    Permisos  os.FileMode
+    Contenido []byte
+}
+
+type SistemaArchivos struct {
+    archivos  map[string]*ArchivoVirtual
+    capacidad int
+    usado     int
+}
+
+func NuevoSistemaArchivos(capacidad int) *SistemaArchivos {
+    return &SistemaArchivos{
+        archivos:  make(map[string]*ArchivoVirtual),
+        capacidad: capacidad,
+    }
+}
+
+func (fs *SistemaArchivos) Crear(nombre string, contenido []byte) error {
+    if nombre == "" {
+        return &ErrorSistemaArchivos{
+            Operacion: "crear",
+            Ruta:      nombre,
+            Err:       ErrDatosInvalidos,
+        }
+    }
+
+    if fs.usado+len(contenido) > fs.capacidad {
+        return &ErrorSistemaArchivos{
+            Operacion: "crear",
+            Ruta:      nombre,
+            Err:       ErrDirectorioLleno,
+        }
+    }
+
+    archivo := &ArchivoVirtual{
+        Nombre:    nombre,
+        Tamano:    len(contenido),
+        Permisos:  0644,
+        Contenido: contenido,
+    }
+    fs.archivos[nombre] = archivo
+    fs.usado += len(contenido)
+    return nil
+}
+
+func (fs *SistemaArchivos) Leer(nombre string) ([]byte, error) {
+    archivo, ok := fs.archivos[nombre]
+    if !ok {
+        return nil, &ErrorSistemaArchivos{
+            Operacion: "leer",
+            Ruta:      nombre,
+            Err:       ErrArchivoNoEncontrado,
+        }
+    }
+
+    if archivo.Permisos&0400 == 0 {
+        return nil, &ErrorSistemaArchivos{
+            Operacion: "leer",
+            Ruta:      nombre,
+            Err:       ErrPermisoDenegado,
+        }
+    }
+
+    if len(archivo.Contenido) == 0 {
+        return nil, &ErrorSistemaArchivos{
+            Operacion: "leer",
+            Ruta:      nombre,
+            Err:       ErrArchivoCorrupto,
+        }
+    }
+
+    return archivo.Contenido, nil
+}
+
+func (fs *SistemaArchivos) Eliminar(nombre string) error {
+    archivo, ok := fs.archivos[nombre]
+    if !ok {
+        return &ErrorSistemaArchivos{
+            Operacion: "eliminar",
+            Ruta:      nombre,
+            Err:       ErrArchivoNoEncontrado,
+        }
+    }
+
+    fs.usado -= archivo.Tamano
+    delete(fs.archivos, nombre)
+    return nil
+}
+
+func (fs *SistemaArchivos) Listar() string {
+    var b strings.Builder
+    b.WriteString(fmt.Sprintf("Sistema de archivos (%d/%d bytes usados):\n",
+        fs.usado, fs.capacidad))
+    for _, archivo := range fs.archivos {
+        b.WriteString(fmt.Sprintf("  %s (%d bytes, permisos: %o)\n",
+            archivo.Nombre, archivo.Tamano, archivo.Permisos))
+    }
+    return b.String()
+}
+
+func main() {
+    fs := NuevoSistemaArchivos(1000)
+
+    operaciones := []struct {
+        op    string
+        nombre string
+        contenido []byte
+    }{
+        {"crear", "hola.txt", []byte("Hola mundo")},
+        {"crear", "datos.bin", []byte{0x00, 0x01, 0x02}},
+        {"leer", "hola.txt", nil},
+        {"leer", "no_existe.txt", nil},
+        {"crear", "grande.txt", make([]byte, 2000)},
+    }
+
+    for _, op := range operaciones {
+        var err error
+        switch op.op {
+        case "crear":
+            err = fs.Crear(op.nombre, op.contenido)
+        case "leer":
+            var datos []byte
+            datos, err = fs.Leer(op.nombre)
+            if err == nil {
+                fmt.Printf("Leido %s: %d bytes\n", op.nombre, len(datos))
+            }
+        }
+
+        if err != nil {
+            fmt.Printf("ERROR en %s %s: %v\n", op.op, op.nombre, err)
+
+            var fsErr *ErrorSistemaArchivos
+            if errors.As(err, &fsErr) {
+                fmt.Printf("  Operacion: %s, Ruta: %s\n",
+                    fsErr.Operacion, fsErr.Ruta)
+
+                if errors.Is(err, ErrDirectorioLleno) {
+                    fmt.Println("  Sugerencia: libera espacio en el disco")
+                }
+            }
+        }
+    }
+
+    fmt.Println("\n" + fs.Listar())
+}
+--------------------------------------------------------------------------------
+
+--- 16. BUENAS PRACTICAS CON ERRORES -----------------------------------------
+
+1. Siempre verifica errores: no uses _ para ignorar errores.
+
+2. Errores como ultimo valor de retorno: es la convencion de Go.
+
+3. Mensajes de error en minuscula y sin puntuacion:
+    Bien: "archivo no encontrado"
+    Mal: "Archivo no encontrado."
+
+4. Usa %w para wrapping, no + o fmt.Sprintf.
+
+5. Define sentinel errors con var, no con const.
+
+6. No uses panic para errores normales.
+
+7. Documenta que errores puede retornar tu funcion.
+
+8. Usa errors.Is para comparar, no == (a menos que sea sentinel directo).
+
+--- 17. ERRORES CON CODIGOS HTTP ---------------------------------------------
+
+Patron para APIs:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "errors"
+    "fmt"
+)
+
+type ErrorHTTP struct {
+    Codigo  int
+    Mensaje string
+    Err     error
+}
+
+func (e *ErrorHTTP) Error() string {
+    if e.Err != nil {
+        return fmt.Sprintf("HTTP %d: %s (%v)", e.Codigo, e.Mensaje, e.Err)
+    }
+    return fmt.Sprintf("HTTP %d: %s", e.Codigo, e.Mensaje)
+}
+
+func (e *ErrorHTTP) Unwrap() error {
+    return e.Err
+}
+
+func ErrorBadRequest(mensaje string) *ErrorHTTP {
+    return &ErrorHTTP{Codigo: 400, Mensaje: mensaje}
+}
+
+func ErrorNotFound(mensaje string) *ErrorHTTP {
+    return &ErrorHTTP{Codigo: 404, Mensaje: mensaje}
+}
+
+func ErrorInternal(mensaje string, err error) *ErrorHTTP {
+    return &ErrorHTTP{Codigo: 500, Mensaje: mensaje, Err: err}
+}
+
+func main() {
+    err := ErrorBadRequest("ID de usuario invalido")
+    fmt.Println(err)
+
+    err2 := ErrorInternal("error en base de datos",
+        errors.New("conexion timeout"))
+    fmt.Println(err2)
+}
+--------------------------------------------------------------------------------
+
+--- 18. PANICO POR ERROR NO ESPERADO -----------------------------------------
+
+Para errores que "no deberian ocurrir", puedes panic y recover:
+
+    if err != nil {
+        panic(fmt.Errorf("error inesperado: %w", err))
+    }
+
+Pero esto es excepcional. La norma es retornar error.
+
+--- 19. ERRORES EN PRUEBAS ---------------------------------------------------
+
+En tests, usa t.Fatal o t.Error con errores:
+
+    func TestAlgo(t *testing.T) {
+        resultado, err := MiFuncion()
+        if err != nil {
+            t.Fatalf("error inesperado: %v", err)
+        }
+        if resultado != esperado {
+            t.Errorf("resultado: got %v, want %v", resultado, esperado)
+        }
+    }
+
+--- 20. ERRORES Y DEFER WRAPPING ---------------------------------------------
+
+Cuando defer tiene error, puedes decidir si sobrescribir el error
+de retorno:
+
+    defer func() {
+        if cerr := file.Close(); cerr != nil {
+            if err != nil {
+                err = fmt.Errorf("%v; ademas error al cerrar: %w", err, cerr)
+            } else {
+                err = cerr
+            }
+        }
+    }()
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * error es una interfaz: type error interface { Error() string }.
+  * errors.New crea errores simples con mensaje fijo.
+  * fmt.Errorf crea errores con formato.
+  * %w en fmt.Errorf permite wrapping de errores (Go 1.13+).
+  * errors.Is recorre la cadena buscando un error especifico.
+  * errors.As extrae el primer error de un tipo concreto.
+  * Sentinel errors son variables de error predefinidas.
+  * Tipos personalizados pueden implementar error con campos extra.
+  * Unwrap() permite a errors.Is/As recorrer la cadena.
+  * Siempre verifica errores; no los ignores.
+
+--------------------------------------------------------------------------------
+  EJERCICIOS
+--------------------------------------------------------------------------------
+
+--- Ejercicio 1: errors.New ---
+
+Crea una funcion ValidarPassword(password string) error que retorne
+errors.New si la password es menor de 8 caracteres o no tiene numeros.
+
+--- Ejercicio 2: fmt.Errorf ---
+
+Crea una funcion ConectarBD(host string, puerto int) error que retorne
+fmt.Errorf con informacion del host y puerto si falla.
+
+--- Ejercicio 3: Sentinel errors ---
+
+Define sentinel errors para un sistema de archivos:
+ErrNoEncontrado, ErrAccesoDenegado, ErrEspacioInsuficiente.
+Usalos en una funcion GuardarArchivo(nombre string, datos []byte) error.
+
+--- Ejercicio 4: Error wrapping ---
+
+Crea una cadena de 3 funciones donde cada una wrappea el error
+de la anterior con %w. Usa errors.Is para verificar el error
+original.
+
+--- Ejercicio 5: Tipo de error personalizado ---
+
+Crea un tipo ErrorBD con campos: Operacion, Tabla, Err, Timestamp.
+Implementa error y Unwrap. Usalo en operaciones CRUD.
+
+--- Ejercicio 6: errors.As ---
+
+Crea un tipo ErrorTimeout con campo Duracion time.Duration.
+Crea una funcion que retorne este error envuelto.
+Usa errors.As para extraer la duracion.
+
+--- Ejercicio 7: Errores multiples ---
+
+Crea una funcion ValidarUsuario(u Usuario) []error que valide
+multiples campos y retorne todos los errores encontrados.
+Crea un tipo ErroresValidacion que contenga []error.
+
+--- Ejercicio 8: Error con reintento ---
+
+Crea un tipo ErrorReintentable con metodo EsReintentable() bool.
+Crea un bucle que reintente hasta 3 veces si el error es reintentable.
+
+--- Ejercicio 9: Error HTTP personalizado ---
+
+Crea un tipo ErrorAPI con Codigo, Mensaje, Detalle.
+Implementa error. Crea handlers simulados que retornen estos errores.
+
+--- Ejercicio 10: Sistema de errores completo ---
+
+Crea un mini-servidor de archivos con operaciones:
+- Abrir, Leer, Escribir, Cerrar
+- Cada operacion retorna errores personalizados con contexto
+- Usa errors.Is y errors.As en el main para mostrar informacion detallada
+
+--------------------------------------------------------------------------------
+  FAQ - PREGUNTAS FRECUENTES
+--------------------------------------------------------------------------------
+
+P: Por que Go no tiene try/catch?
+R: Porque los errores son valores, no excepciones. Esto hace el flujo
+   de error explicito y predecible.
+
+P: Cuando uso errors.New vs fmt.Errorf?
+R: errors.New para mensajes fijos; fmt.Errorf para mensajes con
+   informacion variable.
+
+P: Que hace %w en fmt.Errorf?
+R: Crea un error "wrapped" que errors.Is y errors.As pueden
+   inspeccionar.
+
+P: Como hago para propagar un error con contexto?
+R: return fmt.Errorf("contexto: %w", err)
+
+P: errors.Is vs == ?
+R: errors.Is recorre la cadena de wrapping; == solo compara el error
+   directo. Usa errors.Is siempre que haya wrapping.
+
+P: Puedo tener un error con codigo numerico?
+R: Si. Define un tipo personalizado con campo Codigo int.
+
+P: Como manejo errores en gorutinas?
+R: Usa canales de error o sync.WaitGroup con recoleccion de errores.
+
+P: Que significa "sentinel error"?
+R: Es un error predefinido como variable global que se usa para
+   comparacion: var ErrNotFound = errors.New("no encontrado").
+
+--------------------------------------------------------------------------------
+  DESAFIO DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+Sistema de Backup con Manejo de Errores:
+
+Construye un sistema de backup que realice copias de seguridad con
+manejo detallado de errores, wrapping, y reintentos.
+
+  Componentes:
+    type BackupError struct {
+        Fase      string
+        Archivo   string
+        Err       error
+        Timestamp time.Time
+    }
+
+    type BackupStats struct {
+        Exitosos   int
+        Fallidos   int
+        Bytes      int64
+        Duracion   time.Duration
+        Errores    []error
+    }
+
+    type BackupManager struct {
+        Origen      string
+        Destino     string
+        Reintentos  int
+        Compresion  bool
+    }
+
+  Operaciones:
+    1. BackupManager.Backup() BackupStats
+       - Lista archivos en Origen
+       - Copia cada archivo a Destino
+       - Si falla, reintenta hasta Reintentos veces
+       - Comprime si Compresion es true
+
+    2. BackupManager.VerificarIntegridad() error
+       - Verifica que los archivos en Destino coincidan con Origen
+       - Retorna error si hay discrepancias
+
+    3. BackupManager.Restaurar(archivos []string) error
+       - Restaura archivos seleccionados desde Destino a Origen
+       - Si un archivo no existe en backup, retorna error
+
+  Errores especificos:
+    - ErrArchivoNoExiste: el archivo origen no existe
+    - ErrPermisoLectura: no se puede leer el origen
+    - ErrPermisoEscritura: no se puede escribir en destino
+    - ErrEspacioInsuficiente: destino sin espacio
+    - ErrIntegridad: checksum no coincide
+    - ErrReintentosAgotados: se agotaron los reintentos
+
+  Requisitos:
+    1. Cada error debe tener contexto (archivo, operacion).
+    2. Usa %w para mantener la cadena de errores.
+    3. BackupStats debe tener un metodo Error() que resuma los errores.
+    4. Si hay errores no criticos, el backup continua.
+    5. Implementa un callback OnError(func(BackupError)) para notificar.
+
+  Extra:
+    - Simula fallos aleatorios para probar reintentos.
+    - Implementa un modo "seco" (dry-run) que no copie realmente.
+
+Este desafio integra todos los conceptos de manejo de errores en Go:
+sentinel errors, wrapping, tipos personalizados, errors.Is/As y
+diseno robusto.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL CAPITULO
+--------------------------------------------------------------------------------
+
+Has dominado el manejo de errores en Go. Ahora sabes que los errores
+son valores que se retornan, se envuelven, se inspeccionan y se
+manejan con explicititud.
+
+Recuerda: no ignores errores, no uses panic para errores esperados,
+y siempre proporciona contexto suficiente para diagnosticar.
+
+En el proximo capitulo veremos panic y recover, los mecanismos de
+Go para situaciones excepcionales.
+
+Nos vemos en el capitulo 39: PANIC Y RECOVER.
+
+--------------------------------------------------------------------------------
+  PROXIMO CAPITULO
+--------------------------------------------------------------------------------
+
+  CAPITULO 39: PANIC Y RECOVER
+    -> panic, defer+recover, cuando panic es apropiado,
+      recover solo en defer, patrones en stdlib.
+
+===============================================================================
+  FIN DEL CAPITULO 38 - ERRORES (ERROR INTERFACE)
+===============================================================================

@@ -1,0 +1,1209 @@
+================================================================================
+  MÓDULO IV: POO AVANZADA Y EXCEPCIONES
+  CAPÍTULO 35: STREAMS API
+================================================================================
+
+  "La programación funcional no se trata de evitar efectos secundarios;
+   se trata de controlar los efectos secundarios."
+   — Simon Peyton Jones
+
+--------------------------------------------------------------------------------
+
+  BIENVENIDO
+
+  Has dominado las expresiones lambda en el capítulo anterior. Ahora es
+  momento de combinarlas con la Java Streams API, una de las adiciones
+  más poderosas de Java 8.
+
+  Un Stream no es una estructura de datos, sino una secuencia de elementos
+  que soporta operaciones agregadas en pipeline. La API de Streams te
+  permite procesar colecciones de manera declarativa: en lugar de escribir
+  bucles for con condiciones y acumuladores, describes qué quieres hacer
+  y la API se encarga de cómo hacerlo.
+
+  En este capítulo aprenderás a crear streams, filtrar, mapear, reducir,
+  colectar y mucho más. Los streams, combinados con lambdas, transformarán
+  la forma en que procesas colecciones en Java.
+
+--------------------------------------------------------------------------------
+
+  OBJETIVOS DEL CAPÍTULO
+
+  1. Comprender qué es un Stream y su diferencia con las colecciones.
+  2. Crear streams a partir de diferentes fuentes (colecciones, arreglos,
+     valores, archivos).
+  3. Aplicar operaciones intermedias: filter, map, flatMap, distinct,
+     sorted, peek, limit, skip.
+  4. Ejecutar operaciones terminales: forEach, collect, reduce, count,
+     anyMatch, allMatch, noneMatch, findFirst, findAny.
+  5. Utilizar Collectors para agrupar, particionar y resumir datos.
+  6. Diferenciar entre streams secuenciales y paralelos.
+  7. Aplicar buenas prácticas y evitar errores comunes.
+
+--------------------------------------------------------------------------------
+
+  CONTENIDO
+
+  --- 1. ¿QUÉ ES UN STREAM? ---
+
+  Un Stream es una secuencia de elementos que soporta operaciones
+  agregadas en pipeline. Características fundamentales:
+
+  1. No almacena datos: los streams transportan elementos desde una fuente
+     (colección, arreglo, generador) hasta las operaciones terminales.
+  2. No modifica la fuente: las operaciones producen nuevos streams o
+     resultados, no modifican los datos originales.
+  3. Lazy (perezoso): las operaciones intermedias no se ejecutan hasta
+     que se invoca una operación terminal.
+  4. Posiblemente ilimitado: los streams pueden ser infinitos (con
+     limit() para acotarlos).
+  5. Consumible: un stream solo puede recorrerse una vez. Después se
+     cierra y no se puede reutilizar.
+
+  ```java
+  // Ciclo de vida de un stream
+
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class CicloVidaStream {
+      public static void main(String[] args) {
+          List<String> nombres = Arrays.asList("Ana", "Luis", "Sofía");
+
+          // 1. Creación (source)
+          // 2. Operaciones intermedias (lazy)
+          // 3. Operación terminal (ejecuta todo el pipeline)
+          nombres.stream()                // Creación
+                 .filter(n -> n.length() > 2)  // Intermedia (lazy)
+                 .map(n -> n.toUpperCase())    // Intermedia (lazy)
+                 .forEach(System.out::println);// Terminal (ejecuta)
+
+          // Stream consumido: esto lanzará excepción
+          Stream<String> stream = nombres.stream();
+          stream.forEach(System.out::println);
+          // stream.forEach(System.out::println);  // IllegalStateException
+      }
+  }
+  ```
+
+  --- 2. CREACIÓN DE STREAMS ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+  import java.nio.file.*;
+
+  public class CreacionStreams {
+      public static void main(String[] args) {
+          // 1. Desde una Collection
+          List<String> lista = Arrays.asList("a", "b", "c");
+          Stream<String> stream1 = lista.stream();
+          Stream<String> stream2 = lista.parallelStream();
+
+          // 2. Desde un array
+          String[] array = {"x", "y", "z"};
+          Stream<String> stream3 = Arrays.stream(array);
+          Stream<String> stream4 = Stream.of(array);  // Varargs
+          Stream<String> stream5 = Stream.of("a", "b", "c");  // Directo
+
+          // 3. Stream vacío
+          Stream<String> vacio = Stream.empty();
+
+          // 4. Stream infinito: iterate
+          Stream<Integer> numeros = Stream.iterate(0, n -> n + 1);
+          numeros.limit(5).forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          // 5. Stream infinito: generate
+          Stream<Double> aleatorios = Stream.generate(Math::random);
+          aleatorios.limit(3).forEach(d -> System.out.printf("%.2f ", d));
+          System.out.println();
+
+          // 6. Stream de rangos (int, long)
+          IntStream rango = IntStream.range(1, 6);      // 1,2,3,4,5
+          IntStream rangoCerrado = IntStream.rangeClosed(1, 5); // 1,2,3,4,5
+
+          System.out.print("Range: ");
+          rango.forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          // 7. Stream de String (chars)
+          "Hola".chars().forEach(c -> System.out.print((char) c + " "));
+          System.out.println();
+
+          // 8. Stream desde archivo (try-with-resources)
+          // try (Stream<String> lineas = Files.lines(Paths.get("archivo.txt"))) {
+          //     lineas.forEach(System.out::println);
+          // } catch (IOException e) {
+          //     e.printStackTrace();
+          // }
+
+          // 9. Stream desde la API de Random
+          new Random().ints(5, 1, 100)
+                  .forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          // 10. Stream desde StringBuilder
+          IntStream letras = "Lambda".chars();
+          letras.mapToObj(c -> (char) c)
+                  .forEach(System.out::println);
+      }
+  }
+  ```
+
+  --- 3. OPERACIONES INTERMEDIAS: FILTER ---
+
+  filter(Predicate<T>) selecciona los elementos que cumplen una condición.
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class OperacionFilter {
+      public static void main(String[] args) {
+          List<Integer> numeros = Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+
+          // Números pares
+          List<Integer> pares = numeros.stream()
+                  .filter(n -> n % 2 == 0)
+                  .collect(Collectors.toList());
+          System.out.println("Pares: " + pares);
+
+          // Números > 5
+          numeros.stream()
+                  .filter(n -> n > 5)
+                  .forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          // Combinación de predicados
+          List<Integer> resultado = numeros.stream()
+                  .filter(n -> n % 2 == 0)
+                  .filter(n -> n > 4)
+                  .collect(Collectors.toList());
+          System.out.println("Pares > 4: " + resultado);
+
+          // Con Predicate personalizado
+          Predicate<Integer> esPrimo = n -> {
+              if (n < 2) return false;
+              for (int i = 2; i <= Math.sqrt(n); i++) {
+                  if (n % i == 0) return false;
+              }
+              return true;
+          };
+
+          List<Integer> primos = numeros.stream()
+                  .filter(esPrimo)
+                  .collect(Collectors.toList());
+          System.out.println("Primos: " + primos);
+
+          // Ejemplo con objetos
+          List<String> palabras = Arrays.asList("casa", "sol", "árbol",
+                  "avión", "sol", "casa", "mar");
+
+          // Palabras únicas que empiezan con vocal
+          palabras.stream()
+                  .distinct()
+                  .filter(p -> "aeiouáéíóú".indexOf(p.charAt(0)) >= 0)
+                  .forEach(System.out::println);
+      }
+  }
+  ```
+
+  --- 4. OPERACIONES INTERMEDIAS: MAP ---
+
+  map(Function<T,R>) transforma cada elemento aplicando una función.
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  class Persona {
+      String nombre;
+      int edad;
+
+      Persona(String nombre, int edad) {
+          this.nombre = nombre;
+          this.edad = edad;
+      }
+
+      public String toString() {
+          return nombre + "(" + edad + ")";
+      }
+  }
+
+  public class OperacionMap {
+      public static void main(String[] args) {
+          List<String> nombres = Arrays.asList("ana", "luis", "sofía");
+
+          // Transformación simple
+          List<String> mayusculas = nombres.stream()
+                  .map(String::toUpperCase)
+                  .collect(Collectors.toList());
+          System.out.println("Mayúsculas: " + mayusculas);
+
+          // Longitud de cada palabra
+          List<Integer> longitudes = nombres.stream()
+                  .map(String::length)
+                  .collect(Collectors.toList());
+          System.out.println("Longitudes: " + longitudes);
+
+          // mapToInt, mapToLong, mapToDouble
+          int sumaLongitudes = nombres.stream()
+                  .mapToInt(String::length)
+                  .sum();
+          System.out.println("Suma longitudes: " + sumaLongitudes);
+
+          // Transformación con objetos
+          List<Persona> personas = Arrays.asList(
+                  new Persona("Ana", 25),
+                  new Persona("Luis", 30),
+                  new Persona("Sofía", 22));
+
+          // Obtener solo nombres
+          List<String> soloNombres = personas.stream()
+                  .map(p -> p.nombre)
+                  .collect(Collectors.toList());
+          System.out.println("Nombres: " + soloNombres);
+
+          // Crear nuevas strings a partir de objetos
+          List<String> descripciones = personas.stream()
+                  .map(p -> p.nombre + " tiene " + p.edad + " años")
+                  .collect(Collectors.toList());
+          descripciones.forEach(System.out::println);
+
+          // flatMap: aplana streams anidados
+          List<List<Integer>> listaAnidada = Arrays.asList(
+                  Arrays.asList(1, 2, 3),
+                  Arrays.asList(4, 5, 6),
+                  Arrays.asList(7, 8, 9));
+
+          List<Integer> aplanada = listaAnidada.stream()
+                  .flatMap(Collection::stream)
+                  .collect(Collectors.toList());
+          System.out.println("Aplanada: " + aplanada);
+
+          // flatMap con String -> caracteres
+          List<String> palabras = Arrays.asList("Hola", "Mundo");
+          List<String> caracteres = palabras.stream()
+                  .flatMap(p -> Arrays.stream(p.split("")))
+                  .distinct()
+                  .collect(Collectors.toList());
+          System.out.println("Caracteres distintos: " + caracteres);
+      }
+  }
+  ```
+
+  --- 5. OTRAS OPERACIONES INTERMEDIAS ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class OtrasIntermedias {
+      public static void main(String[] args) {
+          List<Integer> numeros = Arrays.asList(3, 1, 4, 1, 5, 9, 2, 6, 5, 3);
+
+          // distinct: elimina duplicados
+          List<Integer> unicos = numeros.stream()
+                  .distinct()
+                  .collect(Collectors.toList());
+          System.out.println("Únicos: " + unicos);
+
+          // sorted: ordena (natural o con Comparator)
+          List<Integer> ordenados = numeros.stream()
+                  .sorted()
+                  .collect(Collectors.toList());
+          System.out.println("Ordenados: " + ordenados);
+
+          List<Integer> reverso = numeros.stream()
+                  .sorted((a, b) -> b - a)
+                  .collect(Collectors.toList());
+          System.out.println("Reverso: " + reverso);
+
+          // limit: toma los primeros n elementos
+          List<Integer> primeros5 = numeros.stream()
+                  .distinct()
+                  .limit(5)
+                  .collect(Collectors.toList());
+          System.out.println("Primeros 5 únicos: " + primeros5);
+
+          // skip: salta los primeros n elementos
+          List<Integer> saltados = numeros.stream()
+                  .sorted()
+                  .skip(3)
+                  .collect(Collectors.toList());
+          System.out.println("Saltando 3: " + saltados);
+
+          // peek: inspecciona elementos (útil para debugging)
+          System.out.println("=== Debug con peek ===");
+          List<Integer> resultado = numeros.stream()
+                  .peek(n -> System.out.println("  Original: " + n))
+                  .filter(n -> n % 2 == 0)
+                  .peek(n -> System.out.println("  Filtrado: " + n))
+                  .map(n -> n * n)
+                  .peek(n -> System.out.println("  Cuadrado: " + n))
+                  .collect(Collectors.toList());
+          System.out.println("Resultado: " + resultado);
+
+          // takeWhile (Java 9+): toma mientras se cumpla condición
+          // dropWhile (Java 9+): salta mientras se cumpla condición
+          // Ejemplo (Java 9+):
+          // List<Integer> tomados = numeros.stream()
+          //         .sorted()
+          //         .takeWhile(n -> n < 5)
+          //         .collect(Collectors.toList());
+      }
+  }
+  ```
+
+  Resumen de operaciones intermedias:
+  - filter(Predicate): selecciona elementos
+  - map(Function): transforma elementos
+  - flatMap(Function): aplana streams anidados
+  - distinct(): elimina duplicados (usa equals)
+  - sorted(): ordena elementos
+  - peek(Consumer): inspecciona (debug)
+  - limit(long): toma n elementos
+  - skip(long): salta n elementos
+  - takeWhile(Predicate): toma mientras (Java 9+)
+  - dropWhile(Predicate): salta mientras (Java 9+)
+
+  --- 6. OPERACIONES TERMINALES: forEach y forEachOrdered ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class TerminalForEach {
+      public static void main(String[] args) {
+          List<String> items = Arrays.asList("A", "B", "C", "D", "E");
+
+          // forEach: puede no respetar orden en paralelo
+          System.out.println("=== forEach (secuencial) ===");
+          items.stream().forEach(System.out::println);
+
+          // forEachOrdered: garantiza orden (incluso en paralelo)
+          System.out.println("=== forEachOrdered (paralelo) ===");
+          items.parallelStream()
+                  .forEachOrdered(System.out::println);
+
+          // forEach con índice (no hay soporte directo, pero...)
+          System.out.println("=== Con índice ===");
+          int[] idx = {0};
+          items.stream()
+                  .forEach(item -> {
+                      System.out.println(idx[0]++ + ": " + item);
+                  });
+      }
+  }
+  ```
+
+  --- 7. OPERACIONES TERMINALES: collect ---
+
+  collect(Collector) es la operación terminal más versátil. Transforma los
+  elementos del stream en un contenedor (Lista, Set, Map, etc.).
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+  import java.util.function.*;
+
+  public class TerminalCollect {
+      public static void main(String[] args) {
+          List<Persona> personas = Arrays.asList(
+                  new Persona("Ana", 25),
+                  new Persona("Luis", 30),
+                  new Persona("Sofía", 22),
+                  new Persona("Carlos", 25),
+                  new Persona("Ana", 28));  // Nombre repetido
+
+          // toList()
+          List<String> nombres = personas.stream()
+                  .map(p -> p.nombre)
+                  .collect(Collectors.toList());
+          System.out.println("Lista: " + nombres);
+
+          // toSet() (sin duplicados)
+          Set<String> nombresSet = personas.stream()
+                  .map(p -> p.nombre)
+                  .collect(Collectors.toSet());
+          System.out.println("Set: " + nombresSet);
+
+          // toCollection() (especificando implementación)
+          LinkedList<String> linkedList = personas.stream()
+                  .map(p -> p.nombre)
+                  .collect(Collectors.toCollection(LinkedList::new));
+          System.out.println("LinkedList: " + linkedList);
+
+          // joining (para Strings)
+          String concatenado = nombres.stream()
+                  .collect(Collectors.joining(", "));
+          System.out.println("Concatenado: " + concatenado);
+
+          String conPrefSuf = nombres.stream()
+                  .collect(Collectors.joining(", ", "[", "]"));
+          System.out.println("Formateado: " + conPrefSuf);
+
+          // summingInt/Double/Long
+          int sumaEdades = personas.stream()
+                  .collect(Collectors.summingInt(p -> p.edad));
+          System.out.println("Suma edades: " + sumaEdades);
+
+          // averagingInt
+          double promedioEdad = personas.stream()
+                  .collect(Collectors.averagingInt(p -> p.edad));
+          System.out.println("Promedio edad: " + promedioEdad);
+
+          // summarizingInt (estadísticas completas)
+          IntSummaryStatistics stats = personas.stream()
+                  .collect(Collectors.summarizingInt(p -> p.edad));
+          System.out.println("Stats: " + stats);
+
+          // counting
+          long total = personas.stream()
+                  .collect(Collectors.counting());
+          System.out.println("Total: " + total);
+
+          // mapping (aplica un mapper antes de colectar)
+          List<String> nombresMayus = personas.stream()
+                  .collect(Collectors.mapping(
+                          p -> p.nombre.toUpperCase(),
+                          Collectors.toList()));
+          System.out.println("Nombres MAYUS: " + nombresMayus);
+
+          // toMap (clave, valor, función de merge)
+          Map<String, Integer> nombreEdad = personas.stream()
+                  .collect(Collectors.toMap(
+                          p -> p.nombre,      // key mapper
+                          p -> p.edad,         // value mapper
+                          (e1, e2) -> e1 + e2  // merge para duplicados
+                  ));
+          System.out.println("Map: " + nombreEdad);
+      }
+  }
+  ```
+
+  --- 8. COLECTORS AVANZADOS: GROUPINGBY Y PARTITIONINGBY ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+  import java.util.function.*;
+
+  public class CollectorsAvanzados {
+      public static void main(String[] args) {
+          List<Persona> personas = Arrays.asList(
+                  new Persona("Ana", 25),
+                  new Persona("Luis", 30),
+                  new Persona("Sofía", 22),
+                  new Persona("Carlos", 25),
+                  new Persona("Pedro", 30),
+                  new Persona("María", 22));
+
+          // groupingBy: agrupa por un clasificador
+          Map<Integer, List<Persona>> porEdad = personas.stream()
+                  .collect(Collectors.groupingBy(p -> p.edad));
+          System.out.println("=== Por edad ===");
+          porEdad.forEach((edad, grupo) -> {
+              System.out.println(edad + " años: " + grupo);
+          });
+
+          // groupingBy con downstream collector (contar)
+          Map<Integer, Long> countPorEdad = personas.stream()
+                  .collect(Collectors.groupingBy(
+                          p -> p.edad,
+                          Collectors.counting()));
+          System.out.println("\n=== Conteo por edad ===");
+          countPorEdad.forEach((edad, count) ->
+                  System.out.println(edad + ": " + count + " personas"));
+
+          // groupingBy con downstream (nombres)
+          Map<Integer, List<String>> nombresPorEdad = personas.stream()
+                  .collect(Collectors.groupingBy(
+                          p -> p.edad,
+                          Collectors.mapping(
+                                  p -> p.nombre,
+                                  Collectors.toList())));
+          System.out.println("\n=== Nombres por edad ===");
+          nombresPorEdad.forEach((edad, nombres) ->
+                  System.out.println(edad + ": " + nombres));
+
+          // groupingBy con TreeMap ordenado
+          TreeMap<Integer, List<Persona>> ordenado = personas.stream()
+                  .collect(Collectors.groupingBy(
+                          p -> p.edad,
+                          TreeMap::new,
+                          Collectors.toList()));
+          System.out.println("\n=== Ordenado por edad ===");
+          ordenado.forEach((edad, grupo) ->
+                  System.out.println(edad + ": " + grupo));
+
+          // partitioningBy: divide en dos grupos (true/false)
+          Map<Boolean, List<Persona>> mayoresDe25 = personas.stream()
+                  .collect(Collectors.partitioningBy(
+                          p -> p.edad > 25));
+          System.out.println("\n=== Partición (>25) ===");
+          System.out.println("Mayores de 25: " + mayoresDe25.get(true));
+          System.out.println("25 o menos: " + mayoresDe25.get(false));
+
+          // partitioningBy con downstream
+          Map<Boolean, Long> countMayores = personas.stream()
+                  .collect(Collectors.partitioningBy(
+                          p -> p.edad > 25,
+                          Collectors.counting()));
+          System.out.println("\nConteo: " + countMayores);
+      }
+  }
+  ```
+
+  --- 9. OPERACIONES TERMINALES: reduce ---
+
+  reduce es una operación de plegado (fold) que combina los elementos del
+  stream en un solo resultado usando una función de acumulación.
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class TerminalReduce {
+      public static void main(String[] args) {
+          List<Integer> numeros = Arrays.asList(1, 2, 3, 4, 5);
+
+          // reduce con valor identidad (1 forma)
+          int suma = numeros.stream()
+                  .reduce(0, (a, b) -> a + b);
+          System.out.println("Suma: " + suma);
+
+          int producto = numeros.stream()
+                  .reduce(1, (a, b) -> a * b);
+          System.out.println("Producto: " + producto);
+
+          // reduce sin identidad (2 forma) -> Optional
+          Optional<Integer> maximo = numeros.stream()
+                  .reduce(Integer::max);
+          maximo.ifPresent(m -> System.out.println("Máximo: " + m));
+
+          Optional<Integer> minimo = numeros.stream()
+                  .reduce(Integer::min);
+          minimo.ifPresent(m -> System.out.println("Mínimo: " + m));
+
+          // reduce con combinador (3 forma: para paralelismo)
+          int sumaParalela = numeros.parallelStream()
+                  .reduce(0,
+                          (a, b) -> a + b,      // acumulador
+                          (a, b) -> a + b);      // combinador
+          System.out.println("Suma paralela: " + sumaParalela);
+
+          // Ejemplo con String: concatenar
+          List<String> palabras = Arrays.asList("Java", " ", "Streams", " ", "API");
+          Optional<String> frase = palabras.stream()
+                  .reduce((a, b) -> a + b);
+          frase.ifPresent(System.out::println);
+
+          // Reduce más complejo: construir un StringBuilder
+          StringBuilder sb = numeros.stream()
+                  .reduce(new StringBuilder(),
+                          (builder, n) -> builder.append(n).append(" "),
+                          (b1, b2) -> b1.append(b2));
+          System.out.println("Con StringBuilder: " + sb.toString().trim());
+      }
+  }
+  ```
+
+  --- 10. OPERACIONES TERMINALES: MATCHING Y FINDING ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class TerminalMatchFind {
+      public static void main(String[] args) {
+          List<Integer> numeros = Arrays.asList(2, 4, 6, 8, 10, 11);
+
+          // anyMatch: al menos un elemento cumple
+          boolean hayPar = numeros.stream()
+                  .anyMatch(n -> n % 2 == 0);
+          System.out.println("¿Hay pares? " + hayPar);
+
+          // allMatch: todos cumplen
+          boolean todosPares = numeros.stream()
+                  .allMatch(n -> n % 2 == 0);
+          System.out.println("¿Todos pares? " + todosPares);
+
+          // noneMatch: ninguno cumple
+          boolean ningunoMayorQue100 = numeros.stream()
+                  .noneMatch(n -> n > 100);
+          System.out.println("¿Ninguno > 100? " + ningunoMayorQue100);
+
+          // findFirst: primer elemento (respeta orden)
+          Optional<Integer> primero = numeros.stream()
+                  .filter(n -> n > 5)
+                  .findFirst();
+          primero.ifPresent(p -> System.out.println("Primero > 5: " + p));
+
+          // findAny: cualquier elemento (útil en paralelo)
+          Optional<Integer> cualquiera = numeros.parallelStream()
+                  .filter(n -> n > 5)
+                  .findAny();
+          cualquiera.ifPresent(p -> System.out.println("Cualquiera > 5: " + p));
+
+          // count: cuenta elementos
+          long cuantosMayoresQue5 = numeros.stream()
+                  .filter(n -> n > 5)
+                  .count();
+          System.out.println("Cantidad > 5: " + cuantosMayoresQue5);
+
+          // min y max
+          Optional<Integer> min = numeros.stream().min(Integer::compare);
+          Optional<Integer> max = numeros.stream().max(Integer::compare);
+          min.ifPresent(m -> System.out.println("Mín: " + m));
+          max.ifPresent(m -> System.out.println("Máx: " + m));
+      }
+  }
+  ```
+
+  --- 11. STREAMS PARALELOS ---
+
+  Los streams paralelos dividen los datos en múltiples segmentos que se
+  procesan concurrentemente. Se obtienen con parallelStream() o
+  .parallel().
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class StreamsParalelos {
+      public static void main(String[] args) {
+          // Crear un stream paralelo
+          List<Integer> numeros = new ArrayList<>();
+          for (int i = 0; i < 10_000_000; i++) {
+              numeros.add(i);
+          }
+
+          // Secuencial
+          long inicio = System.currentTimeMillis();
+          long sumaSecuencial = numeros.stream()
+                  .reduce(0, Integer::sum);
+          long finSec = System.currentTimeMillis();
+          System.out.println("Secuencial: " + sumaSecuencial
+                  + " (" + (finSec - inicio) + "ms)");
+
+          // Paralelo
+          inicio = System.currentTimeMillis();
+          long sumaParalela = numeros.parallelStream()
+                  .reduce(0, Integer::sum);
+          long finPar = System.currentTimeMillis();
+          System.out.println("Paralelo: " + sumaParalela
+                  + " (" + (finPar - inicio) + "ms)");
+
+          // Precauciones con streams paralelos
+          // 1. No usar si las operaciones tienen efectos secundarios
+          // 2. El orden no está garantizado
+          // 3. Usar solo con datos grandes y operaciones costosas
+          // 4. Asegurarse de que el acumulador sea asociativo
+
+          // Ejemplo con parallel y forEachOrdered
+          System.out.println("\n=== Orden en paralelo ===");
+          List<String> letras = Arrays.asList("A", "B", "C", "D", "E");
+          letras.parallelStream()
+                  .forEachOrdered(System.out::println);
+      }
+  }
+  ```
+
+  --- 12. STREAMS CON TIPOS PRIMITIVOS ---
+
+  IntStream, LongStream y DoubleStream tienen métodos específicos.
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class StreamsPrimitivos {
+      public static void main(String[] args) {
+          // IntStream
+          int[] numeros = {5, 2, 8, 1, 9, 3};
+
+          IntStream stream = Arrays.stream(numeros);
+
+          // Operaciones numéricas
+          System.out.println("Suma: " + stream.sum());
+
+          // Re-crear porque el stream se consumió
+          System.out.println("Promedio: "
+                  + Arrays.stream(numeros).average().orElse(0));
+
+          System.out.println("Máximo: "
+                  + Arrays.stream(numeros).max().orElse(0));
+
+          System.out.println("Mínimo: "
+                  + Arrays.stream(numeros).min().orElse(0));
+
+          // Estadísticas
+          IntSummaryStatistics stats = Arrays.stream(numeros)
+                  .summaryStatistics();
+          System.out.println("Stats: " + stats);
+
+          // range y rangeClosed
+          System.out.print("Range(1,10): ");
+          IntStream.range(1, 10).forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          System.out.print("RangeClosed(1,10): ");
+          IntStream.rangeClosed(1, 10).forEach(n -> System.out.print(n + " "));
+          System.out.println();
+
+          // mapToObj (de primitivo a objeto)
+          List<String> etiquetas = IntStream.range(1, 6)
+                  .mapToObj(i -> "Item " + i)
+                  .collect(Collectors.toList());
+          System.out.println("Etiquetas: " + etiquetas);
+
+          // boxed: de primitivo a wrapper
+          List<Integer> listaNumeros = IntStream.range(1, 10)
+                  .boxed()
+                  .collect(Collectors.toList());
+          System.out.println("Boxed: " + listaNumeros);
+      }
+  }
+  ```
+
+  --- 13. STREAMS Y OPCIONALES ---
+
+  Muchas operaciones terminales devuelven Optional para manejar la
+  ausencia de valores.
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+
+  public class StreamsOptional {
+      public static void main(String[] args) {
+          List<String> listaVacia = new ArrayList<>();
+          List<String> listaConValor = Arrays.asList("Java", "Streams");
+
+          // Optional de streams vacíos
+          Optional<String> primero = listaVacia.stream()
+                  .findFirst();
+          System.out.println("Primero de vacío: " + primero);
+
+          // orElse, orElseGet, orElseThrow
+          String valor = listaVacia.stream()
+                  .findFirst()
+                  .orElse("Valor por defecto");
+          System.out.println("Con orElse: " + valor);
+
+          String valor2 = listaConValor.stream()
+                  .findFirst()
+                  .orElseThrow(() -> new NoSuchElementException("Lista vacía"));
+          System.out.println("Con orElseThrow: " + valor2);
+
+          // min/max devuelven Optional
+          Optional<Integer> min = Stream.<Integer>empty()
+                  .min(Integer::compare);
+          System.out.println("Min de vacío: " + min);
+
+          // Uso con reduce sin identidad
+          Optional<Integer> resultado = Stream.of(1, 2, 3)
+                  .reduce(Integer::sum);
+          resultado.ifPresentOrElse(
+                  r -> System.out.println("Resultado: " + r),
+                  () -> System.out.println("No hay resultado"));
+      }
+  }
+  ```
+
+  --- 14. EJEMPLO INTEGRADOR ---
+
+  ```java
+  import java.util.*;
+  import java.util.stream.*;
+  import java.util.function.*;
+
+  class Empleado {
+      String nombre;
+      String departamento;
+      double salario;
+      int edad;
+
+      Empleado(String nombre, String departamento, double salario, int edad) {
+          this.nombre = nombre;
+          this.departamento = departamento;
+          this.salario = salario;
+          this.edad = edad;
+      }
+
+      public String toString() {
+          return String.format("%s [%s] $%.0f (%d años)",
+                  nombre, departamento, salario, edad);
+      }
+  }
+
+  public class EjemploIntegradorStreams {
+      public static void main(String[] args) {
+          List<Empleado> empleados = Arrays.asList(
+                  new Empleado("Ana García", "IT", 45000, 28),
+                  new Empleado("Carlos López", "Ventas", 35000, 35),
+                  new Empleado("María Pérez", "IT", 52000, 32),
+                  new Empleado("Pedro Sánchez", "RRHH", 38000, 45),
+                  new Empleado("Laura Díaz", "Ventas", 42000, 29),
+                  new Empleado("Jorge Ruiz", "IT", 48000, 38),
+                  new Empleado("Sofía Torres", "Marketing", 40000, 26),
+                  new Empleado("Diego Ramírez", "Marketing", 36000, 31),
+                  new Empleado("Ana García", "IT", 47000, 28)  // Duplicado parcial
+          );
+
+          System.out.println("=== TODOS LOS EMPLEADOS ===");
+          empleados.stream().forEach(System.out::println);
+
+          // 1. Filtrar por departamento
+          System.out.println("\n=== EMPLEADOS DE IT ===");
+          empleados.stream()
+                  .filter(e -> e.departamento.equals("IT"))
+                  .forEach(System.out::println);
+
+          // 2. Salarios ordenados
+          System.out.println("\n=== SALARIOS ORDENADOS (DESC) ===");
+          empleados.stream()
+                  .map(e -> e.nombre + ": $" + e.salario)
+                  .sorted(Comparator.reverseOrder())
+                  .forEach(System.out::println);
+
+          // 3. Estadísticas salariales por departamento
+          System.out.println("\n=== ESTADÍSTICAS POR DEPARTAMENTO ===");
+          Map<String, DoubleSummaryStatistics> statsPorDept = empleados.stream()
+                  .collect(Collectors.groupingBy(
+                          e -> e.departamento,
+                          Collectors.summarizingDouble(e -> e.salario)));
+
+          statsPorDept.forEach((dept, stats) -> {
+              System.out.printf("%s: Promedio=$%.0f Max=$%.0f Min=$%.0f Count=%d%n",
+                      dept, stats.getAverage(), stats.getMax(),
+                      stats.getMin(), stats.getCount());
+          });
+
+          // 4. Top 3 salarios más altos
+          System.out.println("\n=== TOP 3 SALARIOS ===");
+          empleados.stream()
+                  .sorted((a, b) -> Double.compare(b.salario, a.salario))
+                  .limit(3)
+                  .forEach(e -> System.out.println(e.nombre + ": $" + e.salario));
+
+          // 5. Aumento del 10% para empleados con salario < 40000
+          System.out.println("\n=== AUMENTO DEL 10% (salario < $40000) ===");
+          List<Empleado> conAumento = empleados.stream()
+                  .map(e -> {
+                      if (e.salario < 40000) {
+                          return new Empleado(e.nombre, e.departamento,
+                                  e.salario * 1.10, e.edad);
+                      }
+                      return e;
+                  })
+                  .collect(Collectors.toList());
+
+          conAumento.stream()
+                  .filter(e -> e.salario >= 40000 && e.salario < 44000)
+                  .forEach(e -> System.out.println(e.nombre + " nuevo salario: $" + e.salario));
+
+          // 6. Agrupar por rango de edad
+          System.out.println("\n=== POR RANGO DE EDAD ===");
+          Map<String, List<Empleado>> porRangoEdad = empleados.stream()
+                  .collect(Collectors.groupingBy(e -> {
+                      if (e.edad < 30) return "Junior (<30)";
+                      else if (e.edad < 40) return "Senior (30-39)";
+                      else return "Master (40+)";
+                  }));
+
+          porRangoEdad.forEach((rango, grupo) -> {
+              System.out.println(rango + ": " + grupo.size() + " empleados");
+              grupo.forEach(e -> System.out.println("  - " + e.nombre));
+          });
+
+          // 7. Nómina total
+          double nominaTotal = empleados.stream()
+                  .mapToDouble(e -> e.salario)
+                  .sum();
+          System.out.printf("%nNómina total: $%.2f%n", nominaTotal);
+
+          // 8. ¿Hay empleados mayores de 40?
+          boolean hayMayores40 = empleados.stream()
+                  .anyMatch(e -> e.edad > 40);
+          System.out.println("¿Hay empleados > 40? " + hayMayores40);
+
+          // 9. Empleado más joven
+          empleados.stream()
+                  .min(Comparator.comparingInt(e -> e.edad))
+                  .ifPresent(e -> System.out.println("Más joven: " + e));
+
+          // 10. Nombres únicos en mayúsculas
+          System.out.println("\n=== NOMBRES ÚNICOS ===");
+          empleados.stream()
+                  .map(e -> e.nombre.toUpperCase())
+                  .distinct()
+                  .sorted()
+                  .forEach(System.out::println);
+      }
+  }
+  ```
+
+  --- 15. BUENAS PRÁCTICAS ---
+
+  1. Usa streams para operaciones declarativas sobre colecciones, no para
+     remplazar todos los bucles for.
+
+  2. Mantén los pipelines cortos (3-5 operaciones). Si es más largo,
+     extrae a métodos con nombres descriptivos.
+
+  3. No uses streams para operaciones con efectos secundarios dentro de
+     filter, map, etc. (usa forEach solo al final).
+
+  4. Prefiere collect(Collectors.toList()) sobre forEach+add.
+
+  5. Usa findFirst() sobre findAny() solo si necesitas garantizar orden.
+
+  6. Usa streams paralelos solo cuando los datos sean grandes y las
+     operaciones sean costosas e independientes.
+
+  7. Evita modificar la fuente del stream mientras se procesa.
+
+  8. Los streams primitivos (IntStream, etc.) son más eficientes que
+     Stream<Integer> para operaciones numéricas.
+
+  9. No uses streams para conjuntos pequeños (el overhead no vale la
+     pena).
+
+  10. Cierra streams de recursos (Files.lines()) con try-with-resources.
+
+  ```java
+  // Malo:
+  List<String> resultado = new ArrayList<>();
+  lista.stream()
+       .filter(s -> s.length() > 3)
+       .forEach(s -> resultado.add(s));  // Efecto secundario
+
+  // Bueno:
+  List<String> resultado = lista.stream()
+       .filter(s -> s.length() > 3)
+       .collect(Collectors.toList());
+  ```
+
+  ```java
+  // Malo: pipeline demasiado largo
+  lista.stream()
+      .filter(...)
+      .map(...)
+      .filter(...)
+      .flatMap(...)
+      .sorted()
+      .distinct()
+      .limit(10)
+      .map(...)
+      .filter(...)
+      .collect(...);
+
+  // Bueno: extraer a métodos
+  lista.stream()
+      .filter(this::esValido)
+      .map(this::transformar)
+      .limit(10)
+      .collect(...);
+  ```
+
+  --- 16. TABLA RESUMEN DE OPERACIONES ---
+
+  +====================+============================+====================================+
+  | Tipo               | Operación                  | Descripción                        |
+  +====================+============================+====================================+
+  | Creación           | collection.stream()        | Stream desde Collection            |
+  |                    | Stream.of(T...)            | Stream desde valores               |
+  |                    | Arrays.stream(T[])         | Stream desde array                 |
+  |                    | IntStream.range(a,b)       | Rango de enteros                   |
+  |                    | Stream.iterate(seed,fn)    | Stream infinito (iterate)          |
+  |                    | Stream.generate(sup)       | Stream infinito (generator)        |
+  +--------------------+----------------------------+------------------------------------+
+  | Intermedia         | filter(Predicate)          | Selecciona elementos               |
+  | (devuelven Stream) | map(Function)              | Transforma elementos               |
+  |                    | flatMap(Function)          | Aplana streams anidados            |
+  |                    | distinct()                 | Elimina duplicados                 |
+  |                    | sorted(Comparator)         | Ordena elementos                   |
+  |                    | peek(Consumer)             | Inspecciona (debug)                |
+  |                    | limit(long)                | Toma n elementos                   |
+  |                    | skip(long)                 | Salta n elementos                  |
+  +--------------------+----------------------------+------------------------------------+
+  | Terminal           | forEach(Consumer)          | Ejecuta acción por elemento        |
+  | (consumen stream)  | collect(Collector)         | Acumula en contenedor              |
+  |                    | reduce(BinaryOperator)     | Reduce a un valor                  |
+  |                    | count()                    | Cuenta elementos                   |
+  |                    | anyMatch(Predicate)        | ¿Algún elemento cumple?            |
+  |                    | allMatch(Predicate)        | ¿Todos cumplen?                    |
+  |                    | noneMatch(Predicate)       | ¿Ninguno cumple?                   |
+  |                    | findFirst()                | Primer elemento                    |
+  |                    | findAny()                  | Cualquier elemento                 |
+  |                    | min(Comparator)            | Mínimo según criterio              |
+  |                    | max(Comparator)            | Máximo según criterio              |
+  +--------------------+----------------------------+------------------------------------+
+
+--------------------------------------------------------------------------------
+
+  PREGUNTAS FRECUENTES (FAQ)
+
+  1. ¿Un Stream modifica la colección original?
+     No. Las operaciones de stream nunca modifican la fuente de datos.
+
+  2. ¿Se puede reutilizar un stream?
+     No. Un stream se consume una vez. Después de una operación terminal,
+     el stream está cerrado.
+
+  3. ¿Cuál es la diferencia entre Collection.stream() y Collection.parallelStream()?
+     stream() es secuencial (un solo hilo). parallelStream() divide los
+     datos en múltiples segmentos para procesamiento concurrente.
+
+  4. ¿Qué diferencia hay entre findFirst() y findAny()?
+     findFirst() respeta el orden del encuentro. findAny() es menos
+     restrictivo y mejor para streams paralelos.
+
+  5. ¿Qué es un Collector?
+     Es una implementación del patólogo mutable (mutable reduction) que
+     acumula elementos en un contenedor como List, Set o Map.
+
+  6. ¿Los streams siempre son más rápidos que los bucles?
+     No. Para colecciones pequeñas, los bucles suelen ser más rápidos.
+     La ventaja de los streams es la legibilidad y expresividad.
+
+  7. ¿Puedo usar break/continue/return en streams?
+     No directamente. Para interrumpir un stream se usa, por ejemplo,
+     findFirst() combinado con filtros.
+
+  8. ¿Qué es flatMap?
+     Toma un elemento y produce un stream de elementos, luego aplana
+     todos esos streams en uno solo.
+
+  9. ¿Puedo tener streams infinitos?
+     Sí, con Stream.iterate() o Stream.generate(), pero debes limitarlos
+     con limit() para que la operación terminal termine.
+
+  10. ¿Los streams lazy significan que no se ejecutan hasta la terminal?
+        Sí. Las operaciones intermedias construyen un pipeline pero no
+        procesan datos hasta que se invoca una operación terminal.
+
+--------------------------------------------------------------------------------
+
+  EJERCICIOS PROPUESTOS
+
+  Ejercicio 1: Análisis de Ventas
+  Crea una clase Venta (producto, cantidad, precioUnitario, fecha). Genera
+  una lista de 20 ventas. Usa streams para: calcular el total de ingresos,
+  el producto más vendido por cantidad, las ventas agrupadas por día, el
+  promedio de precio por producto, y el top 3 de productos por ingreso.
+
+  Ejercicio 2: Procesamiento de Texto
+  Lee un texto (String largo) y usa streams para: contar palabras únicas,
+  encontrar la palabra más larga, agrupar palabras por longitud, contar
+  la frecuencia de cada letra (ignorando mayúsculas), y listar palabras
+  ordenadas alfabéticamente que contengan más de 5 caracteres.
+
+  Ejercicio 3: Streams de Números
+  Usa IntStream para: generar los primeros 50 números primos, calcular la
+  suma de los cuadrados de los primeros 100 números, encontrar números
+  perfectos (menores a 10000), y generar una secuencia de Fibonacci
+  (usando Stream.iterate) hasta el término 30.
+
+  Ejercicio 4: Sistema de Estudiantes
+  Define una clase Estudiante (nombre, nota1, nota2, nota3). Crea una
+  lista de estudiantes con sus notas. Usa streams para: calcular el
+  promedio de cada estudiante, filtrar aprobados (promedio >= 11),
+  ordenar por promedio descendente, encontrar el mejor estudiante, y
+  particionar entre aprobados y desaprobados.
+
+  Ejercicio 5: Reporte con Collectors Avanzados
+  Usando la lista de estudiantes del ejercicio 4, aplica: groupingBy con
+  rangos de notas (0-5, 6-10, 11-15, 16-20), partitioningBy para
+  aprobados/desaprobados, toMap con nombre como clave y promedio como
+  valor (manejando duplicados), y summarizingDouble para estadísticas
+  globales.
+
+--------------------------------------------------------------------------------
+
+  RESUMEN DEL CAPÍTULO
+
+  En este capítulo has aprendido:
+
+  • Un Stream es una secuencia de elementos que soporta operaciones en
+    pipeline de manera declarativa.
+
+  • Los streams tienen tres partes: fuente (source), operaciones
+    intermedias (lazy) y operación terminal (eager).
+
+  • Operaciones intermedias: filter, map, flatMap, distinct, sorted,
+    peek, limit, skip.
+
+  • Operaciones terminales: forEach, collect, reduce, count, anyMatch,
+    allMatch, noneMatch, findFirst, findAny, min, max.
+
+  • Collectors: toList, toSet, toMap, joining, groupingBy,
+    partitioningBy, summingInt, averagingInt, summarizingInt.
+
+  • reduce es el plegado funcional con/sin valor identidad.
+
+  • Los streams paralelos pueden mejorar el rendimiento con datos grandes.
+
+  • IntStream, LongStream y DoubleStream ofrecen métodos numéricos.
+
+  • Los streams no modifican la fuente y son consumibles una sola vez.
+
+  • Las operaciones son lazy hasta que se invoca una terminal.
+
+--------------------------------------------------------------------------------
+
+  DESAFÍO DEL ARQUITECTO
+
+  Construye un sistema de análisis de datos de ventas retail completo
+  usando exclusivamente la Streams API (sin bucles for/while).
+
+  Requisitos:
+  - Clase Venta (id, producto, categoria, cantidad, precioUnitario,
+    fecha, vendedor, sucursal)
+  - Genera 100 ventas aleatorias realistas
+  - Usa streams para:
+
+    1. TOP 5 productos más vendidos (por cantidad total)
+    2. Sucursal con mayores ingresos totales
+    3. Vendedor del mes con más ventas
+    4. Categoría más rentable
+    5. Distribución de ventas por rango de precio (0-50, 51-100,
+       101-200, 200+)
+    6. Comparativa mes actual vs mes anterior (crecimiento)
+    7. Clientes que compraron en más de 3 categorías diferentes
+    8. Productos con tendencia de compra (comparando primera quincena
+       vs segunda)
+    9. Ranking de vendedores por eficiencia (ingresos/cantidad)
+    10. Reporte JSON simulado con todos los agregados
+
+  Restricciones:
+  - Sin bucles for/while/do-while
+  - Sin variables mutables fuera de streams
+  - Usa groupingBy con downstream collectors complejos
+  - Usa reduce y collect en lugar de operaciones imperativas
+  - Incluye al menos un uso de flatMap, partitioningBy y teeing (Java 12+)
+
+  Extensión: Implementa un menú interactivo que permita consultar
+  diferentes reportes usando el patrón Command con lambdas.
+
+--------------------------------------------------------------------------------
+
+  CIERRE DEL CAPÍTULO
+
+  La Java Streams API es una de las herramientas más poderosas del
+  lenguaje. Te permite procesar colecciones de manera declarativa,
+  expresando claramente la intención del código. Combinada con las
+  expresiones lambda del capítulo anterior, tienes un arsenal para
+  escribir código Java moderno, conciso y eficiente.
+
+  En el próximo capítulo explorarás un tema fundamental para la
+  robustez de tus programas: el manejo de excepciones con try/catch.
+
+  ¡Nos vemos en el Capítulo 36!
+
+================================================================================
+  FIN DEL CAPÍTULO 35
+================================================================================

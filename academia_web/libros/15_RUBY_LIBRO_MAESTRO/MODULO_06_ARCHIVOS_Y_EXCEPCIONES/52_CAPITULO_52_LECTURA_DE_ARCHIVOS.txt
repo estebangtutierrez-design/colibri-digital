@@ -1,0 +1,971 @@
+================================================================================
+RUBY MASTER BOOK - MÓDULO VI: ARCHIVOS Y EXCEPCIONES
+================================================================================
+CAPÍTULO 52: LECTURA DE ARCHIVOS
+
+================================================================================
+BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 52! En el capítulo anterior aprendiste a abrir
+archivos y a entender los modos de apertura. Ahora es momento de explorar
+el corazón de la lectura de archivos en Ruby. Leer archivos es una de las
+tareas más comunes en programación: archivos de configuración, logs, datos
+CSV, documentos de texto, código fuente... todo se lee.
+
+Ruby ofrece una variedad de métodos para leer archivos, cada uno con sus
+ventajas según el contexto. Puedes leer el archivo completo en memoria
+con File.read, línea por línea con File.foreach o IO#each_line, o incluso
+carácter por carácter con IO#each_char.
+
+En este capítulo dominarás todas las técnicas de lectura, desde las más
+simples hasta las más avanzadas, incluyendo la lectura eficiente de
+archivos grandes que no caben en memoria.
+
+Prepárate para convertirte en un experto en lectura de archivos.
+
+================================================================================
+FRASE DEL CAPÍTULO
+================================================================================
+
+"Leer es viajar sin moverse. Leer archivos en Ruby es viajar a la
+velocidad de la luz." — Adaptación de José Saramago
+
+================================================================================
+OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+Al finalizar este capítulo, serás capaz de:
+
+1. Leer archivos completos con File.read.
+2. Leer todas las líneas con File.readlines y File.read.
+3. Iterar línea por línea con File.foreach e IO#each_line.
+4. Usar gets, readline, readlines en el contexto de archivos.
+5. Leer archivos grandes sin consumir toda la memoria.
+6. Leer caracteres y bytes individuales.
+7. Controlar la codificación durante la lectura.
+8. Filtrar y transformar líneas durante la lectura.
+9. Leer archivos con un separador de línea personalizado.
+10. Aplicar buenas prácticas de lectura en proyectos reales.
+
+================================================================================
+CONTENIDO DEL CAPÍTULO
+================================================================================
+
+----------------------------------------------------------------------
+1. FILE.READ — LECTURA COMPLETA
+----------------------------------------------------------------------
+
+El método más simple y directo: File.read lee el archivo completo y
+devuelve un String con todo su contenido. Es ideal para archivos
+pequeños y medianos.
+
+  contenido = File.read("ruta/al/archivo.txt")
+  File.read("ruta", encoding: "UTF-8")
+  File.read("ruta", mode: "rb")  # modo binario
+
+ADVERTENCIA: No uses File.read para archivos muy grandes (cientos de MB
+o GB) porque cargará todo el contenido en memoria.
+
+================================================================================
+EJEMPLO 1: File.read básico
+================================================================================
+
+#------ archivo: ej01_file_read.rb ------
+puts "=== FILE.READ ==="
+
+# Primero creamos un archivo de prueba
+File.open("poema.txt", "w:UTF-8") do |f|
+  f.puts "En un lugar de la Mancha,"
+  f.puts "de cuyo nombre no quiero acordarme,"
+  f.puts "no ha mucho tiempo que vivía"
+  f.puts "un hidalgo de los de lanza en astillero,"
+  f.puts "adarga antigua, rocín flaco y galgo corredor."
+end
+
+# Lectura completa
+contenido = File.read("poema.txt")
+puts "=== Contenido completo ==="
+puts contenido
+puts "=== Fin del contenido ==="
+puts "Tamaño: #{contenido.length} caracteres"
+puts "Líneas: #{contenido.lines.count}"
+puts "Encoding: #{contenido.encoding}"
+
+# File.read con encoding
+contenido_utf8 = File.read("poema.txt", encoding: "UTF-8")
+puts "\nLectura con encoding UTF-8: #{contenido_utf8.encoding}"
+
+# File.read en modo binario
+contenido_bin = File.read("poema.txt", mode: "rb")
+puts "Lectura binaria: #{contenido_bin.encoding}"
+
+File.delete("poema.txt") if File.exist?("poema.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+2. FILE.READLINES — ARREGLO DE LÍNEAS
+----------------------------------------------------------------------
+
+File.readlines lee el archivo completo y devuelve un Array donde cada
+elemento es una línea del archivo (incluyendo el carácter de nueva línea
+\n por defecto).
+
+  lineas = File.readlines("ruta")
+  lineas = File.readlines("ruta", chomp: true)  # sin \n
+  lineas = File.readlines("ruta", encoding: "UTF-8")
+
+Opción chomp: true elimina los saltos de línea (disponible desde Ruby 2.7+).
+
+================================================================================
+EJEMPLO 2: File.readlines
+================================================================================
+
+#------ archivo: ej02_file_readlines.rb ------
+puts "=== FILE.READLINES ==="
+
+File.open("numeros.txt", "w") do |f|
+  (1..10).each { |n| f.puts "Línea número #{n}" }
+end
+
+# Leer como arreglo
+lineas = File.readlines("numeros.txt")
+puts "Cantidad de líneas: #{lineas.size}"
+puts "Tipo: #{lineas.class}"
+puts "Primera línea: #{lineas.first.inspect}"
+puts "Última línea: #{lineas.last.inspect}"
+
+# Con chomp: true (sin saltos de línea)
+lineas_limpias = File.readlines("numeros.txt", chomp: true)
+puts "\nCon chomp: true:"
+lineas_limpias.each_with_index do |linea, i|
+  puts "  [#{i+1}] #{linea}"
+end
+
+# Modificar líneas
+lineas_mayus = File.readlines("numeros.txt", chomp: true).map(&:upcase)
+puts "\nEn mayúsculas:"
+puts lineas_mayus.join("\n")
+
+# Filtrar líneas que contengan un número par
+pares = File.readlines("numeros.txt", chomp: true).select do |linea|
+  numero = linea.scan(/\d+/).first.to_i
+  numero.even?
+end
+puts "\nLíneas con número par:"
+puts pares.join("\n")
+
+File.delete("numeros.txt") if File.exist?("numeros.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+3. FILE.FOREACH — ITERADOR DE LÍNEAS
+----------------------------------------------------------------------
+
+File.foreach es el método más eficiente para leer archivos línea por
+línea. No carga todo el archivo en memoria, sino que va cediendo cada
+línea al bloque. Es ideal para archivos grandes.
+
+  File.foreach("ruta") { |linea| puts linea }
+  File.foreach("ruta", chomp: true) { |linea| puts linea }
+
+La ventaja fundamental: en cualquier momento puedes hacer break para
+detener la lectura.
+
+================================================================================
+EJEMPLO 3: File.foreach
+================================================================================
+
+#------ archivo: ej03_file_foreach.rb ------
+puts "=== FILE.FOREACH ==="
+
+# Crear archivo de prueba grande simulado
+File.open("log_simulado.txt", "w") do |f|
+  (1..100).each { |i| f.puts "[2024-01-15 10:00:#{format('%02d', i)}] Evento #{i}" }
+end
+
+# Leer línea por línea
+contador = 0
+File.foreach("log_simulado.txt") do |linea|
+  contador += 1
+  puts "Procesando línea #{contador}: #{linea.chomp}" if contador <= 5
+end
+puts "... (total: #{contador} líneas)"
+
+# foreach con chomp
+puts "\nCon chomp (sin saltos de línea):"
+File.foreach("log_simulado.txt", chomp: true).with_index do |linea, i|
+  puts "  #{i+1}: #{linea}"
+  break if i >= 2  # solo primeras 3
+end
+
+# foreach con filtro en bloque
+puts "\nLíneas que contienen 'Evento 5':"
+File.foreach("log_simulado.txt", chomp: true) do |linea|
+  puts "  #{linea}" if linea.include?("Evento 5")
+end
+
+# foreach con grep-like
+puts "\nPrimeras 5 líneas con número par:"
+cont = 0
+File.foreach("log_simulado.txt", chomp: true) do |linea|
+  if linea.scan(/\d+/).last.to_i.even?
+    puts "  #{linea}"
+    cont += 1
+    break if cont >= 5
+  end
+end
+
+File.delete("log_simulado.txt") if File.exist?("log_simulado.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+4. IO#EACH_LINE
+----------------------------------------------------------------------
+
+Cuando tienes un objeto File abierto, puedes usar each_line que es
+equivalente a File.foreach pero sobre una instancia:
+
+  File.open("ruta") do |f|
+    f.each_line { |linea| puts linea }
+    f.each_line(chomp: true) { |linea| puts linea }
+  end
+
+each_line es un alias de each. También existen:
+
+  f.each_char { |c| puts c }      # carácter por carácter
+  f.each_byte { |b| puts b }      # byte por byte
+  f.each_codepoint { |cp| puts cp }  # punto de código Unicode
+
+================================================================================
+EJEMPLO 4: IO#each_line y variantes
+================================================================================
+
+#------ archivo: ej04_each_line.rb ------
+puts "=== IO#EACH_LINE Y VARIANTES ==="
+
+File.open("variedades.txt", "w") do |f|
+  f.puts "Ruby es un lenguaje"
+  f.puts "hermoso y expresivo"
+  f.puts "diseñado para la felicidad"
+end
+
+# each_line
+puts "--- each_line ---"
+File.open("variedades.txt") do |f|
+  f.each_line { |linea| puts "  > #{linea.chomp}" }
+end
+
+# each_char
+puts "\n--- each_char (primeros 10 chars) ---"
+File.open("variedades.txt") do |f|
+  cont = 0
+  f.each_char do |c|
+    print "[#{c}] "
+    cont += 1
+    break if cont >= 10
+  end
+  puts
+end
+
+# each_byte
+puts "\n--- each_byte (primeros 8 bytes) ---"
+File.open("variedades.txt") do |f|
+  cont = 0
+  f.each_byte do |b|
+    print "#{b} "
+    cont += 1
+    break if cont >= 8
+  end
+  puts
+end
+
+# each_codepoint
+puts "\n--- each_codepoint ---"
+File.open("variedades.txt") do |f|
+  cont = 0
+  f.each_codepoint do |cp|
+    print "U+#{cp.to_s(16).upcase} "
+    cont += 1
+    break if cont >= 5
+  end
+  puts
+end
+
+File.delete("variedades.txt") if File.exist?("variedades.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+5. GETS, READLINE, READLINES
+----------------------------------------------------------------------
+
+Los métodos gets, readline y readlines vienen de IO y están disponibles
+en los objetos File. Simulan la lectura desde STDIN pero sobre archivos.
+
+  f.gets        # lee una línea, nil si EOF
+  f.readline    # lee una línea, lanza EOFError si EOF
+  f.readlines   # todas las líneas como Array
+
+La diferencia clave: gets devuelve nil al llegar al final, readline
+lanza una excepción EOFError.
+
+================================================================================
+EJEMPLO 5: gets vs readline vs readlines
+================================================================================
+
+#------ archivo: ej05_gets_readline.rb ------
+puts "=== GETS VS READLINE VS READLINES ==="
+
+File.open("datos_lectura.txt", "w") do |f|
+  f.puts "Primera línea"
+  f.puts "Segunda línea"
+  f.puts "Tercera línea"
+end
+
+# gets
+puts "--- gets ---"
+File.open("datos_lectura.txt") do |f|
+  loop do
+    linea = f.gets
+    break if linea.nil?
+    puts "  Leído: #{linea.chomp}"
+  end
+end
+
+# readline
+puts "\n--- readline ---"
+File.open("datos_lectura.txt") do |f|
+  begin
+    loop do
+      linea = f.readline
+      puts "  Leído: #{linea.chomp}"
+    end
+  rescue EOFError
+    puts "  (Fin del archivo - EOFError capturado)"
+  end
+end
+
+# readlines
+puts "\n--- readlines ---"
+File.open("datos_lectura.txt") do |f|
+  lineas = f.readlines
+  puts "  Total: #{lineas.size} líneas"
+  lineas.each_with_index { |l, i| puts "  [#{i+1}] #{l.chomp}" }
+end
+
+File.delete("datos_lectura.txt") if File.exist?("datos_lectura.txt")
+
+#------ fin del ejemplo ------
+
+También existe IO#read:
+
+  f.read         # lee todo el archivo restante
+  f.read(100)    # lee 100 bytes
+  f.read(100, buffer)  # lee en un buffer reutilizable
+
+================================================================================
+EJEMPLO 6: IO#read con tamaño y buffer
+================================================================================
+
+#------ archivo: ej06_io_read.rb ------
+puts "=== IO#READ CON TAMAÑO Y BUFFER ==="
+
+File.open("lectura_buffer.txt", "w") do |f|
+  f.puts "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  f.puts "abcdefghijklmnopqrstuvwxyz"
+end
+
+# Leer de a N bytes
+puts "--- Lectura parcial ---"
+File.open("lectura_buffer.txt") do |f|
+  while chunk = f.read(5)
+    puts "  Chunk de 5: #{chunk.inspect}"
+  end
+end
+
+# Leer en buffer reutilizable
+puts "\n--- Lectura con buffer ---"
+File.open("lectura_buffer.txt") do |f|
+  buffer = String.new
+  while f.read(10, buffer)
+    puts "  Buffer: #{buffer.inspect}"
+  end
+end
+
+# Leer todo
+puts "\n--- read sin argumentos ---"
+contenido = File.open("lectura_buffer.txt") { |f| f.read }
+puts "  Completo: #{contenido.inspect}"
+
+File.delete("lectura_buffer.txt") if File.exist?("lectura_buffer.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+6. SEPARADOR DE LÍNEA PERSONALIZADO ($/)
+----------------------------------------------------------------------
+
+Ruby permite cambiar el separador de línea. Por defecto es \n, pero
+puedes cambiarlo usando la variable global $/ (input record separator)
+o usando el parámetro sep en gets/readline/foreach.
+
+Esto es útil para archivos con formato especial (CSV con registros
+multilínea, archivos con separador null, etc.).
+
+================================================================================
+EJEMPLO 7: Separador personalizado
+================================================================================
+
+#------ archivo: ej07_separador.rb ------
+puts "=== SEPARADOR PERSONALIZADO ==="
+
+File.open("separador_personalizado.txt", "w") do |f|
+  f.print "REGISTRO 1: datos...---"
+  f.print "REGISTRO 2: más datos...---"
+  f.print "REGISTRO 3: últimos datos...---"
+end
+
+# Usar "---" como separador en lugar de \n
+puts "--- Leyendo con separador '---' ---"
+File.open("separador_personalizado.txt") do |f|
+  # Cambiar el separador de registro de entrada
+  f.each_line("---") do |registro|
+    puts "  Registro: #{registro.chomp('---')}"
+  end
+end
+
+# Otro ejemplo: archivos con separador de párrafo (doble \n)
+File.open("parrafos.txt", "w") do |f|
+  f.puts "Primer párrafo.\n\n"
+  f.puts "Segundo párrafo con más\ntexto en varias líneas.\n\n"
+  f.puts "Tercer párrafo."
+end
+
+puts "\n--- Leyendo por párrafos (separador \"\") ---"
+File.open("parrafos.txt") do |f|
+  f.each_line("") do |parrafo|
+    puts "  Párrafo: #{parrafo.gsub(/\n+/, ' ').strip}"
+  end
+end
+
+File.delete("separador_personalizado.txt") if File.exist?("separador_personalizado.txt")
+File.delete("parrafos.txt") if File.exist?("parrafos.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+7. LECTURA DE ARCHIVOS GRANDES
+----------------------------------------------------------------------
+
+Cuando los archivos son demasiado grandes para caber en memoria, debes
+evitar File.read y File.readlines. Usa File.foreach o lectura por
+bloques con read(tamaño).
+
+Estrategias:
+  a) File.foreach { |linea| ... }  # línea por línea
+  b) f.read(tamaño) { |chunk| ... }  # por bloques
+  c) Combinación de ambos
+
+================================================================================
+EJEMPLO 8: Lectura eficiente de archivos grandes
+================================================================================
+
+#------ archivo: ej08_archivos_grandes.rb ------
+puts "=== LECTURA DE ARCHIVOS GRANDES ==="
+
+# Simular un archivo grande
+File.open("archivo_grande.txt", "w") do |f|
+  100_000.times { |i| f.puts "Línea #{i} - #{'x' * 50}" }
+end
+
+# Medir memoria con foreach
+puts "Leyendo 100,000 líneas con File.foreach..."
+tiempo_inicio = Time.now
+contador = 0
+File.foreach("archivo_grande.txt") do |linea|
+  contador += 1
+  # Simular procesamiento ligero
+  break if contador >= 5  # solo para demo, leemos 5
+end
+puts "Leídas #{contador} líneas (demostración)"
+puts "Tiempo: #{Time.now - tiempo_inicio}s"
+
+# Lectura por chunks
+puts "\nLeyendo por chunks de 4096 bytes..."
+File.open("archivo_grande.txt", "rb") do |f|
+  bytes_leidos = 0
+  chunk_size = 4096
+  chunks = 0
+  while chunk = f.read(chunk_size)
+    bytes_leidos += chunk.bytesize
+    chunks += 1
+    break if chunks >= 3
+  end
+  puts "Leídos #{bytes_leidos} bytes en #{chunks} chunks"
+end
+
+# Contar líneas sin cargar todo (solución clásica)
+puts "\nContando líneas..."
+num_lineas = 0
+File.foreach("archivo_grande.txt") { num_lineas += 1 }
+puts "Total de líneas: #{num_lineas}"
+
+File.delete("archivo_grande.txt") if File.exist?("archivo_grande.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+8. LECTURA CON FILTROS Y TRANSFORMACIONES
+----------------------------------------------------------------------
+
+Puedes combinar lectura con procesamiento en una sola pasada:
+
+  File.foreach("archivo").grep(/patron/) { |linea| ... }
+  File.foreach("archivo").select { |linea| ... }
+  File.foreach("archivo").map { |linea| ... }
+
+File.foreach devuelve un Enumerator cuando no se le da bloque, lo que
+permite encadenar métodos de Enumerable.
+
+================================================================================
+EJEMPLO 9: Lectura con filtros
+================================================================================
+
+#------ archivo: ej09_filtros.rb ------
+puts "=== LECTURA CON FILTROS ==="
+
+File.open("accesos.log", "w") do |f|
+  f.puts "192.168.1.1 - GET /index.html 200"
+  f.puts "192.168.1.2 - POST /login 401"
+  f.puts "192.168.1.1 - GET /dashboard 200"
+  f.puts "192.168.1.3 - POST /login 200"
+  f.puts "192.168.1.4 - GET /admin 403"
+  f.puts "192.168.1.2 - GET /logout 200"
+end
+
+# grep: líneas que contengan "200"
+puts "--- grep('200') ---"
+lineas_ok = File.foreach("accesos.log").grep(/200/)
+puts lineas_ok.map { |l| "  #{l.chomp}" }.join("\n")
+
+# grep con bloque
+puts "\n--- grep con bloque (extraer IP) ---"
+ips = File.foreach("accesos.log").grep(/200/) do |linea|
+  linea.split.first
+end
+puts "  IPs con 200: #{ips.join(', ')}"
+
+# select + map
+puts "\n--- select + map ---"
+errores = File.foreach("accesos.log", chomp: true)
+  .select { |l| l.match? /4\d\d/ }
+  .map { |l| l.split }
+
+errores.each do |datos|
+  puts "  IP: #{datos[0]}, Código: #{datos[-1]}"
+end
+
+# first(n) - primeras N líneas
+puts "\n--- first(2) ---"
+File.foreach("accesos.log", chomp: true).first(2).each do |l|
+  puts "  #{l}"
+end
+
+File.delete("accesos.log") if File.exist?("accesos.log")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+9. CODIFICACIÓN EN LECTURA
+----------------------------------------------------------------------
+
+Al leer archivos, la codificación importa. Ruby te permite controlarla:
+
+  File.read("archivo", encoding: "ISO-8859-1")
+  File.readlines("archivo", encoding: "UTF-8")
+  File.foreach("archivo", encoding: "UTF-8:ISO-8859-1")
+
+El formato "externa:interna" convierte automáticamente:
+
+  File.read("archivo", encoding: "ISO-8859-1:UTF-8")
+
+================================================================================
+EJEMPLO 10: Codificación en lectura
+================================================================================
+
+#------ archivo: ej10_codificacion_lectura.rb ------
+puts "=== CODIFICACIÓN EN LECTURA ==="
+
+# Crear archivo con encoding explícito
+File.open("latin1_ejemplo.txt", "w:ISO-8859-1") do |f|
+  f.puts "Texto en Latin-1 con acentos: á é í ó ú ñ"
+end
+
+# Leer sin especificar encoding (puede fallar o interpretar mal)
+bytes = File.read("latin1_ejemplo.txt", encoding: "BINARY")
+puts "Bytes crudos: #{bytes.bytes.inspect}"
+
+# Leer con encoding correcto
+texto_correcto = File.read("latin1_ejemplo.txt", encoding: "ISO-8859-1")
+puts "Con ISO-8859-1: #{texto_correcto}"
+
+# Forzar conversión a UTF-8
+texto_utf8 = File.read("latin1_ejemplo.txt", encoding: "ISO-8859-1:UTF-8")
+puts "Convertido a UTF-8: #{texto_utf8}"
+puts "Encoding final: #{texto_utf8.encoding}"
+
+# Detectar encoding con la gema 'charlock_holmes'
+begin
+  require 'charlock_holmes'
+  deteccion = CharlockHolmes::EncodingDetector.detect(File.read("latin1_ejemplo.txt"))
+  puts "\nEncoding detectado: #{deteccion[:encoding]}"
+  puts "Confianza: #{deteccion[:confidence]}"
+rescue LoadError
+  puts "\n(La gema charlock_holmes no está instalada)"
+end
+
+File.delete("latin1_ejemplo.txt") if File.exist?("latin1_ejemplo.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+10. POSICIONAMIENTO EN ARCHIVOS
+----------------------------------------------------------------------
+
+Ruby permite moverse dentro del archivo usando:
+
+  f.pos       # posición actual
+  f.tell      # sinónimo de pos
+  f.seek(pos, whence)  # moverse a una posición
+  f.rewind    # volver al inicio
+
+whence puede ser:
+  IO::SEEK_SET = 0  # desde el inicio
+  IO::SEEK_CUR = 1  # desde la posición actual
+  IO::SEEK_END = 2  # desde el final
+
+================================================================================
+EJEMPLO 11: Posicionamiento con seek
+================================================================================
+
+#------ archivo: ej11_seek.rb ------
+puts "=== POSICIONAMIENTO CON SEEK ==="
+
+File.open("seek_ejemplo.txt", "w") do |f|
+  f.puts "0123456789"
+  f.puts "ABCDEFGHIJ"
+  f.puts "KLMNOPQRST"
+end
+
+File.open("seek_ejemplo.txt") do |f|
+  puts "Posición inicial: #{f.pos}"
+
+  # Leer 5 caracteres
+  puts "Primeros 5: #{f.read(5)}"
+  puts "Posición después de leer 5: #{f.pos}"
+
+  # Volver al inicio
+  f.rewind
+  puts "Después de rewind: #{f.pos}"
+
+  # seek desde el inicio
+  f.seek(3, IO::SEEK_SET)
+  puts "seek(3, SEEK_SET) -> pos #{f.pos}: #{f.read(3)}"
+
+  # seek desde posición actual
+  f.seek(2, IO::SEEK_CUR)
+  puts "seek(2, SEEK_CUR) -> pos #{f.pos}: #{f.read(3)}"
+
+  # seek desde el final
+  f.seek(-5, IO::SEEK_END)
+  puts "seek(-5, SEEK_END) -> pos #{f.pos}: #{f.read(5)}"
+end
+
+File.delete("seek_ejemplo.txt") if File.exist?("seek_ejemplo.txt")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+11. LECTURA DE ARCHIVOS COMPRIMIDOS
+----------------------------------------------------------------------
+
+Ruby puede leer archivos comprimidos usando la librería estándar
+zlib (gzip) o gemas externas para otros formatos.
+
+  require 'zlib'
+  Zlib::GzipReader.open("archivo.gz") { |gz| puts gz.read }
+
+================================================================================
+EJEMPLO 12: Lectura de archivos gzip
+================================================================================
+
+#------ archivo: ej12_gzip.rb ------
+require 'zlib'
+require 'stringio'
+
+puts "=== LECTURA DE ARCHIVOS GZIP ==="
+
+# Crear un archivo gzip en memoria
+datos = "Este es un texto que será comprimido.\n" * 100
+
+gz_string = StringIO.new
+Zlib::GzipWriter.new(gz_string) { |gz| gz.write(datos )
+
+# Escribir el gzip a disco
+File.write("ejemplo.gz", gz_string.string)
+
+# Leer el gzip
+puts "Leyendo archivo comprimido..."
+Zlib::GzipReader.open("ejemplo.gz") do |gz|
+  lineas = gz.readlines
+  puts "Total líneas: #{lineas.size}"
+  puts "Primera línea: #{lineas.first.chomp}"
+  puts "Última línea: #{lineas.last.chomp}"
+end
+
+# Comparar tamaños
+puts "\nTamaño original (estimado): #{datos.bytesize} bytes"
+puts "Tamaño comprimido: #{File.size("ejemplo.gz")} bytes"
+
+File.delete("ejemplo.gz") if File.exist?("ejemplo.gz")
+
+#------ fin del ejemplo ------
+
+----------------------------------------------------------------------
+12. LECTURA DE ARCHIVOS REMOTOS (URI)
+----------------------------------------------------------------------
+
+Para leer archivos desde URLs, puedes usar open-uri:
+
+  require 'open-uri'
+  URI.open("https://ejemplo.com/datos.txt") { |f| puts f.read }
+
+================================================================================
+EJEMPLO 13: Lectura remota con open-uri
+================================================================================
+
+#------ archivo: ej13_open_uri.rb ------
+require 'open-uri'
+
+puts "=== LECTURA DE ARCHIVOS REMOTOS ==="
+
+urls = [
+  "https://www.example.com",
+  "https://www.ruby-lang.org"
+]
+
+urls.each do |url|
+  begin
+    puts "\n--- Leyendo: #{url} ---"
+    URI.open(url) do |f|
+      puts "  Status: #{f.status.join(' ')}"
+      puts "  Content-Type: #{f.content_type}"
+      puts "  Tamaño: #{f.size} bytes"
+      puts "  Primeros 200 chars: #{f.read(200).gsub(/\s+/, ' ').strip}..."
+    end
+  rescue OpenURI::HTTPError => e
+    puts "  Error HTTP: #{e.message}"
+  rescue Errno::ECONNREFUSED => e
+    puts "  Conexión rechazada: #{e.message}"
+  rescue => e
+    puts "  Error: #{e.message}"
+  end
+end
+
+#------ fin del ejemplo ------
+
+================================================================================
+RESUMEN DEL CAPÍTULO
+================================================================================
+
+Hemos cubierto todas las técnicas de lectura de archivos en Ruby:
+
+1. File.read: lectura completa en memoria (archivos pequeños/medianos).
+2. File.readlines: lee todo como Array de líneas.
+3. File.foreach: itera línea por línea sin cargar todo (ideal para
+   archivos grandes).
+4. IO#each_line, each_char, each_byte, each_codepoint: variantes
+   de iteración sobre objetos File abiertos.
+5. gets, readline, readlines: métodos de IO para lectura con
+   diferentes comportamientos al llegar a EOF.
+6. Separador personalizado ($/ o parámetro sep): permite leer
+   registros delimitados por cualquier string.
+7. Lectura de archivos grandes: foreach y read(chunk) para
+   evitar consumir toda la memoria RAM.
+8. Filtros y transformaciones: grep, select, map sobre el
+   Enumerator que devuelve File.foreach.
+9. Codificación en lectura: control de encoding externo e interno.
+10. Posicionamiento: seek, rewind, pos para navegar.
+11. Archivos comprimidos: Zlib::GzipReader.
+12. Archivos remotos: open-uri para leer URLs.
+
+Regla de oro: "Usa File.foreach a menos que necesites todo el archivo
+en memoria y sepas que es pequeño."
+
+================================================================================
+EJERCICIOS
+================================================================================
+
+1. LECTURA SIMPLE: Crea un programa que lea un archivo "notas.txt" usando
+   File.read y muestre su contenido, número de caracteres y número de
+   líneas.
+
+2. READLINES: Lee un archivo con File.readlines(chomp: true), filtra las
+   líneas que empiezan con "#" (comentarios) y muestra el resto.
+
+3. FOREACH: Usando File.foreach, cuenta cuántas líneas de un archivo
+   contienen la palabra "ERROR" y muestra esas líneas.
+
+4. EACH_LINE: Abre un archivo con File.open y bloque, usa each_line
+   para numerar las líneas (1: contenido, 2: contenido, etc.).
+
+5. GETS VS READLINE: Escribe un programa que lea un archivo usando gets
+   y otro usando readline, demostrando la diferencia al llegar al final.
+
+6. SEPARADOR: Crea un archivo con registros separados por "|||" y luego
+   léelos usando each_line con separador personalizado.
+
+7. ARCHIVO GRANDE: Simula un archivo de 50,000 líneas y mide el tiempo
+   de lectura con File.foreach vs File.readlines (como comentario,
+   explica por qué foreach es mejor).
+
+8. FILTROS: Usando File.foreach y grep, extrae todas las direcciones de
+   email de un archivo de texto (asume formato simple: palabra@dominio).
+
+9. SEEK: Crea un archivo con números del 1 al 100 (uno por línea). Usa
+   seek para leer solo los números en posiciones pares (índice 2, 4, 6...).
+
+10. CODIFICACIÓN: Crea un archivo con encoding ISO-8859-1 que contenga
+    el texto "El niño comió jalapeños y piñatas". Léelo en UTF-8 y
+    verifica que los caracteres especiales se vean correctamente.
+
+================================================================================
+PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Cuál es la diferencia entre File.read y File.readlines?
+R: File.read devuelve un String único con todo el contenido.
+   File.readlines devuelve un Array de strings (uno por línea).
+   El primero es más útil para procesar todo el texto, el segundo
+   cuando necesitas trabajar con líneas individuales.
+
+P: ¿Qué método debo usar para archivos muy grandes (500 MB)?
+R: File.foreach o IO#each_line. Nunca File.read o File.readlines
+   para archivos grandes, ya que cargarían todo en memoria.
+
+P: ¿File.foreach carga todo el archivo en memoria?
+R: No. Lee una línea a la vez. Sin embargo, si almacenas todas las
+   líneas en un array dentro del bloque, estarías derrotando el propósito.
+
+P: ¿Qué hace chomp: true?
+R: Elimina el separador de línea ($/, por defecto \n) de cada línea
+   leída. Disponible desde Ruby 2.7.
+
+P: ¿Puedo leer un archivo desde el final hacia el principio?
+R: No hay un método directo, pero puedes usar seek para ir al final
+   y leer hacia atrás, o cargar el archivo y usar reverse.
+
+P: ¿Qué es EOFError?
+R: Es una excepción que lanza readline cuando intenta leer más allá
+   del final del archivo. gets en cambio devuelve nil.
+
+P: ¿Cómo leo un archivo CSV?
+R: Ruby tiene la librería estándar CSV. Pero si el CSV es simple,
+   puedes usar File.foreach con split(',').
+
+P: ¿File.foreach con bloque vs File.foreach sin bloque?
+R: Con bloque, itera automáticamente. Sin bloque, devuelve un
+   Enumerator que puedes encadenar con otros métodos (grep, map, etc.).
+
+P: ¿Qué es $/? Es seguro usarlo?
+R: Es el separador de registro de entrada (input record separator).
+   Es una variable global, por lo que modificarla afecta globalmente.
+   Es mejor usar el parámetro sep de each_line.
+
+P: ¿Cómo leo solo las primeras N líneas?
+R: File.foreach("ruta").first(N) o un contador con break.
+
+================================================================================
+DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Construye una herramienta llamada LogAnalyzer que procese archivos de
+log de servidor web (formato Common Log Format) con las siguientes
+características:
+
+Formato de entrada (una línea por petición):
+  127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326
+
+Tu analizador debe:
+
+  1. parse_log(file_path): Lee el archivo línea por línea (usando
+     File.foreach) y parsea cada línea a un Hash con claves:
+     :ip, :user, :timestamp, :method, :path, :protocol, :status, :bytes
+
+  2. top_ips(n): Devuelve las n IPs con más peticiones.
+
+  3. top_paths(n): Devuelve las n rutas más solicitadas.
+
+  4. errors_by_hour: Agrupa los errores (status >= 400) por hora.
+
+  5. generate_report: Genera un resumen con:
+     - Total de peticiones
+     - Peticiones exitosas (2xx), redirecciones (3xx), errores (4xx, 5xx)
+     - Top 5 IPs
+     - Top 5 rutas
+     - Bytes totales transferidos
+
+Requisitos:
+  - Usa solamente File.foreach (no File.readlines).
+  - Usa expresiones regulares para parsear las líneas.
+  - Implementa el modo verbose (-v) que muestra el progreso.
+  - El archivo de log debe especificarse como argumento de línea
+    de comandos (ARGV).
+  - Si el archivo no existe, muestra un error y sale con código 1.
+  - Si el archivo está vacío, muestra un mensaje y sale.
+
+Este desafío integra todo lo aprendido en el capítulo y simula un
+problema real del mundo del desarrollo backend.
+
+================================================================================
+CIERRE DEL CAPÍTULO
+================================================================================
+
+Has recorrido un camino completo desde la lectura más simple con
+File.read hasta técnicas avanzadas como la lectura por chunks, el
+posicionamiento con seek, y el procesamiento de logs con filtros.
+
+Ahora eres capaz de leer cualquier tipo de archivo en Ruby: pequeños,
+grandes, comprimidos, remotos, con codificaciones especiales. Esta
+habilidad es fundamental para cualquier desarrollador Ruby, ya que
+la lectura de archivos está en el centro de几乎 todas las aplicaciones.
+
+Recuerda siempre: elige la herramienta adecuada para cada situación.
+File.foreach para archivos grandes, File.read para archivos pequeños,
+filtros con grep para búsquedas rápidas, y seek para acceso aleatorio.
+
+En el próximo capítulo aprenderemos el complemento perfecto de la
+lectura: la escritura de archivos. Crear, modificar, y persistir datos.
+
+¡Nos vemos en el Capítulo 53!
+
+================================================================================
+PRÓXIMO CAPÍTULO
+================================================================================
+
+Capítulo 53: ESCRITURA DE ARCHIVOS
+  - File.write y File.open con 'w'
+  - IO#puts, IO#print, IO#write
+  - Append mode y truncado
+  - Escritura con formato (printf, sprintf)
+  - Buffering y sync
+  - Escritura segura (atomic write)
+  - Archivos temporales
+
+================================================================================
+FIN DEL CAPÍTULO 52
+================================================================================

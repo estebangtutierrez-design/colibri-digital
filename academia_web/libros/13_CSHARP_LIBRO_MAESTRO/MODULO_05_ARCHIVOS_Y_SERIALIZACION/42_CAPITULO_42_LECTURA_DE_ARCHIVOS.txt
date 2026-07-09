@@ -1,0 +1,711 @@
+================================================================================
+  MÓDULO V: ARCHIVOS Y SERIALIZACIÓN
+  CAPÍTULO 42: LECTURA DE ARCHIVOS
+  "C# MASTER BOOK"
+================================================================================
+
+================================================================================
+  BIENVENIDA
+================================================================================
+
+¡Bienvenido al Capítulo 42! En el capítulo anterior sentamos las bases con
+FileStream y el manejo de bytes. Ahora daremos un paso adelante para trabajar
+con métodos de alto nivel que simplifican drásticamente la lectura de archivos.
+
+La clase File de .NET proporciona métodos estáticos que convierten operaciones
+que requerían múltiples líneas de código en una sola llamada. Sin embargo, con
+gran poder viene gran responsabilidad: aprenderás cuándo usar estos métodos y
+cuándo es preferible el streaming tradicional.
+
+Prepárate para dominar el arte de leer archivos en C#.
+
+================================================================================
+  FRASE DEL DÍA
+================================================================================
+
+"Leer es a la mente lo que el ejercicio es al cuerpo. Leer archivos es al
+programa lo que los datos son a la lógica."
+
+--- Adaptado de Joseph Addison
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  - Utilizar File.ReadAllText, File.ReadAllLines y File.ReadAllBytes.
+  - Comprender las implicaciones de rendimiento de cada método.
+  - Diferenciar entre carga completa y streaming para archivos grandes.
+  - Implementar lectura eficiente con FileStream y buffer.
+  - Manejar codificaciones de texto (UTF-8, ASCII, etc.).
+  - Aplicar patrones de lectura según el tamaño del archivo.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+1. La clase File y sus métodos estáticos
+2. File.ReadAllText: Lectura completa como cadena
+3. File.ReadAllLines: Lectura como arreglo de líneas
+4. File.ReadAllBytes: Lectura binaria completa
+5. File.ReadLines: Lectura diferida (lazy)
+6. Streaming para archivos grandes
+7. Codificaciones de texto
+8. Lectura asincrónica
+9. Comparativa de rendimiento
+10. Buenas prácticas de lectura
+
+----------------------------------------------------------------------
+1. LA CLASE FILE Y SUS MÉTODOS ESTÁTICOS
+----------------------------------------------------------------------
+
+La clase File (System.IO) proporciona métodos estáticos que encapsulan la
+creación de FileStream y las operaciones de lectura/escritura en una sola
+llamada. Son ideales para archivos pequeños y medianos.
+
+Métodos de lectura principales:
+  - File.ReadAllText(path) → string
+  - File.ReadAllLines(path) → string[]
+  - File.ReadAllBytes(path) → byte[]
+  - File.ReadLines(path) → IEnumerable<string> (lazy)
+
+Todos tienen sobrecargas que aceptan Encoding para especificar la codificación.
+
+  ```csharp
+  // Sin especificar encoding (usa UTF-8 por defecto)
+  string contenido = File.ReadAllText("archivo.txt");
+
+  // Con encoding específico
+  string contenido = File.ReadAllText("archivo.txt", Encoding.ASCII);
+  ```
+
+----------------------------------------------------------------------
+2. FILE.READALLTEXT: LECTURA COMPLETA COMO CADENA
+----------------------------------------------------------------------
+
+File.ReadAllText lee todo el contenido del archivo y lo devuelve como un
+solo string. Internamente:
+  1. Crea un FileStream con FileMode.Open, FileAccess.Read.
+  2. Crea un StreamReader con la codificación especificada.
+  3. Lee hasta el final del archivo.
+  4. Cierra y libera todos los recursos.
+
+Útil para: archivos de configuración, XML pequeños, JSON, logs pequeños.
+
+  ```csharp
+  using System;
+  using System.IO;
+  using System.Text;
+
+  string ruta = "config.txt";
+
+  // Leer todo como texto
+  string contenido = File.ReadAllText(ruta);
+  Console.WriteLine($"Archivo completo ({contenido.Length} caracteres):");
+  Console.WriteLine(contenido);
+
+  // Con encoding específico
+  string utf32 = File.ReadAllText(ruta, Encoding.UTF32);
+  ```
+
+Advertencia: Para archivos grandes, esto consume mucha memoria. Un archivo
+de 500 MB se convierte en un string de 500 MB + overhead.
+
+----------------------------------------------------------------------
+3. FILE.READALLLINES: LECTURA COMO ARREGLO DE LÍNEAS
+----------------------------------------------------------------------
+
+File.ReadAllLines lee todo el archivo y devuelve un string[] donde cada
+elemento es una línea (sin los caracteres de salto de línea).
+
+  ```csharp
+  string[] lineas = File.ReadAllLines("datos.csv");
+  foreach (string linea in lineas)
+  {
+      string[] campos = linea.Split(',');
+      Console.WriteLine($"Campo 1: {campos[0]}");
+  }
+  ```
+
+Consideraciones:
+  - Carga todo el archivo en memoria (como string[]).
+  - Cada línea es un string independiente: overhead adicional.
+  - Útil cuando necesitas acceso aleatorio a líneas.
+  - No recomendado para archivos con millones de líneas.
+
+Procesamiento con LINQ:
+  ```csharp
+  var lineasPares = File.ReadAllLines("numeros.txt")
+      .Select((linea, i) => new { Numero = int.Parse(linea), Indice = i })
+      .Where(x => x.Numero % 2 == 0)
+      .ToList();
+  ```
+
+----------------------------------------------------------------------
+4. FILE.READALLBYTES: LECTURA BINARIA COMPLETA
+----------------------------------------------------------------------
+
+File.ReadAllBytes lee todo el archivo como un arreglo de bytes. Es el método
+más eficiente para archivos binarios pequeños.
+
+  ```csharp
+  byte[] imagenBytes = File.ReadAllBytes("foto.jpg");
+  Console.WriteLine($"Imagen cargada: {imagenBytes.Length} bytes");
+  Console.WriteLine($"Primeros bytes: {BitConverter.ToString(imagenBytes[..16])}");
+
+  // También sirve para detectar tipo de archivo (magic bytes)
+  if (imagenBytes.Length >= 4)
+  {
+      if (imagenBytes[0] == 0x89 && imagenBytes[1] == 0x50 &&
+          imagenBytes[2] == 0x4E && imagenBytes[3] == 0x47)
+      {
+          Console.WriteLine("El archivo es un PNG.");
+      }
+      else if (imagenBytes[0] == 0xFF && imagenBytes[1] == 0xD8)
+      {
+          Console.WriteLine("El archivo es un JPEG.");
+      }
+  }
+  ```
+
+Útil para: imágenes, archivos comprimidos, archivos binarios pequeños.
+No usar para archivos > ~100 MB.
+
+----------------------------------------------------------------------
+5. FILE.READLINES: LECTURA DIFERIDA (LAZY)
+----------------------------------------------------------------------
+
+File.ReadLines es el método inteligente. No carga todo el archivo en memoria.
+Devuelve un IEnumerable<string> que va leyendo líneas bajo demanda.
+
+  ```csharp
+  // Lectura diferida: solo una línea en memoria a la vez
+  foreach (string linea in File.ReadLines("archivo_grande.log"))
+  {
+      if (linea.Contains("ERROR"))
+      {
+          Console.WriteLine(linea);
+      }
+  }
+  ```
+
+Diferencias clave con ReadAllLines:
+  - ReadAllLines: string[] completo en memoria.
+  - ReadLines: IEnumerable<string>, línea por línea.
+  - ReadLines NO se puede usar con LINQ que requiera múltiples iteraciones
+    (ToArray, Count, OrderBy sin materializar).
+
+Uso con LINX (cuidado con múltiples iteraciones):
+  ```csharp
+  // Esto funciona: solo se itera una vez
+  var errores = File.ReadLines("log.txt").Where(l => l.Contains("ERROR"));
+
+  // Esto es PELIGROSO: Count itera de nuevo el archivo
+  int total = errores.Count(); // Vuelve a leer todo el archivo
+  ```
+
+Para múltiples operaciones, materializa con ToList o ToArray:
+  ```csharp
+  var lineas = File.ReadLines("log.txt")
+      .Where(l => l.Contains("ERROR"))
+      .Take(100)
+      .ToList(); // Materializa aquí
+  ```
+
+----------------------------------------------------------------------
+6. STREAMING PARA ARCHIVOS GRANDES
+----------------------------------------------------------------------
+
+Cuando los archivos superan los 200-500 MB, los métodos estáticos no son
+apropiados. Debes usar streaming con FileStream.
+
+  ```csharp
+  using FileStream fs = new FileStream("archivo_grande.mp4",
+      FileMode.Open, FileAccess.Read, FileShare.Read, 65536,
+      FileOptions.SequentialScan);
+  byte[] buffer = new byte[81920]; // 80 KB
+  int bytesRead;
+  long totalBytes = 0;
+
+  while ((bytesRead = fs.Read(buffer, 0, buffer.Length)) > 0)
+  {
+      totalBytes += bytesRead;
+      // Procesar el bloque (enviar a red, escribir a otro archivo, etc.)
+      // No acumular en memoria a menos que sea necesario
+  }
+  Console.WriteLine($"Total procesado: {totalBytes} bytes");
+  ```
+
+Para procesamiento de texto línea por línea con streaming:
+  ```csharp
+  using FileStream fs = new FileStream("log_gigante.log",
+      FileMode.Open, FileAccess.Read, FileShare.Read);
+  using StreamReader sr = new StreamReader(fs);
+
+  string linea;
+  while ((linea = sr.ReadLine()) != null)
+  {
+      // Procesar una línea a la vez
+      if (linea.Contains("CRITICAL"))
+      {
+          Console.WriteLine($"ALERTA: {linea}");
+      }
+  }
+  ```
+
+----------------------------------------------------------------------
+7. CODIFICACIONES DE TEXTO
+----------------------------------------------------------------------
+
+La codificación determina cómo se convierten los bytes en caracteres.
+La codificación incorrecta produce caracteres corruptos.
+
+Codificaciones comunes en .NET:
+  - Encoding.UTF8: Estándar universal, compatible con ASCII.
+  - Encoding.ASCII: Solo caracteres ingleses (0-127).
+  - Encoding.UTF32: 4 bytes por carácter.
+  - Encoding.Unicode: UTF-16 (usado internamente por C#).
+  - Encoding.Default: Codificación del sistema operativo.
+
+  ```csharp
+  // Detectar y leer con codificación correcta
+  string ruta = "archivo_iso.txt";
+
+  // Leer con UTF-8 (por defecto)
+  string utf8 = File.ReadAllText(ruta);
+
+  // Leer con ISO-8859-1 (Latin1)
+  var latin1 = Encoding.GetEncoding("ISO-8859-1");
+  string latin1Text = File.ReadAllText(ruta, latin1);
+
+  // Leer con Windows-1252
+  var win1252 = Encoding.GetEncoding(1252);
+  string winText = File.ReadAllText(ruta, win1252);
+  ```
+
+Detección de BOM (Byte Order Mark):
+  ```csharp
+  byte[] bytes = File.ReadAllBytes("archivo.txt");
+  Encoding detectedEncoding;
+
+  if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+      detectedEncoding = Encoding.UTF8;
+  else if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+      detectedEncoding = Encoding.Unicode; // UTF-16 LE
+  else if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+      detectedEncoding = Encoding.BigEndianUnicode; // UTF-16 BE
+  else if (bytes.Length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 &&
+           bytes[2] == 0xFE && bytes[3] == 0xFF)
+      detectedEncoding = Encoding.UTF32;
+  else
+      detectedEncoding = Encoding.Default;
+
+  Console.WriteLine($"Codificación detectada: {detectedEncoding.EncodingName}");
+  string contenido = detectedEncoding.GetString(bytes);
+  ```
+
+----------------------------------------------------------------------
+8. LECTURA ASINCRÓNICA
+----------------------------------------------------------------------
+
+Para aplicaciones UI o servidores, la lectura asincrónica evita bloquear el
+hilo principal.
+
+  ```csharp
+  public async Task<string> LeerArchivoAsync(string path)
+  {
+      return await File.ReadAllTextAsync(path);
+  }
+
+  public async Task ProcesarLineasAsync(string path)
+  {
+      using FileStream fs = new FileStream(path, FileMode.Open,
+          FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+      using StreamReader sr = new StreamReader(fs);
+
+      string linea;
+      while ((linea = await sr.ReadLineAsync()) != null)
+      {
+          await ProcesarLineaAsync(linea);
+      }
+  }
+
+  public async Task<byte[]> LeerImagenAsync(string path)
+  {
+      return await File.ReadAllBytesAsync(path);
+  }
+  ```
+
+Métodos asincrónicos disponibles:
+  - File.ReadAllTextAsync
+  - File.ReadAllLinesAsync
+  - File.ReadAllBytesAsync
+  - StreamReader.ReadLineAsync
+  - Stream.ReadAsync
+
+----------------------------------------------------------------------
+9. COMPARATIVA DE RENDIMIENTO
+----------------------------------------------------------------------
+
+Supongamos un archivo de texto de 100 MB con 1 millón de líneas:
+
+  Método                    | Memoria     | Tiempo  | Ideal para
+  --------------------------|-------------|---------|---------------------------
+  ReadAllText               | ~100 MB     | Rápido  | Archivos pequeños (<10 MB)
+  ReadAllLines              | ~200+ MB    | Rápido  | Datos tabulares pequeños
+  ReadAllBytes              | ~100 MB     | Rápido  | Archivos binarios pequeños
+  ReadLines (foreach)       | ~1 KB       | Medio   | Archivos de texto grandes
+  FileStream + buffer       | ~80 KB      | Rápido  | Archivos binarios grandes
+  FileStream + StreamReader | ~8 KB       | Medio   | Archivos de texto grandes
+
+Benchmark simple:
+  ```csharp
+  using System.Diagnostics;
+
+  void MedirLectura(string path)
+  {
+      Stopwatch sw = Stopwatch.StartNew();
+
+      // Método 1: ReadAllText
+      sw.Restart();
+      string texto = File.ReadAllText(path);
+      sw.Stop();
+      Console.WriteLine($"ReadAllText: {sw.ElapsedMilliseconds} ms, {texto.Length} chars");
+
+      // Método 2: ReadLines
+      sw.Restart();
+      long total = 0;
+      foreach (string linea in File.ReadLines(path))
+      {
+          total += linea.Length;
+      }
+      sw.Stop();
+      Console.WriteLine($"ReadLines: {sw.ElapsedMilliseconds} ms, {total} chars");
+
+      // Método 3: StreamReader
+      sw.Restart();
+      total = 0;
+      using (var sr = new StreamReader(path))
+      {
+          string linea;
+          while ((linea = sr.ReadLine()) != null)
+              total += linea.Length;
+      }
+      sw.Stop();
+      Console.WriteLine($"StreamReader: {sw.ElapsedMilliseconds} ms, {total} chars");
+  }
+  ```
+
+----------------------------------------------------------------------
+10. BUENAS PRÁCTICAS DE LECTURA
+----------------------------------------------------------------------
+
+a) Conoce el tamaño de tus archivos: no uses carga completa para archivos
+   que sabes que serán grandes.
+
+b) Usa File.ReadLines en lugar de File.ReadAllLines para procesamiento
+   secuencial.
+
+c) Especifica la codificación explícitamente para evitar sorpresas.
+
+d) Usa métodos asincrónicos en UI y aplicaciones escalables.
+
+e) Para archivos binarios, FileStream con buffer razonable es la mejor opción.
+
+f) No asumas que los archivos son pequeños: los archivos de log crecen.
+
+g) Usa File.Exists solo si el archivo podría no existir. No es necesaria
+   una comprobación separada si manejas FileNotFoundException.
+
+h) Considera FileOptions.SequentialScan para lectura lineal de archivos
+   grandes.
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+  using System.IO;
+  using System.Linq;
+  using System.Text;
+  using System.Threading.Tasks;
+
+  namespace Capitulo42.LecturaArchivos
+  {
+      class Program
+      {
+          static async Task Main(string[] args)
+          {
+              string directorio = "ejemplos_lectura";
+              Directory.CreateDirectory(directorio);
+
+              string archivoPeq = Path.Combine(directorio, "pequeno.txt");
+              string archivoLog = Path.Combine(directorio, "aplicacion.log");
+              string archivoBin = Path.Combine(directorio, "datos.bin");
+
+              // Preparar archivos de ejemplo
+              File.WriteAllText(archivoPeq, "Hola, este es un archivo pequeño.\nSegunda línea.");
+              GenerarArchivoLog(archivoLog, 5000);
+              CrearArchivoBinario(archivoBin);
+
+              Console.WriteLine("=== DEMO 1: FILE.READALLTEXT ===");
+              string contenido = File.ReadAllText(archivoPeq);
+              Console.WriteLine($"Contenido completo:\n{contenido}\n");
+
+              Console.WriteLine("=== DEMO 2: FILE.READALLLINES ===");
+              string[] lineas = File.ReadAllLines(archivoPeq);
+              foreach (string linea in lineas)
+                  Console.WriteLine($"Línea: {linea}");
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 3: FILE.READALLBYTES ===");
+              byte[] bytes = File.ReadAllBytes(archivoBin);
+              Console.WriteLine($"Bytes leídos: {bytes.Length}");
+              Console.WriteLine($"Hex: {BitConverter.ToString(bytes[..16])}\n");
+
+              Console.WriteLine("=== DEMO 4: FILE.READLINES (LAZY) ===");
+              var errores = File.ReadLines(archivoLog)
+                  .Where(l => l.Contains("ERROR"))
+                  .Take(10);
+              foreach (string error in errores)
+                  Console.WriteLine(error);
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 5: STREAMREADER ===");
+              using (StreamReader sr = new StreamReader(archivoLog, Encoding.UTF8))
+              {
+                  string linea;
+                  int contador = 0;
+                  while ((linea = sr.ReadLine()) != null && contador < 5)
+                  {
+                      Console.WriteLine($"[{contador}] {linea}");
+                      contador++;
+                  }
+              }
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 6: LECTURA ASINCRÓNICA ===");
+              string asyncText = await File.ReadAllTextAsync(archivoPeq);
+              Console.WriteLine($"Async: {asyncText}\n");
+
+              Console.WriteLine("=== DEMO 7: FILESTREAM CON BUFFER ===");
+              using (FileStream fs = new FileStream(archivoLog, FileMode.Open,
+                  FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan))
+              {
+                  byte[] buffer = new byte[256];
+                  int read;
+                  int totalRead = 0;
+                  while ((read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                  {
+                      totalRead += read;
+                  }
+                  Console.WriteLine($"Total leído con FileStream: {totalRead} bytes\n");
+              }
+
+              Console.WriteLine("=== DEMO 8: DETECCIÓN DE CODIFICACIÓN ===");
+              DetectarEncoding(archivoPeq);
+              Console.WriteLine();
+
+              Console.WriteLine("=== DEMO 9: BENCHMARK RÁPIDO ===");
+              BenchmarkBasico(archivoLog);
+
+              // Limpieza
+              Directory.Delete(directorio, true);
+              Console.WriteLine("\n¡Todas las demostraciones completadas!");
+          }
+
+          static void GenerarArchivoLog(string path, int lineas)
+          {
+              var niveles = new[] { "INFO", "WARN", "ERROR", "DEBUG" };
+              var rand = new Random(42);
+              using StreamWriter sw = new StreamWriter(path);
+              for (int i = 0; i < lineas; i++)
+              {
+                  string nivel = niveles[rand.Next(niveles.Length)];
+                  sw.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{nivel}] " +
+                      $"Mensaje de log número {i} - " +
+                      $"Evento: {Guid.NewGuid():N}");
+              }
+          }
+
+          static void CrearArchivoBinario(string path)
+          {
+              using BinaryWriter bw = new BinaryWriter(File.Open(path, FileMode.Create));
+              bw.Write(42);                          // int
+              bw.Write(3.14159);                     // double
+              bw.Write("Hola Binario");              // string
+              bw.Write(true);                        // bool
+              bw.Write(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF });
+          }
+
+          static void DetectarEncoding(string path)
+          {
+              byte[] b = File.ReadAllBytes(path);
+              Encoding detected;
+              if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF)
+                  detected = Encoding.UTF8;
+              else if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0xFE)
+                  detected = Encoding.Unicode;
+              else if (b.Length >= 2 && b[0] == 0xFE && b[1] == 0xFF)
+                  detected = Encoding.BigEndianUnicode;
+              else
+                  detected = Encoding.UTF8;
+              Console.WriteLine($"Codificación detectada: {detected.EncodingName} " +
+                  $"(BOM presente: {(b.Length >= 3 && b[0] == 0xEF ? "sí" : "no")})");
+          }
+
+          static void BenchmarkBasico(string path)
+          {
+              Stopwatch sw = Stopwatch.StartNew();
+
+              // ReadLines
+              sw.Restart();
+              long total = 0;
+              foreach (string linea in File.ReadLines(path)) total += linea.Length;
+              sw.Stop();
+              Console.WriteLine($"ReadLines: {sw.ElapsedMilliseconds} ms");
+
+              // StreamReader
+              sw.Restart();
+              total = 0;
+              using (var sr = new StreamReader(path))
+              {
+                  string linea;
+                  while ((linea = sr.ReadLine()) != null) total += linea.Length;
+              }
+              sw.Stop();
+              Console.WriteLine($"StreamReader: {sw.ElapsedMilliseconds} ms");
+          }
+      }
+  }
+  ```
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Escribe un programa que lea un archivo CSV y calcule el promedio de una
+   columna numérica usando File.ReadLines (streaming). No cargues todo el
+   archivo en memoria.
+
+2. Crea un "detector de tipo de archivo" que lea los primeros 8 bytes de un
+   archivo con FileStream y determine si es PNG, JPEG, GIF, PDF, ZIP o
+   desconocido, basándose en los magic bytes.
+
+3. Implementa un contador de palabras eficiente que procese archivos de texto
+   de cualquier tamaño usando StreamReader y un Dictionary<string, int>.
+
+4. Escribe un programa que lea un archivo de texto codificado en UTF-8 y lo
+   convierta a UTF-32 y ASCII, guardando los resultados en archivos separados.
+   Compara los tamaños.
+
+5. Crea un sistema que lea un archivo de log en tiempo real (como tail -f en
+   Linux) usando FileStream con FileShare.ReadWrite y polling.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿File.ReadAllText lanza excepción si el archivo no existe?
+R: Sí, lanza FileNotFoundException. Siempre debes manejarla.
+
+P: ¿Cuál es el límite de tamaño recomendado para ReadAllText?
+R: Generalmente 10-50 MB. Por encima de 100 MB, usa streaming.
+
+P: ¿File.ReadLines es realmente lazy?
+R: Sí. Implementa yield return y solo lee la línea actual en memoria.
+
+P: ¿Qué codificación usa File.ReadAllText por defecto?
+R: UTF-8 sin BOM. Si el archivo tiene BOM, lo detecta automáticamente.
+
+P: ¿Puedo mezclar File.ReadLines con LINQ paralelo (PLINQ)?
+R: Sí, pero ten cuidado: PLINQ procesará en paralelo, pero File.ReadLines
+   es secuencial. El paralelismo solo aplica al procesamiento.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Implementa un "Procesador de Archivos Masivos" que:
+
+  - Reciba una ruta de directorio y un patrón de búsqueda (ej. "*.log").
+  - Procese recursivamente todos los archivos que coincidan.
+  - Para cada archivo:
+      a) Detecte automáticamente la codificación.
+      b) Lea el archivo usando streaming (FileStream + StreamReader).
+      c) Aplique un filtro configurable (por expresión regular).
+      d) Cuente líneas, palabras, bytes.
+      e) Genere un resumen por archivo.
+  - Genere un reporte final en JSON con:
+      - Archivo más grande, más pequeño, promedio de tamaño.
+      - Total de archivos procesados.
+      - Líneas totales, palabras totales.
+      - Tiempo total de procesamiento.
+  - Maneje archivos de cualquier tamaño sin OutOfMemoryException.
+  - Use paralelismo (Parallel.ForEach) para procesar múltiples archivos
+    simultáneamente.
+  - Registre el progreso en consola con barra de progreso.
+
+Pistas:
+  - Usa Directory.EnumerateFiles para listar archivos sin cargarlos todos.
+  - FileStream + StreamReader para cada archivo.
+  - Parallel.ForEach con grado de paralelismo controlado.
+  - Reporte final con System.Text.Json.
+  - Cuidado con el acceso concurrente al reporte (lock o ConcurrentDictionary).
+
+Criterios de éxito:
+  - Procesa 1000+ archivos sin problemas de memoria.
+  - Genera reportes precisos.
+  - La interfaz de progreso es informativa.
+  - El código es robusto con manejo de errores por archivo.
+  - Los errores en un archivo no detienen el procesamiento de los demás.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+Hemos aprendido:
+
+  - File.ReadAllText: lee todo como string (archivos pequeños).
+  - File.ReadAllLines: lee todo como string[] (acceso aleatorio).
+  - File.ReadAllBytes: lee todo como byte[] (binarios).
+  - File.ReadLines: lectura diferida línea por línea (lazy).
+  - FileStream: control total, eficiente para archivos grandes.
+  - StreamReader: lectura de texto con codificación.
+  - Codificaciones: UTF-8, UTF-16, ASCII, Latin1, etc.
+  - Métodos asincrónicos: ReadAllTextAsync, ReadLineAsync, etc.
+  - Benchmarking: streaming gana en memoria; carga completa gana en velocidad.
+  - Regla general: archivos <10 MB usa métodos estáticos; >100 MB usa streaming.
+
+================================================================================
+  CIERRE
+================================================================================
+
+¡Excelente trabajo! Ahora sabes leer archivos en C# de múltiples formas,
+entendiendo las compensaciones entre memoria, velocidad y simplicidad. Este
+conocimiento es fundamental para cualquier aplicación que maneje datos.
+
+En el Capítulo 43: Escritura de Archivos, aprenderás las contrapartidas de
+escritura: WriteAllText, WriteAllLines, WriteAllBytes, AppendAllText y las
+técnicas de streaming para escribir datos eficientemente.
+
+¡Continúa, que el dominio total de archivos está cerca!
+
+================================================================================
+  PREPARACIÓN PARA EL PRÓXIMO CAPÍTULO
+================================================================================
+
+En el Capítulo 43 exploraremos:
+  - File.WriteAllText / File.WriteAllLines
+  - File.WriteAllBytes / File.AppendAllText
+  - FileStream para escritura
+  - Sobrescritura segura de archivos
+  - Escribir en archivos compartidos
+
+¡Te esperamos!
+
+================================================================================
+  FIN DEL CAPÍTULO 42
+================================================================================

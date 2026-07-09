@@ -1,0 +1,799 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 66: BENCHMARKS
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 66. Go no solo tiene testing integrado, sino
+  también un sistema de benchmarks de primera clase. Escribir benchmarks
+  correctos es tan importante como escribir tests correctos: te permite
+  medir el rendimiento, detectar regresiones, y optimizar con datos, no
+  con suposiciones.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "La optimización prematura es la raíz de todos los males. Pero medir
+  sin optimizar es simplemente curiosidad." — Donald Knuth (adaptada)
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Escribir funciones BenchmarkXxx(b *testing.B) correctamente.
+  2. Comprender cómo funciona b.N y el ajuste automático.
+  3. Usar benchmem, benchtime, y otros flags.
+  4. Comparar algoritmos con benchmarks precisos.
+  5. Evitar optimizaciones del compilador que sesguen resultados.
+  6. Generar perfiles (CPU, memoria) desde benchmarks.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. INTRODUCCIÓN A BENCHMARKS ──
+
+  Un benchmark en Go es una función especial en un archivo _test.go:
+
+  func BenchmarkXxx(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          // Código a medir
+      }
+  }
+
+  El bucle for con b.N es esencial. El framework de testing ajusta b.N
+  automáticamente para obtener una medición estable (típicamente ~1s).
+
+  ── 2. EJECUTAR BENCHMARKS ──
+
+  # Ejecutar todos los benchmarks del paquete
+  go test -bench=.
+
+  # Benchmark específico
+  go test -bench=BenchmarkSuma
+
+  # Verbose
+  go test -bench=. -v
+
+  # Múltiples benchmarks
+  go test -bench="Suma|Resta"
+
+  # Sin tests (solo benchmarks)
+  go test -bench=. -run=^
+
+  ── 3. EJEMPLO BÁSICO ──
+
+  // --- calc.go ---
+  package calc
+
+  func Suma(n int) int {
+      total := 0
+      for i := 0; i < n; i++ {
+          total += i
+      }
+      return total
+  }
+
+  func SumaGauss(n int) int {
+      return n * (n + 1) / 2
+  }
+
+  // --- calc_test.go ---
+  package calc
+
+  import "testing"
+
+  func BenchmarkSuma(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          Suma(1000)
+      }
+  }
+
+  func BenchmarkSumaGauss(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          SumaGauss(1000)
+      }
+  }
+
+  // Salida típica:
+  // BenchmarkSuma-8         1000000     1250 ns/op
+  // BenchmarkSumaGauss-8   1000000000   0.33 ns/op
+
+  ── 4. B.N: AJUSTE AUTOMÁTICO ──
+
+  El framework de testing ajusta b.N automáticamente:
+
+  1. Comienza con un valor pequeño (ej. 1).
+  2. Mide cuánto tarda una iteración.
+  3. Calcula cuántas iteraciones caben en ~1 segundo.
+  4. Ejecuta el benchmark completo con ese b.N.
+
+  Puedes ver el valor de b.N con -v:
+
+  go test -bench=. -v
+
+  // Output:
+  // BenchmarkSuma-8   1000000   1250 ns/op
+  //        ^ b.N = 1,000,000
+
+  ── 5. RESET Y START/STOP TIMER ──
+
+  Para evitar que el setup contamine la medición:
+
+  func BenchmarkProcess(b *testing.B) {
+      // Setup costoso
+      data := generateLargeData(10000)
+
+      b.ResetTimer() // Reinicia el contador, ignorando el setup
+
+      for i := 0; i < b.N; i++ {
+          process(data)
+      }
+  }
+
+  Para pausar/reanudar el timer (útil si hay setup en cada iteración):
+
+  func BenchmarkWithSetup(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          b.StopTimer()
+          data := generateData()
+          b.StartTimer()
+
+          process(data)
+      }
+  }
+
+  ── 6. BENCHMEM: MEDIR MEMORIA ──
+
+  El flag -benchmem muestra asignaciones de memoria:
+
+  go test -bench=. -benchmem
+
+  // Output:
+  // BenchmarkConcat-8    500000    5120 ns/op    1024 B/op    1 allocs/op
+  //              ^iter    ^ns/op    ^bytes/op     ^allocs/op
+
+  B/op: bytes asignados por operación.
+  allocs/op: número de asignaciones por operación.
+
+  Ejemplo comparando concatenación de strings:
+
+  func BenchmarkConcatPlus(b *testing.B) {
+      s := ""
+      for i := 0; i < b.N; i++ {
+          s += "a"
+      }
+      _ = s
+  }
+
+  func BenchmarkConcatBuilder(b *testing.B) {
+      var sb strings.Builder
+      for i := 0; i < b.N; i++ {
+          sb.WriteString("a")
+      }
+      _ = sb.String()
+  }
+
+  // Resultados típicos:
+  // ConcatPlus:   alta memoria, muchas allocs
+  // ConcatBuilder: baja memoria, pocas allocs
+
+  ── 7. BENCHTIME: CONTROLAR DURACIÓN ──
+
+  Por defecto, cada benchmark dura ~1 segundo. Puedes cambiarlo:
+
+  go test -bench=. -benchtime=5s   # 5 segundos
+  go test -bench=. -benchtime=100x # Exactamente 100 iteraciones
+
+  Útil cuando:
+  ● Quieres más precisión (benchtime mayor).
+  ● El benchmark es muy lento (benchtime menor o iteraciones fijas).
+
+  ── 8. COMPARAR BENCHMARKS ──
+
+  Para comparar dos algoritmos, ejecuta ambos y calcula la diferencia:
+
+  func BenchmarkFast(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          FastAlgorithm()
+      }
+  }
+
+  func BenchmarkSlow(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          SlowAlgorithm()
+      }
+  }
+
+  go test -bench=. -benchtime=1000x
+
+  También puedes usar benchstat (herramienta externa) para análisis
+  estadístico:
+
+  go get golang.org/x/perf/cmd/benchstat
+  go test -bench=. -count=10 > results.txt
+  benchstat results.txt
+
+  benchstat calcula medias, desviaciones, y detecta regresiones.
+
+  ── 9. BENCHMARKS CON DIFERENTES ENTRADAS ──
+
+  func BenchmarkSuma(b *testing.B) {
+      sizes := []int{10, 100, 1000, 10000}
+      for _, size := range sizes {
+          b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+              data := make([]int, size)
+              for i := range data {
+                  data[i] = i
+              }
+              b.ResetTimer()
+
+              for i := 0; i < b.N; i++ {
+                  SumaSlice(data)
+              }
+          })
+      }
+  }
+
+  // Ejecutar:
+  // go test -bench=BenchmarkSuma
+  // BenchmarkSuma/n=10-8       500000000    2.5 ns/op
+  // BenchmarkSuma/n=100-8      100000000    12.3 ns/op
+  // BenchmarkSuma/n=1000-8     10000000     125.0 ns/op
+
+  ── 10. EVITAR OPTIMIZACIONES DEL COMPILADOR ──
+
+  El compilador puede optimizar código no usado, sesgando benchmarks:
+
+  // ❌ El compilador puede eliminar esto si no se usa el resultado
+  func BenchmarkBad(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          Suma(1000) // Resultado descartado
+      }
+  }
+
+  // ✅ Forzar uso del resultado
+  func BenchmarkGood(b *testing.B) {
+      var result int
+      for i := 0; i < b.N; i++ {
+          result = Suma(1000)
+      }
+      _ = result // El compilador no eliminará la asignación
+  }
+
+  // ✅ O mejor: asignar a variable global (más seguro)
+  var globalResult int
+
+  func BenchmarkBest(b *testing.B) {
+      var result int
+      for i := 0; i < b.N; i++ {
+          result = Suma(1000)
+      }
+      globalResult = result
+  }
+
+  Para funciones que devuelven slices, usa:
+
+  var globalSlice []byte
+
+  func BenchmarkAlloc(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+          s := make([]byte, 1024)
+          globalSlice = s
+      }
+  }
+
+  ── 11. PROFILING DESDE BENCHMARKS ──
+
+  Puedes generar perfiles de CPU y memoria desde benchmarks:
+
+  # Perfil de CPU
+  go test -bench=. -cpuprofile=cpu.out
+
+  # Perfil de memoria (heap)
+  go test -bench=. -memprofile=mem.out
+
+  # Perfil de bloqueo
+  go test -bench=. -blockprofile=block.out
+
+  # Perfil de goroutines
+  go test -bench=. -goroutineprofile=goroutine.out
+
+  # Ver el perfil
+  go tool pprof cpu.out
+  (pprof) top        # Funciones más costosas
+  (pprof) web        # Visualizar gráfico
+  (pprof) list Func  # Ver código línea por línea
+
+  # Perfil de memoria interactivo
+  go tool pprof -alloc_space mem.out
+  go tool pprof -inuse_space mem.out
+
+  ── 12. EJEMPLO COMPLETO: COMPARACIÓN DE ALGORITMOS ──
+
+  // --- sort.go ---
+  package sortalgo
+
+  func BubbleSort(arr []int) {
+      n := len(arr)
+      for i := 0; i < n-1; i++ {
+          for j := 0; j < n-i-1; j++ {
+              if arr[j] > arr[j+1] {
+                  arr[j], arr[j+1] = arr[j+1], arr[j]
+              }
+          }
+      }
+  }
+
+  func QuickSort(arr []int) {
+      if len(arr) < 2 {
+          return
+      }
+      pivot := arr[0]
+      left, right := 0, len(arr)-1
+      for i := 1; i <= right; {
+          if arr[i] < pivot {
+              arr[i], arr[left] = arr[left], arr[i]
+              left++
+              i++
+          } else if arr[i] > pivot {
+              arr[i], arr[right] = arr[right], arr[i]
+              right--
+          } else {
+              i++
+          }
+      }
+      QuickSort(arr[:left])
+      QuickSort(arr[right+1:])
+  }
+
+  // --- sort_test.go ---
+  package sortalgo
+
+  import (
+      "math/rand"
+      "testing"
+  )
+
+  func generateSlice(n int) []int {
+      s := make([]int, n)
+      for i := range s {
+          s[i] = rand.Intn(n)
+      }
+      return s
+  }
+
+  func BenchmarkBubbleSort(b *testing.B) {
+      sizes := []int{10, 100, 1000}
+      for _, size := range sizes {
+          b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+              for i := 0; i < b.N; i++ {
+                  b.StopTimer()
+                  data := generateSlice(size)
+                  b.StartTimer()
+                  BubbleSort(data)
+              }
+          })
+      }
+  }
+
+  func BenchmarkQuickSort(b *testing.B) {
+      sizes := []int{10, 100, 1000, 10000}
+      for _, size := range sizes {
+          b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+              for i := 0; i < b.N; i++ {
+                  b.StopTimer()
+                  data := generateSlice(size)
+                  b.StartTimer()
+                  QuickSort(data)
+              }
+          })
+      }
+  }
+
+  ── 13. BENCHMARK DE CONCURRENCIA ──
+
+  func BenchmarkParallel(b *testing.B) {
+      b.RunParallel(func(pb *testing.PB) {
+          for pb.Next() {
+              // Código ejecutado en paralelo
+              expensiveOperation()
+          }
+      })
+  }
+
+  b.RunParallel crea múltiples goroutines (tantas como GOMAXPROCS) y
+  distribuye las iteraciones entre ellas. Es ideal para medir
+  rendimiento de operaciones concurrentes.
+
+  func BenchmarkParallelSum(b *testing.B) {
+      data := generateSlice(1000)
+      b.ResetTimer()
+
+      b.RunParallel(func(pb *testing.PB) {
+          for pb.Next() {
+              sum := 0
+              for _, v := range data {
+                  sum += v
+              }
+              globalResult = sum
+          }
+      })
+  }
+
+  ── 14. SUB-BENCHMARKS Y FILTROS ──
+
+  // Benchmarks jerárquicos con b.Run
+  func BenchmarkMath(b *testing.B) {
+      b.Run("Sum", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              Sum(1, 2)
+          }
+      })
+      b.Run("Mul", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              Mul(3, 4)
+          }
+      })
+  }
+
+  // Ejecutar sub-benchmarks específicos:
+  // go test -bench=BenchmarkMath/Sum
+  // go test -bench=BenchmarkMath/Mul
+
+  ── 15. COMPARATIVA: STRING CONCATENATION ──
+
+  // --- strconcat.go ---
+  package strconcat
+
+  func ConcatPlus(parts []string) string {
+      result := ""
+      for _, p := range parts {
+          result += p
+      }
+      return result
+  }
+
+  func ConcatBuilder(parts []string) string {
+      var sb strings.Builder
+      for _, p := range parts {
+          sb.WriteString(p)
+      }
+      return sb.String()
+  }
+
+  func ConcatJoin(parts []string) string {
+      return strings.Join(parts, "")
+  }
+
+  func ConcatSprintf(parts []string) string {
+      result := ""
+      for _, p := range parts {
+          result = fmt.Sprintf("%s%s", result, p)
+      }
+      return result
+  }
+
+  // --- strconcat_test.go ---
+  package strconcat
+
+  import (
+      "testing"
+  )
+
+  func BenchmarkConcat(b *testing.B) {
+      parts := []string{"hello", " ", "world", " ", "from", " ", "Go"}
+      sizes := []int{10, 100, 1000}
+
+      methods := []struct {
+          name string
+          fn   func([]string) string
+      }{
+          {"Plus", ConcatPlus},
+          {"Builder", ConcatBuilder},
+          {"Join", ConcatJoin},
+          {"Sprintf", ConcatSprintf},
+      }
+
+      for _, size := range sizes {
+          for _, m := range methods {
+              b.Run(fmt.Sprintf("%s_%d", m.name, size), func(b *testing.B) {
+                  // Preparar datos del tamaño correcto
+                  data := make([]string, size)
+                  for i := range data {
+                      data[i] = parts[i%len(parts)]
+                  }
+                  b.ResetTimer()
+
+                  for i := 0; i < b.N; i++ {
+                      m.fn(data)
+                  }
+              })
+          }
+      }
+  }
+
+  ── 16. BENCHMARK DE ASIGNACIONES ──
+
+  func BenchmarkMakeVsNew(b *testing.B) {
+      b.Run("make", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              s := make([]int, 0, 100)
+              _ = s
+          }
+      })
+      b.Run("literal", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              s := make([]int, 0, 100)
+              _ = s
+          }
+      })
+  }
+
+  func BenchmarkSliceAppend(b *testing.B) {
+      // Sin capacidad inicial
+      b.Run("no-cap", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              s := make([]int, 0)
+              for j := 0; j < 100; j++ {
+                  s = append(s, j)
+              }
+              globalSlice = s
+          }
+      })
+      // Con capacidad inicial
+      b.Run("with-cap", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              s := make([]int, 0, 100)
+              for j := 0; j < 100; j++ {
+                  s = append(s, j)
+              }
+              globalSlice = s
+          }
+      })
+  }
+
+  ── 17. BENCHMARK DE MAP ──
+
+  func BenchmarkMapAccess(b *testing.B) {
+      m := make(map[int]int)
+      for i := 0; i < 1000; i++ {
+          m[i] = i
+      }
+      b.ResetTimer()
+
+      b.Run("read-existing", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              _ = m[i%1000]
+          }
+      })
+      b.Run("read-missing", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              _ = m[-1]
+          }
+      })
+      b.Run("write", func(b *testing.B) {
+          for i := 0; i < b.N; i++ {
+              m[i] = i
+          }
+      })
+  }
+
+  ── 18. BENCHMARK DE JSON ──
+
+  type Data struct {
+      Name  string `json:"name"`
+      Age   int    `json:"age"`
+      Items []int  `json:"items"`
+  }
+
+  func BenchmarkJSONMarshal(b *testing.B) {
+      data := Data{
+          Name:  "Alice",
+          Age:   30,
+          Items: []int{1, 2, 3, 4, 5},
+      }
+      b.ResetTimer()
+
+      for i := 0; i < b.N; i++ {
+          _, err := json.Marshal(data)
+          if err != nil {
+              b.Fatal(err)
+          }
+      }
+  }
+
+  func BenchmarkJSONUnmarshal(b *testing.B) {
+      jsonBytes := []byte(`{"name":"Alice","age":30,"items":[1,2,3,4,5]}`)
+      b.ResetTimer()
+
+      for i := 0; i < b.N; i++ {
+          var data Data
+          err := json.Unmarshal(jsonBytes, &data)
+          if err != nil {
+              b.Fatal(err)
+          }
+      }
+  }
+
+  ── 19. BENCHMARK DE CANALES ──
+
+  func BenchmarkChannelUnbuffered(b *testing.B) {
+      ch := make(chan int)
+      go func() {
+          for i := 0; i < b.N; i++ {
+              ch <- i
+          }
+          close(ch)
+      }()
+
+      for i := 0; i < b.N; i++ {
+          <-ch
+      }
+  }
+
+  func BenchmarkChannelBuffered(b *testing.B) {
+      ch := make(chan int, 100)
+      go func() {
+          for i := 0; i < b.N; i++ {
+              ch <- i
+          }
+          close(ch)
+      }()
+
+      for i := 0; i < b.N; i++ {
+          <-ch
+      }
+  }
+
+  ── 20. EJEMPLO COMPLETO: HTTP BENCHMARK ──
+
+  // --- handler.go ---
+  package handler
+
+  import (
+      "encoding/json"
+      "net/http"
+  )
+
+  type User struct {
+      ID   int    `json:"id"`
+      Name string `json:"name"`
+  }
+
+  func UserHandler(w http.ResponseWriter, r *http.Request) {
+      user := User{ID: 1, Name: "Alice"}
+      json.NewEncoder(w).Encode(user)
+  }
+
+  // --- handler_test.go ---
+  package handler
+
+  import (
+      "net/http"
+      "net/http/httptest"
+      "testing"
+  )
+
+  func BenchmarkUserHandler(b *testing.B) {
+      req := httptest.NewRequest("GET", "/user", nil)
+      for i := 0; i < b.N; i++ {
+          w := httptest.NewRecorder()
+          UserHandler(w, req)
+      }
+  }
+
+  ── 21. COMPARATIVA CON benchstat ──
+
+  # Instalar benchstat
+  go install golang.org/x/perf/cmd/benchstat@latest
+
+  # Ejecutar benchmarks 10 veces para obtener datos significativos
+  go test -bench=. -count=10 -benchmem > bench.txt
+
+  # Analizar con benchstat
+  benchstat bench.txt
+
+  # Comparar dos versiones del código
+  git checkout main
+  go test -bench=. -count=10 > old.txt
+  git checkout feature
+  go test -bench=. -count=10 > new.txt
+  benchstat old.txt new.txt
+
+  benchstat muestra:
+  ● Media y desviación de cada benchmark.
+  ● Diferencia porcentual entre versiones (p-value).
+  ● Señalización de cambios significativos.
+
+  ── 22. BUENAS PRÁCTICAS DE BENCHMARKS ──
+
+  1. Siempre usa el bucle for con b.N (no pongas un número fijo).
+  2. Reinicia el timer después del setup con b.ResetTimer().
+  3. Asigna resultados a variables globales para evitar optimizaciones.
+  4. Usa b.RunParallel para medir rendimiento concurrente.
+  5. Ejecuta benchmarks varias veces con -count para datos estables.
+  6. Mide memoria con -benchmem para entender asignaciones.
+  7. Usa benchstat para comparar resultados estadísticamente.
+  8. No optimices basado en una sola ejecución; busca tendencias.
+  9. Aísla el benchmark: minimiza trabajo fuera del bucle.
+  10. Documenta qué estás midiendo con nombres descriptivos.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● Los benchmarks usan funciones BenchmarkXxx(b *testing.B) con b.N.
+  ● b.N se ajusta automáticamente para obtener ~1s de medición.
+  ● b.ResetTimer() ignora el setup; b.StartTimer/b.StopTimer controlan
+    la medición.
+  ● -benchmem muestra bytes y allocs por operación.
+  ● -benchtime controla la duración o número de iteraciones.
+  ● b.RunParallel mide rendimiento concurrente.
+  ● Asigna resultados a variables globales para evitar optimizaciones.
+  ● benchstat analiza resultados estadísticamente entre versiones.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Escribe un benchmark que compare dos formas de sumar números:
+     bucle for vs fórmula de Gauss.
+  2. Compara strings.Builder vs + para concatenar 1000 strings.
+  3. Mide la diferencia entre make([]int, 0, n) vs make([]int, n) con
+     asignación directa vs append.
+  4. Compara JSON.Marshal/Unmarshal vs manual Serialize/Deserialize.
+  5. Escribe un benchmark paralelo con b.RunParallel.
+  6. Genera perfiles de CPU de un benchmark y analízalos con pprof.
+  7. Mide el overhead de Reflection vs llamada directa.
+  8. Compara map vs slice para búsqueda (100, 1000, 10000 elementos).
+  9. Benchmarks con diferentes tamaños de entrada usando b.Run.
+  10. Usa benchstat para comparar dos versiones de un algoritmo.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Por qué mi benchmark da resultados inconsistentes?
+  R: Posibles causas: recolector de basura, throttling térmico, otros
+     procesos. Usa -count=10 para obtener una muestra grande.
+
+  P: ¿Debo ejecutar benchmarks con -race?
+  R: No. -race añade overhead y distorsiona las mediciones. Ejecuta
+     benchmarks sin -race.
+
+  P: ¿Cómo mido solo el benchmark, sin tests?
+  R: go test -bench=. -run=^$
+
+  P: ¿Qué significa ns/op, B/op, allocs/op?
+  R: ns/op = nanosegundos por operación (menor es mejor). B/op = bytes
+     asignados por operación. allocs/op = asignaciones por operación.
+
+  P: ¿benchmem afecta el rendimiento?
+  R: Muy poco. La medición de memoria es precisa y el overhead es
+     mínimo.
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Diseña un framework de benchmarks para un servidor HTTP que incluya:
+
+  1. Benchmarks para cada handler (GET, POST, PUT, DELETE).
+  2. Benchmarks con diferentes tamaños de payload (1KB, 10KB, 1MB).
+  3. Benchmarks concurrentes: 1, 10, 100, 1000 conexiones simultáneas.
+  4. Medición de latencia (p50, p95, p99) además de throughput.
+  5. Comparación entre diferentes serializaciones: JSON vs Protobuf vs
+     manual.
+  6. Perfiles de CPU y memoria para cada escenario.
+  7. Script que ejecute batería completa y genere reporte HTML.
+  8. El desafío: identificar el cuello de botella principal y proponer
+     una optimización medida y documentada.
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has dominado los benchmarks en Go, desde la sintaxis básica hasta la
+  comparación estadística con benchstat, profiling, y optimización
+  basada en datos. La medición objetiva es la base de todo sistema de
+  alto rendimiento. En el próximo capítulo exploraremos Reflection.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 67: REFLEXIÓN (REFLECT) → reflect.TypeOf, reflect.ValueOf,
+  Kind, Set, reflection para struct tags, y casos de uso reales.
+
+================================================================================
+  FIN DEL CAPÍTULO 66
+================================================================================

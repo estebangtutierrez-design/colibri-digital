@@ -1,0 +1,1092 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 42: CHANNELS
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A LOS CHANNELS
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la concurrencia. En el capítulo anterior aprendiste
+a crear gorutinas, esos hilos ligeros que dan vida a la ejecución concurrente.
+Pero las gorutinas por sí solas son como islas desiertas: cada una ejecuta su
+código, pero no tienen forma de comunicarse entre sí.
+
+Hoy cruzas el puente que conecta esas islas. Los channels (canales) son el
+mecanismo de comunicación principal entre gorutinas en Go. No solo permiten
+enviar y recibir datos, sino que además sincronizan la ejecución de forma
+intrínseca.
+
+El lema de Go para la concurrencia es: "No te comuniques mediante memoria
+compartida; comparte memoria mediante comunicación." Los channels son la
+materialización de esta filosofía. Con ellos, una gorutina puede enviar un
+valor a otra y ambas se sincronizan automáticamente en el proceso.
+
+En este capítulo dominarás los channels sin buffer: cómo crearlos, cómo
+enviar y recibir datos, cómo evitar deadlocks, y cómo usarlos para coordinar
+gorutinas de forma elegante y segura.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"Los canales son la forma en que las gorutinas se comunican. Son el conducto
+que conecta las islas de concurrencia en un archipiélago de cooperación."
+— Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender el concepto de channel como conducto de comunicación.
+  • Crear channels no bufferizados con make(chan T).
+  • Aprender la sintaxis de envío (ch <- v) y recepción (v := <-ch).
+  • Entender el bloqueo síncrono de los channels no bufferizados.
+  • Identificar y resolver deadlocks en channels.
+  • Usar channels para retornar valores desde gorutinas.
+  • Implementar patrones básicos de productor-consumidor.
+  • Distinguir entre channels bidireccionales y direccionales.
+  • Usar la dirección de channel como parámetro de función.
+  • Practicar la coordinación de múltiples gorutinas con channels.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — CHANNELS
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ¿QUÉ ES UN CHANNEL?
+----------------------------------------------------------------------
+
+Un channel es un conducto tipado a través del cual puedes enviar y recibir
+valores con el operador <- (flecha). Los channels conectan gorutinas y
+sincronizan su ejecución.
+
+Creación:
+    ch := make(chan int)  // Channel no bufferizado de enteros
+
+El tipo del channel es parte de su firma. chan int solo acepta enteros.
+
+----------------------------------------------------------------------
+  2. SINTAXIS DE ENVÍO Y RECEPCIÓN
+----------------------------------------------------------------------
+
+Envío: la flecha apunta hacia el channel (los datos fluyen hacia el channel):
+    ch <- 42  // Envía 42 al channel
+
+Recepción: la flecha sale del channel (los datos fluyen desde el channel):
+    valor := <-ch  // Recibe y asigna
+    fmt.Println(<-ch)  // Recibe y usa directamente
+
+----------------------------------------------------------------------
+  3. BLOQUEO SINCRÓNICO
+----------------------------------------------------------------------
+
+Un channel no bufferizado bloquea al emisor hasta que un receptor esté listo,
+y bloquea al receptor hasta que un emisor envíe. Esto proporciona sincronización
+implícita:
+
+    // Gorutina A:                    // Gorutina B:
+    ch <- 42  // BLOQUEA hasta       <-ch  // BLOQUEA hasta
+              // que B reciba                // que A envíe
+
+Es como pasar un testigo: ambas partes deben estar sincronizadas.
+
+----------------------------------------------------------------------
+  4. DEADLOCK (INTERBLOQUEO)
+----------------------------------------------------------------------
+
+Un deadlock ocurre cuando todas las gorutinas están bloqueadas esperando
+algo que nunca sucederá. Ejemplo clásico:
+
+    ch := make(chan int)
+    ch <- 42  // Deadlock: main está bloqueada enviando, pero nadie recibe
+    <-ch
+
+El runtime de Go detecta deadlocks en tiempo de ejecución y lanza un panic:
+
+    fatal error: all goroutines are asleep - deadlock!
+
+Para evitarlo, asegúrate de que cada envío tenga un receptor correspondiente
+y viceversa, o usa gorutinas para separar emisor y receptor.
+
+----------------------------------------------------------------------
+  5. CHANNELS DIRECCIONALES
+----------------------------------------------------------------------
+
+Puedes restringir la dirección de un channel en la firma de una función:
+
+    func productor(ch chan<- int) {  // Solo envío
+        ch <- 42
+    }
+
+    func consumidor(ch <-chan int) {  // Solo recepción
+        valor := <-ch
+    }
+
+Esto aumenta la seguridad de tipos y documenta la intención. La conversión
+de un channel bidireccional a uno direccional es automática.
+
+----------------------------------------------------------------------
+  6. PATRÓN PRODUCTOR-CONSUMIDOR
+----------------------------------------------------------------------
+
+El patrón más básico con channels: una gorutina produce datos y otra los
+consume. El channel actúa como tubería sincronizada.
+
+----------------------------------------------------------------------
+  7. CANAL COMO MECANISMO DE SEÑALIZACIÓN
+----------------------------------------------------------------------
+
+Además de datos, los channels pueden usarse solo para señalización (eventos).
+Un channel de struct{} vacío es ideal para esto:
+
+    done := make(chan struct{})
+    go func() {
+        // hacer trabajo
+        done <- struct{}{}
+    }()
+    <-done  // Espera a que la gorutina termine
+
+----------------------------------------------------------------------
+  8. VALOR CERO DE UN CHANNEL
+----------------------------------------------------------------------
+
+El valor cero de un channel es nil. Enviar o recibir de un channel nil
+bloquea para siempre (deadlock). Cerrar un channel nil causa panic.
+
+    var ch chan int  // ch es nil
+    ch <- 42  // BLOQUEA PARA SIEMPRE (deadlock)
+
+Siempre inicializa tus channels con make().
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: CHANNEL BÁSICO — SINCRONIZACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    // Crear un channel de tipo string
+    ch := make(chan string)
+
+    // Gorutina que envía un mensaje
+    go func() {
+        ch <- "¡Hola desde la gorutina!"
+    }()
+
+    // Recibir el mensaje (esto bloquea hasta que la gorutina envíe)
+    mensaje := <-ch
+    fmt.Println(mensaje)
+}
+```
+
+Este es el ejemplo más simple de channel. La gorutina envía, main recibe.
+Ambas se sincronizan en la operación del channel.
+
+----------------------------------------------------------------------
+  EJEMPLO 2: RETORNANDO VALORES DESDE GORUTINAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func calcularCuadrado(n int, ch chan int) {
+    time.Sleep(100 * time.Millisecond)
+    ch <- n * n
+}
+
+func main() {
+    ch := make(chan int)
+
+    // Lanzamos 3 gorutinas que devuelven resultados por el channel
+    go calcularCuadrado(2, ch)
+    go calcularCuadrado(3, ch)
+    go calcularCuadrado(4, ch)
+
+    // Recibimos los 3 resultados
+    a := <-ch
+    b := <-ch
+    c := <-ch
+
+    fmt.Printf("Resultados: %d, %d, %d\n", a, b, c)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 3: DEADLOCK — ENVÍO SIN RECEPTOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan string)
+
+    // Esto causa deadlock: main envía pero no hay receptor
+    // (la gorutina anónima no se ha lanzado aún)
+    ch <- "mensaje"
+
+    fmt.Println("Esto nunca se imprime")
+}
+```
+
+Para corregirlo, debemos lanzar la gorutina antes de enviar, o usar una
+gorutina para enviar y main para recibir.
+
+VERSIÓN CORREGIDA:
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan string)
+
+    // La gorutina envía, main recibe
+    go func() {
+        ch <- "mensaje"
+    }()
+
+    mensaje := <-ch
+    fmt.Println(mensaje)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: CANAL COMO SEMÁFORO DE FINALIZACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func trabajador(id int, done chan bool) {
+    fmt.Printf("Trabajador %d comenzando\n", id)
+    time.Sleep(time.Duration(id) * 100 * time.Millisecond)
+    fmt.Printf("Trabajador %d terminado\n", id)
+    done <- true
+}
+
+func main() {
+    done := make(chan bool)
+
+    go trabajador(1, done)
+    go trabajador(2, done)
+    go trabajador(3, done)
+
+    // Esperamos a que los 3 terminen
+    <-done
+    <-done
+    <-done
+
+    fmt.Println("Todos los trabajadores terminaron")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: PRODUCTOR Y CONSUMIDOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func productor(ch chan int) {
+    for i := 0; i < 5; i++ {
+        fmt.Printf("Productor envía: %d\n", i)
+        ch <- i
+        time.Sleep(100 * time.Millisecond)
+    }
+    close(ch)
+}
+
+func consumidor(ch chan int) {
+    for valor := range ch {
+        fmt.Printf("Consumidor recibe: %d\n", valor)
+        time.Sleep(150 * time.Millisecond)
+    }
+}
+
+func main() {
+    ch := make(chan int)
+
+    go productor(ch)
+    consumidor(ch) // main actúa como consumidor
+
+    fmt.Println("Todo el proceso completado")
+}
+```
+
+Nota: el consumidor se ejecuta en la gorutina principal. El productor se
+ejecuta concurrentemente. El rango sobre el channel itera hasta que se cierra.
+
+----------------------------------------------------------------------
+  EJEMPLO 6: CHANNELS DIRECCIONALES EN FUNCIONES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+// soloEnvio: solo puede enviar datos al channel
+func soloEnvio(ch chan<- string) {
+    for i := 0; i < 3; i++ {
+        ch <- fmt.Sprintf("Mensaje %d", i)
+        time.Sleep(50 * time.Millisecond)
+    }
+    close(ch)
+}
+
+// soloRecepcion: solo puede recibir datos del channel
+func soloRecepcion(ch <-chan string) {
+    for msg := range ch {
+        fmt.Println("Recibido:", msg)
+    }
+}
+
+func main() {
+    ch := make(chan string)
+
+    go soloEnvio(ch)
+    soloRecepcion(ch)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 7: CHANNEL CON ESTRUCTURAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Resultado struct {
+    ID     int
+    Valor  int
+    Error  error
+}
+
+func calcular(id int, ch chan<- Resultado) {
+    time.Sleep(100 * time.Millisecond)
+    if id == 3 {
+        ch <- Resultado{ID: id, Error: fmt.Errorf("error simulado en %d", id)}
+        return
+    }
+    ch <- Resultado{ID: id, Valor: id * id}
+}
+
+func main() {
+    ch := make(chan Resultado)
+
+    for i := 1; i <= 5; i++ {
+        go calcular(i, ch)
+    }
+
+    for i := 1; i <= 5; i++ {
+        r := <-ch
+        if r.Error != nil {
+            fmt.Printf("Error en tarea %d: %v\n", r.ID, r.Error)
+        } else {
+            fmt.Printf("Tarea %d: resultado = %d\n", r.ID, r.Valor)
+        }
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 8: MÚLTIPLES GORUTINAS, UN SOLO CHANNEL
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+
+    // Lanzamos 5 gorutinas que escriben al mismo channel
+    for i := 0; i < 5; i++ {
+        go func(id int) {
+            time.Sleep(time.Duration(id) * 50 * time.Millisecond)
+            ch <- id * 10
+        }(i)
+    }
+
+    // Recibimos 5 resultados
+    for i := 0; i < 5; i++ {
+        fmt.Printf("Recibido: %d\n", <-ch)
+    }
+
+    fmt.Println("Todos los resultados recibidos")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: CANAL DE STRUCT{VACÍO} PARA SEÑALIZACIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    // Usamos un canal de struct{} vacío solo para señalización
+    fin := make(chan struct{})
+
+    go func() {
+        fmt.Println("Gorutina trabajando...")
+        time.Sleep(200 * time.Millisecond)
+        fmt.Println("Gorutina terminó, enviando señal")
+        fin <- struct{}{}
+    }()
+
+    fmt.Println("Main esperando señal...")
+    <-fin
+    fmt.Println("Main recibió señal, terminando")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: PING-PONG CON CHANNELS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func ping(pings chan string, pongs chan string) {
+    for i := 0; i < 5; i++ {
+        msg := <-pings
+        fmt.Println("Ping recibe:", msg)
+        pongs <- fmt.Sprintf("Pong %d", i)
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+
+func main() {
+    pings := make(chan string)
+    pongs := make(chan string)
+
+    go ping(pings, pongs)
+
+    for i := 0; i < 5; i++ {
+        pings <- fmt.Sprintf("Ping %d", i)
+        respuesta := <-pongs
+        fmt.Println("Main recibe:", respuesta)
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: CHANNEL Y DEFER
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan string)
+
+    go func() {
+        defer fmt.Println("Gorutina finalizada")
+        defer func() { ch <- "mensaje final" }()
+
+        fmt.Println("Gorutina trabajando...")
+        time.Sleep(100 * time.Millisecond)
+        ch <- "mensaje intermedio"
+    }()
+
+    fmt.Println("Main esperando...")
+    fmt.Println("Recibido 1:", <-ch)
+    fmt.Println("Recibido 2:", <-ch)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: SUMATORIA CON CHANNELS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func sumar(rango []int, ch chan int) {
+    suma := 0
+    for _, v := range rango {
+        suma += v
+    }
+    time.Sleep(50 * time.Millisecond)
+    ch <- suma
+}
+
+func main() {
+    numeros := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+    ch := make(chan int)
+
+    // Dividimos el trabajo en 2 gorutinas
+    mitad := len(numeros) / 2
+    go sumar(numeros[:mitad], ch)
+    go sumar(numeros[mitad:], ch)
+
+    suma1 := <-ch
+    suma2 := <-ch
+
+    fmt.Printf("Suma total: %d + %d = %d\n", suma1, suma2, suma1+suma2)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: GENERADOR DE IDS SECUENCIALES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func generadorID() <-chan int {
+    ch := make(chan int)
+    go func() {
+        for id := 1; ; id++ {
+            ch <- id
+        }
+    }()
+    return ch
+}
+
+func main() {
+    ids := generadorID()
+
+    // Obtenemos 5 IDs
+    for i := 0; i < 5; i++ {
+        fmt.Printf("ID generado: %d\n", <-ids)
+    }
+}
+```
+
+Advertencia: este generador nunca termina (bucle infinito). En un programa
+real, necesitarías una forma de detenerlo.
+
+----------------------------------------------------------------------
+  EJEMPLO 14: CHANNEL DIRECCIONAL — ERROR COMÚN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func soloEnvio(ch chan<- int) {
+    ch <- 42
+    // Esto NO compila: recibir de un canal de solo envío
+    // valor := <-ch
+}
+
+func soloRecepcion(ch <-chan int) {
+    valor := <-ch
+    fmt.Println("Valor recibido:", valor)
+    // Esto NO compila: enviar a un canal de solo recepción
+    // ch <- 99
+}
+
+func main() {
+    ch := make(chan int)
+
+    go soloEnvio(ch)
+    soloRecepcion(ch)
+}
+```
+
+La compilación fallará si intentas usar la dirección incorrecta. Es una
+garantía de tipo en tiempo de compilación.
+
+----------------------------------------------------------------------
+  EJEMPLO 15: COMUNICACIÓN BIDIRECCIONAL CON DOS CHANNELS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func worker(solicitudes chan int, respuestas chan int) {
+    for req := range solicitudes {
+        time.Sleep(50 * time.Millisecond)
+        respuestas <- req * 2
+    }
+}
+
+func main() {
+    solicitudes := make(chan int)
+    respuestas := make(chan int)
+
+    go worker(solicitudes, respuestas)
+
+    // Enviamos 5 solicitudes
+    for i := 1; i <= 5; i++ {
+        solicitudes <- i
+        fmt.Printf("Solicitud %d -> Respuesta %d\n", i, <-respuestas)
+    }
+
+    close(solicitudes)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: CHANNEL Y BUCLE INFINITO CONTROLADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    ch := make(chan int)
+    done := make(chan bool)
+
+    // Consumidor que itera 10 veces y avisa
+    go func() {
+        for i := 0; i < 10; i++ {
+            fmt.Printf("Consumido: %d\n", <-ch)
+        }
+        done <- true
+    }()
+
+    // Productor
+    go func() {
+        for i := 0; ; i++ {
+            select {
+            case <-done:
+                return
+            default:
+                ch <- i
+                time.Sleep(20 * time.Millisecond)
+            }
+        }
+    }()
+
+    time.Sleep(1 * time.Second)
+    fmt.Println("Programa finalizado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: MÚLTIPLES CONSUMIDORES, UN PRODUCTOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func productor(ch chan int) {
+    for i := 1; i <= 10; i++ {
+        ch <- i
+        fmt.Printf("Producido: %d\n", i)
+        time.Sleep(30 * time.Millisecond)
+    }
+    close(ch)
+}
+
+func consumidor(id int, ch chan int, done chan bool) {
+    for v := range ch {
+        fmt.Printf("Consumidor %d procesa: %d\n", id, v)
+        time.Sleep(50 * time.Millisecond)
+    }
+    done <- true
+}
+
+func main() {
+    ch := make(chan int, 3) // buffer pequeño
+    done := make(chan bool)
+
+    // 3 consumidores, 1 productor
+    for i := 1; i <= 3; i++ {
+        go consumidor(i, ch, done)
+    }
+
+    go productor(ch)
+
+    // Esperamos a los 3 consumidores
+    for i := 1; i <= 3; i++ {
+        <-done
+    }
+
+    fmt.Println("Todos los consumidores terminaron")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: ERROR: ENVIAR A CHANNEL CERRADO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+func main() {
+    ch := make(chan int)
+    close(ch)
+
+    // Esto causa panic: enviar a un channel cerrado
+    ch <- 42
+
+    fmt.Println("Esto nunca se imprime")
+}
+```
+
+Siempre es responsabilidad del emisor cerrar el channel, y solo el emisor
+debe cerrarlo.
+
+----------------------------------------------------------------------
+  EJEMPLO 19: SÍNCRONO VS ASÍNCRONO (BUFFER 1)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func main() {
+    // Sin buffer: síncrono
+    ch1 := make(chan int)
+
+    inicio := time.Now()
+    go func() {
+        ch1 <- 10
+    }()
+    valor1 := <-ch1
+    fmt.Printf("Sin buffer: %d en %v\n", valor1, time.Since(inicio))
+
+    // Con buffer 1: asíncrono hasta que se llena
+    ch2 := make(chan int, 1)
+
+    inicio = time.Now()
+    ch2 <- 20 // No bloquea porque hay espacio
+    valor2 := <-ch2
+    fmt.Printf("Con buffer 1: %d en %v\n", valor2, time.Since(inicio))
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — CALCULADORA CONCURRENTE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Operacion struct {
+    A, B int
+    Op   string
+}
+
+type ResultadoOp struct {
+    Operacion
+    Resultado int
+}
+
+func calculadora(entrada <-chan Operacion, salida chan<- ResultadoOp) {
+    for op := range entrada {
+        var res int
+        switch op.Op {
+        case "+":
+            res = op.A + op.B
+        case "-":
+            res = op.A - op.B
+        case "*":
+            res = op.A * op.B
+        case "/":
+            if op.B != 0 {
+                res = op.A / op.B
+            }
+        }
+        time.Sleep(50 * time.Millisecond)
+        salida <- ResultadoOp{Operacion: op, Resultado: res}
+    }
+}
+
+func main() {
+    entrada := make(chan Operacion)
+    salida := make(chan ResultadoOp)
+
+    // Lanzamos 3 calculadoras concurrentes
+    for i := 0; i < 3; i++ {
+        go calculadora(entrada, salida)
+   }
+
+    // Enviamos operaciones
+    ops := []Operacion{
+        {10, 5, "+"},
+        {20, 4, "-"},
+        {6, 7, "*"},
+        {100, 4, "/"},
+        {8, 3, "+"},
+        {50, 2, "-"},
+    }
+
+    go func() {
+        for _, op := range ops {
+            entrada <- op
+        }
+        close(entrada)
+    }()
+
+    // Recibimos resultados
+    for i := 0; i < len(ops); i++ {
+        r := <-salida
+        fmt.Printf("%d %s %d = %d\n", r.A, r.Op, r.B, r.Resultado)
+    }
+
+    fmt.Println("Todas las operaciones completadas")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Un channel es un conducto tipado que conecta gorutinas.
+  • Se crea con make(chan T) para channels no bufferizados.
+  • El envío (ch <- v) bloquea hasta que alguien recibe.
+  • La recepción (v := <-ch) bloquea hasta que alguien envía.
+  • Los deadlocks ocurren cuando todas las gorutinas están bloqueadas.
+  • Los channels direccionales (chan<-, <-chan) mejoran la seguridad.
+  • Un channel puede usarse para señalización con struct{} vacío.
+  • El patrón productor-consumidor es el caso de uso fundamental.
+  • Enviar a un channel cerrado causa panic.
+  • Solo el emisor debe cerrar un channel.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Crea un programa donde una gorutina genere los primeros 10 números
+   de la serie Fibonacci y los envíe por un channel. El main los imprime.
+
+2. INTERMEDIO — Implementa el patrón worker pool: 3 gorutinas consumen tareas
+   desde un channel compartido. Cada tarea es un string. Cada worker la
+   procesa e imprime su resultado.
+
+3. AVANZADO — Crea dos gorutinas que se comuniquen bidireccionalmente usando
+   dos channels. Una envía números, la otra los duplica y devuelve.
+
+4. BÁSICO — Escribe un programa que demuestre un deadlock y luego corrígelo.
+
+5. INTERMEDIO — Implementa un pipeline de 3 etapas conectadas por channels:
+   etapa1 produce números, etapa2 los eleva al cuadrado, etapa3 los imprime.
+
+6. AVANZADO — Crea un sistema de chat simple entre 2 gorutinas usando
+   channels. Cada gorutina envía y recibe mensajes de la otra.
+
+7. INTERMEDIO — Usa un channel de struct{} para sincronizar 5 gorutinas.
+   Todas deben terminar antes de que main continúe.
+
+8. AVANZADO — Implementa un limitador de tasa (rate limiter) usando un
+   channel con buffer. Solo se permiten N operaciones por segundo.
+
+9. BÁSICO — Crea una función que reciba un <-chan int y devuelva un chan<- int.
+   Demuestra la conversión de direcciones.
+
+10. INTERMEDIO — Escribe un programa que demuestre la diferencia entre un
+    channel nil, uno cerrado y uno activo. Muestra el comportamiento de
+    cada uno.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Qué pasa si leo de un channel cerrado?
+R: Obtienes el valor cero del tipo inmediatamente, sin bloqueo. Si usas la
+forma de dos valores (v, ok := <-ch), ok es false cuando el channel está
+cerrado y vacío.
+
+❓ ¿Puedo cerrar un channel desde el receptor?
+R: Técnicamente sí, pero es un antipatrón. El emisor debe cerrar el channel
+para indicar que no enviará más datos. Si el receptor cierra, causará panic
+cuando el emisor intente enviar.
+
+❓ ¿Qué es un deadlock y cómo lo evito?
+R: Un deadlock es cuando todas las gorutinas esperan un evento que nunca
+ocurrirá. Para evitarlo, asegura que cada envío tenga un receptor y cada
+receptor tenga un emisor. Usa select con default para operaciones no bloqueantes.
+
+❓ ¿Los channels son rápidos?
+R: Sí, pero tienen overhead. Para sistemas de altas prestaciones, considera
+buffers adecuados o el paquete sync para operaciones simples. Los channels
+priorizan la seguridad y claridad sobre la velocidad máxima.
+
+❓ ¿Puedo tener un channel de channels?
+R: Sí: make(chan chan int) crea un channel que transporta channels de enteros.
+Es útil en patrones avanzados como multiplexación dinámica.
+
+❓ ¿Cuántos bytes ocupa un channel?
+R: Internamente, un channel es un puntero a una estructura hchan en el heap.
+El tamaño de la estructura es de unos 192 bytes aproximadamente, más el buffer
+si tiene uno.
+
+❓ ¿Es seguro usar un channel desde múltiples gorutinas?
+R: Sí. Los channels son seguros para concurrencia por diseño. Múltiples
+gorutinas pueden enviar y recibir del mismo channel sin locks adicionales.
+
+❓ ¿Puedo iterar sobre un channel con range?
+R: Sí. for v := range ch itera hasta que el channel se cierra. Esto se cubre
+en detalle en el Capítulo 44.
+
+❓ ¿Qué es un channel nil?
+R: Un channel declarado pero no inicializado (var ch chan int). Enviar o
+recibir de un channel nil bloquea para siempre. Cerrarlo causa panic.
+
+❓ ¿Los channels tienen capacidad de inspección?
+R: Puedes usar len(ch) para ver cuántos elementos hay en el buffer, y cap(ch)
+para ver la capacidad del buffer. Pero no hay forma de ver el número de
+gorutinas esperando en el channel.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: SISTEMA DE PROCESAMIENTO DE IMÁGENES                          │
+│                                                                          │
+│  Diseña un sistema concurrente de procesamiento de imágenes que siga    │
+│  un pipeline de 4 etapas conectadas por channels:                       │
+│                                                                          │
+│    1. CARGADOR: Lee rutas de imágenes (simulado con strings) y las      │
+│       envía a la siguiente etapa.                                       │
+│    2. FILTRO: Aplica un filtro de escala de grises (simulado con        │
+│       time.Sleep).                                                      │
+│    3. REDIMENSIONADOR: Redimensiona a 800x600 (simulado con Sleep).     │
+│    4. GUARDADOR: Guarda la imagen procesada (simulado, imprime).        │
+│                                                                          │
+│  Requisitos:                                                             │
+│  • Cada etapa debe ejecutarse en su propia gorutina.                    │
+│  • Los resultados deben fluir de etapa a etapa mediante channels.       │
+│  • Cada etapa debe procesar imágenes concurrentemente (puede tener      │
+│    múltiples workers internos).                                         │
+│  • Implementa un mecanismo de cancelación: si una imagen falla en       │
+│    cualquier etapa, el pipeline debe continuar con la siguiente.        │
+│  • Usa struct Image con campos: ID, Ruta, Estado, Error.               │
+│  • El sistema debe procesar 20 imágenes en total.                      │
+│  • Al final, imprime un resumen: cuántas tuvieron éxito y cuántas       │
+│    fallaron.                                                             │
+│                                                                          │
+│  Pistas:                                                                 │
+│  • Usa channels direccionales para cada etapa.                          │
+│  • El Cargador es el único que cierra su channel de salida.             │
+│  • Cada etapa recibe de un channel y envía a otro.                      │
+│  • Si una etapa falla, envía la imagen con el error a la siguiente.     │
+│  • El Guardador es la última etapa y recopila estadísticas.            │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra gorutinas y channels en un diseño de pipeline realista.
+Al completarlo, estarás listo para el siguiente capítulo sobre channels
+bufferizados, que añadirán flexibilidad a tus diseños.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dominado los channels no bufferizados, el corazón de la comunicación
+entre gorutinas. Ahora entiendes cómo las gorutinas pueden colaborar, enviar
+datos, señalizarse mutuamente y sincronizarse sin necesidad de variables
+compartidas ni locks explícitos.
+
+Este modelo CSP (Communicating Sequential Processes) es lo que hace único
+a Go. No es solo una biblioteca de concurrencia; es una forma de pensar
+la arquitectura de software.
+
+En el próximo capítulo daremos un paso más: los channels bufferizados.
+Estos canales con capacidad permiten desacoplar aún más a productores y
+consumidores, suavizando picos de carga y mejorando el rendimiento.
+
+"Los canales son la orquesta; las gorutinas, los músicos." — Anónimo
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 43: CHANNELS BUFFERIZADOS → Canales con capacidad
+
+══════════════════════════════════════════════════════════════════════════════

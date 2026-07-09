@@ -1,0 +1,1492 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 48: ATOMIC (SYNC/ATOMIC)
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A SYNC/ATOMIC
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la sincronización de bajo nivel. Has aprendido a
+usar Mutex para proteger secciones críticas. Pero hay un nivel más profundo
+y eficiente: las operaciones atómicas.
+
+El paquete sync/atomic proporciona operaciones de bajo nivel para manipular
+variables de forma atómica sin necesidad de locks. Estas operaciones son la
+base sobre la que se construyen los propios mutex y otros primitivos de
+sincronización.
+
+Las operaciones atómicas son:
+  • Más rápidas que los mutex (no hay cambio de contexto).
+  • Ideales para contadores, flags, y estados simples.
+  • La base para algoritmos libres de locks (lock-free).
+  • Implementadas directamente en hardware (CAS: Compare-And-Swap).
+
+Pero también son más limitadas: solo funcionan con tipos específicos (int32,
+int64, uint32, uint64, uintptr, Pointer) y solo soportan operaciones simples.
+
+En este capítulo dominarás las funciones principales de sync/atomic:
+AddTipo, LoadTipo, StoreTipo, SwapTipo, CompareAndSwapTipo, y el tipo
+atomic.Value para cargas/almacenes genéricos.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"Las operaciones atómicas son los átomos de la concurrencia: indivisibles,
+imparables, la base de todo lo demás." — Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender qué son las operaciones atómicas y cómo funcionan.
+  • Usar atomic.AddTipo para incrementar/decrementar contadores.
+  • Usar atomic.LoadTipo y atomic.StoreTipo para leer/escribir.
+  • Usar atomic.CompareAndSwapTipo para CAS lock-free.
+  • Usar atomic.SwapTipo para intercambio atómico.
+  • Usar atomic.Value para operaciones genéricas.
+  • Conocer la diferencia entre atomic y Mutex.
+  • Saber cuándo usar atomic y cuándo usar Mutex.
+  • Implementar contadores, flags, y estados con atomic.
+  • Construir un spinlock simple con CAS.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — SYNC/ATOMIC
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. ¿QUÉ SON LAS OPERACIONES ATÓMICAS?
+----------------------------------------------------------------------
+
+Una operación atómica es una operación que se completa en un solo paso desde
+la perspectiva de otras gorutinas. No puede ser interrumpida por otras
+gorutinas.
+
+En CPU, las operaciones atómicas se implementan con instrucciones especiales:
+  • XADD (eXchange and ADD) para incrementos atómicos.
+  • CMPXCHG (CoMPare and eXCHanGe) para CAS.
+  • LOCK prefijo para bloquear el bus de memoria.
+
+----------------------------------------------------------------------
+  2. FUNCIONES PRINCIPALES
+----------------------------------------------------------------------
+
+Para tipos enteros (int32, int64, uint32, uint64):
+
+    // Incrementar/Decrementar
+    atomic.AddInt32(&valor, 1)    // valor++
+    atomic.AddInt32(&valor, -1)   // valor--
+
+    // Leer y Escribir
+    v := atomic.LoadInt32(&valor)    // Leer atómicamente
+    atomic.StoreInt32(&valor, 100)   // Escribir atómicamente
+
+    // Intercambiar
+    anterior := atomic.SwapInt32(&valor, 200)
+
+    // Comparar e Intercambiar (CAS)
+    exito := atomic.CompareAndSwapInt32(&valor, esperado, nuevo)
+
+Para punteros: atomic.Pointer[T]
+
+Para genéricos: atomic.Value (interface{})
+
+----------------------------------------------------------------------
+  3. ATOMIC.VALUE
+----------------------------------------------------------------------
+
+atomic.Value permite cargar y almacenar cualquier tipo de forma atómica:
+
+    var v atomic.Value
+    v.Store("hola")
+    msg := v.Load().(string)
+
+Es útil para configuración que cambia poco y se lee mucho.
+
+Requisitos: los valores almacenados deben ser del mismo tipo concreto.
+Store con nil causa panic.
+
+----------------------------------------------------------------------
+  4. ATOMIC vs MUTEX
+----------------------------------------------------------------------
+
+  • Atomic: Operaciones individuales, rápidas, sin bloqueo.
+  • Mutex: Secciones críticas, bloquea, más lento pero más flexible.
+
+Usa atomic para:
+  • Contadores y estadísticas.
+  • Flags de estado (abierto/cerrado, activo/inactivo).
+  • Configuración que cambia raramente.
+
+Usa mutex para:
+  • Operaciones que afectan múltiples variables.
+  • Estructuras de datos complejas (mapas, slices).
+  • Cuando necesitas una sección crítica con múltiples instrucciones.
+
+----------------------------------------------------------------------
+  5. CAS (COMPARE AND SWAP)
+----------------------------------------------------------------------
+
+CAS es la operación fundamental para algoritmos libres de locks:
+
+    // Intenta cambiar valor de 0 a 1
+    if atomic.CompareAndSwapInt32(&flag, 0, 1) {
+        // Adquirido exitosamente
+    }
+
+CAS verifica que el valor actual sea el esperado y lo reemplaza en un solo
+paso atómico. Si otra gorutina lo cambió entre la lectura y la escritura,
+CAS falla y puedes reintentar.
+
+----------------------------------------------------------------------
+  6. SPINLOCK CON CAS
+----------------------------------------------------------------------
+
+Un spinlock espera en un bucle hasta que CAS tenga éxito:
+
+    for !atomic.CompareAndSwapInt32(&lock, 0, 1) {
+        // Espera activa (spin)
+    }
+    // Sección crítica
+    atomic.StoreInt32(&lock, 0)
+
+Útil para contienda muy baja. Para contienda alta, Mutex es mejor porque
+el scheduler duerme la gorutina.
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: ATOMIC.ADDINT64 — CONTADOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+func main() {
+    var contador int64
+    var wg sync.WaitGroup
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            atomic.AddInt64(&contador, 1)
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador: %d (debe ser 1000)\n", contador)
+}
+```
+
+Sin race, sin mutex. Atómico y eficiente.
+
+----------------------------------------------------------------------
+  EJEMPLO 2: COMPARACIÓN MUTEX vs ATOMIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+const N = 50000
+
+func conMutex() time.Duration {
+    var (
+        mu  sync.Mutex
+        val int64
+        wg  sync.WaitGroup
+    )
+    inicio := time.Now()
+    for i := 0; i < N; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            val++
+            mu.Unlock()
+        }()
+    }
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func conAtomic() time.Duration {
+    var (
+        val int64
+        wg  sync.WaitGroup
+    )
+    inicio := time.Now()
+    for i := 0; i < N; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            atomic.AddInt64(&val, 1)
+        }()
+    }
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func main() {
+    fmt.Printf("Mutex  (%d ops): %v\n", N, conMutex())
+    fmt.Printf("Atomic (%d ops): %v\n", N, conAtomic())
+}
+```
+
+Atomic es significativamente más rápido.
+
+----------------------------------------------------------------------
+  EJEMPLO 3: LOAD Y STORE — LECTURA/ESCRITURA ATÓMICA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+func main() {
+    var config atomic.Value
+    config.Store("configuración-inicial")
+
+    var wg sync.WaitGroup
+
+    // Lectores
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := 0; j < 3; j++ {
+                val := config.Load().(string)
+                fmt.Printf("Lector %d: %s\n", id, val)
+                time.Sleep(100 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    // Escritor (cambia la configuración)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        time.Sleep(150 * time.Millisecond)
+        fmt.Println(">>> Cambiando configuración...")
+        config.Store("configuración-actualizada")
+    }()
+
+    wg.Wait()
+    fmt.Println("Config atómica demostrada")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: FLAG ATÓMICO CON LOAD/STORE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Servidor struct {
+    activo int32 // Flag atómica (0 = inactivo, 1 = activo)
+}
+
+func (s *Servidor) Iniciar() {
+    atomic.StoreInt32(&s.activo, 1)
+    fmt.Println("Servidor iniciado")
+}
+
+func (s *Servidor) Detener() {
+    atomic.StoreInt32(&s.activo, 0)
+    fmt.Println("Servidor detenido")
+}
+
+func (s *Servidor) EstaActivo() bool {
+    return atomic.LoadInt32(&s.activo) == 1
+}
+
+func main() {
+    var s Servidor
+    var wg sync.WaitGroup
+
+    s.Iniciar()
+
+    // Workers que verifican si el servidor está activo
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := 0; j < 5; j++ {
+                if s.EstaActivo() {
+                    fmt.Printf("Worker %d: servidor activo, trabajando...\n", id)
+                } else {
+                    fmt.Printf("Worker %d: servidor INACTIVO, deteniendo\n", id)
+                    return
+                }
+                time.Sleep(50 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    time.Sleep(200 * time.Millisecond)
+    s.Detener()
+
+    wg.Wait()
+    fmt.Println("Flag atómico demostrado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: COMPAREANDSWAP (CAS)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+func main() {
+    var valor int64 = 100
+
+    // CAS exitoso: valor actual (100) == esperado (100), cambia a 200
+    cambiado := atomic.CompareAndSwapInt64(&valor, 100, 200)
+    fmt.Printf("CAS 100→200: %t, valor actual: %d\n", cambiado, valor)
+
+    // CAS fallido: valor actual (200) != esperado (100), no cambia
+    cambiado = atomic.CompareAndSwapInt64(&valor, 100, 300)
+    fmt.Printf("CAS 100→300: %t, valor actual: %d\n", cambiado, valor)
+
+    // Este sí funciona
+    cambiado = atomic.CompareAndSwapInt64(&valor, 200, 300)
+    fmt.Printf("CAS 200→300: %t, valor actual: %d\n", cambiado, valor)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 6: SPINLOCK CON CAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type SpinLock struct {
+    flag int32
+}
+
+func (s *SpinLock) Lock() {
+    for !atomic.CompareAndSwapInt32(&s.flag, 0, 1) {
+        // Espera activa (spin)
+    }
+}
+
+func (s *SpinLock) Unlock() {
+    atomic.StoreInt32(&s.flag, 0)
+}
+
+func main() {
+    var lock SpinLock
+    var contador int
+    var wg sync.WaitGroup
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            lock.Lock()
+            contador++
+            lock.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador con SpinLock: %d\n", contador)
+}
+```
+
+Advertencia: SpinLock desperdicia CPU en espera activa. Solo útil para
+contención muy baja y secciones críticas muy cortas.
+
+----------------------------------------------------------------------
+  EJEMPLO 7: ATOMIC.SWAP — INTERCAMBIO ATÓMICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync/atomic"
+)
+
+func main() {
+    var valor int64 = 100
+
+    // Swap cambia el valor y devuelve el anterior
+    anterior := atomic.SwapInt64(&valor, 200)
+    fmt.Printf("Anterior: %d, Nuevo: %d\n", anterior, valor)
+
+    anterior = atomic.SwapInt64(&valor, 300)
+    fmt.Printf("Anterior: %d, Nuevo: %d\n", anterior, valor)
+}
+```
+
+Útil para implementar pooled resources sin locks.
+
+----------------------------------------------------------------------
+  EJEMPLO 8: ATOMIC PARA ESTADÍSTICAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Estadisticas struct {
+    peticiones    int64
+    errores       int64
+    tiempoTotal   int64 // nanosegundos
+}
+
+func (e *Estadisticas) RegistrarPeticion(duracion time.Duration, error bool) {
+    atomic.AddInt64(&e.peticiones, 1)
+    atomic.AddInt64(&e.tiempoTotal, int64(duracion))
+    if error {
+        atomic.AddInt64(&e.errores, 1)
+    }
+}
+
+func (e *Estadisticas) Promedio() float64 {
+    peticiones := atomic.LoadInt64(&e.peticiones)
+    if peticiones == 0 {
+        return 0
+    }
+    tiempo := atomic.LoadInt64(&e.tiempoTotal)
+    return float64(tiempo) / float64(peticiones)
+}
+
+func (e *Estadisticas) Reporte() {
+    p := atomic.LoadInt64(&e.peticiones)
+    er := atomic.LoadInt64(&e.errores)
+    fmt.Printf("Peticiones: %d, Errores: %d, Tasa error: %.2f%%, Promedio: %v\n",
+        p, er, float64(er)/float64(p)*100,
+        time.Duration(e.Promedio()))
+}
+
+func main() {
+    var stats Estadisticas
+    var wg sync.WaitGroup
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            inicio := time.Now()
+            time.Sleep(time.Duration(n) * 100 * time.Microsecond)
+            stats.RegistrarPeticion(time.Since(inicio), n%10 == 0)
+        }(i)
+    }
+
+    wg.Wait()
+    stats.Reporte()
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: ATOMIC.VALUE CON ESTRUCTURA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Config struct {
+    Puerto    int
+    Timeout   time.Duration
+    MaxConns  int
+}
+
+func main() {
+    var config atomic.Value
+    config.Store(&Config{
+        Puerto:   8080,
+        Timeout:  30 * time.Second,
+        MaxConns: 100,
+    })
+
+    var wg sync.WaitGroup
+
+    // Lectores
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := 0; j < 3; j++ {
+                cfg := config.Load().(*Config)
+                fmt.Printf("Lector %d: puerto=%d, timeout=%v, maxconns=%d\n",
+                    id, cfg.Puerto, cfg.Timeout, cfg.MaxConns)
+                time.Sleep(50 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    // Escritor
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        time.Sleep(120 * time.Millisecond)
+        nueva := &Config{
+            Puerto:   9090,
+            Timeout:  60 * time.Second,
+            MaxConns: 200,
+        }
+        fmt.Println(">>> Actualizando configuración...")
+        config.Store(nueva)
+    }()
+
+    wg.Wait()
+    fmt.Println("Configuración atómica demostrada")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: ATOMIC.POINTER (GO 1.19+)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Estado struct {
+    Mensaje string
+    Version int
+}
+
+func main() {
+    var estado atomic.Pointer[Estado]
+    estado.Store(&Estado{Mensaje: "inicial", Version: 1})
+
+    var wg sync.WaitGroup
+
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := 0; j < 3; j++ {
+                e := estado.Load()
+                fmt.Printf("Lector %d: %s (v%d)\n", id, e.Mensaje, e.Version)
+                time.Sleep(50 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        time.Sleep(100 * time.Millisecond)
+        estado.Store(&Estado{Mensaje: "actualizado", Version: 2})
+        fmt.Println(">>> Estado actualizado")
+    }()
+
+    wg.Wait()
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: CONTADOR DE PETICIONES CON ATOMIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type RateLimiter struct {
+    contador  int64
+    limite    int64
+    intervalo time.Duration
+}
+
+func NewRateLimiter(limite int64, intervalo time.Duration) *RateLimiter {
+    rl := &RateLimiter{limite: limite, intervalo: intervalo}
+    go rl.reiniciarPeriodicamente()
+    return rl
+}
+
+func (rl *RateLimiter) Permitir() bool {
+    actual := atomic.LoadInt64(&rl.contador)
+    if actual >= rl.limite {
+        return false
+    }
+    atomic.AddInt64(&rl.contador, 1)
+    return true
+}
+
+func (rl *RateLimiter) reiniciarPeriodicamente() {
+    for {
+        time.Sleep(rl.intervalo)
+        atomic.StoreInt64(&rl.contador, 0)
+    }
+}
+
+func main() {
+    rl := NewRateLimiter(5, 1*time.Second)
+    var wg sync.WaitGroup
+
+    for i := 0; i < 20; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            if rl.Permitir() {
+                fmt.Printf("Petición %d: PERMITIDA\n", id)
+            } else {
+                fmt.Printf("Petición %d: DENEGADA (límite)\n", id)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Rate limiter atómico demostrado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: SEMÁFORO CON ATOMIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Semaphore struct {
+    permits int64
+    max     int64
+}
+
+func NewSemaphore(max int64) *Semaphore {
+    return &Semaphore{max: max}
+}
+
+func (s *Semaphore) Acquire() bool {
+    for {
+        actual := atomic.LoadInt64(&s.permits)
+        if actual >= s.max {
+            return false
+        }
+        if atomic.CompareAndSwapInt64(&s.permits, actual, actual+1) {
+            return true
+        }
+    }
+}
+
+func (s *Semaphore) Release() {
+    atomic.AddInt64(&s.permits, -1)
+}
+
+func (s *Semaphore) Available() int64 {
+    return s.max - atomic.LoadInt64(&s.permits)
+}
+
+func main() {
+    sem := NewSemaphore(3)
+    var wg sync.WaitGroup
+
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            if sem.Acquire() {
+                fmt.Printf("Gorutina %d ADQUIRIÓ (disponibles: %d)\n",
+                    id, sem.Available())
+                time.Sleep(200 * time.Millisecond)
+                sem.Release()
+                fmt.Printf("Gorutina %d LIBERÓ (disponibles: %d)\n",
+                    id, sem.Available())
+            } else {
+                fmt.Printf("Gorutina %d NO PUDO adquirir\n", id)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Semáforo atómico demostrado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 13: LOAD Y STORE CON INT32
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+func main() {
+    var temperatura int32 = 25
+    var wg sync.WaitGroup
+
+    // Sensor que actualiza la temperatura
+    go func() {
+        for i := 0; i < 10; i++ {
+            time.Sleep(50 * time.Millisecond)
+            atomic.StoreInt32(&temperatura, int32(25+i))
+        }
+    }()
+
+    // Lectores
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            for j := 0; j < 5; j++ {
+                temp := atomic.LoadInt32(&temperatura)
+                fmt.Printf("Lector %d: temperatura = %d°C\n", id, temp)
+                time.Sleep(60 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Temperatura atómica demostrada")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: ESTADOS CON MÚLTIPLES FLAGS ATÓMICOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type EstadoServidor struct {
+    corriendo  int32
+    conectado  int32
+    procesando int32
+}
+
+func (s *EstadoServidor) Iniciar() {
+    atomic.StoreInt32(&s.corriendo, 1)
+}
+
+func (s *EstadoServidor) Detener() {
+    atomic.StoreInt32(&s.corriendo, 0)
+}
+
+func (s *EstadoServidor) EstaCorriendo() bool {
+    return atomic.LoadInt32(&s.corriendo) == 1
+}
+
+func (s *EstadoServidor) RegistrarConexion() {
+    atomic.AddInt32(&s.conectado, 1)
+}
+
+func (s *EstadoServidor) CerrarConexion() {
+    atomic.AddInt32(&s.conectado, -1)
+}
+
+func (s *EstadoServidor) ConexionesActivas() int32 {
+    return atomic.LoadInt32(&s.conectado)
+}
+
+func (s *EstadoServidor) Procesar() {
+    atomic.AddInt32(&s.procesando, 1)
+}
+
+func (s *EstadoServidor) TerminarProcesar() {
+    atomic.AddInt32(&s.procesando, -1)
+}
+
+func (s *EstadoServidor) Reporte() {
+    fmt.Printf("[ESTADO] corriendo=%d, conectados=%d, procesando=%d\n",
+        atomic.LoadInt32(&s.corriendo),
+        atomic.LoadInt32(&s.conectado),
+        atomic.LoadInt32(&s.procesando))
+}
+
+func main() {
+    var estado EstadoServidor
+    var wg sync.WaitGroup
+
+    estado.Iniciar()
+
+    // Simulamos conexiones y procesamiento
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            if !estado.EstaCorriendo() {
+                return
+            }
+            estado.RegistrarConexion()
+            estado.Procesar()
+            time.Sleep(time.Duration(id) * 30 * time.Millisecond)
+            estado.TerminarProcesar()
+            estado.CerrarConexion()
+        }(i)
+    }
+
+    wg.Wait()
+    estado.Reporte()
+    estado.Detener()
+    fmt.Println("Estados atómicos demostrados")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: SECUENCIADOR ATÓMICO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+type Sequencer struct {
+    counter uint64
+}
+
+func (s *Sequencer) Next() uint64 {
+    return atomic.AddUint64(&s.counter, 1)
+}
+
+func (s *Sequencer) Current() uint64 {
+    return atomic.LoadUint64(&s.counter)
+}
+
+func main() {
+    var seq Sequencer
+    var wg sync.WaitGroup
+    ids := make([]uint64, 0)
+    var mu sync.Mutex
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            id := seq.Next()
+            mu.Lock()
+            ids = append(ids, id)
+            mu.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Total IDs generados: %d\n", seq.Current())
+
+    // Verificar unicidad
+    unicos := make(map[uint64]bool)
+    for _, id := range ids {
+        unicos[id] = true
+    }
+    fmt.Printf("IDs únicos: %d (debe ser %d)\n", len(unicos), len(ids))
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: CAS EN BUCLE (RETRY LOOP)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+type ContadorCAS struct {
+    valor int64
+}
+
+func (c *ContadorCAS) Incrementar() {
+    for {
+        actual := atomic.LoadInt64(&c.valor)
+        nuevo := actual + 1
+        if atomic.CompareAndSwapInt64(&c.valor, actual, nuevo) {
+            return
+        }
+        // Si CAS falla, otra gorutina cambió el valor, reintentamos
+    }
+}
+
+func (c *ContadorCAS) Valor() int64 {
+    return atomic.LoadInt64(&c.valor)
+}
+
+func main() {
+    var c ContadorCAS
+    var wg sync.WaitGroup
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            c.Incrementar()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador CAS: %d\n", c.Valor())
+}
+```
+
+Este es el patrón CAS lock-free: intenta, si falla reintenta.
+
+----------------------------------------------------------------------
+  EJEMPLO 17: ATOMIC CON UINT64
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+func main() {
+    var total uint64
+    var wg sync.WaitGroup
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n uint64) {
+            defer wg.Done()
+            atomic.AddUint64(&total, n)
+        }(uint64(i))
+    }
+
+    wg.Wait()
+    // Suma de 0..99 = 99*100/2 = 4950
+    fmt.Printf("Total: %d (debe ser 4950)\n", total)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: ALMACÉN DE PRODUCTOS CON ATOMIC.VALUE
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type Catalogo struct {
+    productos map[int]string
+    version   int
+}
+
+type Tienda struct {
+    catalogo atomic.Value // *Catalogo
+}
+
+func NewTienda() *Tienda {
+    t := &Tienda{}
+    t.catalogo.Store(&Catalogo{
+        productos: map[int]string{
+            1: "Laptop",
+            2: "Mouse",
+            3: "Teclado",
+        },
+        version: 1,
+    })
+    return t
+}
+
+func (t *Tienda) ObtenerProducto(id int) (string, bool) {
+    cat := t.catalogo.Load().(*Catalogo)
+    nombre, ok := cat.productos[id]
+    return nombre, ok
+}
+
+func (t *Tienda) ActualizarCatalogo(nuevos map[int]string) {
+    actual := t.catalogo.Load().(*Catalogo)
+    nuevo := &Catalogo{
+        productos: nuevos,
+        version:   actual.version + 1,
+    }
+    t.catalogo.Store(nuevo)
+    fmt.Printf("Catálogo actualizado a v%d (%d productos)\n",
+        nuevo.version, len(nuevo.productos))
+}
+
+func main() {
+    tienda := NewTienda()
+    var wg sync.WaitGroup
+
+    // Consultas concurrentes
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            ids := []int{1, 2, 3, 4}
+            for _, pid := range ids {
+                nombre, ok := tienda.ObtenerProducto(pid)
+                if ok {
+                    fmt.Printf("Consulta %d: producto %d = %s\n", id, pid, nombre)
+                } else {
+                    fmt.Printf("Consulta %d: producto %d no encontrado\n", id, pid)
+                }
+                time.Sleep(20 * time.Millisecond)
+            }
+        }(i)
+    }
+
+    // Actualización
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        time.Sleep(100 * time.Millisecond)
+        tienda.ActualizarCatalogo(map[int]string{
+            1: "Laptop Pro",
+            2: "Mouse Inalámbrico",
+            3: "Teclado Mecánico",
+            4: "Monitor 4K",
+            5: "Webcam HD",
+        })
+    }()
+
+    wg.Wait()
+    fmt.Println("Tienda con catálogo atómico demostrada")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 19: WRAPPER DE ATOMIC PARA CONTADOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+)
+
+type AtomicCounter struct {
+    value int64
+}
+
+func (c *AtomicCounter) Inc() int64 {
+    return atomic.AddInt64(&c.value, 1)
+}
+
+func (c *AtomicCounter) Dec() int64 {
+    return atomic.AddInt64(&c.value, -1)
+}
+
+func (c *AtomicCounter) Load() int64 {
+    return atomic.LoadInt64(&c.value)
+}
+
+func (c *AtomicCounter) Store(val int64) {
+    atomic.StoreInt64(&c.value, val)
+}
+
+func (c *AtomicCounter) CAS(old, new int64) bool {
+    return atomic.CompareAndSwapInt64(&c.value, old, new)
+}
+
+func main() {
+    var counter AtomicCounter
+    var wg sync.WaitGroup
+
+    var esperado int64 = 0
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            counter.Inc()
+        }()
+    }
+
+    wg.Wait()
+
+    final := counter.Load()
+    fmt.Printf("Valor final: %d\n", final)
+
+    // CAS
+    if counter.CAS(final, 0) {
+        fmt.Println("CAS exitoso: reset a 0")
+    }
+    fmt.Printf("Después de CAS: %d\n", counter.Load())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — MONITOR DE SISTEMA CON ATOMIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+type SystemMonitor struct {
+    cpuUsage    int64  // porcentaje * 100
+    memoryUsed  int64  // bytes
+    requests    int64
+    errors      int64
+    activeConns int64
+    maxConns    int64
+}
+
+func NewSystemMonitor(maxConns int64) *SystemMonitor {
+    return &SystemMonitor{maxConns: maxConns}
+}
+
+func (m *SystemMonitor) RecordCPU(usage float64) {
+    atomic.StoreInt64(&m.cpuUsage, int64(usage*100))
+}
+
+func (m *SystemMonitor) RecordMemory(bytes int64) {
+    atomic.StoreInt64(&m.memoryUsed, bytes)
+}
+
+func (m *SystemMonitor) RequestReceived() {
+    atomic.AddInt64(&m.requests, 1)
+}
+
+func (m *SystemMonitor) RequestError() {
+    atomic.AddInt64(&m.errors, 1)
+}
+
+func (m *SystemMonitor) ConnOpen() bool {
+    for {
+        actual := atomic.LoadInt64(&m.activeConns)
+        if actual >= m.maxConns {
+            return false
+        }
+        if atomic.CompareAndSwapInt64(&m.activeConns, actual, actual+1) {
+            return true
+        }
+    }
+}
+
+func (m *SystemMonitor) ConnClose() {
+    atomic.AddInt64(&m.activeConns, -1)
+}
+
+func (m *SystemMonitor) Snapshot() {
+    cpu := float64(atomic.LoadInt64(&m.cpuUsage)) / 100
+    mem := atomic.LoadInt64(&m.memoryUsed)
+    req := atomic.LoadInt64(&m.requests)
+    err := atomic.LoadInt64(&m.errors)
+    conns := atomic.LoadInt64(&m.activeConns)
+
+    fmt.Printf("\n=== MONITOR SNAPSHOT ===\n")
+    fmt.Printf("CPU:       %.1f%%\n", cpu)
+    fmt.Printf("Memoria:   %d MB\n", mem/1024/1024)
+    fmt.Printf("Requests:  %d\n", req)
+    fmt.Printf("Errores:   %d (%.1f%%)\n", err, float64(err)/float64(req)*100)
+    fmt.Printf("Conexiones: %d / %d\n", conns, m.maxConns)
+    fmt.Printf("=========================\n")
+}
+
+func main() {
+    monitor := NewSystemMonitor(10)
+    var wg sync.WaitGroup
+
+    // Simulamos carga
+    for i := 0; i < 50; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+
+            // Simular conexión
+            if monitor.ConnOpen() {
+                monitor.RequestReceived()
+                time.Sleep(time.Duration(id) * 5 * time.Millisecond)
+
+                // Simular error ocasional
+                if id%7 == 0 {
+                    monitor.RequestError()
+                }
+
+                monitor.ConnClose()
+            }
+        }(i)
+    }
+
+    // Monitor que registra métricas
+    go func() {
+        for i := 0; i < 5; i++ {
+            monitor.RecordCPU(45.0 + float64(i)*5)
+            monitor.RecordMemory(int64(500+i*50) * 1024 * 1024)
+            time.Sleep(100 * time.Millisecond)
+        }
+    }()
+
+    wg.Wait()
+    time.Sleep(100 * time.Millisecond)
+    monitor.Snapshot()
+    fmt.Println("Monitor de sistema con atomic completado")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • sync/atomic ofrece operaciones atómicas para tipos básicos.
+  • atomic.AddTipo incrementa/decrementa atómicamente.
+  • atomic.LoadTipo y StoreTipo leen/escriben atómicamente.
+  • atomic.CompareAndSwapTipo implementa CAS lock-free.
+  • atomic.SwapTipo intercambia valores atómicamente.
+  • atomic.Value almacena/carga cualquier tipo de forma atómica.
+  • Las operaciones atómicas son más rápidas que Mutex.
+  • CAS permite construir algoritmos libres de locks.
+  • atomic es ideal para contadores, flags y estadísticas.
+  • Para operaciones complejas, usa Mutex en lugar de atomic.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Implementa un contador atómico que sea incrementado por 100
+   gorutinas 100 veces cada una. Verifica el resultado.
+
+2. INTERMEDIO — Crea un rate limiter que use atomic para contar peticiones
+   en una ventana de 1 segundo. Permite máximo 10 peticiones.
+
+3. AVANZADO — Implementa una cola lock-free (libre de locks) usando CAS.
+   Debe soportar Push y Pop desde múltiples gorutinas.
+
+4. BÁSICO — Compara el rendimiento de atomic.AddInt64 vs Mutex para
+   100,000 operaciones. Documenta los resultados.
+
+5. INTERMEDIO — Implementa un generador de IDs único con atomic.AddUint64.
+   Asegura que no haya IDs duplicados en 1000 gorutinas.
+
+6. AVANZADO — Crea un sistema de configuración en caliente usando
+   atomic.Value. Los lectores ven la configuración actual sin locks.
+
+7. INTERMEDIO — Implementa un SpinLock con CAS. Mide su rendimiento
+   comparado con sync.Mutex.
+
+8. AVANZADO — Implementa un semáforo usando solo atomic.CompareAndSwapInt64.
+   Soporta Acquire y Release desde múltiples gorutinas.
+
+9. BÁSICO — Usa atomic.StoreInt32 y atomic.LoadInt32 para implementar
+   una bandera de "apagado" que detiene un bucle infinito.
+
+10. INTERMEDIO — Crea un pool de objetos reutilizables usando atomic.Swap
+    y CAS. Los objetos se toman y devuelven al pool concurrentemente.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Qué diferencia hay entre atomic e int64 normal?
+R: Las variables normales no garantizan atomicidad en lecturas/escrituras
+concurrentes. atomic asegura que la operación es indivisible.
+
+❓ ¿Cuándo debo usar atomic en lugar de Mutex?
+R: Para operaciones simples (incrementar, leer, escribir, CAS) sobre una
+sola variable. Mutex es para secciones críticas más complejas.
+
+❓ ¿Es seguro leer un int64 sin atomic?
+R: En arquitecturas de 32 bits, leer un int64 puede no ser atómico (ocurre
+en dos lecturas de 32 bits). Usa atomic.LoadInt64 para seguridad.
+
+❓ ¿Qué tipos soporta sync/atomic?
+R: int32, int64, uint32, uint64, uintptr, unsafe.Pointer, y Pointer[T].
+
+❓ ¿Atomic.Value puede almacenar cualquier tipo?
+R: Sí, cualquier interface{}. Pero todos los Store deben ser del mismo tipo
+concreto. Store con nil causa panic.
+
+❓ ¿Qué es CAS?
+R: Compare-And-Swap: verifica que un valor sea el esperado y lo reemplaza
+en un solo paso atómico. Es la base de los algoritmos lock-free.
+
+❓ ¿CAS siempre es mejor que Mutex?
+R: No. CAS es mejor para contienda baja y operaciones simples. Para
+contienda alta, Mutex es mejor porque el scheduler duerme la gorutina.
+
+❓ ¿Puedo implementar un Mutex con atomic?
+R: Sí. Un SpinLock es esencialmente un CAS loop. Pero sync.Mutex ya está
+altamente optimizado, incluyendo spinning adaptativo.
+
+❓ ¿El orden de memoria en atomic?
+R: Las operaciones atomic en Go tienen semántica de ordenación secuencial
+consistente (sequential consistency). Esto puede ser más restrictivo que
+necesario, pero es seguro.
+
+❓ ¿Atomic garantiza visibilidad entre gorutinas?
+R: Sí. Un Store precede a un Load en otra gorutina (happens-before). Esto
+garantiza que la escritura sea visible.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: SISTEMA DE MÉTRICAS EN TIEMPO REAL CON ATOMIC                │
+│                                                                          │
+│  Diseña un sistema de monitoreo de métricas en tiempo real para un      │
+│  servidor web que use exclusivamente operaciones atómicas para          │
+│  recolectar estadísticas.                                               │
+│                                                                          │
+│  ESPECIFICACIONES:                                                       │
+│  • 100 gorutinas simulando clientes que hacen peticiones al servidor.   │
+│  • Cada petición tiene: tiempo de procesamiento, tamaño de respuesta,   │
+│    código HTTP (200, 404, 500).                                         │
+│  • El sistema debe recolectar en tiempo real:                           │
+│    - Número total de peticiones                                         │
+│    - Peticiones por código HTTP (3 contadores)                         │
+│    - Tiempo total de procesamiento (para promedio)                     │
+│    - Bytes totales servidos                                             │
+│    - Pico máximo de peticiones concurrentes                            │
+│    - Mínimo, máximo y promedio de tiempo de respuesta                   │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│  1. Clientes: 100 gorutinas que hacen peticiones con tiempos            │
+│     aleatorios entre 10-100ms y resultados aleatorios (80% 200,         │
+│     10% 404, 10% 500).                                                  │
+│                                                                          │
+│  2. Recolector de Métricas: estructura con campos atómicos para         │
+│     cada métrica. No usa Mutex en ningún lado.                          │
+│                                                                          │
+│  3. Reporteador: cada 500ms toma una snapshot de las métricas y         │
+│     muestra: throughput (req/s), tasa de error, promedio, pico.         │
+│     También usa atomic.Load para leer sin locks.                        │
+│                                                                          │
+│  4. Gestor de Pico: mantiene el máximo de peticiones concurrentes       │
+│     usando CAS para actualizar solo si el nuevo valor es mayor.         │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Todas las métricas deben usar sync/atomic.                           │
+│  • Para el pico máximo, usa CAS en bucle (solo actualiza si es mayor). │
+│  • Para el promedio, almacena total y count, y calcula al leer.        │
+│  • Usa atomic.Value para la configuración del servidor.                │
+│  • Demuestra que no hay condiciones de carrera con -race.              │
+│  • Tiempo de ejecución: 3 segundos.                                    │
+│  • Documenta por qué elegiste atomic en lugar de Mutex.                 │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra todas las operaciones atómicas en un sistema real de
+monitoreo. Complejidad: Muy alta. Requiere diseño cuidadoso para evitar
+locks manteniendo la consistencia.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dominado sync/atomic, el nivel más bajo de sincronización en Go. Las
+operaciones atómicas te permiten construir contadores, flags, estados, y
+algoritmos lock-free con la máxima eficiencia.
+
+Recuerda: atomic es para operaciones simples y rápidas. Para todo lo demás,
+existe Mutex. La clave está en elegir la herramienta correcta para cada
+situación.
+
+En el próximo capítulo exploraremos los patrones de concurrencia más
+importantes en Go: pipeline, fan-in/fan-out, generator, worker pool, y
+otros. Estos patrones son el repertorio esencial del arquitecto de software
+concurrente.
+
+"Lo atómico es simple, preciso y veloz. Como un buen reloj suizo."
+— Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 49: PATRONES DE CONCURRENCIA → Patrones esenciales
+
+══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,784 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     JAVA MASTER BOOK
+##
+##                         MÓDULO VII
+##                   JAVA PROFESIONAL
+##
+##                     CAPÍTULO 63
+##
+##               EJECUTORES (EXECUTOR SERVICE)
+##
+################################################################################
+################################################################################
+
+"Los ejecutores son los capataces de la concurrencia: gestionan tus hilos
+para que tú te concentres en la lógica de negocio."
+— Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, arquitecto de sistemas concurrentes! En los capítulos anteriores
+aprendiste a crear hilos manualmente y a sincronizarlos. Pero gestionar hilos
+a mano es tedioso y propenso a errores: ¿cuántos hilos crear? ¿cuándo
+reciclarlos? ¿cómo manejar resultados?
+
+El framework ExecutorService, introducido en Java 5, resuelve estos problemas.
+Es como tener un administrador de hilos profesional: le envías tareas y él
+se encarga de asignarles hilos, gestionar su ciclo de vida y devolverte
+los resultados.
+
+En este capítulo aprenderás a usar ExecutorService, ThreadPool, Callable y
+Future. Dominarás la creación de pools de hilos reutilizables, la ejecución
+de tareas que devuelven valores y la cancelación controlada de tareas.
+
+¡Prepárate para llevar la concurrencia al siguiente nivel profesional!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Crear hilos manualmente es como contratar y despedir empleados a diario.
+ExecutorService es tu departamento de recursos humanos automatizado."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender las limitaciones de crear hilos manualmente.
+✓ Conocer la arquitectura del framework Executor.
+✓ Utilizar ExecutorService para ejecutar tareas Runnable.
+✓ Configurar y gestionar ThreadPool (pool de hilos).
+✓ Implementar tareas que devuelvan resultados con Callable.
+✓ Utilizar Future para obtener resultados y cancelar tareas.
+✓ Conocer los diferentes tipos de pools: fixed, cached, scheduled.
+✓ Manejar el shutdown correcto del ExecutorService.
+✓ Implementar invokeAll() e invokeAny() para ejecución en lote.
+
+===============================================================================
+1. LIMITACIONES DE LA GESTIÓN MANUAL DE HILOS
+===============================================================================
+
+Antes de ExecutorService, crear hilos directamente tenía estos problemas:
+
+```java
+// Enfoque problemático: crear un hilo por tarea
+public class GestionManual {
+    public static void main(String[] args) {
+        for (int i = 0; i < 1000; i++) {
+            // Problema: crear 1000 hilos puede saturar el sistema
+            new Thread(() -> {
+                System.out.println("Tarea " +
+                    Thread.currentThread().getName());
+                // Trabajo...
+            }).start();
+        }
+    }
+}
+```
+
+Problemas de este enfoque:
+1. Overhead: Crear un hilo tiene costo (pila, contexto, etc.).
+2. Sin límite: Puedes crear tantos hilos como memoria permita, saturando el SO.
+3. Sin reciclaje: Cada hilo se usa una vez y se descarta.
+4. Sin gestión de resultados: Difícil obtener valores de retorno.
+5. Sin cancelación: No hay forma elegante de cancelar una tarea.
+
+ExecutorService resuelve todos estos problemas proporcionando un pool de
+hilos reutilizables y un framework completo para gestión de tareas.
+
+===============================================================================
+2. CREACIÓN DE UN EXECUTORSERVICE
+===============================================================================
+
+La clase Executors (factory) proporciona métodos estáticos para crear
+diferentes tipos de pools.
+
+```java
+import java.util.concurrent.*;
+
+public class CreacionExecutor {
+    public static void main(String[] args) {
+        // Pool con número fijo de hilos
+        ExecutorService fixedPool = Executors.newFixedThreadPool(4);
+
+        // Pool que crea hilos bajo demanda y recicla los inactivos
+        ExecutorService cachedPool = Executors.newCachedThreadPool();
+
+        // Pool con un solo hilo (ejecución secuencial)
+        ExecutorService singlePool = Executors.newSingleThreadExecutor();
+
+        // Pool que programa tareas para ejecución futura
+        ScheduledExecutorService scheduledPool =
+            Executors.newScheduledThreadPool(2);
+
+        // Pool que programa tareas con delay fijo
+        ScheduledExecutorService singleScheduled =
+            Executors.newSingleThreadScheduledExecutor();
+
+        // Uso básico
+        fixedPool.execute(() -> {
+            System.out.println("Tarea ejecutada por: " +
+                Thread.currentThread().getName());
+        });
+
+        // Siempre cerrar el pool cuando ya no se necesita
+        fixedPool.shutdown();
+        cachedPool.shutdown();
+        singlePool.shutdown();
+        scheduledPool.shutdown();
+        singleScheduled.shutdown();
+    }
+}
+```
+
+===============================================================================
+3. EXECUTORSERVICE CON RUNNABLE
+===============================================================================
+
+La forma más simple es usar execute(Runnable) para tareas que no devuelven
+resultado.
+
+```java
+public class ExecutorRunnable {
+    public static void main(String[] args) {
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+
+        // Enviamos 10 tareas a un pool de 3 hilos
+        for (int i = 1; i <= 10; i++) {
+            final int tareaId = i;
+            executor.execute(() -> {
+                String hilo = Thread.currentThread().getName();
+                System.out.println("Tarea " + tareaId +
+                    " ejecutada por " + hilo);
+                try {
+                    Thread.sleep((long)(Math.random() * 1000));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                System.out.println("Tarea " + tareaId +
+                    " completada por " + hilo);
+            });
+        }
+
+        executor.shutdown(); // No acepta más tareas, pero termina las actuales
+        System.out.println("Main continúa...");
+    }
+}
+```
+
+===============================================================================
+4. SHUTDOWN DEL EXECUTORSERVICE
+===============================================================================
+
+Es crucial cerrar correctamente un ExecutorService para evitar fugas de
+recursos.
+
+```java
+public class ShutdownDemo {
+    public static void main(String[] args) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        for (int i = 1; i <= 5; i++) {
+            final int id = i;
+            executor.execute(() -> {
+                System.out.println("Tarea " + id + " iniciada");
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    System.out.println("Tarea " + id + " interrumpida");
+                }
+                System.out.println("Tarea " + id + " finalizada");
+            });
+        }
+
+        // shutdown(): no acepta nuevas tareas, espera que terminen las activas
+        executor.shutdown();
+
+        try {
+            // Espera hasta 5 segundos a que terminen todas las tareas
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                // shutdownNow(): intenta detener las tareas activas
+                executor.shutdownNow();
+                System.out.println("Forzando terminación...");
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        System.out.println("Executor cerrado: " + executor.isShutdown());
+        System.out.println("Todas terminadas: " + executor.isTerminated());
+    }
+}
+```
+
+Diferencias entre métodos de shutdown:
+- shutdown(): Ordenado, espera que terminen las tareas en curso.
+- shutdownNow(): Intenta detener las tareas activas (vía Thread.interrupt()).
+- awaitTermination(t, unit): Bloquea hasta que todas terminen o expire el timeout.
+
+===============================================================================
+5. CALLABLE Y FUTURE
+===============================================================================
+
+Callable es similar a Runnable pero puede devolver un valor y lanzar
+excepciones. Future representa el resultado pendiente de una tarea.
+
+```java
+import java.util.concurrent.*;
+
+public class CallableFutureDemo {
+    public static void main(String[] args) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        // Callable que devuelve un resultado
+        Callable<String> tarea = () -> {
+            String hilo = Thread.currentThread().getName();
+            System.out.println("Calculando en " + hilo);
+            Thread.sleep(1500);
+            return "Resultado de " + hilo;
+        };
+
+        // Enviar la tarea y obtener un Future
+        Future<String> future = executor.submit(tarea);
+
+        System.out.println("Tarea enviada. Main sigue trabajando...");
+
+        try {
+            // get() bloquea hasta obtener el resultado
+            String resultado = future.get(); // Espera hasta 3 segundos
+            // Con timeout: future.get(3, TimeUnit.SECONDS);
+            System.out.println("Resultado: " + resultado);
+        } catch (InterruptedException e) {
+            System.err.println("Espera interrumpida");
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            System.err.println("Error en la tarea: " + e.getCause());
+        }
+
+        executor.shutdown();
+    }
+}
+```
+
+Métodos importantes de Future:
+- get(): Espera y obtiene el resultado (bloqueante).
+- get(timeout, unit): Espera con límite de tiempo.
+- isDone(): Verifica si la tarea completó.
+- cancel(mayInterrupt): Intenta cancelar la tarea.
+- isCancelled(): Verifica si fue cancelada.
+
+```java
+public class FutureMetodos {
+    public static void main(String[] args) throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        Future<Integer> future = executor.submit(() -> {
+            Thread.sleep(1000);
+            return 42;
+        });
+
+        // Verificar estado sin bloquear
+        while (!future.isDone()) {
+            System.out.println("Esperando...");
+            Thread.sleep(200);
+        }
+
+        System.out.println("Resultado: " + future.get());
+
+        // Cancelación
+        Future<String> tareaLarga = executor.submit(() -> {
+            Thread.sleep(10000);
+            return "Terminó";
+        });
+
+        boolean cancelada = tareaLarga.cancel(true);
+        System.out.println("Cancelada: " + cancelada);
+        System.out.println("isCancelled: " + tareaLarga.isCancelled());
+
+        executor.shutdown();
+    }
+}
+```
+
+===============================================================================
+6. TIPOS DE POOLS DE HILOS
+===============================================================================
+
+Cada tipo de pool tiene un comportamiento y caso de uso específico.
+
+```java
+public class TiposPool {
+    public static void main(String[] args) throws InterruptedException {
+        // FixedThreadPool: Número fijo de hilos
+        // Ideal para tareas con carga predecible
+        ExecutorService fixed = Executors.newFixedThreadPool(4);
+        System.out.println("Fixed: 4 hilos siempre activos");
+
+        // CachedThreadPool: Hilos bajo demanda, recicla los inactivos (60s)
+        // Ideal para tareas cortas y ráfagas de trabajo
+        ExecutorService cached = Executors.newCachedThreadPool();
+        System.out.println("Cached: crea según necesidad, recicla inactivos");
+
+        // SingleThreadExecutor: Un solo hilo, ejecución secuencial
+        // Garantiza que las tareas se ejecuten en orden FIFO
+        ExecutorService single = Executors.newSingleThreadExecutor();
+        System.out.println("Single: ejecución secuencial en un hilo");
+
+        // WorkStealingPool: Pool con robo de trabajo (ForkJoinPool)
+        // Ideal para tareas divisibles recursivamente
+        ExecutorService stealing = Executors.newWorkStealingPool();
+        System.out.println("Stealing: robo de trabajo, paralelismo óptimo");
+
+        fixed.shutdown();
+        cached.shutdown();
+        single.shutdown();
+        stealing.shutdown();
+    }
+}
+```
+
+Comparativa:
+- FixedThreadPool: Hilos fijos, cola ilimitada de tareas.
+- CachedThreadPool: Hilos variables, cola síncrona (0 capacidad).
+- SingleThreadExecutor: Garantiza orden, ideal para actualizaciones de UI.
+- WorkStealingPool: Robo de trabajo, paralelismo adaptativo.
+
+===============================================================================
+7. SCHEDULEDEXECUTORSERVICE
+===============================================================================
+
+Para ejecutar tareas con retardo o de forma periódica.
+
+```java
+public class ScheduledExecutorDemo {
+    public static void main(String[] args) {
+        ScheduledExecutorService scheduler =
+            Executors.newScheduledThreadPool(2);
+
+        Runnable tarea = () -> {
+            System.out.println("Ejecutando tarea en: " +
+                Thread.currentThread().getName() +
+                " a las " + System.currentTimeMillis());
+        };
+
+        System.out.println("Tiempo actual: " + System.currentTimeMillis());
+
+        // Ejecutar una vez después de 2 segundos
+        ScheduledFuture<?> future1 =
+            scheduler.schedule(tarea, 2, TimeUnit.SECONDS);
+
+        // Ejecutar cada 1 segundo, empezando después de 1 segundo
+        ScheduledFuture<?> future2 =
+            scheduler.scheduleAtFixedRate(tarea, 1, 1, TimeUnit.SECONDS);
+
+        // Ejecutar con delay fijo entre el fin de una y el inicio de la siguiente
+        ScheduledFuture<?> future3 =
+            scheduler.scheduleWithFixedDelay(tarea, 1, 2, TimeUnit.SECONDS);
+
+        // Cancelar la tarea periódica después de 5 segundos
+        scheduler.schedule(() -> {
+            future2.cancel(false);
+            future3.cancel(false);
+            scheduler.shutdown();
+        }, 5, TimeUnit.SECONDS);
+    }
+}
+```
+
+Diferencia entre scheduleAtFixedRate y scheduleWithFixedDelay:
+- AtFixedRate: El periodo es entre inicios de ejecución (ignora duración).
+- WithFixedDelay: El periodo es entre el fin de una y el inicio de la siguiente.
+
+===============================================================================
+8. INVOKEALL E INVOKEANY
+===============================================================================
+
+Para ejecutar lotes de tareas:
+
+- invokeAll(): Ejecuta todas las tareas y espera que todas terminen.
+- invokeAny(): Ejecuta todas y devuelve el resultado de la primera en terminar.
+
+```java
+import java.util.*;
+
+public class InvokeAllAny {
+    public static void main(String[] args) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+
+        List<Callable<String>> tareas = new ArrayList<>();
+
+        for (int i = 1; i <= 8; i++) {
+            final int id = i;
+            tareas.add(() -> {
+                int tiempo = (int)(Math.random() * 3000);
+                Thread.sleep(tiempo);
+                return "Tarea-" + id + " completada en " + tiempo + "ms";
+            });
+        }
+
+        // invokeAll: espera todas
+        System.out.println("=== invokeAll: Esperando todas ===");
+        List<Future<String>> resultados = executor.invokeAll(tareas);
+        for (Future<String> f : resultados) {
+            System.out.println(f.get());
+        }
+
+        // invokeAny: devuelve la primera en terminar
+        System.out.println("\n=== invokeAny: La primera en terminar ===");
+        String ganador = executor.invokeAny(tareas);
+        System.out.println("Ganadora: " + ganador);
+
+        executor.shutdown();
+    }
+}
+```
+
+===============================================================================
+9. COMPLETABLEFUTURE (JAVA 8)
+===============================================================================
+
+CompletableFuture extiende Future con capacidades de programación funcional
+y composición de tareas asíncronas.
+
+```java
+import java.util.concurrent.*;
+
+public class CompletableFutureDemo {
+    public static void main(String[] args) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+
+        // Crear un CompletableFuture manualmente
+        CompletableFuture<String> future =
+            CompletableFuture.supplyAsync(() -> {
+                System.out.println("Ejecutando en: " +
+                    Thread.currentThread().getName());
+                try { Thread.sleep(1000); } catch (Exception e) {}
+                return "Hola";
+            }, executor);
+
+        // Encadenar transformaciones
+        CompletableFuture<String> futuroCompleto =
+            future.thenApply(s -> s + " Mundo")
+                  .thenApply(String::toUpperCase)
+                  .thenApply(s -> s + "!!!");
+
+        System.out.println("Resultado final: " + futuroCompleto.get());
+
+        // Combinar dos futures independientes
+        CompletableFuture<String> f1 =
+            CompletableFuture.supplyAsync(() -> "Java", executor);
+        CompletableFuture<String> f2 =
+            CompletableFuture.supplyAsync(() -> "Rocks", executor);
+
+        CompletableFuture<String> combinado =
+            f1.thenCombine(f2, (a, b) -> a + " " + b);
+
+        System.out.println("Combinado: " + combinado.get());
+
+        // Manejo de errores
+        CompletableFuture<Integer> conError =
+            CompletableFuture.supplyAsync(() -> {
+                if (Math.random() > 0.5) throw new RuntimeException("Error!");
+                return 100;
+            }, executor).exceptionally(ex -> {
+                System.out.println("Error capturado: " + ex.getMessage());
+                return -1; // Valor por defecto
+            });
+
+        System.out.println("Con manejo de error: " + conError.get());
+
+        executor.shutdown();
+    }
+}
+```
+
+Métodos clave de CompletableFuture:
+- supplyAsync(): Ejecuta un Supplier (Callable sin excepción checked).
+- runAsync(): Ejecuta un Runnable.
+- thenApply(): Transforma el resultado.
+- thenAccept(): Consume el resultado sin devolver nada.
+- thenCombine(): Combina dos futures.
+- exceptionally(): Maneja errores.
+- allOf(): Espera que todos los futures completen.
+- anyOf(): Espera que uno de los futures complete.
+
+```java
+public class CompletableFutureAllOf {
+    public static void main(String[] args) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(5);
+
+        CompletableFuture<String> f1 =
+            CompletableFuture.supplyAsync(() -> {
+                sleep(1000); return "API-1";
+            }, executor);
+        CompletableFuture<String> f2 =
+            CompletableFuture.supplyAsync(() -> {
+                sleep(2000); return "API-2";
+            }, executor);
+        CompletableFuture<String> f3 =
+            CompletableFuture.supplyAsync(() -> {
+                sleep(1500); return "API-3";
+            }, executor);
+
+        // Esperar todas las tareas
+        CompletableFuture<Void> todas =
+            CompletableFuture.allOf(f1, f2, f3);
+
+        todas.get(); // Espera sin bloqueo de hilo
+
+        System.out.println("Todas las APIs respondieron");
+        System.out.println(f1.get() + ", " + f2.get() + ", " + f3.get());
+
+        executor.shutdown();
+    }
+
+    static void sleep(int ms) {
+        try { Thread.sleep(ms); } catch (Exception e) {}
+    }
+}
+```
+
+===============================================================================
+10. EJEMPLO PRÁCTICO: PROCESADOR DE PEDIDOS
+===============================================================================
+
+Un ejemplo que integra ExecutorService, Callable y Future en un escenario
+realista.
+
+```java
+import java.util.*;
+import java.util.concurrent.*;
+
+class Pedido {
+    private final int id;
+    private final String producto;
+    private final int cantidad;
+
+    public Pedido(int id, String producto, int cantidad) {
+        this.id = id;
+        this.producto = producto;
+        this.cantidad = cantidad;
+    }
+
+    public int getId() { return id; }
+    public String getProducto() { return producto; }
+    public int getCantidad() { return cantidad; }
+
+    @Override
+    public String toString() {
+        return "Pedido{" + "id=" + id + ", producto='" +
+            producto + "', cantidad=" + cantidad + '}';
+    }
+}
+
+class ResultadoProcesamiento {
+    private final Pedido pedido;
+    private final boolean exitoso;
+    private final String mensaje;
+
+    public ResultadoProcesamiento(Pedido p, boolean exito, String msg) {
+        this.pedido = p;
+        this.exitoso = exito;
+        this.mensaje = msg;
+    }
+
+    @Override
+    public String toString() {
+        return (exitoso ? "[OK]" : "[FAIL]") + " Pedido " +
+            pedido.getId() + ": " + mensaje;
+    }
+}
+
+public class ProcesadorPedidos {
+    public static void main(String[] args) {
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+
+        List<Pedido> pedidos = Arrays.asList(
+            new Pedido(1, "Laptop", 2),
+            new Pedido(2, "Mouse", 10),
+            new Pedido(3, "Teclado", 5),
+            new Pedido(4, "Monitor", 3),
+            new Pedido(5, "USB Hub", 20)
+        );
+
+        List<Callable<ResultadoProcesamiento>> tareas = new ArrayList<>();
+
+        for (Pedido pedido : pedidos) {
+            tareas.add(() -> {
+                System.out.println("Procesando " + pedido +
+                    " en " + Thread.currentThread().getName());
+
+                // Simular procesamiento
+                Thread.sleep((long)(Math.random() * 2000 + 500));
+
+                // Simular posible fallo
+                if (Math.random() < 0.2) {
+                    return new ResultadoProcesamiento(pedido, false,
+                        "Error: inventario insuficiente");
+                }
+
+                return new ResultadoProcesamiento(pedido, true,
+                    "Procesado: " + pedido.getCantidad() +
+                    " x " + pedido.getProducto());
+            });
+        }
+
+        try {
+            List<Future<ResultadoProcesamiento>> resultados =
+                executor.invokeAll(tareas);
+
+            System.out.println("\n=== RESULTADOS ===");
+            int exitosos = 0;
+            int fallidos = 0;
+
+            for (Future<ResultadoProcesamiento> future : resultados) {
+                ResultadoProcesamiento r = future.get();
+                System.out.println(r);
+                if (r.exitoso) {
+                    exitosos++;
+                } else {
+                    fallidos++;
+                }
+            }
+
+            System.out.println("\nResumen: " + exitosos +
+                " exitosos, " + fallidos + " fallidos");
+
+        } catch (InterruptedException | ExecutionException e) {
+            System.err.println("Error en procesamiento: " + e.getMessage());
+        } finally {
+            executor.shutdown();
+        }
+    }
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+En este capítulo hemos aprendido:
+
+• ExecutorService abstrae la gestión de hilos, eliminando la creación
+  manual y el reciclaje de hilos.
+
+• Los pools de hilos se crean con la clase Executors: newFixedThreadPool,
+  newCachedThreadPool, newSingleThreadExecutor.
+
+• shutdown() inicia un apagado ordenado; shutdownNow() es más agresivo.
+
+• Callable es como Runnable pero devuelve un resultado y puede lanzar
+  excepciones.
+
+• Future representa el resultado pendiente de una tarea. get() bloquea
+  hasta obtenerlo, cancel() permite cancelar.
+
+• ScheduledExecutorService ejecuta tareas con retardo o periódicamente.
+
+• invokeAll() ejecuta un lote y espera todas; invokeAny() devuelve la
+  primera en completarse.
+
+• CompletableFuture (Java 8+) permite composición funcional de tareas
+  asíncronas con thenApply, thenCombine, exceptionally, etc.
+
+===============================================================================
+EJERCICIOS DEL CAPÍTULO
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un programa que calcule la suma de los números del
+1 al 1000 dividiendo el trabajo entre 4 hilos usando ExecutorService y
+Callable. Cada hilo calcula un rango (1-250, 251-500, etc.). Suma los
+resultados parciales.
+
+🧩 **Ejercicio 2:** Implementa un sistema de descarga de 10 archivos usando
+un pool fijo de 3 hilos. Cada descarga tarda entre 1 y 3 segundos
+(simulado). Muestra el progreso y el tiempo total.
+
+🧩 **Ejercicio 3:** Usando ScheduledExecutorService, crea un reloj que
+imprima la hora actual cada segundo durante 10 segundos y luego se detenga.
+
+🧩 **Ejercicio 4:** Implementa un servicio de consulta de precios que
+consulte 3 fuentes diferentes simultáneamente (simulado con sleep). Usa
+invokeAny() para obtener el precio más rápido.
+
+🧩 **Ejercicio 5:** Usando CompletableFuture, implementa un pipeline de
+procesamiento que: 1) lea un ID de usuario, 2) obtenga sus datos,
+3) obtenga sus pedidos, 4) calcule el total gastado. Cada paso es
+asíncrono.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Qué tamaño de pool debo elegir?**
+Depende del tipo de tarea. Para tareas intensivas en CPU: pool = núcleos + 1.
+Para tareas intensivas en IO: pool = núcleos * (1 + tiempo_espera/tiempo_trabajo).
+En la práctica, empieza con un tamaño razonable y ajusta midiendo.
+
+❓ **¿Cuál es la diferencia entre execute() y submit()?**
+execute(Runnable) no devuelve nada. submit(Callable) devuelve un Future.
+submit(Runnable) también devuelve un Future pero con null como resultado.
+
+❓ **¿Qué pasa si todas las tareas del pool están ocupadas?**
+Las tareas entran en una cola interna (BlockingQueue). Con FixedThreadPool,
+la cola es ilimitada. Con CachedThreadPool, se crea un nuevo hilo.
+
+❓ **¿ExecutorService es thread-safe?**
+Sí, está diseñado para ser usado desde múltiples hilos de forma segura.
+
+❓ **¿Qué diferencia hay entre shutdown() y shutdownNow()?**
+shutdown() no acepta nuevas tareas pero completa las activas. shutdownNow()
+intenta detener las activas con interrupt() y devuelve las pendientes.
+
+❓ **¿Cuándo usar CompletableFuture en lugar de Future?**
+CompletableFuture es mejor cuando necesitas composición, transformación
+o manejo de errores funcional. Future es suficiente para casos simples
+de obtener un resultado.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Procesamiento de Imágenes Concurrente**
+
+Diseña un sistema que procese un lote de imágenes (simulado) usando
+ExecutorService con las siguientes características:
+
+Requisitos:
+1. Hay N imágenes para procesar (ej: 20 imágenes).
+2. Cada imagen pasa por 3 etapas: cargar, redimensionar, guardar.
+3. Las etapas son tareas independientes que pueden ejecutarse en paralelo
+   para diferentes imágenes.
+4. Usa un pool para cada etapa con tamaños optimizados.
+5. Muestra el progreso general y el tiempo total.
+6. Implementa cancelación si el usuario solicita detener el proceso.
+
+Implementa:
+- Una clase Imagen con propiedades simuladas (nombre, tamaño, etc.).
+- Un pipeline con CompletableFuture encadenando las 3 etapas.
+- Un ExecutorService por etapa (loadPool, resizePool, savePool).
+- Métricas de rendimiento (tiempo por etapa, throughput).
+
+Este desafío te prepara para sistemas reales de procesamiento batch
+utilizando los patrones más profesionales de concurrencia en Java.
+
+===============================================================================
+FIN DEL CAPÍTULO 63
+===============================================================================
+
+"ExecutorService no solo gestiona hilos: gestiona tu tranquilidad mental.
+Deja que el framework haga el trabajo pesado."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+64_CAPITULO_64_JDBC.txt → JDBC (BASES DE DATOS)
+===============================================================================

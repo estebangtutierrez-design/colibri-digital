@@ -1,0 +1,1477 @@
+================================================================================
+  CAPITULO 70: PROYECTO: SISTEMA DE PLUGINS CON REFLECTION Y ATTRIBUTES
+  MODULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+!Bienvenido al capitulo final del Modulo VII! En este proyecto integrador
+aplicaremos todo lo aprendido: excepciones personalizadas, atributos,
+reflection, dynamic, unsafe, P/Invoke y patrones de diseno. Construiremos
+un sistema completo de plugins que puede cargar, ejecutar y gestionar
+extensiones de forma dinamica.
+
+FRASE DEL DIA
+-------------
+"El mejor modo de predecir el futuro es crearlo." — Alan Kay
+
+OBJETIVOS DEL CAPITULO
+----------------------
+1. Disenar una arquitectura de plugins extensible.
+2. Implementar un cargador de plugins con reflection.
+3. Usar atributos personalizados para metadata de plugins.
+4. Aplicar patrones: Strategy, Factory, DI, IDisposable.
+5. Manejar errores con excepciones personalizadas.
+6. Crear un sandbox seguro para ejecucion de plugins.
+7. Documentar la API para desarrolladores de plugins.
+
+================================================================================
+  ARQUITECTURA DEL SISTEMA
+================================================================================
+
+El sistema consta de estos componentes:
+
+1. PluginCore: Biblioteca base con interfaces y atributos.
+2. PluginLoader: Cargador que escanea DLLs y resuelve plugins.
+3. PluginHost: Entorno de ejecucion con sandbox y DI.
+4. Plugins de ejemplo: Implementaciones concretas.
+5. Aplicacion principal: Consola que integra todo.
+
+================================================================================
+  IMPLEMENTACION
+================================================================================
+
+--- 1. PLUGINCORE (INTERFACES Y ATRIBUTOS) ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+namespace PluginCore
+{
+    // Atributo de metadata para plugins
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+    public class PluginInfoAttribute : Attribute
+    {
+        public string Id { get; }
+        public string Nombre { get; }
+        public string Version { get; }
+        public string Autor { get; set; }
+        public string Descripcion { get; set; }
+        public string Website { get; set; }
+        public Type TipoConfiguracion { get; set; }
+
+        public PluginInfoAttribute(string id, string nombre, string version)
+        {
+            Id = id;
+            Nombre = nombre;
+            Version = version;
+        }
+    }
+
+    // Atributo para dependencias entre plugins
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+    public class PluginDependencyAttribute : Attribute
+    {
+        public string PluginId { get; }
+        public string VersionMinima { get; }
+        public bool Requerida { get; set; } = true;
+
+        public PluginDependencyAttribute(string pluginId, string versionMinima)
+        {
+            PluginId = pluginId;
+            VersionMinima = versionMinima;
+        }
+    }
+
+    // Atributo para metodos exportados (hooks)
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+    public class PluginHookAttribute : Attribute
+    {
+        public string Nombre { get; }
+        public string Descripcion { get; set; }
+
+        public PluginHookAttribute(string nombre)
+        {
+            Nombre = nombre;
+        }
+    }
+
+    // Atributo para configuracion de plugin
+    [AttributeUsage(AttributeTargets.Property)]
+    public class PluginConfigAttribute : Attribute
+    {
+        public string Clave { get; }
+        public string ValorDefecto { get; set; }
+        public string Descripcion { get; set; }
+
+        public PluginConfigAttribute(string clave)
+        {
+            Clave = clave;
+        }
+    }
+
+    // Ciclo de vida del plugin
+    public enum PluginEstado
+    {
+        Descargado,
+        Cargado,
+        Inicializado,
+        Ejecutando,
+        Detenido,
+        Error
+    }
+
+    // Interfaz principal que todo plugin debe implementar
+    public interface IPlugin : IDisposable
+    {
+        string Id { get; }
+        PluginEstado Estado { get; }
+
+        void Inicializar(IPluginContext contexto);
+        void Iniciar();
+        void Detener();
+    }
+
+    // Contexto proporcionado al plugin
+    public interface IPluginContext
+    {
+        string DirectorioPlugins { get; }
+        string DirectorioDatos { get; }
+        ILogger Logger { get; }
+        IPluginManager Manager { get; }
+        T ObtenerConfiguracion<T>() where T : class, new();
+        void EstablecerConfiguracion<T>(T config) where T : class;
+    }
+
+    // Logger
+    public interface ILogger
+    {
+        void Info(string mensaje);
+        void Warn(string mensaje);
+        void Error(string mensaje, Exception ex = null);
+        void Debug(string mensaje);
+    }
+
+    // Manager de plugins
+    public interface IPluginManager
+    {
+        IEnumerable<IPlugin> Plugins { get; }
+        IPlugin ObtenerPlugin(string id);
+        T ObtenerPlugin<T>() where T : IPlugin;
+        void EjecutarHook(string nombreHook, object parametro = null);
+    }
+
+    // Excepciones personalizadas
+    [Serializable]
+    public class PluginException : Exception
+    {
+        public string PluginId { get; }
+        public PluginException(string pluginId, string mensaje)
+            : base($"[{pluginId}] {mensaje}") { PluginId = pluginId; }
+        public PluginException(string pluginId, string mensaje, Exception inner)
+            : base($"[{pluginId}] {mensaje}", inner) { PluginId = pluginId; }
+        protected PluginException(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+    }
+
+    [Serializable]
+    public class PluginNotFoundException : PluginException
+    {
+        public PluginNotFoundException(string pluginId)
+            : base(pluginId, $"Plugin '{pluginId}' no encontrado.") { }
+        protected PluginNotFoundException(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+    }
+
+    [Serializable]
+    public class PluginDependencyException : PluginException
+    {
+        public string DependenciaFaltante { get; }
+        public PluginDependencyException(string pluginId, string dependencia)
+            : base(pluginId, $"Plugin '{pluginId}' requiere '{dependencia}'.") {
+            DependenciaFaltante = dependencia; }
+        protected PluginDependencyException(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+    }
+
+    [Serializable]
+    public class PluginHookException : PluginException
+    {
+        public string NombreHook { get; }
+        public PluginHookException(string pluginId, string hook, Exception inner)
+            : base(pluginId, $"Error en hook '{hook}': {inner.Message}", inner) {
+            NombreHook = hook; }
+        protected PluginHookException(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+    }
+
+    // Clase base util para plugins
+    public abstract class PluginBase : IPlugin
+    {
+        public abstract string Id { get; }
+        public PluginEstado Estado { get; private set; } = PluginEstado.Descargado;
+        protected IPluginContext Contexto { get; private set; }
+        protected ILogger Log => Contexto?.Logger;
+
+        public virtual void Inicializar(IPluginContext contexto)
+        {
+            Contexto = contexto;
+            Estado = PluginEstado.Cargado;
+            Log?.Info($"Plugin '{Id}' inicializado.");
+        }
+
+        public virtual void Iniciar()
+        {
+            Estado = PluginEstado.Ejecutando;
+            Log?.Info($"Plugin '{Id}' iniciado.");
+        }
+
+        public virtual void Detener()
+        {
+            Estado = PluginEstado.Detenido;
+            Log?.Info($"Plugin '{Id}' detenido.");
+        }
+
+        public virtual void Dispose()
+        {
+            if (Estado == PluginEstado.Ejecutando)
+                Detener();
+            Estado = PluginEstado.Descargado;
+        }
+    }
+}
+```
+
+--- 2. PLUGINLOADER (REFLECTION Y ATRIBUTOS) ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.IO;
+using System.Reflection;
+using PluginCore;
+
+namespace PluginEngine
+{
+    public class PluginLoader
+    {
+        private readonly string _directorioPlugins;
+        private readonly ILogger _logger;
+        private readonly List<PluginAssembly> _assemblies = new();
+
+        public PluginLoader(string directorioPlugins, ILogger logger)
+        {
+            _directorioPlugins = directorioPlugins;
+            _logger = logger;
+        }
+
+        public PluginLoadResult CargarPlugins()
+        {
+            var resultado = new PluginLoadResult();
+
+            if (!Directory.Exists(_directorioPlugins))
+            {
+                _logger.Warn($"Directorio de plugins no existe: {_directorioPlugins}");
+                return resultado;
+            }
+
+            var archivos = Directory.GetFiles(_directorioPlugins, "*.dll");
+            _logger.Info($"Escaneando {archivos.Length} DLL(s) en {_directorioPlugins}");
+
+            foreach (var archivo in archivos)
+            {
+                try
+                {
+                    var assembly = Assembly.LoadFrom(archivo);
+                    var tiposPlugin = ObtenerTiposPlugin(assembly);
+
+                    if (tiposPlugin.Any())
+                    {
+                        _assemblies.Add(new PluginAssembly
+                        {
+                            Assembly = assembly,
+                            Archivo = archivo,
+                            TiposPlugin = tiposPlugin
+                        });
+
+                        foreach (var tipo in tiposPlugin)
+                        {
+                            var info = tipo.GetCustomAttribute<PluginInfoAttribute>();
+                            resultado.PluginsEncontrados.Add(new PluginDescriptor
+                            {
+                                Tipo = tipo,
+                                Info = info,
+                                Archivo = archivo
+                            });
+                            _logger.Info($"  Plugin encontrado: {info?.Nombre ?? tipo.Name}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Error cargando {archivo}: {ex.Message}");
+                    resultado.Errores.Add(new PluginError(archivo, ex.Message));
+                }
+            }
+
+            // Validar dependencias
+            foreach (var desc in resultado.PluginsEncontrados)
+            {
+                var deps = desc.Tipo.GetCustomAttributes<PluginDependencyAttribute>();
+                foreach (var dep in deps)
+                {
+                    if (!resultado.PluginsEncontrados.Any(p =>
+                        p.Info.Id == dep.PluginId && dep.Requerida))
+                    {
+                        resultado.Errores.Add(new PluginError(
+                            desc.Info.Id,
+                            $"Dependencia faltante: {dep.PluginId} {dep.VersionMinima}"));
+                    }
+                }
+            }
+
+            return resultado;
+        }
+
+        public IPlugin InstanciarPlugin(PluginDescriptor descriptor,
+            IPluginContext contexto)
+        {
+            try
+            {
+                var plugin = (IPlugin)Activator.CreateInstance(descriptor.Tipo);
+                plugin.Inicializar(contexto);
+                return plugin;
+            }
+            catch (Exception ex)
+            {
+                throw new PluginException(descriptor.Info?.Id ?? "?",
+                    $"Error al instanciar plugin", ex);
+            }
+        }
+
+        private List<Type> ObtenerTiposPlugin(Assembly assembly)
+        {
+            return assembly.GetTypes()
+                .Where(t => typeof(IPlugin).IsAssignableFrom(t)
+                         && !t.IsInterface
+                         && !t.IsAbstract
+                         && t.GetCustomAttribute<PluginInfoAttribute>() != null)
+                .ToList();
+        }
+    }
+
+    public class PluginAssembly
+    {
+        public Assembly Assembly { get; set; }
+        public string Archivo { get; set; }
+        public List<Type> TiposPlugin { get; set; } = new();
+    }
+
+    public class PluginDescriptor
+    {
+        public Type Tipo { get; set; }
+        public PluginInfoAttribute Info { get; set; }
+        public string Archivo { get; set; }
+    }
+
+    public class PluginLoadResult
+    {
+        public List<PluginDescriptor> PluginsEncontrados { get; } = new();
+        public List<PluginError> Errores { get; } = new();
+        public bool Exitoso => Errores.Count == 0;
+    }
+
+    public class PluginError
+    {
+        public string Origen { get; }
+        public string Mensaje { get; }
+        public PluginError(string origen, string mensaje)
+        {
+            Origen = origen;
+            Mensaje = mensaje;
+        }
+    }
+}
+```
+
+--- 3. PLUGINHOST (CONTEXTO Y EJECUCION) ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using PluginCore;
+
+namespace PluginEngine
+{
+    public class PluginHost : IPluginManager, IDisposable
+    {
+        private readonly PluginLoader _loader;
+        private readonly PluginLoadResult _loadResult;
+        private readonly Dictionary<string, IPlugin> _instancias = new();
+        private readonly Dictionary<string, List<MethodInfo>> _hooks = new();
+        private readonly ILogger _logger;
+        private readonly string _directorioBase;
+        private bool _inicializado;
+
+        public PluginHost(string directorioPlugins, ILogger logger)
+        {
+            _directorioBase = directorioPlugins;
+            _logger = logger;
+            _loader = new PluginLoader(directorioPlugins, logger);
+        }
+
+        public IEnumerable<IPlugin> Plugins => _instancias.Values;
+
+        public PluginLoadResult Cargar()
+        {
+            _loadResult = _loader.CargarPlugins();
+
+            if (_loadResult.Errores.Any())
+            {
+                _logger.Warn($"Errores durante carga: {_loadResult.Errores.Count}");
+                foreach (var err in _loadResult.Errores)
+                    _logger.Error($"  [{err.Origen}] {err.Mensaje}");
+            }
+
+            return _loadResult;
+        }
+
+        public void InicializarPlugins()
+        {
+            if (_loadResult == null)
+                throw new InvalidOperationException("Debe llamar a Cargar() primero.");
+
+            foreach (var desc in _loadResult.PluginsEncontrados)
+            {
+                try
+                {
+                    var directorioDatos = Path.Combine(
+                        _directorioBase, "data", desc.Info.Id);
+
+                    var contexto = new PluginContextImpl
+                    {
+                        DirectorioPlugins = _directorioBase,
+                        DirectorioDatos = directorioDatos,
+                        Logger = _logger,
+                        Manager = this,
+                        PluginId = desc.Info.Id
+                    };
+
+                    // Crear directorio de datos si no existe
+                    Directory.CreateDirectory(directorioDatos);
+
+                    var plugin = _loader.InstanciarPlugin(desc, contexto);
+                    _instancias[plugin.Id] = plugin;
+
+                    // Registrar hooks
+                    RegistrarHooks(plugin, desc.Tipo);
+
+                    _logger.Info($"Plugin '{plugin.Id}' inicializado correctamente.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Error inicializando '{desc.Info?.Nombre}': {ex.Message}");
+                }
+            }
+
+            _inicializado = true;
+        }
+
+        public void IniciarPlugins()
+        {
+            if (!_inicializado)
+                throw new InvalidOperationException("Debe llamar a InicializarPlugins() primero.");
+
+            foreach (var plugin in _instancias.Values)
+            {
+                try
+                {
+                    plugin.Iniciar();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Error iniciando '{plugin.Id}': {ex.Message}");
+                }
+            }
+        }
+
+        public void DetenerPlugins()
+        {
+            foreach (var plugin in _instancias.Values.Reverse())
+            {
+                try
+                {
+                    plugin.Detener();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Error deteniendo '{plugin.Id}': {ex.Message}");
+                }
+            }
+        }
+
+        public IPlugin ObtenerPlugin(string id)
+        {
+            if (_instancias.TryGetValue(id, out var plugin))
+                return plugin;
+            throw new PluginNotFoundException(id);
+        }
+
+        public T ObtenerPlugin<T>() where T : IPlugin
+        {
+            return (T)_instancias.Values.FirstOrDefault(p => p is T);
+        }
+
+        public void EjecutarHook(string nombreHook, object parametro = null)
+        {
+            if (_hooks.TryGetValue(nombreHook, out var metodos))
+            {
+                foreach (var metodo in metodos)
+                {
+                    try
+                    {
+                        var plugin = _instancias.Values.FirstOrDefault(
+                            p => p.GetType() == metodo.DeclaringType);
+
+                        if (plugin != null && plugin.Estado == PluginEstado.Ejecutando)
+                        {
+                            var parametros = metodo.GetParameters();
+                            object[] args;
+
+                            if (parametros.Length == 0)
+                                args = Array.Empty<object>();
+                            else if (parametro != null &&
+                                parametros[0].ParameterType.IsInstanceOfType(parametro))
+                                args = new[] { parametro };
+                            else
+                                args = new[] { parametro };
+
+                            metodo.Invoke(plugin, args);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error($"Error en hook '{nombreHook}': {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private void RegistrarHooks(IPlugin plugin, Type tipoPlugin)
+        {
+            foreach (var metodo in tipoPlugin.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance))
+            {
+                var hookAttr = metodo.GetCustomAttribute<PluginHookAttribute>();
+                if (hookAttr != null)
+                {
+                    if (!_hooks.ContainsKey(hookAttr.Nombre))
+                        _hooks[hookAttr.Nombre] = new List<MethodInfo>();
+                    _hooks[hookAttr.Nombre].Add(metodo);
+                    _logger.Debug($"  Hook registrado: {hookAttr.Nombre} -> {tipoPlugin.Name}.{metodo.Name}");
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            DetenerPlugins();
+            foreach (var plugin in _instancias.Values)
+                plugin.Dispose();
+            _instancias.Clear();
+            _hooks.Clear();
+        }
+
+        // Implementacion de IPluginContext
+        private class PluginContextImpl : IPluginContext
+        {
+            public string DirectorioPlugins { get; set; }
+            public string DirectorioDatos { get; set; }
+            public ILogger Logger { get; set; }
+            public IPluginManager Manager { get; set; }
+            public string PluginId { get; set; }
+
+            public T ObtenerConfiguracion<T>() where T : class, new()
+            {
+                string ruta = Path.Combine(DirectorioDatos, "config.json");
+                if (File.Exists(ruta))
+                {
+                    try
+                    {
+                        string json = File.ReadAllText(ruta);
+                        return System.Text.Json.JsonSerializer.Deserialize<T>(json);
+                    }
+                    catch
+                    {
+                        return new T();
+                    }
+                }
+                return new T();
+            }
+
+            public void EstablecerConfiguracion<T>(T config) where T : class
+            {
+                string ruta = Path.Combine(DirectorioDatos, "config.json");
+                string json = System.Text.Json.JsonSerializer.Serialize(config,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(ruta, json);
+            }
+        }
+    }
+}
+```
+
+--- 4. LOGGER (SINGLETON) ---
+
+```csharp
+using System;
+using System.IO;
+using PluginCore;
+
+namespace PluginEngine
+{
+    public class Logger : ILogger
+    {
+        private static readonly Lazy<Logger> _instancia =
+            new Lazy<Logger>(() => new Logger());
+
+        public static Logger Instancia => _instancia.Value;
+
+        private readonly string _archivoLog;
+        private readonly object _lock = new();
+        private LogLevel _nivelMinimo = LogLevel.Info;
+
+        private Logger()
+        {
+            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+            Directory.CreateDirectory(dir);
+            _archivoLog = Path.Combine(dir,
+                $"plugin_{DateTime.Now:yyyyMMdd}.log");
+        }
+
+        public void Configurar(LogLevel nivelMinimo)
+        {
+            _nivelMinimo = nivelMinimo;
+        }
+
+        public void Debug(string mensaje)
+            => Escribir(LogLevel.Debug, mensaje);
+
+        public void Info(string mensaje)
+            => Escribir(LogLevel.Info, mensaje);
+
+        public void Warn(string mensaje)
+            => Escribir(LogLevel.Warn, mensaje);
+
+        public void Error(string mensaje, Exception ex = null)
+        {
+            Escribir(LogLevel.Error, mensaje);
+            if (ex != null)
+                Escribir(LogLevel.Error, $"  Excepcion: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        private void Escribir(LogLevel nivel, string mensaje)
+        {
+            if (nivel < _nivelMinimo) return;
+
+            string linea = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{nivel}] {mensaje}";
+
+            Console.WriteLine($"  {linea}");
+
+            lock (_lock)
+            {
+                try
+                {
+                    File.AppendAllText(_archivoLog, linea + Environment.NewLine);
+                }
+                catch
+                {
+                    // Silencioso
+                }
+            }
+        }
+    }
+
+    public enum LogLevel
+    {
+        Debug = 0,
+        Info = 1,
+        Warn = 2,
+        Error = 3
+    }
+}
+```
+
+--- 5. PLUGINS DE EJEMPLO ---
+
+```csharp
+using System;
+using System.IO;
+using System.Collections.Generic;
+using PluginCore;
+
+namespace Plugins
+{
+    // Plugin 1: Procesador de Texto
+    [PluginInfo("text-processor", "Procesador de Texto", "1.0.0",
+        Autor = "Juan Perez",
+        Descripcion = "Procesa y transforma archivos de texto.")]
+    [PluginDependency("file-utils", "1.0.0", Requerida = false)]
+    public class ProcesadorTextoPlugin : PluginBase
+    {
+        public override string Id => "text-processor";
+        private int _contadorProcesados;
+
+        [PluginConfig("directorio_salida", ValorDefecto = "./output",
+            Descripcion = "Directorio donde se guardan los archivos procesados")]
+        public string DirectorioSalida { get; set; } = "./output";
+
+        [PluginConfig("codificacion", ValorDefecto = "utf-8")]
+        public string Codificacion { get; set; } = "utf-8";
+
+        public override void Inicializar(IPluginContext contexto)
+        {
+            base.Inicializar(contexto);
+
+            // Cargar configuracion
+            var config = contexto.ObtenerConfiguracion<ProcesadorConfig>();
+            if (config != null)
+            {
+                DirectorioSalida = config.DirectorioSalida ?? DirectorioSalida;
+                Codificacion = config.Codificacion ?? Codificacion;
+            }
+
+            Directory.CreateDirectory(DirectorioSalida);
+        }
+
+        [PluginHook("archivo_procesado")]
+        public void OnArchivoProcesado(string rutaArchivo)
+        {
+            _contadorProcesados++;
+            Log?.Info($"Archivo procesado: {rutaArchivo} (total: {_contadorProcesados})");
+        }
+
+        public string Procesar(string contenido)
+        {
+            Log?.Info("Procesando texto...");
+            // Convertir a mayusculas
+            string resultado = contenido.ToUpper();
+            Log?.Debug($"Texto procesado: {contenido.Length} -> {resultado.Length} chars");
+            return resultado;
+        }
+
+        public void GuardarResultado(string nombre, string contenido)
+        {
+            string ruta = Path.Combine(DirectorioSalida, nombre);
+            File.WriteAllText(ruta, contenido);
+            Log?.Info($"Resultado guardado en {ruta}");
+
+            // Disparar hook
+            Contexto?.Manager?.EjecutarHook("archivo_procesado", ruta);
+        }
+
+        public override void Iniciar()
+        {
+            base.Iniciar();
+            Log?.Info($"Procesador de Texto listo. Directorio salida: {DirectorioSalida}");
+        }
+    }
+
+    public class ProcesadorConfig
+    {
+        public string DirectorioSalida { get; set; }
+        public string Codificacion { get; set; }
+    }
+
+    // Plugin 2: Validador de Datos
+    [PluginInfo("data-validator", "Validador de Datos", "2.1.0",
+        Autor = "Maria Garcia",
+        Descripcion = "Valida formatos de datos: email, telefono, RFC, CURP.")]
+    public class ValidadorDatosPlugin : PluginBase
+    {
+        public override string Id => "data-validator";
+
+        private readonly Dictionary<string, Func<string, bool>> _validadores = new();
+
+        public override void Inicializar(IPluginContext contexto)
+        {
+            base.Inicializar(contexto);
+
+            _validadores["email"] = ValidarEmail;
+            _validadores["telefono"] = ValidarTelefono;
+            _validadores["numero"] = ValidarNumero;
+            _validadores["vacio"] = s => !string.IsNullOrWhiteSpace(s);
+
+            Log?.Info($"Validador de Datos inicializado con {_validadores.Count} reglas.");
+        }
+
+        [PluginHook("validar_dato")]
+        public ResultadoValidacion Validar(string tipo, string valor)
+        {
+            Log?.Debug($"Validando '{tipo}': '{valor}'");
+
+            if (_validadores.TryGetValue(tipo, out var validador))
+            {
+                bool esValido = validador(valor);
+                return new ResultadoValidacion
+                {
+                    EsValido = esValido,
+                    Tipo = tipo,
+                    Valor = valor,
+                    Mensaje = esValido ? "OK" : $"Formato de {tipo} invalido"
+                };
+            }
+
+            return new ResultadoValidacion
+            {
+                EsValido = false,
+                Tipo = tipo,
+                Valor = valor,
+                Mensaje = $"Tipo de validacion '{tipo}' no soportado"
+            };
+        }
+
+        public IEnumerable<string> TiposSoportados => _validadores.Keys;
+
+        private bool ValidarEmail(string email)
+        {
+            return !string.IsNullOrWhiteSpace(email) &&
+                   email.Contains("@") &&
+                   email.Contains(".");
+        }
+
+        private bool ValidarTelefono(string telefono)
+        {
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                telefono, @"^\+?\d{7,15}$");
+        }
+
+        private bool ValidarNumero(string numero)
+        {
+            return int.TryParse(numero, out _);
+        }
+    }
+
+    public class ResultadoValidacion
+    {
+        public bool EsValido { get; set; }
+        public string Tipo { get; set; }
+        public string Valor { get; set; }
+        public string Mensaje { get; set; }
+    }
+
+    // Plugin 3: Generador de Reportes
+    [PluginInfo("report-generator", "Generador de Reportes", "1.2.0",
+        Autor = "Carlos Ruiz",
+        Descripcion = "Genera reportes en formato texto y HTML.")]
+    [PluginDependency("text-processor", "1.0.0")]
+    public class GeneradorReportesPlugin : PluginBase
+    {
+        public override string Id => "report-generator";
+        private int _reportesGenerados;
+
+        [PluginHook("reporte_generado")]
+        public void OnReporteGenerado(string nombreReporte)
+        {
+            _reportesGenerados++;
+        }
+
+        public string GenerarReporteTexto(string titulo, IEnumerable<string> lineas)
+        {
+            Log?.Info($"Generando reporte texto: {titulo}");
+
+            var reporte = new System.Text.StringBuilder();
+            reporte.AppendLine("=".PadRight(60, '='));
+            reporte.AppendLine($"  {titulo}");
+            reporte.AppendLine("=".PadRight(60, '='));
+            reporte.AppendLine($"  Fecha: {DateTime.Now:dd/MM/yyyy HH:mm}");
+            reporte.AppendLine($"  Generado por: {Id} v1.2.0");
+            reporte.AppendLine("-".PadRight(60, '-'));
+
+            int i = 1;
+            foreach (var linea in lineas)
+            {
+                reporte.AppendLine($"  {i,3}. {linea}");
+                i++;
+            }
+
+            reporte.AppendLine("-".PadRight(60, '-'));
+            reporte.AppendLine($"  Total lineas: {i - 1}");
+            reporte.AppendLine("=".PadRight(60, '='));
+
+            string resultado = reporte.ToString();
+            Log?.Debug($"Reporte generado: {resultado.Length} caracteres");
+
+            Contexto?.Manager?.EjecutarHook("reporte_generado", titulo);
+
+            return resultado;
+        }
+
+        public string GenerarReporteHTML(string titulo, IEnumerable<string> lineas)
+        {
+            Log?.Info($"Generando reporte HTML: {titulo}");
+
+            var html = new System.Text.StringBuilder();
+            html.AppendLine("<!DOCTYPE html>");
+            html.AppendLine("<html><head>");
+            html.AppendLine($"<title>{titulo}</title>");
+            html.AppendLine("<style>");
+            html.AppendLine("  body { font-family: Arial; margin: 20px; }");
+            html.AppendLine("  h1 { color: #333; }");
+            html.AppendLine("  table { border-collapse: collapse; width: 100%; }");
+            html.AppendLine("  th, td { border: 1px solid #ddd; padding: 8px; }");
+            html.AppendLine("  tr:nth-child(even) { background: #f9f9f9; }");
+            html.AppendLine("</style></head><body>");
+            html.AppendLine($"<h1>{titulo}</h1>");
+            html.AppendLine($"<p>Fecha: {DateTime.Now:dd/MM/yyyy HH:mm}</p>");
+            html.AppendLine("<table><tr><th>#</th><th>Linea</th></tr>");
+
+            int i = 1;
+            foreach (var linea in lineas)
+            {
+                html.AppendLine($"<tr><td>{i}</td><td>{linea}</td></tr>");
+                i++;
+            }
+
+            html.AppendLine("</table>");
+            html.AppendLine($"<p>Total: {i - 1} lineas</p>");
+            html.AppendLine("</body></html>");
+
+            string resultado = html.ToString();
+            Log?.Debug($"Reporte HTML generado: {resultado.Length} caracteres");
+
+            return resultado;
+        }
+
+        public override void Iniciar()
+        {
+            base.Iniciar();
+            Log?.Info("Generador de Reportes listo.");
+        }
+    }
+
+    // Plugin 4: Monitor de Sistema
+    [PluginInfo("system-monitor", "Monitor del Sistema", "1.0.0",
+        Autor = "Equipo Core",
+        Descripcion = "Monitorea recursos del sistema (CPU, memoria, disco).")]
+    public class MonitorSistemaPlugin : PluginBase
+    {
+        public override string Id => "system-monitor";
+        private System.Threading.Timer _timer;
+        private int _intervaloMs = 5000;
+
+        [PluginConfig("intervalo_ms", ValorDefecto = "5000",
+            Descripcion = "Intervalo de monitoreo en milisegundos")]
+        public int IntervaloMs
+        {
+            get => _intervaloMs;
+            set => _intervaloMs = Math.Max(1000, value);
+        }
+
+        public override void Inicializar(IPluginContext contexto)
+        {
+            base.Inicializar(contexto);
+
+            var config = contexto.ObtenerConfiguracion<MonitorConfig>();
+            if (config != null)
+                IntervaloMs = config.IntervaloMs;
+        }
+
+        public override void Iniciar()
+        {
+            base.Iniciar();
+            _timer = new System.Threading.Timer(
+                _ => Monitorear(),
+                null,
+                0,
+                _intervaloMs);
+            Log?.Info($"Monitor iniciado, intervalo: {_intervaloMs}ms");
+        }
+
+        private void Monitorear()
+        {
+            try
+            {
+                var info = new SystemInfo
+                {
+                    Timestamp = DateTime.Now,
+                    MemoriaUsadaMB = ObtenerMemoriaUsada(),
+                    Procesadores = Environment.ProcessorCount,
+                    TiempoActivo = (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime)
+                };
+
+                Log?.Debug($"Monitor: Memoria={info.MemoriaUsadaMB}MB, " +
+                    $"Uptime={info.TiempoActivo:hh\:mm\:ss}");
+            }
+            catch (Exception ex)
+            {
+                Log?.Error($"Error en monitoreo: {ex.Message}");
+            }
+        }
+
+        private long ObtenerMemoriaUsada()
+        {
+            using (var proc = System.Diagnostics.Process.GetCurrentProcess())
+            {
+                return proc.WorkingSet64 / (1024 * 1024);
+            }
+        }
+
+        public override void Detener()
+        {
+            _timer?.Dispose();
+            _timer = null;
+            base.Detener();
+            Log?.Info("Monitor detenido.");
+        }
+
+        public override void Dispose()
+        {
+            _timer?.Dispose();
+            base.Dispose();
+        }
+    }
+
+    public class MonitorConfig
+    {
+        public int IntervaloMs { get; set; } = 5000;
+    }
+
+    public class SystemInfo
+    {
+        public DateTime Timestamp { get; set; }
+        public long MemoriaUsadaMB { get; set; }
+        public int Procesadores { get; set; }
+        public TimeSpan TiempoActivo { get; set; }
+    }
+}
+```
+
+--- 6. APLICACION PRINCIPAL ---
+
+```csharp
+using System;
+using System.IO;
+using System.Linq;
+using PluginCore;
+using PluginEngine;
+using Plugins;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("===== SISTEMA DE PLUGINS - C# MASTER BOOK =====
+");
+
+        // Inicializar logger
+        var logger = Logger.Instancia;
+        logger.Configurar(LogLevel.Debug);
+        logger.Info("Sistema de Plugins iniciado.");
+
+        // Crear host de plugins
+        string dirPlugins = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "plugins");
+        Directory.CreateDirectory(dirPlugins);
+
+        // En desarrollo, los plugins estan en el mismo assembly
+        // En produccion, se cargarian de DLLs externas
+
+        using (var host = new PluginHost(dirPlugins, logger))
+        {
+            // Cargar plugins
+            logger.Info("\n--- FASE 1: CARGA DE PLUGINS ---");
+            var resultado = host.Cargar();
+
+            logger.Info($"Plugins encontrados: {resultado.PluginsEncontrados.Count}");
+            foreach (var desc in resultado.PluginsEncontrados)
+            {
+                logger.Info($"  - {desc.Info.Nombre} v{desc.Info.Version} " +
+                    $"por {desc.Info.Autor}");
+                logger.Info($"    ID: {desc.Info.Id}");
+                logger.Info($"    Desc: {desc.Info.Descripcion}");
+            }
+
+            if (resultado.Errores.Any())
+            {
+                logger.Warn($"\nErrores durante carga: {resultado.Errores.Count}");
+                foreach (var err in resultado.Errores)
+                    logger.Error($"  [{err.Origen}] {err.Mensaje}");
+            }
+
+            // Inicializar plugins
+            logger.Info("\n--- FASE 2: INICIALIZACION ---");
+            host.InicializarPlugins();
+
+            // Iniciar plugins
+            logger.Info("\n--- FASE 3: EJECUCION ---");
+            host.IniciarPlugins();
+
+            // Demostrar funcionalidad
+            logger.Info("\n--- DEMOSTRACION ---");
+
+            // Usar Procesador de Texto
+            var procesador = host.ObtenerPlugin<ProcesadorTextoPlugin>();
+            if (procesador != null)
+            {
+                string texto = "Hola Mundo! Este es un texto de prueba.";
+                logger.Info($"Texto original: {texto}");
+                string procesado = procesador.Procesar(texto);
+                logger.Info($"Texto procesado: {procesado}");
+                procesador.GuardarResultado("salida.txt", procesado);
+            }
+
+            // Usar Validador de Datos
+            var validador = host.ObtenerPlugin<ValidadorDatosPlugin>();
+            if (validador != null)
+            {
+                var tests = new[] {
+                    ("email", "juan@email.com"),
+                    ("email", "invalido"),
+                    ("telefono", "+521234567890"),
+                    ("telefono", "abc"),
+                    ("numero", "42"),
+                    ("numero", "no-es-numero")
+                };
+
+                logger.Info("\nValidaciones:");
+                foreach (var (tipo, valor) in tests)
+                {
+                    var r = validador.Validar(tipo, valor);
+                    logger.Info($"  [{r.Tipo}] '{r.Valor}': " +
+                        $"{(r.EsValido ? "OK" : $"ERROR - {r.Mensaje}")}");
+                }
+            }
+
+            // Usar Generador de Reportes
+            var reportes = host.ObtenerPlugin<GeneradorReportesPlugin>();
+            if (reportes != null)
+            {
+                var lineas = new[] {
+                    "Venta de Laptop Gamer - $1,500.00",
+                    "Venta de Mouse Inalambrico - $25.00",
+                    "Venta de Teclado Mecanico - $80.00",
+                    "Venta de Monitor 4K - $450.00"
+                };
+
+                string reporte = reportes.GenerarReporteTexto(
+                    "Reporte de Ventas Diarias", lineas);
+                logger.Info($"\nReporte generado:\n{reporte}");
+            }
+
+            // Esperar para ver el monitor
+            logger.Info("\nMonitor de sistema activo por 5 segundos...");
+            System.Threading.Thread.Sleep(5000);
+
+            // Detener plugins
+            logger.Info("\n--- FASE 4: DETENER ---");
+            host.DetenerPlugins();
+        }
+
+        logger.Info("\nSistema de Plugins finalizado correctamente.");
+        Console.WriteLine("\nPresione ENTER para salir...");
+        Console.ReadLine();
+    }
+}
+```
+
+--- 7. CONFIGURACION DEL PROYECTO ---
+
+Para compilar el proyecto, necesita un archivo .csproj con:
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>
+```
+
+La estructura de directorios recomendada:
+
+```
+PluginSystem/
+  PluginCore/           # Interfaces y atributos
+    PluginCore.csproj
+  PluginEngine/         # Cargador, host, logger
+    PluginEngine.csproj
+  Plugins/              # Plugins de ejemplo
+    Plugins.csproj
+  App/                  # Aplicacion principal
+    App.csproj
+  plugins/              # Directorio de salida de DLLs
+  logs/                 # Archivos de log
+```
+
+--- 8. PRUEBAS UNITARIAS ---
+
+```csharp
+using System;
+using Xunit;
+using PluginCore;
+using PluginEngine;
+using Plugins;
+
+public class PluginEngineTests
+{
+    [Fact]
+    public void Logger_Instancia_EsSingleton()
+    {
+        var l1 = Logger.Instancia;
+        var l2 = Logger.Instancia;
+        Assert.Same(l1, l2);
+    }
+
+    [Fact]
+    public void PluginInfoAttribute_CamposCorrectos()
+    {
+        var attr = new PluginInfoAttribute("test", "Test Plugin", "1.0.0")
+        {
+            Autor = "Test Author",
+            Descripcion = "Test Description"
+        };
+
+        Assert.Equal("test", attr.Id);
+        Assert.Equal("Test Plugin", attr.Nombre);
+        Assert.Equal("1.0.0", attr.Version);
+        Assert.Equal("Test Author", attr.Autor);
+    }
+
+    [Fact]
+    public void ProcesadorTextoPlugin_Procesar_Mayusculas()
+    {
+        var plugin = new ProcesadorTextoPlugin();
+        var resultado = plugin.Procesar("hola mundo");
+        Assert.Equal("HOLA MUNDO", resultado);
+    }
+
+    [Fact]
+    public void ValidadorDatosPlugin_EmailValido()
+    {
+        var plugin = new ValidadorDatosPlugin();
+        var result = plugin.Validar("email", "test@example.com");
+        Assert.True(result.EsValido);
+    }
+
+    [Fact]
+    public void ValidadorDatosPlugin_EmailInvalido()
+    {
+        var plugin = new ValidadorDatosPlugin();
+        var result = plugin.Validar("email", "invalido");
+        Assert.False(result.EsValido);
+    }
+
+    [Fact]
+    public void PluginBase_CicloVida()
+    {
+        var plugin = new ProcesadorTextoPlugin();
+        Assert.Equal(PluginEstado.Descargado, plugin.Estado);
+
+        // No podemos probar Inicializar sin contexto real
+        // pero podemos verificar el estado inicial
+    }
+}
+```
+
+--- 9. EXTENSIONES FUTURAS ---
+
+El sistema puede extenderse con:
+
+1. Sandbox de seguridad (AppDomain o AssemblyLoadContext aislado)
+2. Comunicacion entre plugins via bus de mensajes
+3. UI de administracion de plugins
+4. Actualizacion en caliente (hot reload)
+5. Tienda de plugins con catalogo remoto
+6. Cache de resultados con atributo [Cacheable]
+7. Permisos por plugin (atributo [RequierePermiso])
+8. Versionado semantico de dependencias
+9. Scripting con IronPython/JavaScript integrado
+10. Panel de monitoreo web via ASP.NET Core
+
+================================================================================
+  RESUMEN DEL CAPITULO
+================================================================================
+
+En este proyecto final hemos construido un sistema completo de plugins
+aplicando todos los conceptos del Modulo VII:
+
+1. Atributos personalizados: PluginInfo, PluginDependency, PluginHook,
+   PluginConfig para metadata semantica.
+
+2. Reflection: Para escanear assemblies, descubrir tipos que implementan
+   IPlugin, leer atributos, e instanciar dinamicamente.
+
+3. Excepciones personalizadas: PluginException, PluginNotFoundException,
+   PluginDependencyException para errores especificos del dominio.
+
+4. Patrones de diseno:
+   - Strategy: Diferentes tipos de plugins
+   - Factory: PluginLoader crea instancias
+   - Singleton: Logger global
+   - DI: PluginContext inyecta dependencias
+   - IDisposable: PluginBase y PluginHost
+   - Observer: Sistema de hooks
+   - Template Method: PluginBase con ciclo de vida
+
+5. Interfaces y contratos: IPlugin, IPluginContext, ILogger, IPluginManager
+   para desacoplamiento total.
+
+6. Buenas practicas: Manejo de errores, logging, configuracion,
+   directorio de datos aislado por plugin.
+
+================================================================================
+  EJERCICIOS PRACTICOS
+================================================================================
+
+Ejercicio 1: Cree un nuevo plugin que procese archivos CSV y los convierta
+a JSON. Use [PluginInfo] y [PluginHook] apropiadamente.
+
+Ejercicio 2: Implemente un sistema de sandbox usando AssemblyLoadContext
+para aislar plugins entre si. Cada plugin debe tener su propio contexto
+de carga y no poder acceder a tipos de otros plugins.
+
+Ejercicio 3: Agregue un atributo [PluginSchedule(cronExpression)] que
+permita a los plugins ejecutarse en intervalos programados. Implemente
+un Scheduler que ejecute los hooks scheduleados.
+
+Ejercicio 4: Cree un administrador de dependencias que resuelva el
+orden de inicializacion de plugins basado en sus dependencias (topological
+sort). Asegure que las dependencias se inicialicen antes que sus clientes.
+
+Ejercicio 5: Implemente un panel web (minimal API ASP.NET Core) que
+exponga endpoints REST para:
+   - GET /plugins: Listar plugins
+   - GET /plugins/{id}: Detalle de plugin
+   - POST /plugins/{id}/start: Iniciar plugin
+   - POST /plugins/{id}/stop: Detener plugin
+   - GET /plugins/{id}/hooks: Hooks disponibles
+   - POST /plugins/{id}/hooks/{hook}: Ejecutar hook
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Puedo cargar plugins que no conozco en compilacion? R: Si. El
+PluginLoader escanea DLLs en un directorio y las carga con Assembly.LoadFrom.
+Los plugins solo necesitan implementar IPlugin y tener [PluginInfo].
+
+P: Como aislo los plugins entre si? R: Use AssemblyLoadContext para crear
+contextos de carga aislados. Cada plugin carga sus dependencias en su
+propio contexto, evitando conflictos de versiones.
+
+P: Como manejo versiones de dependencias? R: El atributo
+[PluginDependency] permite especificar version minima. El PluginLoader
+valida que las dependencias esten presentes y tengan la version adecuada.
+
+P: Puedo tener plugins en diferentes lenguajes .NET? R: Si. Mientras
+compilen a IL y referencien PluginCore.dll, pueden ser VB.NET, F#, etc.
+
+P: Como actualizo un plugin sin reiniciar la app? R: Con AssemblyLoadContext
+puede descargar un contexto (desde .NET Core 3.0+) y recargar la DLL. Esto
+permite hot reload de plugins.
+
+================================================================================
+  DESAFIO DEL ARQUITECTO
+================================================================================
+
+Extienda el sistema de plugins para convertirlo en un micro-framework
+de aplicacion completo:
+
+1. Agregue un pipeline de middleware similar a ASP.NET Core:
+   - IPluginMiddleware con InvokeAsync(PluginContext, next)
+   - Los plugins pueden registrarse como middleware
+   - Pipeline: Logging -> Autenticacion -> Validacion -> Plugin
+   - Soporte para middleware condicional con atributo [When(pluginId)]
+
+2. Implemente un bus de eventos interno:
+   - IEventBus con Publish<T>/Subscribe<T>
+   - Los plugins se comunican sin conocerse
+   - Soporte para eventos asincronos
+   - Filtros de eventos por prioridad
+
+3. Cree un sistema de configuracion jerarquico:
+   - Configuracion global (appsettings.json)
+   - Configuracion por plugin (data/{id}/config.json)
+   - Configuracion por usuario
+   - Las capas se fusionan (ultima prevalece)
+   - Soporte para recarga en caliente (FileSystemWatcher)
+
+4. Agregue metricas y telemetria:
+   - Contadores por plugin (llamadas, errores, tiempo)
+   - Exportacion a Prometheus / OpenTelemetry
+   - Dashboard en tiempo real
+
+5. Implemente un sistema de autorizacion:
+   - [RequierePlugin(permiso)] en hooks
+   - Roles y permisos por plugin
+   - Plugin de autenticacion integrado
+   - Token-based para APIs
+
+6. Cree un generador de codigo (Source Generator) que:
+   - Lea los atributos de plugins en compilacion
+   - Genere codigo de registro automatico
+   - Genere metadatos para discovery rapido
+   - Evite reflection costosa en runtime
+
+El objetivo es tener un framework comparable a sistemas como
+Prism (WPF), MEF (Managed Extensibility Framework) o MAUI,
+pero con una base de codigo propia y completamente entendible.
+
+================================================================================
+  CIERRE DEL CAPITULO Y DEL MODULO
+================================================================================
+
+!Felicidades! Ha completado el Modulo VII de C# Master Book!
+
+Hemos recorrido un camino impresionante desde las excepciones hasta la
+construccion de un sistema completo de plugins. Ha aprendido:
+
+- Capitulo 61: Manejo de excepciones con try/catch/finally
+- Capitulo 62: Creacion de excepciones personalizadas
+- Capitulo 63: Atributos built-in de .NET
+- Capitulo 64: Reflection para explorar y manipular tipos
+- Capitulo 65: Atributos personalizados con metadata semantica
+- Capitulo 66: Programacion dinamica con dynamic y DLR
+- Capitulo 67: Codigo unsafe y punteros
+- Capitulo 68: Interoperabilidad con P/Invoke
+- Capitulo 69: Patrones de diseno avanzados
+- Capitulo 70: Proyecto integrador de sistema de plugins
+
+Estos conocimientos lo distinguen como un desarrollador C# avanzado,
+capaz de crear sistemas flexibles, extensibles y de alto rendimiento.
+
+Continúe su aprendizaje en el Modulo VIII, donde exploraremos temas
+aun mas profundos de .NET.
+
+================================================================================
+  CIERRE DEL MODULO VII
+================================================================================
+
+MODULO VII COMPLETADO: C# AVANZADO
+
+Ha dominado:
+- Excepciones y excepciones personalizadas
+- Atributos (built-in y personalizados)
+- Reflection y metaprogramacion
+- Programacion dinamica con dynamic
+- Codigo unsafe y punteros
+- Interoperabilidad P/Invoke
+- Patrones de diseno avanzados
+- Sistema de plugins completo
+
+!Felicidades, Arquitecto de Software!
+
+PROXIMO MODULO: VIII - Temas Avanzados de .NET
+================================================================================

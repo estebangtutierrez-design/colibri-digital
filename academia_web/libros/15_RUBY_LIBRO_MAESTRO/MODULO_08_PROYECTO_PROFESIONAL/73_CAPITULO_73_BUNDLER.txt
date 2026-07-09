@@ -1,0 +1,982 @@
+╔══════════════════════════════════════════════════════════════════╗
+║           RUBY MASTER BOOK — MÓDULO VIII: PROYECTO               ║
+║              CAPÍTULO 73: BUNDLER                                ║
+║      "El director de orquesta de tus dependencias Ruby"          ║
+╚══════════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, maestro orquestador. Bundler es la herramienta que
+garantiza que tu aplicación Ruby siempre use las gemas correctas
+en las versiones correctas. En este capítulo aprenderás desde la
+sintaxis del Gemfile hasta técnicas avanzadas de gem groups,
+deployment y resolución de conflictos.
+
+FRASE DEL SABIO
+───────────────
+"Un Gemfile bien escrito es un mapa de confianza. Tu aplicación
+funcionará igual hoy, mañana y en producción." — Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Dominar la sintaxis completa del Gemfile.
+2. Comprender Gemfile.lock y su importancia.
+3. Usar gem groups para organizar dependencias.
+4. Ejecutar bundle install, exec, update correctamente.
+5. Resolver conflictos de dependencias como un experto.
+6. Configurar Bundler para entornos de producción.
+
+¿QUÉ ES BUNDLER?
+─────────────────
+
+Bundler es el gestor de dependencias de facto de Ruby. Lee tu
+Gemfile, resuelve las dependencias de forma transitiva y genera
+un Gemfile.lock que congela las versiones exactas.
+
+```ruby
+# ============================================================
+# Verificar que Bundler está instalado
+# ============================================================
+# $ bundler --version
+# $ gem list bundler
+
+# ============================================================
+# Instalar Bundler (si no lo tienes)
+# ============================================================
+# $ gem install bundler
+# $ gem install bundler -v 2.4.0
+```
+
+EL GEMFILE — CORAZÓN DE BUNDLER
+─────────────────────────────────
+
+```ruby
+# Gemfile — Fuente principal
+source 'https://rubygems.org'
+
+# ============================================================
+# GEMAS SIMPLES
+# ============================================================
+gem 'rails'
+gem 'sinatra'
+gem 'puma'
+
+# ============================================================
+# VERSIONES ESPECÍFICAS
+# ============================================================
+gem 'nokogiri', '1.15.0'          # Versión exacta
+gem 'pg', '~> 1.5'                # Pesimista: >= 1.5, < 2.0
+gem 'redis', '>= 4.0', '< 6.0'    # Rango de versiones
+gem 'rubocop', '~> 1.50.0'        # ~> 1.50.0 => >= 1.50.0, < 1.51
+
+# ============================================================
+# GEMAS CON FUENTE ALTERNATIVA
+# ============================================================
+gem 'mi_gema_privada', source: 'https://gems.empresa.com'
+
+# ============================================================
+# GEMAS DESDE GIT
+# ============================================================
+gem 'mi_gema_dev', git: 'https://github.com/usuario/mi_gema_dev.git'
+gem 'mi_gema_branch', git: 'https://github.com/usuario/mi_gema.git', branch: 'develop'
+gem 'mi_gema_tag', git: 'https://github.com/usuario/mi_gema.git', tag: 'v1.0.0'
+gem 'mi_gema_ref', git: 'https://github.com/usuario/mi_gema.git', ref: 'a1b2c3d'
+
+# ============================================================
+# GEMAS DESDE EL SISTEMA DE ARCHIVOS (LOCAL)
+# ============================================================
+gem 'mi_gema_local', path: '../mi_gema'
+
+# ============================================================
+# GEMAS CON REQUIRE DIFERENTE
+# ============================================================
+gem 'rspec', require: false                    # No hacer require automático
+gem 'faraday', require: 'faraday/middleware'   # Requerir submódulo
+gem 'pry-byebug', require: 'pry'              # Alias de require
+
+# ============================================================
+# GEMAS CON PLATFORMAS
+# ============================================================
+gem 'nokogiri'
+gem 'libv8', platforms: [:ruby]               # Solo MRI
+gem 'mini_racer', platforms: :ruby
+gem 'wdm', platforms: [:mingw, :x64_mingw]    # Solo Windows
+
+# ============================================================
+# GRUPOS DE GEMAS
+# ============================================================
+group :development, :test do
+  gem 'rspec-rails'
+  gem 'factory_bot_rails'
+  gem 'faker'
+  gem 'pry-rails'
+end
+
+group :development do
+  gem 'rubocop', require: false
+  gem 'rubocop-rails', require: false
+  gem 'better_errors'
+  gem 'binding_of_caller'
+end
+
+group :test do
+  gem 'shoulda-matchers'
+  gem 'database_cleaner'
+  gem 'simplecov', require: false
+end
+
+group :production do
+  gem 'puma'
+  gem 'sentry-ruby'
+  gem 'lograge'
+end
+
+# ============================================================
+# GEMAS SOLO PARA CIERTAS VERSIONES DE RUBY
+# ============================================================
+gem 'rackup', platform: :ruby_25
+
+# ============================================================
+# FUENTES MÚLTIPLES CON ÁMBITO
+# ============================================================
+source 'https://rubygems.org' do
+  gem 'rails'
+  gem 'pg'
+end
+
+source 'https://gems.empresa.com' do
+  gem 'gema_interna'
+end
+
+# ============================================================
+# GEMFILE MÍNIMO PARA UNA GEMA
+# ============================================================
+# Gemfile para desarrollo de gemas
+source 'https://rubygems.org'
+gemspec  # Lee las dependencias del .gemspec
+
+# ============================================================
+# INSTALACIÓN SIN PRODUCCIÓN
+# ============================================================
+# $ bundle install
+# $ bundle install --without production
+# $ bundle install --path vendor/bundle
+```
+
+GEMFILE.LOCK — EL CONTRATO DE DEPENDENCIAS
+───────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Ejemplo de Gemfile.lock (generado automáticamente)
+# ============================================================
+# GEM
+#   remote: https://rubygems.org/
+#   specs:
+#     actioncable (7.1.0)
+#       actionpack (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       nio4r (~> 2.0)
+#       websocket-driver (>= 0.6.1)
+#     actionmailbox (7.1.0)
+#       actionpack (= 7.1.0)
+#       activejob (= 7.1.0)
+#       activerecord (= 7.1.0)
+#       activestorage (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       mail (>= 2.7.1)
+#       net-imap
+#       net-pop
+#       net-smtp
+#     actionmailer (7.1.0)
+#       actionpack (= 7.1.0)
+#       actionview (= 7.1.0)
+#       activejob (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       mail (~> 2.5, >= 2.5.4)
+#       rails-dom-testing (~> 2.0)
+#     actionpack (7.1.0)
+#       actionview (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       rack (~> 2.0, >= 2.2.4)
+#       rack-test (>= 0.6.3)
+#       rails-dom-testing (~> 2.0)
+#       rails-html-sanitizer (~> 1.0, >= 1.2.0)
+#     actiontext (7.1.0)
+#       actionpack (= 7.1.0)
+#       activerecord (= 7.1.0)
+#       activestorage (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       nokogiri (>= 1.8.5)
+#     actionview (7.1.0)
+#       activesupport (= 7.1.0)
+#       builder (~> 3.1)
+#       erubi (~> 1.4)
+#       rails-dom-testing (~> 2.0)
+#       rails-html-sanitizer (~> 1.1, >= 1.2.0)
+#     activejob (7.1.0)
+#       activesupport (= 7.1.0)
+#       globalid (>= 0.3.6)
+#     activemodel (7.1.0)
+#       activesupport (= 7.1.0)
+#     activerecord (7.1.0)
+#       activemodel (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       timeout (>= 0.4.0)
+#     activestorage (7.1.0)
+#       actionpack (= 7.1.0)
+#       activejob (= 7.1.0)
+#       activerecord (= 7.1.0)
+#       activesupport (= 7.1.0)
+#       marcel (~> 1.0)
+#     activesupport (7.1.0)
+#       concurrent-ruby (~> 1.0, >= 1.0.2)
+#       i18n (>= 1.6, < 2)
+#       minitest (>= 5.1)
+#       tzinfo (~> 2.0)
+#
+# PLATFORMS
+#   ruby
+#   x86_64-linux
+#
+# DEPENDENCIES
+#   rails (~> 7.1)
+#   pg
+#   puma
+#
+# BUNDLED WITH
+#    2.4.0
+
+# ============================================================
+# ¿Para qué sirve Gemfile.lock?
+# ============================================================
+# 1. Congela las versiones exactas de cada gema y sub-dependencia.
+# 2. Asegura que todos los desarrolladores usen las mismas versiones.
+# 3. Garantiza que producción use exactamente lo mismo que desarrollo.
+# 4. Debe estar en el control de versiones (git).
+# 5. Solo se regenera con `bundle update`.
+```
+
+COMANDOS ESENCIALES DE BUNDLER
+───────────────────────────────
+
+```ruby
+# ============================================================
+# BUNDLE INSTALL
+# ============================================================
+# Instala las gemas del Gemfile
+# $ bundle install
+
+# Instalar en un directorio específico
+# $ bundle install --path vendor/bundle
+
+# Instalar sin gemas de producción
+# $ bundle install --without production
+
+# Instalar en modo silencioso
+# $ bundle install --quiet
+
+# ============================================================
+# BUNDLE EXEC
+# ============================================================
+# Ejecuta un comando en el contexto de Bundler
+# $ bundle exec ruby app.rb
+# $ bundle exec rspec
+# $ bundle exec rails server
+# $ bundle exec rake db:migrate
+
+# Sin bundle exec (si usas binstubs):
+# $ bundle binstubs rspec-core
+# $ bin/rspec
+
+# ============================================================
+# BUNDLE UPDATE
+# ============================================================
+# Actualiza TODAS las gemas (regenera Gemfile.lock)
+# $ bundle update
+
+# Actualiza una gema específica
+# $ bundle update sinatra
+
+# Actualizar varias gemas
+# $ bundle update sinatra rails
+
+# ============================================================
+# BUNDLE OUTDATED
+# ============================================================
+# Muestra gemas con versiones desactualizadas
+# $ bundle outdated
+# $ bundle outdated --groups
+# $ bundle outdated sinatra
+
+# ============================================================
+# BUNDLE CHECK
+# ============================================================
+# Verifica que todas las gemas están instaladas
+# $ bundle check
+# $ bundle check --path vendor/bundle
+
+# ============================================================
+# BUNDLE CONSOLE
+# ============================================================
+# Abre una consola IRB cargando el Gemfile
+# $ bundle console
+
+# ============================================================
+# BUNDLE CLEAN
+# ============================================================
+# Limpia gemas viejas que ya no están en el Gemfile
+# $ bundle clean
+# $ bundle clean --force
+
+# ============================================================
+# BUNDLE VIZ
+# ============================================================
+# Genera un gráfico de dependencias visual
+# $ bundle viz
+# (Requiere graphviz instalado)
+
+# ============================================================
+# BUNDLE DOCTOR
+# ============================================================
+# Diagnostica problemas con Bundler
+# $ bundle doctor
+
+# ============================================================
+# BUNDLE PLATFORM
+# ============================================================
+# Muestra información de la plataforma
+# $ bundle platform
+# $ bundle platform --ruby
+
+# ============================================================
+# BUNDLE CONFIG
+# ============================================================
+# Configurar Bundler globalmente
+# $ bundle config set path 'vendor/bundle'
+# $ bundle config set without 'production'
+# $ bundle config set frozen 'true'
+# $ bundle config list
+```
+
+GRUPOS DE GEMAS (ADMINISTRACIÓN AVANZADA)
+───────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Grupos condicionales
+# ============================================================
+group :development do
+  gem 'ruby-debug-ide', require: false
+end
+
+# ============================================================
+# Grupos que se excluyen automáticamente
+# ============================================================
+group :test do
+  gem 'capybara'
+  gem 'selenium-webdriver'
+end
+
+# ============================================================
+# Verificar grupos instalados
+# ============================================================
+# $ bundle list
+# $ bundle list --only=development
+# $ bundle list --without=test
+
+# ============================================================
+# Uso programático de grupos
+# ============================================================
+require 'bundler'
+
+class MiApp
+  def self.inicializar!
+    Bundler.require(:default, :production)
+
+    if ENV['RACK_ENV'] == 'development'
+      Bundler.require(:development)
+    end
+
+    if ENV['RACK_ENV'] == 'test'
+      Bundler.require(:test)
+    end
+  end
+end
+
+# ============================================================
+# Cargar gemas por grupo manualmente
+# ============================================================
+# Solo cargar gemas de producción
+# Bundler.setup(:default, :production)
+
+# Cargar y require de gemas específicas
+# Bundler.require(:default, :test)
+```
+
+RESOLVIENDO CONFLICTOS DE DEPENDENCIAS
+───────────────────────────────────────
+
+```ruby
+# ============================================================
+# Escenario: Dos gemas requieren versiones incompatibles
+# ============================================================
+# Ejemplo de conflicto:
+#   gema_a requiere nokogiri ~> 1.14
+#   gema_b requiere nokogiri ~> 1.15
+
+# Solución 1: Especificar versiones compatibles
+gem 'nokogiri', '~> 1.15'  # Forzar una versión que ambas acepten
+
+# Solución 2: Usar gemas alternativas
+gem 'gema_b', '~> 2.0'  # Versión más nueva que use nokogiri >= 1.14
+
+# Solución 3: Congelar la versión problemática
+gem 'loofah', '2.21.0'  # Gema intermedia que causa el conflicto
+
+# ============================================================
+# Debugging de dependencias
+# ============================================================
+# $ bundle why nokogiri
+# $ bundle exec gem dependency nokogiri
+
+# ============================================================
+# Inspeccionar árbol de dependencias
+# ============================================================
+# $ bundle exec gem list --local
+# $ bundle exec gem dependency rails
+
+# ============================================================
+# Solucionar "Gem::LoadError"
+# ============================================================
+# 1. bundle install
+# 2. bundle update gema_problematica
+# 3. bundle exec (no olvides usarlo)
+# 4. bundle pristine (restaurar gemas)
+```
+
+BUNDLER EN PRODUCCIÓN
+──────────────────────
+
+```ruby
+# ============================================================
+# Configuración óptima para producción
+# ============================================================
+# $ bundle config set deployment true
+# $ bundle config set without 'development test'
+# $ bundle config set path 'vendor/bundle'
+# $ bundle config set frozen true
+
+# ============================================================
+# Script de deploy
+# ============================================================
+#!/bin/bash
+# scripts/deploy.sh
+
+echo "=== Instalando dependencias ==="
+bundle install \
+  --deployment \
+  --without development test \
+  --path vendor/bundle \
+  --quiet
+
+echo "=== Verificando gemas ==="
+bundle check || exit 1
+
+echo "=== Iniciando aplicación ==="
+bundle exec puma -C config/puma.rb
+
+# ============================================================
+# Dockerfile con Bundler
+# ============================================================
+# FROM ruby:3.2-slim
+#
+# RUN apt-get update && \
+#     apt-get install -y build-essential libpq-dev && \
+#     rm -rf /var/lib/apt/lists/*
+#
+# WORKDIR /app
+#
+# COPY Gemfile Gemfile.lock ./
+# RUN bundle install --deployment --without development test
+#
+# COPY . .
+#
+# CMD ["bundle", "exec", "puma"]
+```
+
+CREANDO BINDS E INTEGRACIÓN CON EL SISTEMA
+────────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Binstubs — Atajos para comandos de gemas
+# ============================================================
+# Generar binstubs para todas las gemas
+# $ bundle binstubs --all
+
+# Generar binstub para una gema específica
+# $ bundle binstubs rspec-core
+# $ bundle binstubs rubocop
+
+# Ahora puedes usar:
+# $ bin/rspec
+# $ bin/rubocop
+# En lugar de:
+# $ bundle exec rspec
+# $ bundle exec rubocop
+
+# ============================================================
+# Binstub personalizado
+# ============================================================
+#!/usr/bin/env ruby
+# bin/mi_app
+#
+# Este binstub inicia la aplicación con Bundler
+
+require 'bundler/setup'
+require_relative '../config/application'
+
+MiApp::Application.start(ARGV)
+
+# ============================================================
+# Integración con RVM y rbenv
+# ============================================================
+# .ruby-version (para rbenv y RVM)
+# 3.2.2
+
+# .ruby-gemset (solo RVM)
+# mi_app
+
+# ============================================================
+# Bundler con Rake
+# ============================================================
+require 'bundler/setup'
+require 'bundler/gem_tasks'
+require 'rspec/core/rake_task'
+
+RSpec::Core::RakeTask.new(:spec)
+
+task :environment do
+  Bundler.require(:default, ENV['RACK_ENV'] || :development)
+end
+
+task :console do
+  require_relative 'config/application'
+  binding.pry
+end
+
+namespace :deps do
+  desc 'Verificar gemas desactualizadas'
+  task :outdated do
+    system 'bundle outdated'
+  end
+
+  desc 'Actualizar gemas de forma segura'
+  task :update_safe do
+    puts 'Actualizando gemas...'
+    system 'bundle update --conservative'
+  end
+end
+```
+
+GEMAS Y BUNDLER: CASOS AVANZADOS
+───────────────────────────────────
+
+```ruby
+# ============================================================
+# Usar Bundler para cargar gemas no instaladas
+# ============================================================
+require 'bundler/inline'
+
+gemfile do
+  source 'https://rubygems.org'
+  gem 'json'
+  gem 'net-http'
+  gem 'nokogiri'
+end
+
+puts 'Gemas cargadas inline!'
+
+# ============================================================
+# Bundler standalone (sin instalación previa)
+# ============================================================
+# Generar un bundle autocontenido
+# $ bundle install --standalone --path vendor/bundle
+
+# Luego la app puede cargarse sin Bundler:
+require_relative 'vendor/bundle/bundler/setup'
+
+# ============================================================
+# Gemas con versiones de Ruby específicas
+# ============================================================
+# Gemfile
+ruby '>= 3.1.0'  # Exigir versión de Ruby
+
+# Verificar compatibilidad
+# $ bundle platform --ruby
+# $ ruby --version
+
+# ============================================================
+# Bundler con múltiples Gemfiles
+# ============================================================
+# Usar Gemfile diferente
+# $ BUNDLE_GEMFILE=Gemfile.alternative bundle install
+
+# Cargar Gemfile personalizado en código
+ENV['BUNDLE_GEMFILE'] ||= File.expand_path('../Gemfile', __dir__)
+require 'bundler/setup'
+```
+
+CONFIGURACIÓN PERSONALIZADA DE BUNDLER
+────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Archivo ~/.bundle/config
+# ============================================================
+# ---
+# BUNDLE_PATH: "vendor/bundle"
+# BUNDLE_DISABLE_SHARED_GEMS: "true"
+# BUNDLE_WITHOUT: "development:test"
+# BUNDLE_FROZEN: "true"
+# BUNDLE_JOBS: "4"
+# BUNDLE_RETRY: "3"
+
+# ============================================================
+# Variables de entorno de Bundler
+# ============================================================
+# BUNDLE_GEMFILE    — Ruta al Gemfile
+# BUNDLE_PATH       — Directorio de instalación
+# BUNDLE_WITHOUT    — Grupos a excluir
+# BUNDLE_FROZEN     — No modificar Gemfile.lock
+# BUNDLE_JOBS       — Paralelismo en instalación
+# BUNDLE_RETRY      — Reintentos al fallar
+# BUNDLE_DISABLE_SHARED_GEMS — No usar gemas del sistema
+
+# ============================================================
+# Uso en scripts
+# ============================================================
+ENV['BUNDLE_GEMFILE'] ||= File.expand_path('../Gemfile', __dir__)
+ENV['BUNDLE_WITHOUT'] ||= 'development:test'
+
+require 'bundler/setup'
+require 'bundler'
+
+# Verificar que todas las gemas están disponibles
+begin
+  Bundler.setup(:default, ENV['RACK_ENV'] || :production)
+rescue Bundler::BundlerError => e
+  $stderr.puts e.message
+  exit 1
+end
+```
+
+RESOLVIENDO PROBLEMAS COMUNES
+──────────────────────────────
+
+```ruby
+# ============================================================
+# Problema: "Gem::LoadError: cannot load such file"
+# ============================================================
+# Causa: No usas bundle exec
+# Solución: Usa bundle exec o binstubs
+# bundle exec ruby script.rb
+
+# ============================================================
+# Problema: "Bundler::GemNotFound"
+# ============================================================
+# Causa: Faltan gemas
+# Solución:
+# bundle install
+
+# ============================================================
+# Problema: Conflictos de versiones
+# ============================================================
+# Causa: Gemas requieren versiones incompatibles
+# Solución:
+# bundle update gema_problematica
+# O especificar versión exacta en Gemfile
+
+# ============================================================
+# Problema: Gemfile.lock cambia sin razón
+# ============================================================
+# Causa: Diferencias de plataforma
+# Solución:
+# bundle lock --add-platform x86_64-linux
+# bundle lock --add-platform arm64-darwin
+
+# ============================================================
+# Problema: bundle install muy lento
+# ============================================================
+# Solución:
+# bundle config set jobs 4
+# bundle config set retry 3
+# O usar geminabox como mirror local
+
+# ============================================================
+# Problema: "You have modified your Gemfile..."
+# ============================================================
+# Solución:
+# bundle install
+# O si eliminaste una gema, ejecuta bundle install para limpiar
+
+# ============================================================
+# Comprobación final de integridad
+# ============================================================
+# bundle check
+# bundle doctor
+# bundle list
+```
+
+BUNDLER EN GEMAS PERSONALIZADAS
+─────────────────────────────────
+
+```ruby
+# ============================================================
+# Gemfile para una gema (con gemspec)
+# ============================================================
+# Gemfile
+source 'https://rubygems.org'
+gemspec
+
+# Esto carga las dependencias del .gemspec
+# permitiendo tener un solo lugar de definición
+
+# ============================================================
+# gemspec con dependencias condicionales
+# ============================================================
+Gem::Specification.new do |s|
+  s.name = 'mi_gema'
+  s.version = '1.0.0'
+
+  if RUBY_VERSION >= '3.0'
+    s.add_dependency 'nuevo_parser', '~> 2.0'
+  else
+    s.add_dependency 'viejo_parser', '~> 1.0'
+  end
+
+  s.add_development_dependency 'rspec'
+  s.add_development_dependency 'bundler'
+end
+```
+
+EJEMPLO COMPLETO: GESTOR DE DEPENDENCIAS
+─────────────────────────────────────────
+
+```ruby
+# ============================================================
+# Script que gestiona dependencias automáticamente
+# ============================================================
+#!/usr/bin/env ruby
+# scripts/gestor_dependencias.rb
+
+require 'bundler'
+require 'json'
+
+class GestorDependencias
+  def initialize
+    @definition = Bundler.definition
+  end
+
+  def reporte
+    {
+      gemas: gemas_info,
+      conflictos: detectar_conflictos,
+      salud: verificar_salud,
+      estadisticas: estadisticas
+    }
+  end
+
+  def gemas_info
+    @definition.dependencies.map do |dep|
+      spec = @definition.specs[dep.name].first
+      {
+        nombre: dep.name,
+        version_requerida: dep.requirement.to_s,
+        version_instalada: spec&.version&.to_s,
+        grupos: dep.groups,
+        fuente: spec&.source&.to_s || 'rubygems',
+      }
+    end
+  end
+
+  def detectar_conflictos
+    conflictos = []
+    @definition.dependencies.each do |dep|
+      specs = @definition.resolve.materialize([dep.name], false)
+      if specs.size > 1
+        conflictos << { gema: dep.name, versiones: specs.map(&:version) }
+      end
+    end
+    conflictos
+  end
+
+  def verificar_salud
+    begin
+      Bundler.require
+      { estado: 'saludable', mensaje: 'Todas las gemas cargadas correctamente' }
+    rescue Bundler::GemNotFound, LoadError => e
+      { estado: 'problema', mensaje: e.message }
+    end
+  end
+
+  def estadisticas
+    specs = @definition.specs
+    {
+      total_gemas: specs.size,
+      total_dependencias_directas: @definition.dependencies.size,
+      grupos_disponibles: @definition.dependencies.map(&:groups).flatten.uniq,
+      plataformas: specs.platforms
+    }
+  end
+
+  def exportar_json(ruta = 'reporte_gemas.json')
+    File.write(ruta, JSON.pretty_generate(reporte))
+    puts "Reporte exportado a #{ruta}"
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  gestor = GestorDependencias.new
+  puts JSON.pretty_generate(gestor.reporte)
+end
+```
+
+MEJORES PRÁCTICAS CON BUNDLER
+───────────────────────────────
+
+```ruby
+# ============================================================
+# 1. SIEMPRE incluir Gemfile.lock en git
+# ============================================================
+# Esto garantiza que todos los entornos usen las mismas gemas.
+
+# ============================================================
+# 2. Usar bundle exec para todo
+# ============================================================
+# O generar binstubs con `bundle binstubs --all`
+
+# ============================================================
+# 3. Congelar Bundler en producción
+# ============================================================
+# bundle config set frozen true
+
+# ============================================================
+# 4. Revisar gemas desactualizadas periódicamente
+# ============================================================
+# bundle outdated
+# bundle update --conservative
+
+# ============================================================
+# 5. No mezclar Gemfile.lock de diferentes plataformas
+# ============================================================
+# Usar bundle lock --add-platform
+
+# ============================================================
+# 6. Mantener las fuentes limpias
+# ============================================================
+# source 'https://rubygems.org' (solo una fuente global)
+
+# ============================================================
+# 7. Agrupar gemas por entorno
+# ============================================================
+# group :test do ... end
+# group :development do ... end
+
+# ============================================================
+# 8. Usar gemspec en gemas
+# ============================================================
+# En lugar de duplicar dependencias en Gemfile
+
+# ============================================================
+# 9. Revisar Gemfile.lock en code review
+# ============================================================
+# Un cambio en Gemfile.lock puede indicar una actualización
+# accidental de dependencia.
+
+# ============================================================
+# 10. Usar bundle audit para seguridad
+# ============================================================
+# $ gem install bundler-audit
+# $ bundle audit check --update
+```
+
+RESUMEN DEL CAPÍTULO
+─────────────────────
+- Bundler resuelve y congela dependencias Ruby.
+- El Gemfile define fuentes, gemas, versiones y grupos.
+- Gemfile.lock es el contrato que garantiza reproducibilidad.
+- `bundle install` instala gemas; `bundle update` las actualiza.
+- `bundle exec` ejecuta comandos en el contexto de Bundler.
+- Los grupos organizan gemas por entorno (development, test, prod).
+- Bundler en producción usa modo deployment y frozen.
+- Los conflictos se resuelven especificando versiones compatibles.
+- Los binstubs evitan tener que escribir `bundle exec`.
+- Bundler-audit revisa vulnerabilidades en las dependencias.
+
+EJERCICIOS DEL CAPÍTULO
+────────────────────────
+1. Crea un Gemfile para una app Sinatra con PostgreSQL, RSpec,
+   RuboCop y Puma, organizado en grupos.
+2. Ejecuta `bundle viz` y analiza el gráfico de dependencias.
+3. Simula un conflicto de dependencias y resuélvelo manualmente.
+4. Configura un proyecto con `bundle config set frozen true` y
+   verifica que no permite cambios en Gemfile.lock.
+5. Genera binstubs para todas las gemas de tu proyecto.
+6. Crea un script que use `Bundler.definition` para listar
+   todas las dependencias transitivas.
+7. Implementa un Rakefile con tareas para instalar, actualizar y
+   auditar gemas.
+8. Configura Bundler en un Dockerfile con modo deployment.
+9. Usa `bundle outdated` y actualiza gemas de forma conservadora.
+10. Crea un Gemfile alternativo para testing y ejecuta pruebas con
+    `BUNDLE_GEMFILE=Gemfile.test`.
+
+PREGUNTAS FRECUENTES (FAQ)
+───────────────────────────
+P: ¿Debo incluir Gemfile.lock en el control de versiones?
+R: Sí, siempre. Es el contrato que garantiza que todos los entornos
+   tengan exactamente las mismas gemas.
+
+P: ¿Cuál es la diferencia entre `bundle install` y `bundle update`?
+R: `bundle install` respeta Gemfile.lock. `bundle update` lo
+   regenera resolviendo de nuevo todas las dependencias.
+
+P: ¿Por qué debo usar `bundle exec`?
+R: Porque Bundler prepara el entorno para que las gemas correctas
+   estén disponibles. Sin él, Ruby usa las gemas del sistema.
+
+P: ¿Cómo manejo gemas específicas de plataforma?
+R: Usa `platforms:` en el Gemfile o `bundle lock --add-platform`.
+
+P: ¿Qué hago si `bundle install` falla en producción?
+R: Verifica que Gemfile.lock existe, que las gemas están en
+   RubyGems.org, y que la versión de Ruby es compatible.
+
+DESAFÍO DEL ORQUESTADOR
+────────────────────────
+Crea un sistema de gestión de dependencias llamado 'bundle-manager'
+que sea una CLI interactiva con las siguientes características:
+1. Escanea un proyecto y genera un reporte completo de dependencias.
+2. Detecta conflictos potenciales antes de instalar.
+3. Sugiere actualizaciones seguras basadas en SemVer.
+4. Permite crear snapshots de Gemfile.lock y restaurarlos.
+5. Genera gráficos ASCII del árbol de dependencias.
+6. Integra con bundler-audit para reportar vulnerabilidades.
+7. Envía notificaciones cuando haya actualizaciones críticas.
+
+Este desafío demuestra que dominas Bundler a nivel de arquitecto
+y puedes construir herramientas que todo el equipo agradecerá.
+
+CIERRE DEL CAPÍTULO
+────────────────────
+Bundler es el guardián silencioso de tus proyectos Ruby. Ahora
+sabes cómo orquestar dependencias, resolver conflictos y configurar
+entornos profesionales. Tus aplicaciones son reproducibles, seguras
+y estables. En el próximo capítulo abordaremos el testing con RSpec,
+donde la confianza en tu código se vuelve medible.
+
+PRÓXIMO CAPÍTULO
+─────────────────
+▶ CAPÍTULO 74: TESTING (RSPEC) — Donde la confianza se mide

@@ -1,0 +1,1914 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║            RUBY MASTER BOOK — MÓDULO V: MÓDULOS Y MIXINS                      ║
+║         CAPÍTULO 45: NAMESPACES — ORGANIZACIÓN JERÁRQUICA DEL CÓDIGO          ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────────
+  BIENVENIDA
+────────────────────────────────────────────────────────────────────────────────────
+
+Bienvenido al Capítulo 45 del Ruby Master Book. Hemos visto los módulos como
+contenedores de métodos y como mixins. Ahora exploraremos su tercer gran uso:
+los espacios de nombres (namespaces).
+
+Conforme un proyecto crece, el riesgo de colisiones entre nombres de clases,
+constantes y métodos aumenta. Dos gemas diferentes pueden definir una clase
+`Cliente` o una constante `VERSION`. Los namespaces en Ruby, implementados
+mediante módulos, resuelven este problema elegantemente.
+
+En este capítulo veremos el anidamiento de módulos, el operador `::` para
+resolución, cómo Ruby busca constantes, la pila de módulos con
+`Module.nesting`, y las convenciones de organización que usan frameworks
+como Rails. También exploraremos cómo cargar archivos automáticamente
+usando la convención de nombres de módulos.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FRASE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+"Los espacios de nombres son como apellidos para tus clases: evitan
+  confusiones y dejan claro de quién está hablando cada uno."
+  — David Heinemeier Hansson (DHH), creador de Ruby on Rails
+
+────────────────────────────────────────────────────────────────────────────────────
+  OBJETIVOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+  1. Comprender qué son los espacios de nombres y por qué son necesarios.
+  2. Usar módulos anidados para crear jerarquías de organización.
+  3. Dominar el operador `::` de resolución de constantes.
+  4. Entender la resolución de constantes y `Module.nesting`.
+  5. Conocer la convención de nomenclatura de archivos con namespaces.
+  6. Aplicar namespaces en proyectos grandes.
+  7. Diferenciar entre resolución léxica y de herencia de constantes.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESARROLLO DEL CAPÍTULO — NAMESPACES
+────────────────────────────────────────────────────────────────────────────────────
+
+En Ruby, los módulos actúan como espacios de nombres. Puedes anidar módulos
+y clases dentro de otros módulos para crear una jerarquía organizativa clara.
+
+    module Empresa
+      module Ventas
+        class Cliente
+          # ...
+        end
+      end
+
+      module Finanzas
+        class Cliente
+          # ...
+        end
+      end
+    end
+
+# Las dos clases Cliente son diferentes:
+# Empresa::Ventas::Cliente  ≠  Empresa::Finanzas::Cliente
+
+La resolución de constantes sigue reglas específicas que combinan el
+anidamiento léxico (dónde está definido el código) y la cadena de herencia.
+
+────────────────────────────────────────────────────────────────────────────────────
+  45.1 — ANIDAMIENTO BÁSICO
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 1: Definición de namespaces anidados.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_01_namespaces_basico.rb
+# Definición básica de espacios de nombres
+
+module RedSocial
+  VERSION = "2.0.0"
+
+  class Usuario
+    attr_reader :nombre, :email
+
+    def initialize(nombre, email)
+      @nombre = nombre
+      @email = email
+    end
+
+    def to_s
+      "RS::Usuario: #{@nombre} <#{@email}>"
+    end
+  end
+
+  class Publicacion
+    attr_reader :autor, :contenido, :fecha
+
+    def initialize(autor, contenido)
+      @autor = autor
+      @contenido = contenido
+      @fecha = Time.now
+    end
+
+    def to_s
+      "#{@autor.nombre} dijo: #{@contenido[0..30]}..."
+    end
+  end
+
+  module Privacidad
+    NIVEL_PUBLICO = "publico"
+    NIVEL_PRIVADO = "privado"
+    NIVEL_AMIGOS = "amigos"
+  end
+
+  module Moderacion
+    class Reporte
+      attr_reader :motivo, :reportado_por
+
+      def initialize(motivo, reportado_por)
+        @motivo = motivo
+        @reportado_por = reportado_por
+      end
+    end
+
+    class Bloqueo
+      attr_reader :usuario, :duracion_horas
+
+      def initialize(usuario, duracion_horas)
+        @usuario = usuario
+        @duracion_horas = duracion_horas
+      end
+    end
+  end
+end
+
+module SistemaInterno
+  VERSION = "1.0.0"
+
+  class Usuario
+    attr_reader :nombre, :rol, :ultimo_acceso
+
+    def initialize(nombre, rol)
+      @nombre = nombre
+      @rol = rol
+      @ultimo_acceso = Time.now
+    end
+
+    def to_s
+      "SI::Usuario: #{@nombre} (#{@rol})"
+    end
+  end
+
+  module Auditoria
+    class Log
+      attr_reader :accion, :usuario, :tiempo
+
+      def initialize(accion, usuario)
+        @accion = accion
+        @usuario = usuario
+        @tiempo = Time.now
+      end
+
+      def to_s
+        "[#{@tiempo}] #{@usuario}: #{@accion}"
+      end
+    end
+  end
+end
+
+# Acceso a clases dentro de namespaces
+usuario_rs = RedSocial::Usuario.new("Alice", "alice@rs.com")
+usuario_si = SistemaInterno::Usuario.new("admin", "administrador")
+
+puts usuario_rs
+puts usuario_si
+
+puts "RedSocial versión: #{RedSocial::VERSION}"
+puts "SistemaInterno versión: #{SistemaInterno::VERSION}"
+puts "Nivel privacidad: #{RedSocial::Privacidad::NIVEL_PUBLICO}"
+
+reporte = RedSocial::Moderacion::Reporte.new("Spam", usuario_rs)
+puts "Reporte: #{reporte.motivo} por #{reporte.reportado_por.nombre}"
+
+log = SistemaInterno::Auditoria::Log.new("Login exitoso", "admin")
+puts log
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 2: El operador `::` de resolución.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_02_operador_resolucion.rb
+# El operador :: para resolver constantes
+
+module A
+  VALOR = "A"
+  PI = 3.14
+
+  module B
+    VALOR = "B"
+
+    module C
+      VALOR = "C"
+
+      def self.mostrar
+        puts "VALOR: #{VALOR}"
+        puts "A::VALOR: #{A::VALOR}"
+        puts "A::B::VALOR: #{A::B::VALOR}"
+        puts "A::B::C::VALOR: #{A::B::C::VALOR}"
+        puts "::A::VALOR: #{::A::VALOR}"
+        puts "PI (desde A): #{A::PI}"
+        puts "PI (global): #{::Math::PI}"
+      end
+    end
+  end
+end
+
+A::B::C.mostrar
+
+# :: al inicio se refiere al ámbito global/top-level
+puts "Objeto global: #{::Object.new}"
+puts "String global: #{::String.new("hola")}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 3: Resolución léxica de constantes.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_03_resolucion_lexica.rb
+# Cómo Ruby resuelve las constantes según el anidamiento léxico
+
+module Externo
+  VALOR = "externo"
+
+  module Interno
+    VALOR = "interno"
+
+    def self.mostrar
+      puts "VALOR desde Interno: #{VALOR}"
+    end
+  end
+
+  # Crear un método que muestre la resolución
+  def self.mostrar
+    puts "VALOR desde Externo: #{VALOR}"
+  end
+end
+
+Externo.mostrar
+Externo::Interno.mostrar
+
+# ¿Qué pasa si una constante no está definida?
+module Prueba
+  puts "Module.nesting dentro de Prueba: #{Module.nesting}"
+end
+
+# La búsqueda de constantes va desde el nivel más interno hacia afuera
+module Nivel1
+  VALOR = "N1"
+
+  module Nivel2
+    VALOR = "N2"
+
+    module Nivel3
+      # VALOR no definida aquí, busca en Nivel2, luego en Nivel1
+      def self.mostrar
+        puts "VALOR desde N3: #{VALOR}"
+        puts "Module.nesting: #{Module.nesting}"
+      end
+    end
+  end
+end
+
+Nivel1::Nivel2::Nivel3.mostrar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 4: `Module.nesting` y cómo influye en la resolución.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_04_module_nesting.rb
+# Module.nesting muestra la pila de módulos anidados
+
+module A
+  module B
+    module C
+      def self.mostrar_nesting
+        puts "Nesting actual: #{Module.nesting.inspect}"
+      end
+    end
+  end
+end
+
+A::B::C.mostrar_nesting
+
+# Ejemplo de cómo el nesting afecta la resolución
+module X
+  CONSTANTE = "X"
+
+  module Y
+    CONSTANTE = "Y"
+
+    # Aquí Module.nesting = [X::Y, X]
+    def self.desde_y
+      CONSTANTE  # Encuentra X::Y::CONSTANTE
+    end
+
+    # Esto busca en X::Y, luego en X
+    def self.desde_y_con_absoluto
+      ::X::CONSTANTE  # Fuerza búsqueda desde el nivel global
+    end
+  end
+end
+
+puts "Desde Y: #{X::Y.desde_y}"
+puts "Desde Y (absoluto): #{X::Y.desde_y_con_absoluto}"
+
+# Mostrar nesting en diferentes contextos
+puts "\nNesting en main: #{Module.nesting.inspect}"
+
+module M1
+  puts "Nesting en M1: #{Module.nesting.inspect}"
+
+  module M2
+    puts "Nesting en M2: #{Module.nesting.inspect}"
+
+    class C1
+      puts "Nesting en M1::M2::C1: #{Module.nesting.inspect}"
+    end
+  end
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 5: Convención de nombres y autoloading.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_05_convencion_nombres.rb
+# Convención de nombres: módulos ↔ directorios
+
+# En Rails, la convención es:
+#   app/models/usuario.rb        → class Usuario
+#   app/models/admin/usuario.rb  → class Admin::Usuario
+#   app/models/admin/permiso.rb  → class Admin::Permiso
+#
+# El nombre del archivo debe coincidir con el nombre de la clase/módulo
+# en snake_case, y los módulos anidados se reflejan en directorios.
+
+module Administracion
+  VERSION = "1.0.0"
+
+  # Esto simula la carga de un archivo basada en convención
+  module Cargador
+    def self.cargar_clase(ruta_completa)
+      # Convierte "admin/usuarios" → Admin::Usuario
+      partes = ruta_completa.split('/')
+      nombre_clase = partes.pop
+      modulo = partes.map(&:capitalize).join('::')
+      clase = (modulo.empty? ? "" : modulo + "::") + nombre_clase.capitalize
+      puts "Cargando: #{clase}"
+      clase
+    end
+  end
+
+  class Usuario
+    attr_reader :nombre, :rol
+
+    def initialize(nombre, rol)
+      @nombre = nombre
+      @rol = rol
+    end
+
+    def to_s
+      "Admin::Usuario: #{@nombre} (#{@rol})"
+    end
+  end
+
+  module Reportes
+    class Ventas
+      def generar
+        "Reporte de ventas"
+      end
+    end
+
+    class Usuarios
+      def generar
+        "Reporte de usuarios"
+      end
+    end
+  end
+end
+
+# Simulación de cómo Rails resuelve nombres
+puts "Cargador: #{Administracion::Cargador.cargar_clase("admin/usuarios")}"
+puts "Cargador: #{Administracion::Cargador.cargar_clase("admin/reportes/ventas")}"
+
+# Uso normal
+admin_user = Administracion::Usuario.new("root", "superadmin")
+reporte = Administracion::Reportes::Ventas.new
+puts admin_user
+puts reporte.generar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 6: Namespaces con clases del mismo nombre.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_06_mismo_nombre.rb
+# Clases con el mismo nombre en diferentes namespaces
+
+module Tienda
+  class Producto
+    attr_reader :codigo, :nombre, :precio
+
+    def initialize(codigo, nombre, precio)
+      @codigo = codigo
+      @nombre = nombre
+      @precio = precio
+    end
+
+    def to_s
+      "Tienda::Producto: #{@codigo} - #{@nombre} ($#{@precio})"
+    end
+  end
+
+  module Inventario
+    class Producto
+      attr_reader :codigo, :stock, :ubicacion
+
+      def initialize(codigo, stock, ubicacion)
+        @codigo = codigo
+        @stock = stock
+        @ubicacion = ubicacion
+      end
+
+      def to_s
+        "Tienda::Inventario::Producto: #{@codigo} (stock: #{@stock}, #{@ubicacion})"
+      end
+    end
+  end
+
+  module Catalogo
+    class Producto
+      attr_reader :codigo, :descripcion, :categoria
+
+      def initialize(codigo, descripcion, categoria)
+        @codigo = codigo
+        @descripcion = descripcion
+        @categoria = categoria
+      end
+
+      def to_s
+        "Tienda::Catalogo::Producto: #{@codigo} - #{@categoria}"
+      end
+    end
+  end
+end
+
+class Producto
+  attr_reader :sku
+
+  def initialize(sku)
+    @sku = sku
+  end
+
+  def to_s
+    "Producto (global): #{@sku}"
+  end
+end
+
+# Todos coexisten sin conflicto
+p1 = Tienda::Producto.new("P-001", "Laptop", 1200)
+p2 = Tienda::Inventario::Producto.new("P-001", 50, "Almacén A")
+p3 = Tienda::Catalogo::Producto.new("P-001", "Laptop Gaming", "Electrónicos")
+p4 = Producto.new("SKU-001")
+
+puts p1
+puts p2
+puts p3
+puts p4
+
+# Acceso desde dentro de un namespace
+module Tienda
+  def self.mostrar_ejemplos
+    cat = Catalogo::Producto.new("P-002", "Mouse", "Periféricos")
+    puts "  Desde Tienda: #{cat}"
+  end
+end
+
+Tienda.mostrar_ejemplos
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 7: Resolución de constantes con herencia.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_07_resolucion_herencia.rb
+# La resolución de constantes también considera la herencia
+
+module M
+  CONSTANTE = "desde M"
+end
+
+module N
+  CONSTANTE = "desde N"
+end
+
+class A
+  CONSTANTE = "desde A"
+end
+
+class B < A
+  CONSTANTE = "desde B"
+end
+
+class C < B
+  include M
+  prepend N
+
+  def mostrar
+    puts "CONSTANTE: #{CONSTANTE}"
+    # La constante se busca en: C, B, A, Object, Kernel, BasicObject
+  end
+end
+
+C.new.mostrar
+
+# La búsqueda es: herencia + lexica
+module X
+  CONST = "X"
+
+  module Y
+    CONST = "Y"
+
+    class Z
+      def mostrar
+        puts "CONST: #{CONST}"
+        # Busca: Z -> Y -> X -> (herencia de Z) -> Object...
+      end
+    end
+  end
+end
+
+X::Y::Z.new.mostrar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 8: `const_get`, `const_set`, `const_defined?`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_08_const_get_set.rb
+# Acceso dinámico a constantes
+
+module Configuracion
+  DB_HOST = "localhost"
+  DB_PORT = 5432
+  API_KEY = "secret-12345"
+  TIMEOUT = 30
+  DEBUG = true
+  VERSION = "3.0.0"
+
+  module Logging
+    LEVEL = "info"
+    FORMAT = "json"
+  end
+end
+
+puts "const_get: #{Configuracion.const_get(:DB_HOST)}"
+puts "const_defined?: #{Configuracion.const_defined?(:DB_HOST)}"
+puts "const_defined? (inexistente): #{Configuracion.const_defined?(:INEXISTENTE)}"
+
+# Listar todas las constantes
+puts "\nConstantes de Configuracion:"
+Configuracion.constants.each do |c|
+  puts "  #{c} = #{Configuracion.const_get(c)}"
+end
+
+# Definir constantes dinámicamente
+Configuracion.const_set(:MAX_CONEXIONES, 100)
+puts "Nueva constante: #{Configuracion::MAX_CONEXIONES}"
+
+# const_get anidado
+logging_level = Configuracion::Logging.const_get(:LEVEL)
+puts "Logging level: #{logging_level}"
+
+# Acceso dinámico
+claves = [:DB_HOST, :DB_PORT, :API_KEY, :VERSION]
+claves.each do |clave|
+  puts "  Configuracion.#{clave} = #{Configuracion.const_get(clave)}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 9: Módulos raíz y anidamiento profundo.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_09_anidamiento_profundo.rb
+# Anidamiento profundo de módulos
+
+module Empresa
+  module Ventas
+    module CRM
+      module Contactos
+        VERSION = "1.0"
+
+        class Cliente
+          attr_reader :nombre, :email, :telefono
+
+          def initialize(nombre, email, telefono)
+            @nombre = nombre
+            @email = email
+            @telefono = telefono
+          end
+
+          def to_s
+            "Cliente: #{@nombre} (#{@email})"
+          end
+
+          def version_modulo
+            VERSION
+          end
+        end
+
+        class Proveedor
+          attr_reader :nombre, :contacto
+
+          def initialize(nombre, contacto)
+            @nombre = nombre
+            @contacto = contacto
+          end
+
+          def to_s
+            "Proveedor: #{@nombre}"
+          end
+        end
+      end
+
+      module Oportunidades
+        class Oportunidad
+          attr_reader :cliente, :valor, :etapa
+
+          def initialize(cliente, valor)
+            @cliente = cliente
+            @valor = valor
+            @etapa = :nueva
+          end
+
+          def avanzar
+            etapas = [:nueva, :calificada, :propuesta, :negociacion, :cerrada]
+            idx = etapas.index(@etapa)
+            @etapa = etapas[idx + 1] if idx && idx < etapas.length - 1
+          end
+
+          def to_s
+            "Oportunidad: #{@cliente.nombre} - $#{@valor} (#{@etapa})"
+          end
+        end
+      end
+    end
+
+    module Pedidos
+      class Pedido
+        attr_reader :numero, :cliente, :total, :fecha
+
+        def initialize(numero, cliente, total)
+          @numero = numero
+          @cliente = cliente
+          @total = total
+          @fecha = Time.now
+        end
+
+        def to_s
+          "Pedido ##{@numero}: #{@cliente.nombre} - $#{@total}"
+        end
+      end
+    end
+  end
+
+  module Finanzas
+    VERSION = "2.0"
+
+    module Contabilidad
+      class Factura
+        attr_reader :numero, :monto, :cliente
+
+        def initialize(numero, monto, cliente)
+          @numero = numero
+          @monto = monto
+          @cliente = cliente
+        end
+
+        def to_s
+          "Factura ##{@numero}: #{@cliente} - $#{@monto}"
+        end
+      end
+    end
+
+    module Nominas
+      class Empleado
+        attr_reader :nombre, :salario, :puesto
+
+        def initialize(nombre, salario, puesto)
+          @nombre = nombre
+          @salario = salario
+          @puesto = puesto
+        end
+
+        def to_s
+          "Empleado: #{@nombre} (#{@puesto}) - $#{@salario}/año"
+        end
+      end
+    end
+  end
+end
+
+# Crear objetos en namespaces profundos
+cliente = Empresa::Ventas::CRM::Contactos::Cliente.new(
+  "Ana García",
+  "ana@empresa.com",
+  "+123456789"
+)
+
+puts cliente
+puts "Versión del módulo Contactos: #{cliente.version_modulo}"
+
+proveedor = Empresa::Ventas::CRM::Contactos::Proveedor.new(
+  "Suministros SA",
+  "Juan Pérez"
+)
+
+oportunidad = Empresa::Ventas::CRM::Oportunidades::Oportunidad.new(cliente, 50000)
+oportunidad.avanzar
+oportunidad.avanzar
+puts oportunidad
+
+pedido = Empresa::Ventas::Pedidos::Pedido.new("PED-2024-001", cliente, 1250)
+puts pedido
+
+factura = Empresa::Finanzas::Contabilidad::Factura.new("FAC-001", 1250, cliente.nombre)
+puts factura
+
+empleado = Empresa::Finanzas::Nominas::Empleado.new("Carlos López", 85000, "Ingeniero")
+puts empleado
+
+puts "\nAnidamiento:"
+puts "  Empresa::Ventas::CRM::Contactos::VERSION = #{Empresa::Ventas::CRM::Contactos::VERSION}"
+puts "  Empresa::Finanzas::VERSION = #{Empresa::Finanzas::VERSION}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 10: `include` y `extend` con namespaces.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_10_namespace_mixins.rb
+# Incluyendo y extendiendo módulos desde namespaces
+
+module MiApp
+  module Utils
+    module Formateable
+      def formatear_fecha(tiempo)
+        tiempo.strftime("%d/%m/%Y %H:%M:%S")
+      end
+
+      def formatear_moneda(monto)
+        "$#{format('%.2f', monto)}"
+      end
+    end
+
+    module Loggeable
+      def loggear(mensaje, nivel = :info)
+        timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+        puts "[#{timestamp}] [#{nivel.upcase}] #{mensaje}"
+      end
+    end
+
+    module Serializacion
+      def to_hash
+        instance_variables.each_with_object({}) do |iv, h|
+          h[iv.to_s.delete('@')] = instance_variable_get(iv)
+        end
+      end
+    end
+  end
+
+  module Models
+    class Usuario
+      include Utils::Formateable
+      include Utils::Loggeable
+      include Utils::Serializacion
+
+      attr_reader :nombre, :email, :creado_en
+
+      def initialize(nombre, email)
+        @nombre = nombre
+        @email = email
+        @creado_en = Time.now
+        loggear("Usuario #{@nombre} creado")
+      end
+
+      def to_s
+        "Usuario: #{@nombre} (#{@email}) - creado: #{formatear_fecha(@creado_en)}"
+      end
+    end
+
+    class Factura
+      include Utils::Formateable
+      include Utils::Loggeable
+      include Utils::Serializacion
+
+      attr_reader :numero, :total, :fecha
+
+      def initialize(numero, total)
+        @numero = numero
+        @total = total
+        @fecha = Time.now
+        loggear("Factura ##{@numero} creada por #{formatear_moneda(@total)}")
+      end
+
+      def to_s
+        "Factura ##{@numero}: #{formatear_moneda(@total)} - #{formatear_fecha(@fecha)}"
+      end
+    end
+  end
+
+  module Services
+    class Facturador
+      extend Utils::Loggeable
+
+      def self.procesar(factura)
+        loggear("Procesando factura ##{factura.numero}")
+        "Factura ##{factura.numero} procesada"
+      end
+    end
+  end
+end
+
+usuario = MiApp::Models::Usuario.new("Ana", "ana@example.com")
+puts usuario
+puts "Hash: #{usuario.to_hash}"
+
+factura = MiApp::Models::Factura.new("F-001", 1500.50)
+puts factura
+
+puts MiApp::Services::Facturador.procesar(factura)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 11: Namespaces con `autoload`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_11_autoload.rb
+# Carga perezosa con autoload en módulos
+
+module MiLibreria
+  autoload :Parser, "mi_libreria/parser"
+  autoload :Validator, "mi_libreria/validator"
+  autoload :Formatter, "mi_libreria/formatter"
+  autoload :Serializer, "mi_libreria/serializer"
+
+  module Models
+    autoload :User, "mi_libreria/models/user"
+    autoload :Post, "mi_libreria/models/post"
+    autoload :Comment, "mi_libreria/models/comment"
+  end
+
+  module Services
+    autoload :Mailer, "mi_libreria/services/mailer"
+    autoload :Cache, "mi_libreria/services/cache"
+    autoload :Logger, "mi_libreria/services/logger"
+  end
+
+  VERSION = "1.0.0"
+
+  def self.version
+    VERSION
+  end
+
+  def self.configure
+    yield Configuration.instance if block_given?
+    Configuration.instance
+  end
+
+  class Configuration
+    include Singleton
+
+    attr_accessor :debug, :log_level, :cache_ttl
+
+    def initialize
+      @debug = false
+      @log_level = :info
+      @cache_ttl = 3600
+    end
+  end
+end
+
+# Verificar que las constantes no están cargadas aún
+puts "Constantes de MiLibreria (sin cargar): #{MiLibreria.constants - [:VERSION, :Configuration]}"
+
+# Se cargarán cuando se acceda a ellas
+puts "Parser existe: #{MiLibreria.const_defined?(:Parser)}"
+
+# Nota: autoload requiere que los archivos existan en el sistema de archivos
+# para que funcione realmente. Este ejemplo es ilustrativo.
+puts "\nVersión: #{MiLibreria.version}"
+
+config = MiLibreria.configure do |c|
+  c.debug = true
+  c.log_level = :debug
+end
+
+puts "Debug: #{config.debug}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 12: Namespaces con `require` relativo.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_12_require_namespace.rb
+# Organización de archivos con namespaces
+
+# Simulación de estructura de directorios:
+# lib/
+#   mi_aplicacion.rb
+#   mi_aplicacion/
+#     version.rb
+#     configuracion.rb
+#     modelos/
+#       usuario.rb
+#       articulo.rb
+#     servicios/
+#       email.rb
+#       pdf.rb
+
+module MiAplicacion
+  # Normalmente estos require irían en archivos separados
+  # autoload :Version, "mi_aplicacion/version"
+  # autoload :Configuracion, "mi_aplicacion/configuracion"
+
+  module Modelos
+    # autoload :Usuario, "mi_aplicacion/modelos/usuario"
+    # autoload :Articulo, "mi_aplicacion/modelos/articulo"
+  end
+
+  module Servicios
+    # autoload :Email, "mi_aplicacion/servicios/email"
+    # autoload :Pdf, "mi_aplicacion/servicios/pdf"
+  end
+end
+
+# Simulación de cómo se verían los archivos:
+# archivo: mi_aplicacion/version.rb
+module MiAplicacion
+  VERSION = "1.0.0"
+  RELEASE_DATE = "2024-01-15"
+  AUTOR = "Ruby Master Book"
+end
+
+# archivo: mi_aplicacion/configuracion.rb
+module MiAplicacion
+  class Configuracion
+    attr_accessor :db_host, :db_port, :api_key
+
+    def initialize
+      @db_host = "localhost"
+      @db_port = 5432
+      @api_key = ENV["API_KEY"]
+    end
+  end
+end
+
+# archivo: mi_aplicacion/modelos/usuario.rb
+module MiAplicacion
+  module Modelos
+    class Usuario
+      attr_reader :nombre, :email
+
+      def initialize(nombre, email)
+        @nombre = nombre
+        @email = email
+      end
+    end
+  end
+end
+
+# Demo inline
+MiAplicacion.const_set(:VERSION, "1.0.0") unless MiAplicacion.const_defined?(:VERSION)
+puts "Versión: #{MiAplicacion::VERSION}"
+
+module MiAplicacion
+  class ConfiguracionLocal
+    attr_accessor :debug, :log_level
+  end
+end
+
+config = MiAplicacion::ConfiguracionLocal.new
+config.debug = true
+puts "Debug: #{config.debug}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 13: Namespaces con alias.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_13_alias_namespace.rb
+# Creando alias para namespaces profundos
+
+module Datos
+  module Almacenamiento
+    module Redis
+      class Cliente
+        def conectar
+          "Conectando a Redis..."
+        end
+
+        def get(clave)
+          "valor_para_#{clave}"
+        end
+
+        def set(clave, valor)
+          "OK"
+        end
+      end
+    end
+
+    module SQL
+      class Conexion
+        def conectar
+          "Conectando a PostgreSQL..."
+        end
+
+        def ejecutar(query)
+          "Resultado de: #{query[0..30]}..."
+        end
+      end
+    end
+  end
+end
+
+# Namespace profundo es incómodo de escribir
+# Crear alias locales
+RedisDB = Datos::Almacenamiento::Redis
+SQLDB = Datos::Almacenamiento::SQL
+
+redis = RedisDB::Cliente.new
+puts redis.conectar
+puts redis.get("usuarios:1")
+
+sql = SQLDB::Conexion.new
+puts sql.conectar
+puts sql.ejecutar("SELECT * FROM usuarios")
+
+# También se puede asignar a una constante local dentro de un ámbito
+class Aplicacion
+  Almacenamiento = Datos::Almacenamiento
+
+  def initialize
+    @redis = Almacenamiento::Redis::Cliente.new
+    @sql = Almacenamiento::SQL::Conexion.new
+  end
+
+  def iniciar
+    puts @redis.conectar
+    puts @sql.conectar
+  end
+end
+
+app = Aplicacion.new
+app.iniciar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 14: Namespaces anidados con clases.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_14_clases_en_namespaces.rb
+# Diferentes formas de definir clases dentro de módulos
+
+# Forma 1: Definición completa
+module Tienda
+  class Producto
+  end
+end
+
+# Forma 2: Usando :: (resolución de constante)
+class Tienda::Carrito
+  attr_reader :items
+
+  def initialize
+    @items = []
+  end
+
+  def agregar(producto, cantidad = 1)
+    @items << { producto: producto, cantidad: cantidad }
+  end
+end
+
+# Forma 3: Abriendo un módulo y definiendo dentro
+module Tienda
+  class Pedido
+    attr_reader :numero, :items
+
+    def initialize(numero)
+      @numero = numero
+      @items = []
+    end
+  end
+
+  module Pagos
+    class Tarjeta
+      attr_reader :numero, :titular, :vencimiento
+
+      def initialize(numero, titular, vencimiento)
+        @numero = numero
+        @titular = titular
+        @vencimiento = vencimiento
+      end
+    end
+
+    class PayPal
+      attr_reader :email
+
+      def initialize(email)
+        @email = email
+      end
+    end
+
+    class Transferencia
+      attr_reader :banco, :cuenta
+
+      def initialize(banco, cuenta)
+        @banco = banco
+        @cuenta = cuenta
+      end
+    end
+  end
+end
+
+# Usar las clases
+producto = Tienda::Producto.new
+carrito = Tienda::Carrito.new
+carrito.agregar(producto)
+
+pedido = Tienda::Pedido.new("PED-001")
+tarjeta = Tienda::Pagos::Tarjeta.new("4111111111111111", "Ana García", "12/26")
+
+puts "Pedido: #{pedido.numero}"
+puts "Tarjeta: #{tarjeta.titular} - #{tarjeta.numero[-4..]}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 15: Módulos con funciones matemáticas.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_15_namespace_matematicas.rb
+# Módulo Math como ejemplo de namespace en Ruby estándar
+
+# El módulo Math de Ruby es un namespace para constantes y funciones
+puts "Math::PI = #{Math::PI}"
+puts "Math::E = #{Math::E}"
+puts "Math.sin(0) = #{Math.sin(0)}"
+puts "Math.cos(0) = #{Math.cos(0)}"
+puts "Math.sqrt(16) = #{Math.sqrt(16)}"
+puts "Math.log(100) = #{Math.log(100)}"
+puts "Math.log10(100) = #{Math.log10(100)}"
+puts "Math.exp(1) = #{Math.exp(1)}"
+puts "Math.hypot(3, 4) = #{Math.hypot(3, 4)}"
+
+# Creando nuestro propio namespace matemático
+module MatematicasAvanzadas
+  PI = 3.141592653589793
+  E = 2.718281828459045
+  PHI = 1.618033988749895
+
+  module Trigonometria
+    def self.seno(angulo_grados)
+      Math.sin(angulo_grados * PI / 180)
+    end
+
+    def self.coseno(angulo_grados)
+      Math.cos(angulo_grados * PI / 180)
+    end
+
+    def self.tangente(angulo_grados)
+      Math.tan(angulo_grados * PI / 180)
+    end
+
+    def self.arco_seno(valor)
+      Math.asin(valor) * 180 / PI
+    end
+
+    def self.arco_coseno(valor)
+      Math.acos(valor) * 180 / PI
+    end
+
+    def self.arco_tangente(valor)
+      Math.atan(valor) * 180 / PI
+    end
+
+    def self.grados_a_radianes(grados)
+      grados * PI / 180
+    end
+
+    def self.radianes_a_grados(radianes)
+      radianes * 180 / PI
+    end
+  end
+
+  module Algebra
+    def self.factorial(n)
+      return 1 if n <= 1
+      n * factorial(n - 1)
+    end
+
+    def self.coeficiente_binomial(n, k)
+      factorial(n) / (factorial(k) * factorial(n - k))
+    end
+
+    def self.fibonacci(n)
+      return n if n <= 1
+      fibonacci(n - 1) + fibonacci(n - 2)
+    end
+  end
+
+  module Estadistica
+    def self.media(datos)
+      datos.sum.to_f / datos.length
+    end
+
+    def self.mediana(datos)
+      sorted = datos.sort
+      len = sorted.length
+      (sorted[(len - 1) / 2] + sorted[len / 2]) / 2.0
+    end
+
+    def self.desviacion_estandar(datos)
+      m = media(datos)
+      Math.sqrt(datos.map { |x| (x - m) ** 2 }.sum / datos.length)
+    end
+  end
+
+  module Geometria
+    def self.area_circulo(radio)
+      PI * radio ** 2
+    end
+
+    def self.volumen_esfera(radio)
+      (4.0 / 3.0) * PI * radio ** 3
+    end
+
+    def self.distancia(x1, y1, x2, y2)
+      Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    end
+
+    def self.area_rectangulo(base, altura)
+      base * altura
+    end
+
+    def self.area_triangulo(base, altura)
+      (base * altura) / 2.0
+    end
+  end
+end
+
+puts "\n=== Trigonometría ==="
+puts "Seno de 30°: #{MatematicasAvanzadas::Trigonometria.seno(30)}"
+puts "Coseno de 60°: #{MatematicasAvanzadas::Trigonometria.coseno(60)}"
+
+puts "\n=== Álgebra ==="
+puts "5! = #{MatematicasAvanzadas::Algebra.factorial(5)}"
+puts "C(10,3) = #{MatematicasAvanzadas::Algebra.coeficiente_binomial(10, 3)}"
+puts "Fibonacci(10) = #{MatematicasAvanzadas::Algebra.fibonacci(10)}"
+
+puts "\n=== Estadística ==="
+datos = [4, 8, 15, 16, 23, 42]
+puts "Media: #{MatematicasAvanzadas::Estadistica.media(datos)}"
+puts "Mediana: #{MatematicasAvanzadas::Estadistica.mediana(datos)}"
+puts "Desviación: #{format('%.4f', MatematicasAvanzadas::Estadistica.desviacion_estandar(datos))}"
+
+puts "\n=== Geometría ==="
+puts "Área círculo r=5: #{MatematicasAvanzadas::Geometria.area_circulo(5)}"
+puts "Distancia (0,0)-(3,4): #{MatematicasAvanzadas::Geometria.distancia(0, 0, 3, 4)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 16: Convención de Rails — módulos con archivos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_16_convencion_rails.rb
+# Cómo Rails organiza namespaces con archivos
+
+# En Rails, cada modelo, controlador o vista tiene un archivo,
+# y los namespaces se reflejan en directorios:
+
+# app/models/producto.rb
+#   class Producto < ApplicationRecord; end
+#
+# app/models/admin/usuario.rb
+#   class Admin::Usuario < ApplicationRecord; end
+#
+# app/controllers/admin/usuarios_controller.rb
+#   class Admin::UsuariosController < ApplicationController; end
+#
+# app/controllers/api/v1/productos_controller.rb
+#   class Api::V1::ProductosController < ApplicationController; end
+
+module Admin
+  # Esto estaría en app/models/admin/usuario.rb
+  class Usuario
+    attr_reader :nombre, :rol
+
+    def initialize(nombre, rol)
+      @nombre = nombre
+      @rol = rol
+    end
+
+    def to_s
+      "Admin::Usuario: #{@nombre} (#{@rol})"
+    end
+  end
+
+  # Esto estaría en app/controllers/admin/usuarios_controller.rb
+  class UsuariosController
+    def index
+      "Listando usuarios de administración..."
+    end
+
+    def show(id)
+      "Mostrando usuario admin #{id}"
+    end
+  end
+end
+
+module Api
+  module V1
+    class ProductosController
+      def index
+        "API V1: Listando productos..."
+      end
+
+      def show(id)
+        "API V1: Producto #{id}"
+      end
+
+      def create(params)
+        "API V1: Producto creado: #{params[:nombre]}"
+      end
+    end
+
+    class UsuariosController
+      def index
+        "API V1: Listando usuarios..."
+      end
+    end
+  end
+
+  module V2
+    class ProductosController
+      def index
+        "API V2: Listando productos con nuevo formato..."
+      end
+
+      def search(query)
+        "API V2: Buscando '#{query}'..."
+      end
+    end
+  end
+end
+
+admin_user = Admin::Usuario.new("root", "superadmin")
+puts admin_user
+
+admin_ctrl = Admin::UsuariosController.new
+puts admin_ctrl.index
+puts admin_ctrl.show(1)
+
+api_v1 = Api::V1::ProductosController.new
+puts api_v1.index
+puts api_v1.create({ nombre: "Laptop" })
+
+api_v2 = Api::V2::ProductosController.new
+puts api_v2.index
+puts api_v2.search("laptop gaming")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 17: Módulos con `module_function` en namespaces.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_17_module_function_namespace.rb
+# module_function dentro de namespaces
+
+module Utilidades
+  module Texto
+    def capitalizar_palabras(oracion)
+      oracion.split.map(&:capitalize).join(' ')
+    end
+
+    def invertir(oracion)
+      oracion.split.reverse.join(' ')
+    end
+
+    def contar_palabras(oracion)
+      oracion.split.length
+    end
+
+    def truncar(oracion, longitud = 30)
+      oracion.length > longitud ? oracion[0..longitud - 3] + "..." : oracion
+    end
+
+    def a_snake_case(camel)
+      camel.gsub(/([A-Z])/) { "_#{$1}" }.downcase.gsub(/^_/, '')
+    end
+
+    def a_camel_case(snake)
+      snake.split('_').map(&:capitalize).join
+    end
+
+    module_function :capitalizar_palabras, :invertir, :contar_palabras,
+                   :truncar, :a_snake_case, :a_camel_case
+  end
+
+  module Numerica
+    def redondear(valor, decimales = 2)
+      format("%.#{decimales}f", valor).to_f
+    end
+
+    def porcentaje(valor, total)
+      total > 0 ? (valor.to_f / total * 100).round(1) : 0
+    end
+
+    def rango_porcentaje(valor, min, max)
+      porcentaje(valor - min, max - min)
+    end
+
+    module_function :redondear, :porcentaje, :rango_porcentaje
+  end
+end
+
+# Uso como métodos de módulo
+puts Utilidades::Texto.capitalizar_palabras("hola mundo ruby")
+puts Utilidades::Texto.invertir("uno dos tres")
+puts Utilidades::Texto.truncar("Este es un texto muy largo para truncar", 20)
+puts Utilidades::Texto.a_snake_case("MiClaseRubista")
+puts Utilidades::Texto.a_camel_case("mi_clase_rubista")
+
+puts Utilidades::Numerica.redondear(3.14159, 3)
+puts Utilidades::Numerica.porcentaje(25, 200)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 18: Namespaces y constantes privadas.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_18_constantes_privadas.rb
+# Simulación de constantes privadas dentro de módulos
+
+module ConfiguracionSecreta
+  # Convención: constantes privadas empiezan con _
+  _SECRETO_INTERNO = "no-debes-ver-esto"
+  _TOKEN_API = "sk-1234567890abcdef"
+  _PASSWORD_DB = "s3cr3t!"
+
+  # Constantes públicas
+  VERSION = "1.0.0"
+  TIMEOUT = 30
+  MAX_RETRIES = 3
+
+  # Métodos públicos que usan las constantes privadas
+  def self.api_token
+    "Bearer #{_TOKEN_API}"
+  end
+
+  def self.db_connection_string
+    "postgres://user:#{_PASSWORD_DB}@localhost:5432/mydb"
+  end
+
+  def self.secret_info
+    "Secreto: #{_SECRETO_INTERNO[0..3]}..."
+  end
+end
+
+puts "Versión: #{ConfiguracionSecreta::VERSION}"
+puts "Token: #{ConfiguracionSecreta.api_token}"
+puts "DB: #{ConfiguracionSecreta.db_connection_string}"
+puts "Info: #{ConfiguracionSecreta.secret_info}"
+
+# Las constantes que empiezan con _ son accesibles pero por convención
+# no deberían usarse fuera del módulo
+puts "\nAcceso 'privado' (posible pero no recomendado):"
+puts "Secreto: #{ConfiguracionSecreta.const_get(:_SECRETO_INTERNO)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 19: Namespaces con DSL interno.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_19_dsl_namespace.rb
+# Construyendo un DSL interno usando namespaces
+
+module ConfigDSL
+  module Definiciones
+    def configurar(&bloque)
+      dsl = DSL.new
+      dsl.instance_eval(&bloque)
+      dsl.to_h
+    end
+  end
+
+  class DSL
+    def initialize
+      @config = {}
+    end
+
+    def servidor(nombre, &bloque)
+      @config[:servidores] ||= {}
+      sv = ServidorDSL.new(nombre)
+      sv.instance_eval(&bloque) if bloque
+      @config[:servidores][nombre] = sv.to_h
+    end
+
+    def base_de_datos(&bloque)
+      db = DatabaseDSL.new
+      db.instance_eval(&bloque) if bloque
+      @config[:base_de_datos] = db.to_h
+    end
+
+    def logging(&bloque)
+      log = LoggingDSL.new
+      log.instance_eval(&bloque) if bloque
+      @config[:logging] = log.to_h
+    end
+
+    def to_h
+      @config
+    end
+  end
+
+  class ServidorDSL
+    attr_reader :nombre
+
+    def initialize(nombre)
+      @nombre = nombre
+      @config = { nombre: nombre }
+    end
+
+    def puerto(p)
+      @config[:puerto] = p
+    end
+
+    def ssl(activo = true)
+      @config[:ssl] = activo
+    end
+
+    def timeout(t)
+      @config[:timeout] = t
+    end
+
+    def max_conexiones(n)
+      @config[:max_conexiones] = n
+    end
+
+    def to_h
+      @config
+    end
+  end
+
+  class DatabaseDSL
+    def initialize
+      @config = {}
+    end
+
+    def adapter(a)
+      @config[:adapter] = a
+    end
+
+    def host(h)
+      @config[:host] = h
+    end
+
+    def port(p)
+      @config[:port] = p
+    end
+
+    def nombre(n)
+      @config[:database] = n
+    end
+
+    def usuario(u)
+      @config[:username] = u
+    end
+
+    def password(p)
+      @config[:password] = p
+    end
+
+    def pool(tam)
+      @config[:pool] = tam
+    end
+
+    def to_h
+      @config
+    end
+  end
+
+  class LoggingDSL
+    def initialize
+      @config = {}
+    end
+
+    def nivel(n)
+      @config[:level] = n
+    end
+
+    def formato(f)
+      @config[:format] = f
+    end
+
+    def archivo(a)
+      @config[:file] = a
+    end
+
+    def rotar(tam, count)
+      @config[:rotate] = { size: tam, keep: count }
+    end
+
+    def to_h
+      @config
+    end
+  end
+end
+
+class Aplicacion
+  extend ConfigDSL::Definiciones
+
+  CONFIG = configurar do
+    servidor :web do
+      puerto 8080
+      ssl true
+      timeout 30
+      max_conexiones 100
+    end
+
+    servidor :api do
+      puerto 3000
+      ssl true
+      timeout 10
+    end
+
+    base_de_datos do
+      adapter "postgresql"
+      host "localhost"
+      port 5432
+      nombre "miapp"
+      usuario "admin"
+      password "secreto"
+      pool 5
+    end
+
+    logging do
+      nivel :debug
+      formato :json
+      archivo "log/app.log"
+      rotar "10MB", 5
+    end
+  end
+end
+
+require 'pp'
+puts "Configuración de la aplicación:"
+pp Aplicacion::CONFIG
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 20: Namespaces con constantes globales vs locales.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 45_20_global_vs_local.rb
+# Constantes globales vs constantes en namespaces
+
+# Constante global (top-level)
+PI = 3.1416
+
+puts "PI global: #{PI}"
+
+module Matematicas
+  PI = 3.141592653589793
+
+  def self.mostrar_pi
+    puts "PI local (Matematicas): #{PI}"
+    puts "PI global (::PI): #{::PI}"
+  end
+
+  module Geometria
+    PI = 3.14
+
+    def self.mostrar_pi
+      puts "PI local (Geometria): #{PI}"
+      puts "PI de Matematicas: #{Matematicas::PI}"
+      puts "PI global: #{::PI}"
+      puts "PI de Math (Ruby): #{::Math::PI}"
+    end
+  end
+end
+
+Matematicas.mostrar_pi
+puts "---"
+Matematicas::Geometria.mostrar_pi
+
+# Comparación de valores
+puts "\nValores de PI:"
+puts "  Global: #{PI}"
+puts "  Math::PI: #{Math::PI}"
+puts "  Matematicas::PI: #{Matematicas::PI}"
+puts "  Matematicas::Geometria::PI: #{Matematicas::Geometria::PI}"
+puts "  Diferencia Math - Global: #{Math::PI - PI}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+  RESUMEN DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+Los namespaces mediante módulos son esenciales para la organización del código:
+
+  1. Los módulos actúan como espacios de nombres para clases y constantes.
+  2. El operador `::` resuelve constantes en la jerarquía de módulos.
+  3. `Module.nesting` muestra la pila de anidamiento léxico actual.
+  4. La resolución de constantes busca primero en el nesting léxico y luego
+     en la cadena de herencia.
+  5. Los namespaces evitan colisiones entre nombres en proyectos grandes.
+  6. La convención de directorios (Rails) refleja namespaces en el sistema
+     de archivos.
+  7. `autoload` permite carga perezosa de módulos y clases dentro de namespaces.
+  8. Las constantes privadas por convención empiezan con `_`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  EJERCICIOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+1. Crea una jerarquía de módulos `Empresa::Departamentos::Ventas` y
+   `Empresa::Departamentos::Finanzas`, cada uno con sus propias clases.
+
+2. Implementa un sistema de autenticación con namespaces: `Auth::Strategies`,
+   `Auth::Providers`, `Auth::Tokens`, cada uno con sus clases y constantes.
+
+3. Usa `const_get` y `const_set` para acceder dinámicamente a constantes
+   dentro de un namespace basado en configuración.
+
+4. Crea un módulo `Config` que contenga submódulos `Config::Database`,
+   `Config::API`, `Config::Logging`, cada uno con constantes de configuración.
+
+5. Implementa un DSL para definir rutas de API usando namespaces:
+   `API::V1::Routes`, `API::V2::Routes`.
+
+6. Crea un cargador automático que convierta strings con `::` en rutas
+   de archivos y cargue las clases correspondientes.
+
+7. Usa `Module.nesting` para depurar dónde se está ejecutando el código
+   actualmente dentro de la jerarquía de módulos.
+
+8. Crea un namespace `Plugins::Tipo` con diferentes tipos de plugins donde
+   cada tipo tenga su propia clase base y constantes.
+
+9. Implementa un sistema de configuración multicapa usando namespaces:
+   `Config::Default`, `Config::Production`, `Config::Development`.
+
+10. Crea un validador de esquemas usando namespaces: `Schema::Types`,
+    `Schema::Validators`, `Schema::Formatters`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FAQ — PREGUNTAS FRECUENTES
+────────────────────────────────────────────────────────────────────────────────────
+
+P: ¿Cuál es la diferencia entre `::` y `.`?
+R: `::` es para acceder a constantes (clases, módulos, constantes). `.` es
+   para llamar métodos. `String::NEW` vs `string.new`.
+
+P: ¿Qué pasa si uso `::` al principio del nombre?
+R: `::MiModulo` busca desde el ámbito global (top-level), ignorando el
+   anidamiento actual.
+
+P: ¿Cómo Rails sabe qué archivo cargar para `Admin::Usuario`?
+R: Rails usa `const_missing` y busca `app/models/admin/usuario.rb`
+   siguiendo la convención de nombres.
+
+P: ¿Puedo tener un módulo y una clase con el mismo nombre?
+R: Técnicamente no, porque una clase es un módulo. Pero puedes tener
+   `MiModulo::MiClase` y `Otra::MiClase`.
+
+P: ¿Es buena práctica anidar muy profundamente?
+R: Generalmente no más de 3-4 niveles. La profundidad excesiva hace el
+   código difícil de leer y mantener.
+
+P: ¿Las constantes en módulos son accesibles globalmente?
+R: Sí, cualquier constante definida dentro de un módulo es accesible
+   desde fuera usando el operador `::`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESAFÍO DEL ARQUITECTO
+────────────────────────────────────────────────────────────────────────────────────
+
+Diseña e implementa un sistema completo de "API REST Framework" usando
+namespaces como estructura organizativa principal. El sistema debe tener:
+
+  1. `API::Router` — enruta peticiones a controladores
+  2. `API::Controllers::Base` — clase base para controladores
+  3. `API::Controllers::V1::*` — controladores de versión 1
+  4. `API::Controllers::V2::*` — controladores de versión 2
+  5. `API::Models::*` — modelos de datos
+  6. `API::Serializers::*` — serializadores para cada modelo
+  7. `API::Middleware::*` — middleware (auth, logging, cors)
+  8. `API::Config::*` — configuración por entorno
+  9. `API::Errors::*` — clases de error personalizadas
+  10. `API::Validators::*` — validadores de parámetros
+
+Cada namespace debe tener sus propias constantes y clases, sin colisiones
+con otros namespaces. Implementa al menos 3 endpoints funcionales que
+demuestren cómo los namespaces organizan el código.
+
+El sistema debe demostrar:
+- Organización jerárquica clara
+- Separación de responsabilidades por namespace
+- Convención de nombres consistente
+- Facilidad de navegación y extensión
+
+Este desafío integra todos los conceptos de namespaces: anidamiento,
+resolución de constantes, organización de archivos y diseño de APIs.
+
+────────────────────────────────────────────────────────────────────────────────────
+  CIERRE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+Los namespaces son la herramienta organizativa definitiva en Ruby. Con ellos
+puedes estructurar grandes codebases de manera lógica, evitar colisiones de
+nombres y seguir convenciones que hacen tu código predecible y navegable.
+
+Ya sea que estés construyendo una gema, una aplicación Rails, o un sistema
+empresarial, los namespaces te permiten mantener el orden a medida que tu
+código crece. La combinación de módulos anidados, el operador `::` y la
+convención de archivos es la base de la organización en el mundo Ruby.
+
+────────────────────────────────────────────────────────────────────────────────────
+  PREVIEW DEL PRÓXIMO CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+En el Capítulo 46: Comparable y Enumerable, exploraremos dos de los módulos
+más importantes de la librería estándar de Ruby. Veremos cómo al incluir
+`Comparable` y definir `<=>` obtenemos todos los operadores de comparación,
+y cómo al incluir `Enumerable` y definir `each` obtenemos docenas de métodos
+de iteración, búsqueda y transformación. Es el ejemplo perfecto del poder
+de los mixins en acción.
+═══════════════════════════════════════════════════════════════════════════════════

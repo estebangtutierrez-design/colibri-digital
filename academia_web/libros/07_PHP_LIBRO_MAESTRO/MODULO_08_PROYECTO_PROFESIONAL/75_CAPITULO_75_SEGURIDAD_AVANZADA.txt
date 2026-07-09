@@ -1,0 +1,975 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 75
+##
+##                   SEGURIDAD AVANZADA
+##
+################################################################################
+################################################################################
+
+"En seguridad digital, la paranoia no es un defecto; es una virtud. Confía
+en cero, verifica todo."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido guardián de la seguridad, has llegado a uno de los capítulos más
+críticos de tu formación. En el mundo real, las aplicaciones web son
+atacadas constantemente. Según estadísticas recientes, ocurren más de 2,000
+ataques cibernéticos al día. No es cuestión de si serás atacado, sino de
+cuándo.
+
+La seguridad no es una característica que se añade al final; es una
+mentalidad que debe impregnar cada línea de código que escribes. Desde la
+validación de formularios hasta el almacenamiento de contraseñas, cada
+decisión de diseño tiene implicaciones de seguridad.
+
+En este capítulo cubriremos los vectores de ataque más comunes contra
+aplicaciones PHP: Cross-Site Scripting (XSS), Cross-Site Request Forgery
+(CSRF), SQL Injection, Session Hijacking, y más. Pero no solo
+identificaremos los problemas; implementaremos las defensas más robustas
+para cada uno.
+
+La seguridad es una carrera armamentista. Los atacantes evolucionan, y
+nosotros también debemos hacerlo.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un sistema seguro no es el que no tiene vulnerabilidades, sino el que está
+diseñado para resistir ataques. La seguridad es arquitectura, no parches."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Implementar protección CSRF con tokens en formularios y APIs.
+✓ Prevenir ataques XSS mediante escape y sanitización de salida.
+✓ Proteger contra SQL Injection usando consultas preparadas y filtrado.
+✓ Implementar autenticación segura con hash de contraseñas y sesiones.
+✓ Configurar cabeceras HTTP de seguridad (CSP, HSTS, X-Frame-Options).
+✓ Sanitizar y validar entradas de usuario de forma rigurosa.
+✓ Implementar rate limiting y protección contra fuerza bruta.
+
+===============================================================================
+1. PROTECCIÓN CSRF (CROSS-SITE REQUEST FORGERY)
+===============================================================================
+
+CSRF es un ataque que fuerza a un usuario autenticado a ejecutar acciones
+no deseadas en una aplicación web. La defensa principal es el uso de tokens
+únicos por sesión.
+
+```php
+<?php
+// src/Middleware/CsrfMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+
+class CsrfMiddleware
+{
+    private string $tokenName = 'csrf_token';
+    private int $tokenLifetime = 7200; // 2 horas
+
+    public function handle(Request $request, callable $next): Response
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        // Generar token si no existe
+        if (empty($_SESSION[$this->tokenName])) {
+            $_SESSION[$this->tokenName] = $this->generateToken();
+            $_SESSION[$this->tokenName . '_time'] = time();
+        }
+
+        // Regenerar token si expiró
+        $tokenTime = $_SESSION[$this->tokenName . '_time'] ?? 0;
+        if (time() - $tokenTime > $this->tokenLifetime) {
+            $_SESSION[$this->tokenName] = $this->generateToken();
+            $_SESSION[$this->tokenName . '_time'] = time();
+        }
+
+        // Verificar token en métodos que modifican datos
+        if (in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+
+            $token = $request->getHeader('X-CSRF-Token')
+                   ?? $request->getBody($this->tokenName)
+                   ?? '';
+
+            if (!hash_equals($_SESSION[$this->tokenName], $token)) {
+                return new Response(json_encode([
+                    'status' => 'error',
+                    'message' => 'Token CSRF inválido',
+                ]), 419, ['Content-Type' => 'application/json']);
+            }
+        }
+
+        return $next($request);
+    }
+
+    public static function getToken(): string
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        return $_SESSION['csrf_token'] ?? '';
+    }
+
+    public static function tokenField(): string
+    {
+        $token = self::getToken();
+        return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">';
+    }
+
+    private function generateToken(): string
+    {
+        return bin2hex(random_bytes(32));
+    }
+}
+?>
+```
+
+```html
+<!-- Vista con formulario protegido CSRF -->
+<form action="/api/productos" method="POST">
+    <?= \App\Middleware\CsrfMiddleware::tokenField() ?>
+    <input type="text" name="nombre" placeholder="Nombre del producto">
+    <input type="number" name="precio" placeholder="Precio">
+    <button type="submit">Guardar</button>
+</form>
+```
+
+```javascript
+// Frontend: Enviar token CSRF en peticiones AJAX
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+
+fetch('/api/productos', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRF-Token': csrfToken,
+  },
+  body: JSON.stringify({ nombre: 'Producto', precio: 100 }),
+});
+```
+
+===============================================================================
+2. PREVENCIÓN DE XSS (CROSS-SITE SCRIPTING)
+===============================================================================
+
+XSS permite a atacantes inyectar scripts maliciosos en páginas web. Es la
+vulnerabilidad más común en aplicaciones web. La defensa principal es
+escapar toda salida de datos no confiables.
+
+```php
+<?php
+// src/Helpers/Security.php
+declare(strict_types=1);
+
+namespace App\Helpers;
+
+class Security
+{
+    /**
+     * Escapar salida HTML de forma segura
+     */
+    public static function escape(string $value, string $encoding = 'UTF-8'): string
+    {
+        return htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, $encoding, false);
+    }
+
+    /**
+     * Escapar para atributos HTML
+     */
+    public static function escapeAttribute(string $value): string
+    {
+        return htmlspecialchars($value, ENT_QUOTES, 'UTF-8', true);
+    }
+
+    /**
+     * Escapar para JavaScript
+     */
+    public static function escapeJs(string $value): string
+    {
+        return json_encode($value, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+    }
+
+    /**
+     * Escapar para URLs
+     */
+    public static function escapeUrl(string $value): string
+    {
+        return rawurlencode($value);
+    }
+
+    /**
+     * Sanitizar HTML permitiendo solo etiquetas seguras
+     */
+    public static function sanitizeHtml(string $html): string
+    {
+        $allowedTags = '<p><br><strong><em><b><i><u><ol><ul><li><a><img>';
+        $allowedAttributes = 'href,src,alt,title,class,id,target';
+
+        return strip_tags($html, $allowedTags);
+    }
+
+    /**
+     * Sanitizar nombre de archivo (evitar path traversal)
+     */
+    public static function sanitizeFilename(string $filename): string
+    {
+        // Eliminar caracteres peligrosos
+        $filename = preg_replace('/[^\w\-\.]/', '_', $filename);
+        // Eliminar dobles extensiones
+        $filename = preg_replace('/\.(?=.*\.)/', '_', $filename);
+        // Limitar longitud
+        return mb_substr($filename, 0, 255);
+    }
+
+    /**
+     * Verificar que un path esté dentro del directorio permitido
+     */
+    public static function securePath(string $path, string $allowedDir): bool
+    {
+        $realPath = realpath($path);
+        $realAllowed = realpath($allowedDir);
+
+        if ($realPath === false || $realAllowed === false) {
+            return false;
+        }
+
+        return str_starts_with($realPath, $realAllowed);
+    }
+}
+?>
+```
+
+```php
+<?php
+// Uso correcto de escape en vistas
+
+// MAL: Vulnerable a XSS
+echo "<h1>{$_GET['titulo']}</h1>";
+
+// BIEN: Escape de salida
+echo "<h1>" . Security::escape($_GET['titulo']) . "</h1>";
+
+// MAL: Atributo HTML vulnerable
+echo "<img src='{$_GET['url']}' alt='Imagen'>";
+
+// BIEN: Escape de atributo
+echo "<img src='" . Security::escapeAttribute($_GET['url']) . "' alt='Imagen'>";
+
+// MAL: Datos en JavaScript sin escapar
+echo "<script>var name = '{$_GET['name']}';</script>";
+
+// BIEN: Escape para JavaScript
+echo "<script>var name = " . Security::escapeJs($_GET['name']) . ";</script>";
+?>
+```
+
+```php
+<?php
+// src/Middleware/XssProtectionMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+class XssProtectionMiddleware
+{
+    public function handle($request, $next)
+    {
+        // Sanitizar todos los parámetros GET y POST
+        $this->sanitizeInput($_GET);
+        $this->sanitizeInput($_POST);
+        $this->sanitizeInput($_REQUEST);
+
+        // Configurar cabeceras anti-XSS
+        header('X-Content-Type-Options: nosniff');
+        header('X-XSS-Protection: 1; mode=block');
+
+        return $next($request);
+    }
+
+    private function sanitizeInput(array &$input): void
+    {
+        array_walk_recursive($input, function (&$value) {
+            if (is_string($value)) {
+                // Eliminar caracteres de control peligrosos
+                $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $value);
+                // Normalizar Unicode
+                $value = \Normalizer::normalize($value, \Normalizer::FORM_C);
+            }
+        });
+    }
+}
+?>
+```
+
+===============================================================================
+3. SQL INJECTION: DEFENSA EN PROFUNDIDAD
+===============================================================================
+
+La inyección SQL es el ataque más devastador contra aplicaciones PHP. Un
+solo descuido puede exponer toda la base de datos. La defensa principal son
+las consultas preparadas (prepared statements).
+
+```php
+<?php
+// src/Core/SafeQuery.php - Consultas preparadas obligatorias
+declare(strict_types=1);
+
+namespace App\Core;
+
+class SafeQuery
+{
+    private PDO $pdo;
+
+    public function __construct()
+    {
+        $this->pdo = Database::getInstance()->getConnection();
+    }
+
+    /**
+     * Ejecutar consulta SELECT segura
+     */
+    public function select(string $sql, array $params = []): array
+    {
+        $this->validateSelectSql($sql);
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($this->sanitizeParams($params));
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Ejecutar consulta INSERT segura
+     */
+    public function insert(string $table, array $data): int
+    {
+        $columns = implode(', ', array_keys($data));
+        $placeholders = ':' . implode(', :', array_keys($data));
+
+        $sql = "INSERT INTO {$table} ({$columns}) VALUES ({$placeholders})";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($this->sanitizeParams($data));
+
+        return (int)$this->pdo->lastInsertId();
+    }
+
+    /**
+     * Ejecutar consulta UPDATE segura
+     */
+    public function update(string $table, array $data, string $where, array $whereParams = []): int
+    {
+        $sets = [];
+        foreach (array_keys($data) as $column) {
+            $sets[] = "{$column} = :{$column}";
+        }
+
+        $sql = "UPDATE {$table} SET " . implode(', ', $sets) . " WHERE {$where}";
+        $params = array_merge($data, $whereParams);
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($this->sanitizeParams($params));
+
+        return $stmt->rowCount();
+    }
+
+    /**
+     * Ejecutar consulta DELETE segura
+     */
+    public function delete(string $table, string $where, array $params = []): int
+    {
+        $sql = "DELETE FROM {$table} WHERE {$where}";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($this->sanitizeParams($params));
+
+        return $stmt->rowCount();
+    }
+
+    private function validateSelectSql(string $sql): void
+    {
+        // Prevenir múltiples consultas
+        if (stripos($sql, ';') !== false) {
+            throw new \InvalidArgumentException('No se permiten múltiples consultas');
+        }
+
+        // Solo permitir SELECT
+        if (stripos(trim($sql), 'SELECT') !== 0) {
+            throw new \InvalidArgumentException('Solo se permiten consultas SELECT');
+        }
+    }
+
+    private function sanitizeParams(array $params): array
+    {
+        $sanitized = [];
+        foreach ($params as $key => $value) {
+            if (is_string($value)) {
+                // Limitar longitud para prevenir ataques de buffer overflow
+                $value = mb_substr($value, 0, 65535);
+            }
+            $sanitized[$key] = $value;
+        }
+        return $sanitized;
+    }
+}
+?>
+```
+
+```php
+<?php
+// NUNCA hagas esto (vulnerable a SQL Injection):
+$id = $_GET['id'];
+$sql = "SELECT * FROM productos WHERE id = {$id}"; // ¡PELIGRO!
+$result = $db->query($sql);
+
+// SIEMPRE usa consultas preparadas:
+$stmt = $db->prepare("SELECT * FROM productos WHERE id = :id");
+$stmt->execute(['id' => $_GET['id']]);
+$result = $stmt->fetchAll();
+?>
+```
+
+===============================================================================
+4. AUTENTICACIÓN SEGURA Y GESTIÓN DE SESIONES
+===============================================================================
+
+```php
+<?php
+// src/Services/AuthService.php - Autenticación segura
+declare(strict_types=1);
+
+namespace App\Services;
+
+class AuthService
+{
+    private const BCRYPT_COST = 12;
+    private const SESSION_LIFETIME = 7200; // 2 horas
+    private const MAX_LOGIN_ATTEMPTS = 5;
+    private const LOCKOUT_TIME = 900; // 15 minutos
+
+    public function hashPassword(string $password): string
+    {
+        return password_hash($password, PASSWORD_BCRYPT, [
+            'cost' => self::BCRYPT_COST,
+        ]);
+    }
+
+    public function verifyPassword(string $password, string $hash): bool
+    {
+        return password_verify($password, $hash);
+    }
+
+    public function needsRehash(string $hash): bool
+    {
+        return password_needs_rehash($hash, PASSWORD_BCRYPT, [
+            'cost' => self::BCRYPT_COST,
+        ]);
+    }
+
+    public function secureSession(): void
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            // Configurar cookies de sesión seguras
+            session_set_cookie_params([
+                'lifetime' => self::SESSION_LIFETIME,
+                'path' => '/',
+                'domain' => $_SERVER['HTTP_HOST'] ?? '',
+                'secure' => isset($_SERVER['HTTPS']),
+                'httponly' => true,
+                'samesite' => 'Strict',
+            ]);
+
+            session_start();
+        }
+
+        // Regenerar ID de sesión periódicamente
+        if (!isset($_SESSION['last_regeneration'])) {
+            $this->regenerateSession();
+        } elseif (time() - $_SESSION['last_regeneration'] > 300) {
+            $this->regenerateSession();
+        }
+    }
+
+    private function regenerateSession(): void
+    {
+        session_regenerate_id(true);
+        $_SESSION['last_regeneration'] = time();
+        $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        $_SESSION['ip_address'] = $_SERVER['REMOTE_ADDR'] ?? '';
+    }
+
+    public function validateSession(): bool
+    {
+        if (!isset($_SESSION['user_id'])) {
+            return false;
+        }
+
+        // Verificar User-Agent (previene session hijacking básico)
+        if ($_SESSION['user_agent'] !== ($_SERVER['HTTP_USER_AGENT'] ?? '')) {
+            $this->destroySession();
+            return false;
+        }
+
+        return true;
+    }
+
+    public function checkLoginAttempts(string $ip): bool
+    {
+        $file = __DIR__ . '/../../storage/logs/login_attempts_' . md5($ip) . '.json';
+        $attempts = [];
+
+        if (file_exists($file)) {
+            $attempts = json_decode(file_get_contents($file), true) ?? [];
+            // Limpiar intentos antiguos
+            $attempts = array_filter($attempts, function($t) {
+                return $t > (time() - self::LOCKOUT_TIME);
+            });
+        }
+
+        if (count($attempts) >= self::MAX_LOGIN_ATTEMPTS) {
+            return false; // Bloqueado
+        }
+
+        return true;
+    }
+
+    public function registerLoginAttempt(string $ip, bool $success): void
+    {
+        $file = __DIR__ . '/../../storage/logs/login_attempts_' . md5($ip) . '.json';
+        $attempts = [];
+
+        if (file_exists($file)) {
+            $attempts = json_decode(file_get_contents($file), true) ?? [];
+        }
+
+        $attempts[] = time();
+
+        // Mantener solo los últimos 20 intentos
+        $attempts = array_slice($attempts, -20);
+
+        file_put_contents($file, json_encode($attempts), LOCK_EX);
+
+        // Registrar intento fallido en log
+        if (!$success) {
+            error_log(
+                sprintf(
+                    "[SEGURIDAD] Intento de login fallido desde IP: %s a las %s",
+                    $ip,
+                    date('Y-m-d H:i:s')
+                )
+            );
+        }
+    }
+
+    public function destroySession(): void
+    {
+        $_SESSION = [];
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(
+                session_name(),
+                '',
+                time() - 42000,
+                $params['path'],
+                $params['domain'],
+                $params['secure'],
+                $params['httponly']
+            );
+        }
+        session_destroy();
+    }
+}
+?>
+```
+
+===============================================================================
+5. CABECERAS HTTP DE SEGURIDAD
+===============================================================================
+
+Las cabeceras HTTP de seguridad instruyen al navegador sobre cómo comportarse
+para prevenir ataques.
+
+```php
+<?php
+// src/Middleware/SecurityHeadersMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+class SecurityHeadersMiddleware
+{
+    public function handle($request, $next)
+    {
+        // Content Security Policy (CSP)
+        $csp = [
+            "default-src 'self'",
+            "script-src 'self' 'strict-dynamic' 'nonce-" . $this->generateNonce() . "'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: https:",
+            "font-src 'self'",
+            "connect-src 'self'",
+            "frame-ancestors 'none'",
+            "form-action 'self'",
+            "base-uri 'self'",
+            "object-src 'none'",
+        ];
+
+        header("Content-Security-Policy: " . implode('; ', $csp));
+
+        // Otras cabeceras de seguridad
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: DENY');
+        header('X-XSS-Protection: 1; mode=block');
+        header('Referrer-Policy: strict-origin-when-cross-origin');
+        header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+
+        return $next($request);
+    }
+
+    private function generateNonce(): string
+    {
+        return base64_encode(random_bytes(16));
+    }
+}
+?>
+```
+
+```php
+<?php
+// Verificación y aplicación en el front controller
+public/index.php
+
+// Aplicar cabeceras de seguridad
+header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+?>
+```
+
+===============================================================================
+6. RATE LIMITING Y PROTECCIÓN CONTRA FUERZA BRUTA
+===============================================================================
+
+```php
+<?php
+// src/Middleware/RateLimiterMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+
+class RateLimiterMiddleware
+{
+    private array $limits = [
+        'api' => ['requests' => 60, 'window' => 60],     // 60 req/min
+        'auth' => ['requests' => 5, 'window' => 300],    // 5 req/5min
+        'default' => ['requests' => 100, 'window' => 60], // 100 req/min
+    ];
+
+    public function handle(Request $request, callable $next): Response
+    {
+        $ip = $this->getClientIp();
+        $uri = $request->getUri();
+        $key = $this->getKey($uri);
+        $limit = $this->limits[$key] ?? $this->limits['default'];
+
+        $rateData = $this->getRateData($ip, $key);
+
+        // Limpiar ventanas expiradas
+        $rateData = array_filter($rateData, function($timestamp) use ($limit) {
+            return $timestamp > (time() - $limit['window']);
+        });
+
+        if (count($rateData) >= $limit['requests']) {
+            $retryAfter = $limit['window'] - (time() - min($rateData));
+
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Demasiadas peticiones. Intenta de nuevo más tarde.',
+                'retry_after' => $retryAfter,
+            ]), 429, [
+                'Content-Type' => 'application/json',
+                'Retry-After' => (string)$retryAfter,
+                'X-RateLimit-Limit' => (string)$limit['requests'],
+                'X-RateLimit-Remaining' => '0',
+            ]);
+        }
+
+        $rateData[] = time();
+        $this->saveRateData($ip, $key, $rateData);
+
+        $remaining = $limit['requests'] - count($rateData);
+
+        // Añadir cabeceras de rate limit
+        header("X-RateLimit-Limit: {$limit['requests']}");
+        header("X-RateLimit-Remaining: {$remaining}");
+        header("X-RateLimit-Reset: " . (time() + $limit['window']));
+
+        return $next($request);
+    }
+
+    private function getKey(string $uri): string
+    {
+        if (str_contains($uri, '/auth/login') || str_contains($uri, '/auth/register')) {
+            return 'auth';
+        }
+        if (str_starts_with($uri, '/api/')) {
+            return 'api';
+        }
+        return 'default';
+    }
+
+    private function getClientIp(): string
+    {
+        $headers = [
+            'HTTP_X_FORWARDED_FOR',
+            'HTTP_X_REAL_IP',
+            'HTTP_CLIENT_IP',
+            'REMOTE_ADDR',
+        ];
+
+        foreach ($headers as $header) {
+            if (!empty($_SERVER[$header])) {
+                $ips = explode(',', $_SERVER[$header]);
+                return trim($ips[0]);
+            }
+        }
+
+        return '0.0.0.0';
+    }
+
+    private function getRateData(string $ip, string $key): array
+    {
+        $file = __DIR__ . "/../../storage/ratelimit/{$key}_{$ip}.json";
+        if (!file_exists($file)) return [];
+        return json_decode(file_get_contents($file), true) ?? [];
+    }
+
+    private function saveRateData(string $ip, string $key, array $data): void
+    {
+        $dir = __DIR__ . '/../../storage/ratelimit';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        file_put_contents(
+            "{$dir}/{$key}_{$ip}.json",
+            json_encode($data),
+            LOCK_EX
+        );
+    }
+}
+?>
+```
+
+===============================================================================
+7. SEGURIDAD EN APIs: JWT Y VALIDACIÓN DE TOKENS
+===============================================================================
+
+```php
+<?php
+// src/Middleware/JwtMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use Firebase\JWT\ExpiredException;
+
+class JwtMiddleware
+{
+    private string $secret;
+    private string $algorithm = 'HS256';
+
+    public function __construct()
+    {
+        $this->secret = $_ENV['JWT_SECRET'] ?? throw new \RuntimeException(
+            'JWT_SECRET no configurado'
+        );
+    }
+
+    public function handle(Request $request, callable $next): Response
+    {
+        $authHeader = $request->getHeader('Authorization');
+
+        if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Token de autenticación no proporcionado',
+            ]), 401);
+        }
+
+        $token = substr($authHeader, 7);
+
+        try {
+            $decoded = JWT::decode($token, new Key($this->secret, $this->algorithm));
+
+            // Verificar que el token no ha sido revocado
+            if ($this->isTokenRevoked($token)) {
+                throw new \Exception('Token revocado');
+            }
+
+            // Añadir datos del usuario a la request
+            $request->setAttribute('usuario_id', $decoded->sub);
+            $request->setAttribute('usuario_data', $decoded->data);
+
+            return $next($request);
+
+        } catch (ExpiredException $e) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Token expirado',
+                'code' => 'TOKEN_EXPIRED',
+            ]), 401);
+        } catch (\Exception $e) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Token inválido',
+                'code' => 'TOKEN_INVALID',
+            ]), 401);
+        }
+    }
+
+    private function isTokenRevoked(string $token): bool
+    {
+        $jti = $this->getTokenId($token);
+        if (!$jti) return false;
+
+        $revokedFile = __DIR__ . '/../../storage/revoked_tokens.json';
+        if (!file_exists($revokedFile)) return false;
+
+        $revoked = json_decode(file_get_contents($revokedFile), true) ?? [];
+        return in_array($jti, $revoked);
+    }
+
+    private function getTokenId(string $token): ?string
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) return null;
+
+        $payload = json_decode(base64_decode($parts[1]), true);
+        return $payload['jti'] ?? null;
+    }
+}
+?>
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- CSRF se previene con tokens únicos por sesión, validados en cada
+  petición que modifica datos. Incluir en formularios y headers HTTP.
+- XSS se previene escapando toda salida HTML con htmlspecialchars y
+  sanitizando entradas. Implementar Content-Security-Policy.
+- SQL Injection se previene exclusivamente con consultas preparadas
+  (prepared statements). Nunca concatenar valores en SQL.
+- Las contraseñas deben almacenarse con password_hash() usando BCRYPT
+  con costo 12 o superior.
+- Las sesiones seguras requieren regeneración periódica del ID, cookies
+  httpOnly, Secure y SameSite.
+- Cabeceras HTTP como CSP, HSTS, X-Frame-Options y X-Content-Type-Options
+  añaden capas de protección contra ataques del navegador.
+- Rate limiting previene ataques de fuerza bruta limitando el número de
+  peticiones por IP en una ventana de tiempo.
+- Los tokens JWT deben tener expiración, identificación única (jti) y
+  soporte para revocación.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa el middleware CSRF en tu aplicación. Prueba
+enviar un formulario sin token y verifica que sea rechazado.
+
+🧩 **Ejercicio 2:** Crea una página que muestre datos ingresados por el
+usuario sin escapar. Luego corrígela usando Security::escape(). Observa la
+diferencia.
+
+🧩 **Ejercicio 3:** Implementa el rate limiter en el endpoint de login.
+Configúralo para permitir solo 3 intentos por minuto por IP.
+
+🧩 **Ejercicio 4:** Configura las cabeceras CSP en tu aplicación. Verifica
+que los recursos externos (Google Fonts, CDNs) estén permitidos.
+
+🧩 **Ejercicio 5:** Implementa un sistema de logging de seguridad que
+registre: intentos de login fallidos, accesos a rutas inexistentes (404),
+y peticiones con tokens inválidos.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Es suficiente con escapar la salida para prevenir XSS?**
+Escapar la salida es la defensa principal, pero debe complementarse con
+Content-Security-Policy, sanitización de entradas y validación estricta.
+
+❓ **¿Debo usar PDO o MySQLi para seguridad?**
+Ambos soportan consultas preparadas, que es lo importante. PDO es más
+flexible y portable entre bases de datos.
+
+❓ **¿Qué tan seguro es JWT?**
+JWT es seguro si se implementa correctamente: algoritmo fuerte (HS256 o
+RS256), expiración corta, almacenamiento seguro del secreto y soporte
+para revocación de tokens.
+
+❓ **¿Cómo protejo mi API de ataques DDoS?**
+Rate limiting, WAF (Web Application Firewall), Cloudflare, límites de
+tamaño de petición, y monitoreo de tráfico anómalo.
+
+❓ **¿Debo validar en el frontend también?**
+La validación en el frontend mejora la experiencia de usuario, pero nunca
+confíes en ella para seguridad. Siempre valida en el backend.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto de Seguridad** — Diseña un sistema de seguridad completo
+para una plataforma bancaria en línea que maneja transferencias de dinero
+entre usuarios. Debes implementar: autenticación de dos factores (2FA) con
+TOTP, detección de login desde ubicaciones inusuales, límites de
+transferencia diarios configurables, firma digital de transacciones, log
+de auditoría inmutable, alertas en tiempo real para actividades
+sospechosas, y cumplimiento con regulaciones financieras (PCI DSS, GDPR).
+Describe la arquitectura completa incluyendo cómo se almacenan los
+secretos, cómo se manejan las claves criptográficas, y cómo se garantiza
+la no repudiación de las transacciones.
+
+===============================================================================
+FIN DEL CAPÍTULO 75
+===============================================================================
+
+"La seguridad no es un producto, sino un proceso. No se logra con una
+herramienta, sino con una mentalidad. Sé incansable, sé paranoico, sé
+seguro."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+76_CAPITULO_76_PREPARACION_PARA_SQL.txt
+===============================================================================

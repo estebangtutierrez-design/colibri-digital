@@ -1,0 +1,899 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 44: ARCHIVOS BINARIOS
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo de archivos binarios. Si los archivos de texto son
+como cartas legibles por humanos, los archivos binarios son como cofres
+sellados: compactos, eficientes y rápidos. Aquí aprenderemos a leer y
+escribir datos en su representación nativa en memoria, directamente al
+disco, sin conversiones ni interpretaciones.
+
+FRASE
+-----
+"En binario no hay malentendidos: cada byte es exactamente lo que parece."
+— Anónimo
+
+OBJETIVOS
+---------
+• Comprender las diferencias entre archivos de texto y binarios.
+• Usar ios::binary para apertura correcta en todas las plataformas.
+• Serializar y deserializar structs POD (Plain Old Data) con read/write.
+• Entender y manejar endianness (big-endian vs little-endian).
+• Implementar cabeceras de archivo (file headers) y versionado.
+• Manejar datos binarios complejos: arrays, strings, structs anidados.
+
+CONTENIDO
+---------
+
+1. TEXTO VS BINARIO
+
+  ┌─────────────────────────────────────────────────────┐
+  │  TEXTO                          BINARIO             │
+  │  Legible por humanos            Ilegible directo    │
+  │  Ocupa más espacio              Compacto            │
+  │  Portátil (endianness no afecta)  Depende de plataf.│
+  │  Lento (conversiones)           Rápido (directo)    │
+  │  Precisión decimal limitada     Precisión exacta    │
+  └─────────────────────────────────────────────────────┘
+
+2. ESTRUCTURAS POD (PLAIN OLD DATA)
+
+Una struct POD es aquella que:
+  - No tiene constructores definidos por el usuario.
+  - No tiene funciones virtuales.
+  - No tiene herencia (o solo herencia trivial).
+  - Todos sus miembros son públicos y tipos POD.
+
+Las structs POD se pueden escribir/leer byte a byte directamente porque
+su representación en memoria es contigua y predecible.
+
+3. IOS::BINARY
+
+El flag ios::binary es crucial en Windows (y opcional en Unix) para evitar
+que los caracteres 0x0A (LF) se conviertan a 0x0D 0x0A (CRLF) y viceversa.
+En archivos binarios, cada byte debe preservarse exactamente.
+
+4. ENDIANNESS
+
+Endianness (orden de bytes) se refiere a cómo se almacenan los enteros
+multibyte:
+
+  - Little-endian: byte menos significativo primero (x86, x64).
+  - Big-endian: byte más significativo primero (red, algunos CPUs).
+
+Al leer archivos binarios entre plataformas, debemos considerar el
+endianness. Una solución común es usar un formato de red fijo (big-endian).
+
+5. CABECERAS DE ARCHIVO
+
+Los archivos binarios suelen comenzar con una cabecera que contiene:
+  - Magic number (firma para identificar el formato).
+  - Versión del formato.
+  - Tamaño de la estructura.
+  - Checksum o CRC para verificar integridad.
+
+================================================================================
+CÓDIGO DE EJEMPLO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <cstring>
+#include <cstdint>
+#include <bit>
+
+using namespace std;
+
+//==============================================================================
+// EJEMPLO 1: ESTRUCTURA POD BÁSICA
+//==============================================================================
+
+struct PodBasica
+{
+    int id;
+    double valor;
+    char nombre[32];
+    bool activo;
+};
+
+void ejemplo_pod_basico()
+{
+    cout << "\n--- EJEMPLO 1: Struct POD básica ---\n";
+
+    PodBasica original = {42, 3.14159265, "Ejemplo POD", true};
+
+    ofstream archivo("pod_basica.bin", ios::binary);
+    if (!archivo)
+    {
+        cerr << "Error al escribir.\n";
+        return;
+    }
+
+    archivo.write(reinterpret_cast<char*>(&original), sizeof(PodBasica));
+    archivo.close();
+
+    PodBasica leida;
+    ifstream archivo_in("pod_basica.bin", ios::binary);
+    archivo_in.read(reinterpret_cast<char*>(&leida), sizeof(PodBasica));
+    archivo_in.close();
+
+    cout << "  ID: " << leida.id << "\n";
+    cout << "  Valor: " << leida.valor << "\n";
+    cout << "  Nombre: " << leida.nombre << "\n";
+    cout << "  Activo: " << boolalpha << leida.activo << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 2: ARRAY DE STRUCTS
+//==============================================================================
+
+struct Persona
+{
+    int edad;
+    double altura;
+    double peso;
+    char nombre[50];
+};
+
+void ejemplo_array_structs()
+{
+    cout << "\n--- EJEMPLO 2: Array de structs ---\n";
+
+    Persona personas[] =
+    {
+        {25, 1.75, 72.5, "Ana Pérez"},
+        {30, 1.68, 65.0, "Luis Gómez"},
+        {22, 1.80, 78.2, "Carlos Ruiz"},
+        {35, 1.65, 60.0, "María López"}
+    };
+
+    size_t num = sizeof(personas) / sizeof(Persona);
+
+    ofstream archivo("personas.bin", ios::binary);
+    archivo.write(reinterpret_cast<char*>(&num), sizeof(num));
+    archivo.write(reinterpret_cast<char*>(personas), sizeof(personas));
+    archivo.close();
+
+    size_t num_leidas;
+    ifstream archivo_in("personas.bin", ios::binary);
+    archivo_in.read(reinterpret_cast<char*>(&num_leidas), sizeof(num_leidas));
+    cout << "  Número de personas: " << num_leidas << "\n";
+
+    for (size_t i = 0; i < num_leidas; ++i)
+    {
+        Persona p;
+        archivo_in.read(reinterpret_cast<char*>(&p), sizeof(Persona));
+        cout << "  " << p.nombre << " | Edad: " << p.edad
+             << " | Altura: " << p.altura << " | Peso: " << p.peso << "\n";
+    }
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 3: MAGIC NUMBER Y CABECERA
+//==============================================================================
+/*
+  Uso de un magic number para identificar el formato del archivo.
+*/
+struct Cabecera
+{
+    uint32_t magic;       // Firma: 0x4D414553 ('MAES')
+    uint32_t version;     // Versión del formato
+    uint64_t num_registros;
+    uint32_t checksum;    // Checksum simple
+    char descripcion[32];
+};
+
+struct Registro
+{
+    uint32_t id;
+    char datos[64];
+};
+
+uint32_t calcular_checksum(const char* data, size_t size)
+{
+    uint32_t sum = 0;
+    for (size_t i = 0; i < size; ++i)
+        sum += static_cast<unsigned char>(data[i]);
+    return sum;
+}
+
+void ejemplo_cabecera()
+{
+    cout << "\n--- EJEMPLO 3: Cabecera con magic number ---\n";
+
+    vector<Registro> registros =
+    {
+        {1, "Primer registro de prueba"},
+        {2, "Segundo registro de prueba"},
+        {3, "Tercer registro de prueba"}
+    };
+
+    Cabecera cab;
+    cab.magic = 0x4D414553;
+    cab.version = 1;
+    cab.num_registros = registros.size();
+
+    // Calcular checksum de los datos
+    cab.checksum = 0;
+    for (const auto& r : registros)
+        cab.checksum += calcular_checksum(
+            reinterpret_cast<const char*>(&r), sizeof(Registro));
+
+    strncpy(cab.descripcion, "Formato MAES v1", 31);
+
+    ofstream archivo("cabecera.bin", ios::binary);
+    archivo.write(reinterpret_cast<char*>(&cab), sizeof(Cabecera));
+    archivo.write(reinterpret_cast<char*>(registros.data()),
+                  registros.size() * sizeof(Registro));
+    archivo.close();
+
+    // Lectura y validación
+    ifstream archivo_in("cabecera.bin", ios::binary);
+    Cabecera cab_leida;
+    archivo_in.read(reinterpret_cast<char*>(&cab_leida), sizeof(Cabecera));
+
+    if (cab_leida.magic != 0x4D414553)
+    {
+        cerr << "  Error: magic number inválido!\n";
+        return;
+    }
+
+    cout << "  Magic OK: " << hex << cab_leida.magic << dec << "\n";
+    cout << "  Versión: " << cab_leida.version << "\n";
+    cout << "  Registros: " << cab_leida.num_registros << "\n";
+    cout << "  Descripción: " << cab_leida.descripcion << "\n";
+
+    // Leer y verificar checksum
+    uint32_t checksum_calc = 0;
+    for (uint64_t i = 0; i < cab_leida.num_registros; ++i)
+    {
+        Registro r;
+        archivo_in.read(reinterpret_cast<char*>(&r), sizeof(Registro));
+        checksum_calc += calcular_checksum(
+            reinterpret_cast<const char*>(&r), sizeof(Registro));
+        cout << "  Registro " << r.id << ": " << r.datos << "\n";
+    }
+
+    cout << "  Checksum almacenado: " << cab_leida.checksum << "\n";
+    cout << "  Checksum calculado: " << checksum_calc << "\n";
+    cout << "  Integridad: " << (cab_leida.checksum == checksum_calc ?
+                                 "OK" : "CORRUPCIÓN DETECTADA") << "\n";
+
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 4: ENDIANNESS
+//==============================================================================
+/*
+  Detectar y convertir endianness.
+*/
+void ejemplo_endianness()
+{
+    cout << "\n--- EJEMPLO 4: Endianness ---\n";
+
+    // Detectar endianness
+    uint32_t prueba = 0x01020304;
+    char* bytes = reinterpret_cast<char*>(&prueba);
+
+    if (bytes[0] == 0x04)
+        cout << "  Sistema: Little-Endian\n";
+    else if (bytes[0] == 0x01)
+        cout << "  Sistema: Big-Endian\n";
+    else
+        cout << "  Sistema: Endianness desconocido\n";
+
+    // Mostrar bytes en orden
+    cout << "  Bytes en memoria: ";
+    for (int i = 0; i < 4; ++i)
+        cout << hex << (int)(unsigned char)bytes[i] << " ";
+    cout << dec << "\n";
+
+    // Función de conversión (C++20: std::byteswap)
+    uint32_t original = 0x12345678;
+    uint32_t intercambiado = 0;
+
+    #if __cplusplus >= 202302L
+    intercambiado = byteswap(original);
+    #else
+    // Implementación manual de byteswap
+    intercambiado = ((original & 0xFF000000) >> 24) |
+                    ((original & 0x00FF0000) >>  8) |
+                    ((original & 0x0000FF00) <<  8) |
+                    ((original & 0x000000FF) << 24);
+    #endif
+
+    cout << "  Original: 0x" << hex << original << "\n";
+    cout << "  Swapped:  0x" << hex << intercambiado << dec << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 5: ESCRITURA CON STRINGS (TAMAÑO VARIABLE)
+//==============================================================================
+/*
+  Los strings requieren manejo especial ya que no tienen tamaño fijo.
+  Estrategia: escribir largo + datos.
+*/
+void ejemplo_strings_variable()
+{
+    cout << "\n--- EJEMPLO 5: Strings de tamaño variable ---\n";
+
+    ofstream archivo("strings.bin", ios::binary);
+    if (!archivo) return;
+
+    vector<string> textos =
+    {
+        "C++ es genial",
+        "Archivos binarios",
+        "Strings de longitud variable",
+        "Módulo V - C++ Master Book"
+    };
+
+    // Escribir cantidad de strings
+    uint32_t n = textos.size();
+    archivo.write(reinterpret_cast<char*>(&n), sizeof(n));
+
+    for (const auto& s : textos)
+    {
+        uint32_t len = s.size();
+        archivo.write(reinterpret_cast<char*>(&len), sizeof(len));
+        archivo.write(s.data(), len);
+    }
+    archivo.close();
+
+    ifstream archivo_in("strings.bin", ios::binary);
+    uint32_t n_leidas;
+    archivo_in.read(reinterpret_cast<char*>(&n_leidas), sizeof(n_leidas));
+
+    cout << "  Strings almacenados: " << n_leidas << "\n";
+    for (uint32_t i = 0; i < n_leidas; ++i)
+    {
+        uint32_t len;
+        archivo_in.read(reinterpret_cast<char*>(&len), sizeof(len));
+        string s(len, '\0');
+        archivo_in.read(&s[0], len);
+        cout << "  [" << i << "] '" << s << "' (" << len << " chars)\n";
+    }
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 6: ESTRUCTURA CON CAMPOS DE TAMAÑO FIJO Y VARIABLE
+//==============================================================================
+
+struct CabeceraVariable
+{
+    uint32_t magic;
+    uint32_t version;
+    uint64_t timestamp;
+    uint32_t num_campos;
+};
+
+void ejemplo_estructura_mixta()
+{
+    cout << "\n--- EJEMPLO 6: Estructura mixta ---\n";
+
+    ofstream archivo("mixto.bin", ios::binary);
+
+    CabeceraVariable cab = {0x4D495854, 1, 1721234567, 3};
+    archivo.write(reinterpret_cast<char*>(&cab), sizeof(CabeceraVariable));
+
+    struct Campo { uint16_t tipo; uint32_t valor; };
+    Campo campos[] = {{1, 100}, {2, 200}, {3, 300}};
+    archivo.write(reinterpret_cast<char*>(campos), sizeof(campos));
+
+    archivo.close();
+
+    ifstream archivo_in("mixto.bin", ios::binary);
+    CabeceraVariable c;
+    archivo_in.read(reinterpret_cast<char*>(&c), sizeof(CabeceraVariable));
+
+    cout << "  Timestamp: " << c.timestamp << "\n";
+    cout << "  Campos: " << c.num_campos << "\n";
+
+    for (uint32_t i = 0; i < c.num_campos; ++i)
+    {
+        Campo cm;
+        archivo_in.read(reinterpret_cast<char*>(&cm), sizeof(Campo));
+        cout << "  Campo " << i << ": tipo=" << cm.tipo
+             << " valor=" << cm.valor << "\n";
+    }
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 7: VECTOR DE ENTEROS BINARIO
+//==============================================================================
+void ejemplo_vector_enteros()
+{
+    cout << "\n--- EJEMPLO 7: Vector de enteros ---\n";
+
+    vector<int> datos = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+
+    ofstream archivo("enteros.bin", ios::binary);
+    size_t n = datos.size();
+    archivo.write(reinterpret_cast<char*>(&n), sizeof(n));
+    archivo.write(reinterpret_cast<char*>(datos.data()), n * sizeof(int));
+    archivo.close();
+
+    ifstream archivo_in("enteros.bin", ios::binary);
+    size_t n_leidos;
+    archivo_in.read(reinterpret_cast<char*>(&n_leidos), sizeof(n_leidos));
+
+    vector<int> leidos(n_leidos);
+    archivo_in.read(reinterpret_cast<char*>(leidos.data()), n_leidos * sizeof(int));
+
+    int suma = 0;
+    for (int v : leidos)
+        suma += v;
+
+    cout << "  Enteros: " << n_leidos << ", suma = " << suma << "\n";
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 8: STRUCT CON BITFIELD
+//==============================================================================
+
+struct BitField
+{
+    uint32_t flags : 4;   // 4 bits
+    uint32_t count : 12;  // 12 bits
+    uint32_t id    : 16;  // 16 bits
+};
+
+void ejemplo_bitfield()
+{
+    cout << "\n--- EJEMPLO 8: Bitfields ---\n";
+
+    BitField bf;
+    bf.flags = 0xA;
+    bf.count = 1234;
+    bf.id    = 0xBEEF;
+
+    ofstream archivo("bitfield.bin", ios::binary);
+    archivo.write(reinterpret_cast<char*>(&bf), sizeof(BitField));
+    archivo.close();
+
+    BitField leido;
+    ifstream archivo_in("bitfield.bin", ios::binary);
+    archivo_in.read(reinterpret_cast<char*>(&leido), sizeof(BitField));
+
+    cout << "  Flags: 0x" << hex << leido.flags << "\n";
+    cout << "  Count: " << dec << leido.count << "\n";
+    cout << "  ID: 0x" << hex << leido.id << dec << "\n";
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 9: STRUCT CON CHAR[] VS STRING
+//==============================================================================
+
+struct Fija { char nombre[64]; int id; };
+struct Variable { string nombre; int id; };
+
+void ejemplo_fija_vs_variable()
+{
+    cout << "\n--- EJEMPLO 9: Fijo vs Variable ---\n";
+
+    // Tamaño fijo (POD)
+    Fija fija;
+    fija.id = 1;
+    strncpy(fija.nombre, "Nombre fijo de 64 bytes", 63);
+
+    ofstream archivo("fija.bin", ios::binary);
+    archivo.write(reinterpret_cast<char*>(&fija), sizeof(Fija));
+    archivo.close();
+
+    cout << "  Tamaño struct fija: " << sizeof(Fija) << " bytes\n";
+
+    // Tamaño variable (no POD, hay que serializar manualmente)
+    Variable var;
+    var.id = 2;
+    var.nombre = "Nombre variable - ahorra espacio";
+
+    ofstream archivo_var("variable.bin", ios::binary);
+    uint32_t len = var.nombre.size();
+    archivo_var.write(reinterpret_cast<char*>(&len), sizeof(len));
+    archivo_var.write(var.nombre.data(), len);
+    archivo_var.write(reinterpret_cast<char*>(&var.id), sizeof(var.id));
+    archivo_var.close();
+
+    cout << "  Tamaño struct variable en disco: "
+         << sizeof(len) + len + sizeof(var.id) << " bytes\n";
+}
+
+//==============================================================================
+// EJEMPLO 10: POSICIONAMIENTO Y ACCESO ALEATORIO
+//==============================================================================
+void ejemplo_acceso_aleatorio()
+{
+    cout << "\n--- EJEMPLO 10: Acceso aleatorio ---\n";
+
+    // Crear archivo con 100 enteros secuenciales
+    ofstream out("aleatorio.bin", ios::binary);
+    for (int i = 0; i < 100; ++i)
+    {
+        int val = i * 10;
+        out.write(reinterpret_cast<char*>(&val), sizeof(val));
+    }
+    out.close();
+
+    // Leer posiciones específicas
+    ifstream archivo("aleatorio.bin", ios::binary);
+    if (!archivo) return;
+
+    int posiciones[] = {0, 49, 99, 25, 75};
+    for (int pos : posiciones)
+    {
+        archivo.seekg(pos * sizeof(int), ios::beg);
+        int valor;
+        archivo.read(reinterpret_cast<char*>(&valor), sizeof(valor));
+        cout << "  Posición " << pos << " → valor = " << valor << "\n";
+    }
+    archivo.close();
+}
+
+//==============================================================================
+// EJEMPLO 11: IMAGEN BMP — CABECERA SIMPLE
+//==============================================================================
+/*
+  Lectura de cabecera de un archivo BMP (formato de imagen).
+*/
+struct BmpHeader
+{
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+};
+
+void ejemplo_bmp()
+{
+    cout << "\n--- EJEMPLO 11: Cabecera BMP ---\n";
+
+    // Crear un BMP mínimo (no funcional, solo para demostración)
+    ofstream archivo("test.bmp", ios::binary);
+
+    BmpHeader h;
+    h.bfType = 0x4D42; // 'BM'
+    h.bfSize = 54 + 3 * 10 * 10; // cabecera + píxeles
+    h.bfReserved1 = 0;
+    h.bfReserved2 = 0;
+    h.bfOffBits = 54;
+
+    archivo.write(reinterpret_cast<char*>(&h), sizeof(BmpHeader));
+    archivo.close();
+
+    // Leer y verificar
+    ifstream archivo_in("test.bmp", ios::binary);
+    BmpHeader h_leida;
+    archivo_in.read(reinterpret_cast<char*>(&h_leida), sizeof(BmpHeader));
+
+    if (h_leida.bfType == 0x4D42)
+    {
+        cout << "  ¡Formato BMP válido!\n";
+        cout << "  Tamaño: " << h_leida.bfSize << " bytes\n";
+        cout << "  Offset datos: " << h_leida.bfOffBits << "\n";
+    }
+    else
+    {
+        cout << "  No es un BMP válido.\n";
+    }
+    archivo_in.close();
+}
+
+//==============================================================================
+// EJEMPLO 12: COPY BINARIO
+//==============================================================================
+void ejemplo_copia_binaria()
+{
+    cout << "\n--- EJEMPLO 12: Copia binaria ---\n";
+
+    ofstream("fuente.bin", ios::binary)
+        .write("DATOS_BINARIOS_12345_67890_FIN", 32);
+
+    ifstream fuente("fuente.bin", ios::binary);
+    ofstream destino("copia.bin", ios::binary);
+
+    const size_t TAM = 4096;
+    char buffer[TAM];
+
+    while (fuente.read(buffer, TAM) || fuente.gcount() > 0)
+    {
+        size_t leidos = fuente.gcount();
+        destino.write(buffer, leidos);
+    }
+
+    fuente.close();
+    destino.close();
+
+    cout << "  Archivo copiado correctamente.\n";
+}
+
+//==============================================================================
+// EJEMPLO 13: VERSIONADO DE FORMATO
+//==============================================================================
+/*
+  Distintas versiones del mismo formato.
+*/
+
+struct HeaderV1 { uint32_t magic; uint32_t version; int x; int y; };
+struct HeaderV2 { uint32_t magic; uint32_t version; int x; int y; int z; };
+
+void ejemplo_versionado()
+{
+    cout << "\n--- EJEMPLO 13: Versionado ---\n";
+
+    // Escribir V2
+    HeaderV2 h2 = {0x564552, 2, 10, 20, 30};
+    ofstream out("version.bin", ios::binary);
+    out.write(reinterpret_cast<char*>(&h2), sizeof(HeaderV2));
+    out.close();
+
+    ifstream in("version.bin", ios::binary);
+
+    // Leer solo magic y version
+    uint32_t magic, version;
+    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    in.read(reinterpret_cast<char*>(&version), sizeof(version));
+
+    if (version == 1)
+    {
+        HeaderV1 h1;
+        h1.magic = magic;
+        h1.version = version;
+        in.read(reinterpret_cast<char*>(&h1.x), sizeof(h1.x));
+        in.read(reinterpret_cast<char*>(&h1.y), sizeof(h1.y));
+        cout << "  Versión 1: x=" << h1.x << " y=" << h1.y << "\n";
+    }
+    else if (version == 2)
+    {
+        HeaderV2 h2;
+        h2.magic = magic;
+        h2.version = version;
+        in.read(reinterpret_cast<char*>(&h2.x), sizeof(h2.x));
+        in.read(reinterpret_cast<char*>(&h2.y), sizeof(h2.y));
+        in.read(reinterpret_cast<char*>(&h2.z), sizeof(h2.z));
+        cout << "  Versión 2: x=" << h2.x << " y=" << h2.y
+             << " z=" << h2.z << "\n";
+    }
+    in.close();
+}
+
+//==============================================================================
+// EJEMPLO 14: PADDING Y ALINEACIÓN
+//==============================================================================
+/*
+  Los compiladores pueden añadir padding entre campos para alineación.
+*/
+#pragma pack(push, 1)
+struct Packed { char a; int b; char c; };
+#pragma pack(pop)
+
+struct NoPacked { char a; int b; char c; };
+
+void ejemplo_padding()
+{
+    cout << "\n--- EJEMPLO 14: Padding y alineación ---\n";
+
+    cout << "  Tamaño NoPacked (con padding): " << sizeof(NoPacked) << "\n";
+    cout << "  Tamaño Packed (sin padding):   " << sizeof(Packed) << "\n";
+
+    NoPacked np = {'A', 12345, 'B'};
+    ofstream("nopacked.bin", ios::binary)
+        .write(reinterpret_cast<char*>(&np), sizeof(NoPacked));
+
+    Packed pk = {'A', 12345, 'B'};
+    ofstream("packed.bin", ios::binary)
+        .write(reinterpret_cast<char*>(&pk), sizeof(Packed));
+
+    cout << "  Disco NoPacked: " << sizeof(NoPacked) << " bytes\n";
+    cout << "  Disco Packed:   " << sizeof(Packed) << " bytes\n";
+}
+
+//==============================================================================
+// EJEMPLO 15: BÚSQUEDA BINARIA EN ARCHIVO
+//==============================================================================
+/*
+  Búsqueda binaria sobre un archivo de enteros ordenados.
+*/
+void ejemplo_busqueda_binaria()
+{
+    cout << "\n--- EJEMPLO 15: Búsqueda binaria ---\n";
+
+    ofstream out("sorted.bin", ios::binary);
+    for (int i = 0; i < 1000; ++i)
+    {
+        int v = i * 2; // sorted: 0, 2, 4, ..., 1998
+        out.write(reinterpret_cast<char*>(&v), sizeof(v));
+    }
+    out.close();
+
+    ifstream archivo("sorted.bin", ios::binary);
+    int objetivo = 500;
+
+    // Obtener tamaño
+    archivo.seekg(0, ios::end);
+    int num_enteros = archivo.tellg() / sizeof(int);
+
+    int izq = 0, der = num_enteros - 1, encontrado = -1;
+
+    while (izq <= der)
+    {
+        int medio = izq + (der - izq) / 2;
+        archivo.seekg(medio * sizeof(int), ios::beg);
+
+        int valor;
+        archivo.read(reinterpret_cast<char*>(&valor), sizeof(valor));
+
+        if (valor == objetivo)
+        {
+            encontrado = medio;
+            break;
+        }
+        else if (valor < objetivo)
+            izq = medio + 1;
+        else
+            der = medio - 1;
+    }
+
+    if (encontrado >= 0)
+        cout << "  Valor " << objetivo << " encontrado en índice "
+             << encontrado << "\n";
+    else
+        cout << "  Valor " << objetivo << " no encontrado.\n";
+
+    archivo.close();
+}
+
+//==============================================================================
+// MAIN
+//==============================================================================
+
+int main()
+{
+    cout << "=============================================\n";
+    cout << "  C++ MASTER BOOK — CAPÍTULO 44: BINARIOS\n";
+    cout << "=============================================\n";
+
+    ejemplo_pod_basico();
+    ejemplo_array_structs();
+    ejemplo_cabecera();
+    ejemplo_endianness();
+    ejemplo_strings_variable();
+    ejemplo_estructura_mixta();
+    ejemplo_vector_enteros();
+    ejemplo_bitfield();
+    ejemplo_fija_vs_variable();
+    ejemplo_acceso_aleatorio();
+    ejemplo_bmp();
+    ejemplo_copia_binaria();
+    ejemplo_versionado();
+    ejemplo_padding();
+    ejemplo_busqueda_binaria();
+
+    cout << "\n=============================================\n";
+    cout << "  Fin del capítulo 44.\n";
+    cout << "=============================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN
+-------
+Los archivos binarios ofrecen la forma más eficiente y compacta de almacenar
+datos. En este capítulo aprendimos a serializar structs POD directamente con
+write()/read(), a manejar strings de tamaño variable con prefijos de longitud,
+a incluir cabeceras con magic numbers y versionado, y a considerar el
+endianness al intercambiar archivos entre plataformas. Exploramos el acceso
+aleatorio con seekg/seekp, el padding de estructuras, y técnicas como la
+búsqueda binaria sobre archivos. El manejo correcto de archivos binarios
+es esencial para aplicaciones de alto rendimiento y sistemas embebidos.
+
+EJERCICIOS
+----------
+1. Crea una estructura Punto3D (x, y, z double) y escribe 100 puntos
+   aleatorios en un archivo binario. Luego léelos y calcula la distancia
+   media desde el origen.
+
+2. Implementa un serializador de matrices (vector<vector<int>>) a binario.
+   Formato: filas, columnas, datos.
+
+3. Añade un campo checksum CRC32 simple a un archivo binario y verifica
+   la integridad al leerlo.
+
+4. Crea una estructura Alumno (char nombre[64], int edad, double promedio)
+   y guarda un array de 5 alumnos. Luego permite buscar por índice
+   usando seekg.
+
+5. Escribe un programa que convierta un archivo binario little-endian a
+   big-endian usando byteswap.
+
+6. Implementa un formato de archivo con 3 versiones diferentes. El lector
+   debe detectar la versión y leer correctamente cada formato.
+
+7. Crea un programa que lea un archivo binario y muestre su contenido en
+   hexadecimal y ASCII (como el comando hexdump).
+
+8. Compara el tamaño de 1000 números double guardados como texto CSV vs
+   binario. Calcula la relación de compresión.
+
+9. Implementa la serialización de un árbol binario simple (struct Node con
+   left/right como índices) a un archivo binario plano.
+
+10. (Avanzado) Diseña un "Gestor de Páginas" que divida un archivo binario
+    en páginas de 4 KB, con un directorio de páginas al inicio y soporte
+    para inserción/eliminación de registros.
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: ¿Por qué no puedo escribir un std::string directamente con write()?
+R: string internamente gestiona memoria dinámica. write() escribiría los
+   bytes del objeto string (incluyendo punteros internos), no los caracteres.
+   Debes serializar manualmente: largo + datos.
+
+P: ¿Qué es el padding y cómo evitarlo?
+R: El padding son bytes de relleno que el compilador añade para alinear los
+   campos en memoria. Se evita con #pragma pack(push, 1) y #pragma pack(pop),
+   aunque puede penalizar el rendimiento.
+
+P: ¿Debo preocuparme por el endianness?
+R: Sí, si los archivos se van a intercambiar entre sistemas (x86 little-endian
+   vs ARM big-endian). Define un formato de red fijo (generalmente big-endian)
+   y convierte al leer/escribir.
+
+P: ¿Qué es un magic number?
+R: Es una secuencia fija de bytes al inicio del archivo que identifica su
+   formato. Por ejemplo, 0x4D42 ('BM') para BMP, 0x89504E47 para PNG.
+
+P: ¿seekg y seekp son independientes?
+R: En flujos que solo leen (ifstream) o solo escriben (ofstream), hay un
+   solo puntero. En fstream hay dos punteros que se mueven independientemente.
+
+P: ¿Por qué mi archivo binario se ve corrupto en Windows?
+R: Probablemente porque no abriste el archivo con ios::binary. En Windows,
+   sin el flag binario, el sistema convierte 0x0A a 0x0D 0x0A.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+Implementa un "Sistema de Archivos de Registros Variables" (VRS) que:
+  - Almacene registros de tamaño variable en un solo archivo binario.
+  - Use un índice al inicio con offset y tamaño de cada registro.
+  - Soporte operaciones: insertar, leer por ID, actualizar, eliminar
+    (marcando como libre y reutilizando espacio).
+  - Incluya compactación (defragmentación) cuando el espacio libre supere
+    un umbral.
+  - Use un magic number + versión en la cabecera global.
+  - Mantenga un mapa de bloques libres (free list) para reutilizar espacio.
+  - Implemente checksum por registro para detectar corrupción.
+  - Ofrezca iteración secuencial sobre todos los registros activos.
+
+Este desafío integra todos los conceptos del capítulo: POD, cabeceras,
+acceso aleatorio, versionado, y manejo eficiente de datos binarios.
+
+CIERRE
+------
+Los archivos binarios nos dan el máximo control sobre cómo se almacenan los
+datos. Con magic numbers, versionado y control de endianness, podemos crear
+formatos portables y eficientes. En el próximo capítulo veremos cómo manejar
+los estados de los flujos para construir aplicaciones robustas frente a
+errores de archivo.
+
+PRÓXIMO CAPÍTULO
+----------------
+Capítulo 45: ESTADOS DE ARCHIVOS → good(), eof(), fail(), bad(), clear(),
+y recuperación de errores.
+
+================================================================================
+  FIN DEL CAPÍTULO 44 — C++ MASTER BOOK
+================================================================================

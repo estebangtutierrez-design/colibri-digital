@@ -1,0 +1,1326 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 72: PATRONES DE DISEÑO EN C++
+================================================================================
+
+  "Los patrones de diseño son el vocabulario compartido de los
+   arquitectos del software. Con ellos, una idea compleja se
+   transmite en una sola palabra."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido, Arquitecto!
+
+  En el capítulo anterior aprendiste a estructurar proyectos con
+  arquitectura sólida. Ahora es tiempo de llenar esa arquitectura
+  con patrones de diseño probados que resuelven problemas recurrentes.
+
+  Los patrones no son código copiable, son conceptos que se adaptan
+  a cada contexto. En C++, muchos patrones clásicos adquieren formas
+  únicas gracias a templates, RAII, std::function y CRTP.
+
+  FRASE DEL DÍA
+  -------------
+  "Un patrón de diseño no es una receta; es un mapa que te muestra
+   el camino, pero tú debes recorrerlo."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Implementar Singleton en C++ moderno con seguridad thread-safe.
+  2. Construir un Factory robusto con registro dinámico de tipos.
+  3. Diseñar el patrón Observer usando std::function y señales.
+  4. Aplicar Strategy para algoritmos intercambiables.
+  5. Dominar CRTP (Curiously Recurring Template Pattern).
+  6. Combinar patrones para resolver problemas del mundo real.
+  7. Reconocer cuándo un patrón es útil y cuándo es sobreingeniería.
+
+================================================================================
+
+  PATRONES DE DISEÑO EN C++ — CONTENIDO COMPLETO
+================================================================================
+
+► 1. INTRODUCCIÓN A LOS PATRONES DE DISEÑO
+
+  Los patrones de diseño fueron popularizados por el "Gang of Four"
+  (GoF): Erich Gamma, Richard Helm, Ralph Johnson y John Vlissides
+  en 1994. Los clasificaron en 3 categorías:
+
+  • Creacionales: Cómo se crean los objetos.
+  • Estructurales: Cómo se componen clases y objetos.
+  • De comportamiento: Cómo interactúan y se comunican.
+
+  En C++ moderno, muchos patrones cambian respecto al GoF original.
+  Por ejemplo, el patrón Strategy se implementa mejor con
+  std::function que con jerarquías de clases.
+
+► 2. SINGLETON — EL ÚNICO
+
+  El Singleton garantiza que una clase tenga solo una instancia y
+  proporciona un punto de acceso global a ella.
+
+  EN C++ MODERNO (C++11+):
+
+  El estándar C++11 garantiza que las variables static locales se
+  inicialicen de forma thread-safe. Esto hace que el Singleton
+  "Meyer's" sea la implementación preferida.
+
+*/
+
+#include <iostream>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <functional>
+#include <memory>
+#include <map>
+#include <string>
+#include <algorithm>
+#include <sstream>
+#include <fstream>
+#include <chrono>
+#include <cassert>
+
+//------------------------------------------------------------------------------
+// SINGLETON: Meyer's (C++11 thread-safe)
+//------------------------------------------------------------------------------
+
+class Logger {
+public:
+    // El único punto de acceso — thread-safe por estándar
+    static Logger& instancia() {
+        static Logger instancia;
+        return instancia;
+    }
+
+    void log(const std::string& mensaje) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto ahora = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now());
+        stream_ << std::ctime(&ahora) << ": " << mensaje << "\n";
+    }
+
+    // Eliminar copia y asignación
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
+
+private:
+    // Constructor privado — nadie más puede instanciar
+    Logger() : stream_("aplicacion.log", std::ios::app) {
+        if (!stream_.is_open()) {
+            throw std::runtime_error("No se pudo abrir el log");
+        }
+    }
+
+    ~Logger() {
+        stream_ << "=== FIN DE SESIÓN ===\n";
+    }
+
+    std::mutex mutex_;
+    std::ofstream stream_;
+};
+
+void ejemplo_singleton() {
+    Logger::instancia().log("Aplicación iniciada");
+
+    std::thread t1([] {
+        Logger::instancia().log("Hilo 1: procesando...");
+    });
+
+    std::thread t2([] {
+        Logger::instancia().log("Hilo 2: procesando...");
+    });
+
+    t1.join();
+    t2.join();
+
+    Logger::instancia().log("Aplicación finalizada");
+    // No hay necesidad de delete — la instancia vive hasta fin del programa
+}
+
+//------------------------------------------------------------------------------
+// SINGLETON con template
+//------------------------------------------------------------------------------
+
+template<typename T>
+class Singleton {
+public:
+    static T& instancia() {
+        static T instancia;
+        return instancia;
+    }
+
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
+
+protected:
+    Singleton() = default;
+    virtual ~Singleton() = default;
+};
+
+class Configuracion : public Singleton<Configuracion> {
+    friend class Singleton<Configuracion>;
+public:
+    std::string get(const std::string& clave) const {
+        auto it = valores_.find(clave);
+        return it != valores_.end() ? it->second : "";
+    }
+
+    void set(const std::string& clave, const std::string& valor) {
+        valores_[clave] = valor;
+    }
+
+private:
+    Configuracion() {
+        valores_["version"] = "1.0.0";
+        valores_["entorno"] = "produccion";
+        valores_["db_host"] = "localhost";
+    }
+
+    std::map<std::string, std::string> valores_;
+};
+
+void ejemplo_config_singleton() {
+    Configuracion& cfg = Configuracion::instancia();
+    std::cout << "Versión: " << cfg.get("version") << "\n";
+    cfg.set("timeout", "30");
+}
+
+/*
+  CRÍTICA AL SINGLETON:
+  • Pro: Acceso global fácil.
+  • Contra: Dificulta pruebas (estado global), acopla el código,
+    viola SRP (gestiona su ciclo de vida + su lógica).
+
+  Alternativa: Inyección de dependencias con una sola instancia
+  (Singleton por acuerdo, no por diseño).
+*/
+
+//------------------------------------------------------------------------------
+// FACTORY — EL CONSTRUCTOR INTELIGENTE
+//------------------------------------------------------------------------------
+
+/*
+  Factory Method: Define una interfaz para crear objetos, pero deja
+  que las subclases decidan qué clase instanciar.
+
+  Abstract Factory: Proporciona una interfaz para crear familias de
+  objetos relacionados sin especificar sus clases concretas.
+*/
+
+// --- FACTORY METHOD ---
+
+class Producto {
+public:
+    virtual ~Producto() = default;
+    virtual std::string descripcion() const = 0;
+    virtual double precio() const = 0;
+};
+
+class Laptop : public Producto {
+public:
+    std::string descripcion() const override {
+        return "Laptop Gaming 15\"";
+    }
+    double precio() const override { return 1500.0; }
+};
+
+class Mouse : public Producto {
+public:
+    std::string descripcion() const override {
+        return "Mouse RGB 8000 DPI";
+    }
+    double precio() const override { return 50.0; }
+};
+
+class Teclado : public Producto {
+public:
+    std::string descripcion() const override {
+        return "Teclado Mecánico Blue Switch";
+    }
+    double precio() const override { return 120.0; }
+};
+
+enum class TipoProducto { Laptop, Mouse, Teclado };
+
+// Factory Method clásico
+class FabricaProductos {
+public:
+    virtual ~FabricaProductos() = default;
+
+    std::unique_ptr<Producto> crear(TipoProducto tipo) {
+        switch (tipo) {
+            case TipoProducto::Laptop:
+                return crear_laptop();
+            case TipoProducto::Mouse:
+                return crear_mouse();
+            case TipoProducto::Teclado:
+                return crear_teclado();
+        }
+        throw std::invalid_argument("Tipo no soportado");
+    }
+
+protected:
+    virtual std::unique_ptr<Producto> crear_laptop() {
+        return std::make_unique<Laptop>();
+    }
+    virtual std::unique_ptr<Producto> crear_mouse() {
+        return std::make_unique<Mouse>();
+    }
+    virtual std::unique_ptr<Producto> crear_teclado() {
+        return std::make_unique<Teclado>();
+    }
+};
+
+// Factory Method con descuento — extiende sin modificar
+class FabricaProductosConDescuento : public FabricaProductos {
+protected:
+    std::unique_ptr<Producto> crear_laptop() override {
+        auto p = std::make_unique<Laptop>();
+        // Aplicar descuento del 10%
+        return p;
+    }
+};
+
+// --- FACTORY CON REGISTRO DINÁMICO ---
+
+/*
+  Un factory más flexible permite registrar nuevos tipos sin
+  modificar su código (abierto/cerrado).
+*/
+
+using CreadorProducto = std::function<std::unique_ptr<Producto>()>;
+
+class FabricaRegistrable {
+public:
+    static FabricaRegistrable& instancia() {
+        static FabricaRegistrable fabrica;
+        return fabrica;
+    }
+
+    void registrar(const std::string& nombre, CreadorProducto creador) {
+        creadores_[nombre] = std::move(creador);
+    }
+
+    std::unique_ptr<Producto> crear(const std::string& nombre) {
+        auto it = creadores_.find(nombre);
+        if (it != creadores_.end()) {
+            return it->second();
+        }
+        throw std::runtime_error("Producto no registrado: " + nombre);
+    }
+
+    std::vector<std::string> tipos_disponibles() const {
+        std::vector<std::string> tipos;
+        for (const auto& [nombre, _] : creadores_) {
+            tipos.push_back(nombre);
+        }
+        return tipos;
+    }
+
+private:
+    FabricaRegistrable() = default;
+    std::map<std::string, CreadorProducto> creadores_;
+};
+
+// Macro para auto-registro (ejemplo simplificado)
+#define REGISTRAR_PRODUCTO(nombre, Clase) \
+    namespace { \
+    struct Registrador_##Clase { \
+        Registrador_##Clase() { \
+            FabricaRegistrable::instancia().registrar( \
+                nombre, []{ return std::make_unique<Clase>(); }); \
+        } \
+    } registrador_##Clase; \
+    }
+
+// Registro automático
+REGISTRAR_PRODUCTO("monitor", Producto) // Se reemplazaría con Monitor real
+
+// --- ABSTRACT FACTORY ---
+
+class Boton {
+public:
+    virtual ~Boton() = default;
+    virtual void render() const = 0;
+    virtual void onClick() const = 0;
+};
+
+class Ventana {
+public:
+    virtual ~Ventana() = default;
+    virtual void mostrar() const = 0;
+};
+
+// Familia Windows
+class BotonWindows : public Boton {
+public:
+    void render() const override {
+        std::cout << "[Win] Botón con estilo clásico\n";
+    }
+    void onClick() const override {
+        std::cout << "[Win] Click con sonido de Windows\n";
+    }
+};
+
+class VentanaWindows : public Ventana {
+public:
+    void mostrar() const override {
+        std::cout << "[Win] Ventana con bordes redondeados\n";
+    }
+};
+
+// Familia Linux (GTK)
+class BotonLinux : public Boton {
+public:
+    void render() const override {
+        std::cout << "[Linux] Botón con tema Adwaita\n";
+    }
+    void onClick() const override {
+        std::cout << "[Linux] Click con feedback visual\n";
+    }
+};
+
+class VentanaLinux : public Ventana {
+public:
+    void mostrar() const override {
+        std::cout << "[Linux] Ventana con sombra y transparencia\n";
+    }
+};
+
+// Abstract Factory
+class FabricaUI {
+public:
+    virtual ~FabricaUI() = default;
+    virtual std::unique_ptr<Boton> crear_boton() = 0;
+    virtual std::unique_ptr<Ventana> crear_ventana() = 0;
+};
+
+class FabricaUIWindows : public FabricaUI {
+public:
+    std::unique_ptr<Boton> crear_boton() override {
+        return std::make_unique<BotonWindows>();
+    }
+    std::unique_ptr<Ventana> crear_ventana() override {
+        return std::make_unique<VentanaWindows>();
+    }
+};
+
+class FabricaUILinux : public FabricaUI {
+public:
+    std::unique_ptr<Boton> crear_boton() override {
+        return std::make_unique<BotonLinux>();
+    }
+    std::unique_ptr<Ventana> crear_ventana() override {
+        return std::make_unique<VentanaLinux>();
+    }
+};
+
+//------------------------------------------------------------------------------
+// OBSERVER — EL NOTIFICADOR
+//------------------------------------------------------------------------------
+
+/*
+  Observer define una dependencia uno-a-muchos entre objetos, de
+  modo que cuando un objeto cambie su estado, todos sus dependientes
+  sean notificados automáticamente.
+
+  En C++ moderno, podemos implementarlo elegantemente con
+  std::function en lugar de interfaces acopladas.
+*/
+
+// --- Observer con std::function ---
+
+class Evento {
+public:
+    using Suscriptor = std::function<void(const std::string&)>;
+
+    // Suscribirse al evento
+    void conectar(Suscriptor suscriptor) {
+        suscriptores_.push_back(std::move(suscriptor));
+    }
+
+    // Emitir el evento
+    void emitir(const std::string& datos) {
+        for (const auto& suscriptor : suscriptores_) {
+            suscriptor(datos);
+        }
+    }
+
+private:
+    std::vector<Suscriptor> suscriptores_;
+};
+
+class SistemaNotificaciones {
+public:
+    // Eventos del sistema
+    Evento on_usuario_registrado;
+    Evento on_pedido_creado;
+    Evento on_error;
+
+    void registrar_usuario(const std::string& email) {
+        // ... lógica de registro ...
+        on_usuario_registrado.emitir(
+            "Usuario " + email + " registrado correctamente");
+    }
+
+    void crear_pedido(int id, const std::string& producto) {
+        // ... lógica de pedido ...
+        on_pedido_creado.emitir(
+            "Pedido #" + std::to_string(id) + ": " + producto);
+    }
+};
+
+void ejemplo_observer_funcional() {
+    SistemaNotificaciones sistema;
+
+    // Suscriptor 1: Enviar email de bienvenida
+    sistema.on_usuario_registrado.conectar(
+        [](const std::string& datos) {
+            std::cout << "[EMAIL] Bienvenida: " << datos << "\n";
+        }
+    );
+
+    // Suscriptor 2: Registrar en log
+    sistema.on_usuario_registrado.conectar(
+        [](const std::string& datos) {
+            Logger::instancia().log("REGISTRO: " + datos);
+        }
+    );
+
+    // Suscriptor 3: Enviar a analytics
+    sistema.on_usuario_registrado.conectar(
+        [](const std::string& datos) {
+            std::cout << "[ANALYTICS] Evento: " << datos << "\n";
+        }
+    );
+
+    sistema.on_pedido_creado.conectar(
+        [](const std::string& datos) {
+            std::cout << "[NOTIFICACIÓN] " << datos << "\n";
+        }
+    );
+
+    sistema.registrar_usuario("ana@example.com");
+    sistema.crear_pedido(1001, "Curso C++ Avanzado");
+}
+
+// --- Observer con Signal/Slot (estilo Qt) ---
+
+template<typename... Args>
+class Signal {
+public:
+    using Slot = std::function<void(Args...)>;
+
+    int conectar(Slot slot) {
+        int id = next_id_++;
+        slots_[id] = std::move(slot);
+        return id;
+    }
+
+    void desconectar(int id) {
+        slots_.erase(id);
+    }
+
+    void operator()(Args... args) {
+        for (const auto& [_, slot] : slots_) {
+            slot(args...);
+        }
+    }
+
+private:
+    int next_id_ = 0;
+    std::map<int, Slot> slots_;
+};
+
+void ejemplo_signal() {
+    Signal<int, std::string> signal_progreso;
+
+    auto id1 = signal_progreso.conectar(
+        [](int pct, const std::string& msg) {
+            std::cout << "[BARRA] " << pct << "% — " << msg << "\n";
+        }
+    );
+
+    auto id2 = signal_progreso.conectar(
+        [](int pct, const std::string& msg) {
+            Logger::instancia().log(
+                "Progreso: " + std::to_string(pct) + "% — " + msg);
+        }
+    );
+
+    signal_progreso(50, "Descargando...");
+    signal_progreso(100, "¡Completado!");
+
+    // Desconectar el primero
+    signal_progreso.desconectar(id1);
+    signal_progreso(75, "Procesando...");
+}
+
+//------------------------------------------------------------------------------
+// STRATEGY — EL ALGORITMO INTERCAMBIABLE
+//------------------------------------------------------------------------------
+
+/*
+  Strategy permite definir una familia de algoritmos, encapsularlos
+  y hacerlos intercambiables. En C++ moderno, std::function hace
+  que este patrón sea mucho más liviano.
+*/
+
+// --- Strategy con std::function (enfoque moderno) ---
+
+class ProcesadorTexto {
+public:
+    using EstrategiaFormato = std::function<std::string(
+        const std::string&)>;
+
+    void set_estrategia(EstrategiaFormato estrategia) {
+        estrategia_ = std::move(estrategia);
+    }
+
+    std::string procesar(const std::string& texto) {
+        if (!estrategia_) {
+            throw std::runtime_error(
+                "No se ha configurado estrategia de formato");
+        }
+        return estrategia_(texto);
+    }
+
+private:
+    EstrategiaFormato estrategia_;
+};
+
+void ejemplo_strategy_funcional() {
+    ProcesadorTexto procesador;
+
+    // Estrategia 1: Upper case
+    procesador.set_estrategia(
+        [](const std::string& s) -> std::string {
+            std::string resultado = s;
+            std::transform(resultado.begin(), resultado.end(),
+                resultado.begin(), ::toupper);
+            return resultado;
+        }
+    );
+    std::cout << procesador.procesar("hola mundo") << "\n"; // HOLA MUNDO
+
+    // Estrategia 2: Quitar espacios
+    procesador.set_estrategia(
+        [](const std::string& s) -> std::string {
+            std::string resultado;
+            for (char c : s) {
+                if (c != ' ') resultado += c;
+            }
+            return resultado;
+        }
+    );
+    std::cout << procesador.procesar("h o l a") << "\n"; // hola
+
+    // Estrategia 3: Invertir
+    procesador.set_estrategia(
+        [](const std::string& s) -> std::string {
+            return {s.rbegin(), s.rend()};
+        }
+    );
+    std::cout << procesador.procesar("hola") << "\n"; // aloh
+}
+
+// --- Strategy con polimorfismo clásico ---
+
+class EstrategiaCompresion {
+public:
+    virtual ~EstrategiaCompresion() = default;
+    virtual std::vector<char> comprimir(
+        const std::vector<char>& datos) = 0;
+    virtual std::vector<char> descomprimir(
+        const std::vector<char>& datos) = 0;
+};
+
+class CompresionZip : public EstrategiaCompresion {
+public:
+    std::vector<char> comprimir(
+        const std::vector<char>& datos) override {
+        std::cout << "[ZIP] Comprimiendo " << datos.size()
+                  << " bytes\n";
+        return datos; // Simulación
+    }
+
+    std::vector<char> descomprimir(
+        const std::vector<char>& datos) override {
+        std::cout << "[ZIP] Descomprimiendo\n";
+        return datos;
+    }
+};
+
+class CompresionGzip : public EstrategiaCompresion {
+public:
+    std::vector<char> comprimir(
+        const std::vector<char>& datos) override {
+        std::cout << "[GZIP] Comprimiendo " << datos.size()
+                  << " bytes\n";
+        return datos;
+    }
+
+    std::vector<char> descomprimir(
+        const std::vector<char>& datos) override {
+        std::cout << "[GZIP] Descomprimiendo\n";
+        return datos;
+    }
+};
+
+class GestorArchivos {
+public:
+    explicit GestorArchivos(
+        std::unique_ptr<EstrategiaCompresion> estrategia)
+        : estrategia_(std::move(estrategia)) {}
+
+    void set_estrategia(
+        std::unique_ptr<EstrategiaCompresion> estrategia) {
+        estrategia_ = std::move(estrategia);
+    }
+
+    void guardar(const std::string& ruta,
+                 const std::vector<char>& datos) {
+        auto comprimidos = estrategia_->comprimir(datos);
+        std::ofstream archivo(ruta, std::ios::binary);
+        archivo.write(comprimidos.data(), comprimidos.size());
+    }
+
+private:
+    std::unique_ptr<EstrategiaCompresion> estrategia_;
+};
+
+//------------------------------------------------------------------------------
+// CRTP — EL PATRÓN RECURRENTE
+//------------------------------------------------------------------------------
+
+/*
+  CRTP (Curiously Recurring Template Pattern) es una técnica de C++
+  donde una clase Derived se pasa como parámetro template a su propia
+  clase base. Esto permite polimorfismo en tiempo de compilación
+  (static polymorphism) sin overhead de vtable.
+*/
+
+// --- CRTP básico ---
+
+template<typename Derived>
+class BaseCRTP {
+public:
+    void interfaz() {
+        static_cast<Derived*>(this)->implementacion();
+    }
+
+    void metodo_comun() {
+        std::cout << "Común para todos\n";
+    }
+};
+
+class DerivadaA : public BaseCRTP<DerivadaA> {
+public:
+    void implementacion() {
+        std::cout << "Implementación A\n";
+    }
+};
+
+class DerivadaB : public BaseCRTP<DerivadaB> {
+public:
+    void implementacion() {
+        std::cout << "Implementación B\n";
+    }
+};
+
+template<typename Derived>
+void usar_CRTP(BaseCRTP<Derived>& obj) {
+    obj.interfaz();
+    obj.metodo_comun();
+}
+
+void ejemplo_crtp_basico() {
+    DerivadaA a;
+    DerivadaB b;
+    usar_CRTP(a); // A
+    usar_CRTP(b); // B
+}
+
+// --- CRTP: Clone ---
+
+/*
+  CRTP permite implementar el patrón Clone sin tener que reescribir
+  el método en cada clase derivada.
+*/
+
+template<typename Derived>
+class Clonable {
+public:
+    std::unique_ptr<Derived> clonar() const {
+        return std::make_unique<Derived>(
+            static_cast<const Derived&>(*this));
+    }
+};
+
+class Persona : public Clonable<Persona> {
+public:
+    Persona(std::string nombre, int edad)
+        : nombre_(std::move(nombre)), edad_(edad) {}
+
+    void mostrar() const {
+        std::cout << nombre_ << ", " << edad_ << " años\n";
+    }
+
+private:
+    std::string nombre_;
+    int edad_;
+};
+
+void ejemplo_clone_crtp() {
+    Persona original("Lucas", 30);
+    auto copia = original.clonar();
+    copia->mostrar(); // Lucas, 30 años
+}
+
+// --- CRTP: Singleton (visto arriba, ahora con CRTP) ---
+
+// --- CRTP: Operator overloads automáticos ---
+
+template<typename Derived>
+class Comparable {
+public:
+    friend bool operator!=(const Derived& a, const Derived& b) {
+        return !(a == b);
+    }
+};
+
+class Punto : public Comparable<Punto> {
+public:
+    Punto(int x, int y) : x_(x), y_(y) {}
+
+    friend bool operator==(const Punto& a, const Punto& b) {
+        return a.x_ == b.x_ && a.y_ == b.y_;
+    }
+
+private:
+    int x_, y_;
+};
+
+void ejemplo_comparable_crtp() {
+    Punto p1{1, 2}, p2{1, 2}, p3{3, 4};
+    std::cout << std::boolalpha;
+    std::cout << "p1 == p2: " << (p1 == p2) << "\n"; // true
+    std::cout << "p1 != p3: " << (p1 != p3) << "\n"; // true (generado por CRTP)
+}
+
+// --- CRTP: Mixin de habilidades ---
+
+template<typename Derived>
+class Volador {
+public:
+    void volar() const {
+        std::cout << static_cast<const Derived*>(this)->nombre()
+                  << " está volando!\n";
+    }
+};
+
+template<typename Derived>
+class Nadador {
+public:
+    void nadar() const {
+        std::cout << static_cast<const Derived*>(this)->nombre()
+                  << " está nadando!\n";
+    }
+};
+
+class Pato : public Volador<Pato>, public Nadador<Pato> {
+public:
+    std::string nombre() const { return "Pato Donald"; }
+};
+
+class Avion : public Volador<Avion> {
+public:
+    std::string nombre() const { return "Boeing 747"; }
+};
+
+void ejemplo_mixin_crtp() {
+    Pato pato;
+    pato.volar();
+    pato.nadar();
+
+    Avion avion;
+    avion.volar();
+}
+
+//------------------------------------------------------------------------------
+// COMBINANDO PATRONES: LOGGER CON OBSERVER + STRATEGY + SINGLETON
+//------------------------------------------------------------------------------
+
+/*
+  Un logger completo que combina múltiples patrones:
+
+  • Singleton: Una sola instancia del logger.
+  • Strategy: Diferentes formatos de salida.
+  • Observer: Múltiples destinos (consola, archivo, red).
+*/
+
+enum class NivelLog { Info, Warning, Error, Debug };
+
+struct MensajeLog {
+    NivelLog nivel;
+    std::string componente;
+    std::string texto;
+    std::chrono::system_clock::time_point timestamp;
+};
+
+class EstrategiaFormatoLog {
+public:
+    virtual ~EstrategiaFormatoLog() = default;
+    virtual std::string formatear(const MensajeLog& msg) = 0;
+};
+
+class FormatoTexto : public EstrategiaFormatoLog {
+public:
+    std::string formatear(const MensajeLog& msg) override {
+        auto t = std::chrono::system_clock::to_time_t(msg.timestamp);
+        std::string nivel_str;
+        switch (msg.nivel) {
+            case NivelLog::Info: nivel_str = "INFO"; break;
+            case NivelLog::Warning: nivel_str = "WARN"; break;
+            case NivelLog::Error: nivel_str = "ERROR"; break;
+            case NivelLog::Debug: nivel_str = "DEBUG"; break;
+        }
+        return "[" + nivel_str + "] [" + msg.componente + "] "
+               + msg.texto + " (" + std::ctime(&t) + ")";
+    }
+};
+
+class FormatoJSON : public EstrategiaFormatoLog {
+public:
+    std::string formatear(const MensajeLog& msg) override {
+        auto t = std::chrono::system_clock::to_time_t(msg.timestamp);
+        std::string nivel_str;
+        switch (msg.nivel) {
+            case NivelLog::Info: nivel_str = "INFO"; break;
+            case NivelLog::Warning: nivel_str = "WARN"; break;
+            case NivelLog::Error: nivel_str = "ERROR"; break;
+            case NivelLog::Debug: nivel_str = "DEBUG"; break;
+        }
+        return R"({"nivel":")" + nivel_str
+             + R"(","componente":")" + msg.componente
+             + R"(","mensaje":")" + msg.texto
+             + R"(","timestamp":")" + std::ctime(&t) + "\"}";
+    }
+};
+
+class DestinoLog {
+public:
+    virtual ~DestinoLog() = default;
+    virtual void escribir(const std::string& mensaje_formateado) = 0;
+};
+
+class DestinoConsola : public DestinoLog {
+public:
+    void escribir(const std::string& mensaje) override {
+        std::cout << mensaje;
+    }
+};
+
+class DestinoArchivo : public DestinoLog {
+public:
+    explicit DestinoArchivo(const std::string& ruta)
+        : archivo_(ruta, std::ios::app) {}
+
+    void escribir(const std::string& mensaje) override {
+        if (archivo_.is_open()) {
+            archivo_ << mensaje;
+            archivo_.flush();
+        }
+    }
+
+private:
+    std::ofstream archivo_;
+};
+
+class LoggerPro {
+public:
+    static LoggerPro& instancia() {
+        static LoggerPro instancia;
+        return instancia;
+    }
+
+    void set_formato(std::unique_ptr<EstrategiaFormatoLog> formato) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        formato_ = std::move(formato);
+    }
+
+    void agregar_destino(std::unique_ptr<DestinoLog> destino) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        destinos_.push_back(std::move(destino));
+    }
+
+    template<typename... Args>
+    void log(NivelLog nivel, const std::string& componente,
+             const std::string& formato, Args&&... args) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        MensajeLog msg{
+            nivel,
+            componente,
+            formatear_string(formato, std::forward<Args>(args)...),
+            std::chrono::system_clock::now()
+        };
+
+        auto formateado = formato_->formatear(msg);
+        for (auto& destino : destinos_) {
+            destino->escribir(formateado);
+        }
+    }
+
+    void info(const std::string& comp, const std::string& msg) {
+        log(NivelLog::Info, comp, msg);
+    }
+
+    void error(const std::string& comp, const std::string& msg) {
+        log(NivelLog::Error, comp, msg);
+    }
+
+private:
+    LoggerPro() {
+        set_formato(std::make_unique<FormatoTexto>());
+        agregar_destino(std::make_unique<DestinoConsola>());
+    }
+
+    std::string formatear_string(const std::string& fmt) {
+        return fmt;
+    }
+
+    template<typename T, typename... Args>
+    std::string formatear_string(const std::string& fmt,
+                                  T&& valor, Args&&... args) {
+        std::string resultado;
+        size_t pos = fmt.find("{}");
+        if (pos != std::string::npos) {
+            resultado = fmt.substr(0, pos)
+                      + std::to_string(std::forward<T>(valor))
+                      + fmt.substr(pos + 2);
+            return formatear_string(resultado,
+                                    std::forward<Args>(args)...);
+        }
+        return fmt;
+    }
+
+    std::mutex mutex_;
+    std::unique_ptr<EstrategiaFormatoLog> formato_;
+    std::vector<std::unique_ptr<DestinoLog>> destinos_;
+};
+
+//------------------------------------------------------------------------------
+// PATRÓN VISITOR CON std::variant (C++17)
+//------------------------------------------------------------------------------
+
+/*
+  Visitor resuelve el problema de añadir operaciones a una jerarquía
+  de clases sin modificarlas. Con std::variant y std::visit, este
+  patrón se vuelve extremadamente elegante.
+*/
+
+using Figura = std::variant<struct CirculoV, struct RectanguloV, struct TrianguloV>;
+
+struct CirculoV {
+    double radio;
+};
+
+struct RectanguloV {
+    double ancho, alto;
+};
+
+struct TrianguloV {
+    double base, altura;
+};
+
+struct CalculadorArea {
+    double operator()(const CirculoV& c) {
+        return M_PI * c.radio * c.radio;
+    }
+    double operator()(const RectanguloV& r) {
+        return r.ancho * r.alto;
+    }
+    double operator()(const TrianguloV& t) {
+        return 0.5 * t.base * t.altura;
+    }
+};
+
+void ejemplo_visitor_moderno() {
+    std::vector<Figura> figuras;
+    figuras.emplace_back(CirculoV{5.0});
+    figuras.emplace_back(RectanguloV{4.0, 6.0});
+    figuras.emplace_back(TrianguloV{3.0, 8.0});
+
+    double area_total = 0.0;
+    for (const auto& figura : figuras) {
+        area_total += std::visit(CalculadorArea{}, figura);
+    }
+    std::cout << "Área total: " << area_total << "\n";
+
+    // Visitor lambda in-place
+    auto perimetro = std::visit([](const auto& f) {
+        using T = std::decay_t<decltype(f)>;
+        if constexpr (std::is_same_v<T, CirculoV>) {
+            return 2 * M_PI * f.radio;
+        } else if constexpr (std::is_same_v<T, RectanguloV>) {
+            return 2 * (f.ancho + f.alto);
+        } else {
+            return f.base + f.altura + std::sqrt(f.base*f.base + f.altura*f.altura);
+        }
+    }, figuras[0]);
+}
+
+//------------------------------------------------------------------------------
+// PATRÓN DECORATOR CON std::function
+//------------------------------------------------------------------------------
+
+/*
+  Decorator añade responsabilidades a un objeto dinámicamente.
+  Con funciones, es simplemente composición de funciones.
+*/
+
+using Operacion = std::function<int(int)>;
+
+Operacion decorador_log(Operacion op) {
+    return [op = std::move(op)](int x) {
+        std::cout << "LLAMADA con x=" << x << "\n";
+        int resultado = op(x);
+        std::cout << "RESULTADO: " << resultado << "\n";
+        return resultado;
+    };
+}
+
+Operacion decorador_tiempo(Operacion op) {
+    return [op = std::move(op)](int x) {
+        auto inicio = std::chrono::steady_clock::now();
+        int resultado = op(x);
+        auto fin = std::chrono::steady_clock::now();
+        auto duracion = std::chrono::duration_cast<
+            std::chrono::microseconds>(fin - inicio).count();
+        std::cout << "DURACIÓN: " << duracion << "μs\n";
+        return resultado;
+    };
+}
+
+void ejemplo_decorador_funcional() {
+    Operacion factorial = [](int n) -> int {
+        int r = 1;
+        for (int i = 2; i <= n; ++i) r *= i;
+        return r;
+    };
+
+    auto factorial_con_log = decorador_log(
+        decorador_tiempo(factorial));
+
+    std::cout << "5! = " << factorial_con_log(5) << "\n";
+}
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 72:
+
+  1. Singleton: Útil para recursos globales (log, config), pero
+     usado con moderación. Preferir DI sobre singleton global.
+
+  2. Factory Method y Abstract Factory: Crean objetos sin acoplar
+     al cliente con las clases concretas. El registro dinámico
+     permite añadir nuevos tipos sin modificar la fábrica.
+
+  3. Observer: std::function hace que la implementación sea mucho
+     más flexible que la versión clásica del GoF. Señales y slots
+     son una variante poderosa.
+
+  4. Strategy: std::function permite estrategias sin jerarquías
+     de clases. Para lógica más compleja, el polimorfismo clásico
+     sigue siendo válido.
+
+  5. CRTP: Polimorfismo en tiempo de compilación sin vtable.
+     Útil para mixins, operadores automáticos, clonado y Singleton.
+
+  6. std::variant + std::visit: Visitor sin herencia. Patrón
+     moderno y eficiente para álgebras de tipos cerradas.
+
+  7. Decorator con funciones: Composición simple y elegante.
+
+  8. La combinación de patrones produce sistemas más potentes
+     que la suma de sus partes (como LoggerPro).
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Thread-Safe Singleton
+  -----------------------------------
+  Implementa un Singleton que gestione una conexión a base de datos
+  simulada. Debe ser thread-safe y lazy-initialized.
+
+  class DatabaseConnection {
+  public:
+      static DatabaseConnection& instancia();
+      void query(const std::string& sql);
+  private:
+      DatabaseConnection();
+      std::mutex mutex_;
+  };
+
+  EJERCICIO 2: Factory de notificaciones
+  ---------------------------------------
+  Crea un sistema de notificaciones donde se puedan registrar nuevos
+  canales (Email, SMS, Push) sin modificar el código existente.
+  Usa el patrón Factory con registro dinámico.
+
+  EJERCICIO 3: Signal con prioridades
+  ------------------------------------
+  Extiende la clase Signal para que los slots tengan prioridad.
+  Los slots con mayor prioridad se ejecutan primero.
+
+  EJERCICIO 4: CRTP para operadores aritméticos
+  ----------------------------------------------
+  Implementa un template CRTP que genere automáticamente los
+  operadores +=, -=, *=, /= a partir de +, -, *, /.
+
+  EJERCICIO 5: Decorator de caché
+  --------------------------------
+  Implementa un decorator que cachee resultados de funciones costosas
+  usando std::map o std::unordered_map.
+
+  EJERCICIO 6: Visitor con std::variant
+  --------------------------------------
+  Añade una nueva operación "escalar" al visitor de figuras sin
+  modificar las clases de figuras existentes.
+
+  EJERCICIO 7: Refactorizar código spaghetti
+  -------------------------------------------
+  Dado el siguiente código que mezcla lógica, creación y formato,
+  refactorízalo usando Strategy + Factory:
+
+  void procesar(const std::string& tipo, const std::string& data) {
+      if (tipo == "json") {
+          std::cout << "{ \"data\": \"" << data << "\" }\n";
+      } else if (tipo == "xml") {
+          std::cout << "<data>" << data << "</data>\n";
+      } else if (tipo == "csv") {
+          std::cout << data << "\n";
+      }
+  }
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿Cuándo debo usar CRTP en lugar de polimorfismo virtual?
+  R: CRTP cuando necesitas rendimiento (sin vtable) y el conjunto
+     de tipos es conocido en tiempo de compilación. Virtual cuando
+     necesitas flexibilidad en tiempo de ejecución (plugins, DLLs).
+
+  P: ¿El patrón Observer no crea memory leaks?
+  R: Si los suscriptores viven más que el sujeto, sí. Usa shared_ptr
+     o asegúrate de desconectar explícitamente. En C++ moderno, los
+     weak_ptr ayudan a gestionar el ciclo de vida.
+
+  P: ¿std::function tiene overhead?
+  R: Sí, std::function usa type erasure y puede hacer asignación
+     dinámica. Para la mayoría de casos es aceptable. Para código
+     crítico, considera templates o punteros a función.
+
+  P: ¿Es mejor Factory Method o Abstract Factory?
+  R: Factory Method para un solo producto, Abstract Factory para
+     familias de productos relacionados. Si solo cambia un objeto,
+     Factory Method basta.
+
+  P: ¿Los patrones de diseño son siempre la respuesta?
+  R: No. A veces un simple if-else o un switch es más claro que
+     un patrón. Los patrones resuelven complejidad, no la crean.
+     "No uses un patrón donde una variable basta."
+
+  P: ¿Qué pasa con patrones modernos como RAII y Pimpl?
+  R: RAII no es un patrón GoF pero es el patrón más importante de
+     C++. Pimpl (Pointer to Implementation) es un patrón estructural
+     para ocultar la implementación. Ambos son esenciales.
+
+  P: ¿Cómo elijo entre herencia y composición?
+  R: Prefiere composición sobre herencia. La herencia crea
+     acoplamiento fuerte; la composición es más flexible.
+     "Favor composition over inheritance" — GoF.
+
+  P: ¿Puedo usar estos patrones en código embebido?
+  R: Sí, pero con cuidado. Evita std::function en sistemas con poca
+     memoria. CRTP es ideal por su cero overhead. Singleton también
+     funciona bien.
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 72                ║
+  ║        "EL TEJEDOR DE PATRONES"                            ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Debes implementar un sistema de procesamiento de datos en tiempo
+  real que combine al menos 4 patrones de diseño diferentes.
+
+  Requisitos del sistema:
+  1. Los datos llegan de múltiples fuentes (sensor, archivo, red).
+     → Factory para crear los lectores según la fuente.
+  2. Los datos deben transformarse con múltiples algoritmos.
+     → Strategy para los transformadores.
+  3. Múltiples componentes deben reaccionar a los datos procesados.
+     → Observer/Signal para notificar.
+  4. Solo debe haber un pipeline de procesamiento global.
+     → Singleton para el pipeline.
+  5. El sistema debe ser extensible sin modificar código existente.
+     → CRTP o registro dinámico.
+
+  Extras:
+  • Añade un decorator para medir tiempos de cada etapa.
+  • Usa std::variant para representar diferentes tipos de datos.
+  • Implementa pruebas unitarias para cada patrón.
+
+  Criterios:
+  • Correcta implementación de cada patrón (40 pts)
+  • Integración entre patrones (30 pts)
+  • Código limpio y testeable (30 pts)
+
+  ¡Demuestra que dominas los patrones como un verdadero Arquitecto!
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 72: Patrones de Diseño en C++.
+
+  Ahora tienes un arsenal de soluciones probadas para problemas
+  recurrentes. Recuerda: los patrones son herramientas, no reglas.
+  Úsalos cuando aporten claridad y flexibilidad, no cuando añadan
+  complejidad innecesaria.
+
+  En el próximo capítulo nos sumergiremos en el arte de la
+  depuración con GDB. Aprenderás a usar breakpoints, watchpoints,
+  inspeccionar la memoria y resolver los crashes más difíciles.
+
+  "Un patrón bien aplicado es poesía; mal aplicado, ruido."
+
+  ¡Nos vemos en el Capítulo 73!
+
+================================================================================
+  FIN DEL CAPÍTULO 72 — PATRONES DE DISEÑO EN C++
+  PRÓXIMO CAPÍTULO: DEBUGGING CON GDB (Capítulo 73)
+================================================================================

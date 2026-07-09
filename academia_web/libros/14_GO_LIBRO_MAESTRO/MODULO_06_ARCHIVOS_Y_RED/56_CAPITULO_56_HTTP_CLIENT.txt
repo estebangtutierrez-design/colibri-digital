@@ -1,0 +1,1237 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 56: HTTP CLIENT (net/http)
+================================================================================
+
+  "HTTP es el sistema nervioso de internet. Un cliente HTTP
+   bien construido es la mano que estrecha el mundo."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 56 de GO MASTER BOOK. Llegamos a la red:
+  el paquete net/http es uno de los más importantes de la biblioteca
+  estándar de Go. En este capítulo nos enfocaremos en el lado cliente:
+  cómo hacer peticiones HTTP a APIs, manejar respuestas, configurar
+  timeouts, autenticación, y construir clientes HTTP robustos y
+  eficientes. El siguiente capítulo cubrirá el lado servidor.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "En la red, la incertidumbre es la norma. Un cliente HTTP debe
+   ser resiliente, no solo funcional."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Realizar peticiones GET con http.Get.
+  ✓ Realizar peticiones POST, PUT, DELETE con http.Client.
+  ✓ Manejar respuestas: StatusCode, Headers, Body.
+  ✓ Leer y cerrar correctamente el cuerpo (io.ReadCloser).
+  ✓ Configurar timeouts y transporte.
+  ✓ Manejar errores de red y timeouts.
+  ✓ Trabajar con headers y cookies.
+  ✓ Enviar datos JSON y formularios.
+  ✓ Implementar autenticación básica y Bearer token.
+  ✓ Construir un cliente HTTP reutilizable y testable.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. EL PAQUETE net/http — VISIÓN GENERAL
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  net/http proporciona tanto cliente como servidor HTTP. Del lado
+  cliente, los componentes principales son:
+
+  - http.Get, http.Post, http.PostForm: funciones rápidas.
+  - http.Client: cliente configurable con transporte, timeouts, etc.
+  - http.Request: representa una petición HTTP.
+  - http.Response: representa una respuesta HTTP.
+  - http.Transport: gestiona conexiones subyacentes.
+
+  2. http.Get — LA FORMA MÁS SIMPLE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+  )
+
+  func main() {
+      resp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, err := io.ReadAll(resp.Body)
+      if err != nil {
+          fmt.Println("Error al leer:", err)
+          return
+      }
+
+      fmt.Println("Status:", resp.Status)
+      fmt.Println("StatusCode:", resp.StatusCode)
+      fmt.Println("Body:", string(body))
+  }
+  ```
+
+  http.Get es útil para peticiones simples, pero no permite
+  configurar headers, timeouts ni otros parámetros.
+
+  3. MANEJO DE LA RESPUESTA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  type Response struct {
+      Status     string // "200 OK"
+      StatusCode int    // 200
+      Proto      string // "HTTP/1.1"
+      ProtoMajor int    // 1
+      ProtoMinor int    // 1
+      Header     Header
+      Body       io.ReadCloser
+      ContentLength int64
+      TransferEncoding []string
+      Close      bool
+      Uncompressed bool
+      Trailer    Header
+      Request    *Request
+      TLS        *tls.ConnectionState
+  }
+  ```
+
+  Ejemplo completo de manejo de respuesta:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "os"
+  )
+
+  func main() {
+      resp, err := http.Get("https://httpbin.org/get")
+      if err != nil {
+          fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+          os.Exit(1)
+      }
+      defer resp.Body.Close()
+
+      fmt.Printf("HTTP %s (%d)\n", resp.Status, resp.StatusCode)
+      fmt.Printf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
+      fmt.Printf("Content-Length: %d\n", resp.ContentLength)
+      fmt.Println("\nHeaders:")
+      for k, v := range resp.Header {
+          fmt.Printf("  %s: %s\n", k, v)
+      }
+
+      fmt.Println("\nBody:")
+      io.Copy(os.Stdout, resp.Body)
+  }
+  ```
+
+  4. IMPORTANCIA DE CERRAR resp.Body
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Siempre debemos cerrar resp.Body, incluso si no lo leemos:
+
+  ```go
+  resp, err := http.Get(url)
+  if err != nil {
+      return err
+  }
+  defer resp.Body.Close()
+
+  // Si no cerramos, las conexiones no se reciclan
+  // y eventualmente se agotan los sockets
+  ```
+
+  Si no necesitas el body, ciérralo igualmente:
+
+  ```go
+  resp, _ := http.Get(url)
+  resp.Body.Close() // siempre cerrar
+  ```
+
+  5. http.Client — CLIENTE CONFIGURABLE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para peticiones con control fino, usa http.Client:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  func main() {
+      client := &http.Client{
+          Timeout: 10 * time.Second,
+      }
+
+      resp, err := client.Get("https://api.ejemplo.com/data")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Println(string(body))
+  }
+  ```
+
+  El http.Client también tiene un campo Transport, que permite
+  configurar el pool de conexiones:
+
+  ```go
+  client := &http.Client{
+      Transport: &http.Transport{
+          MaxIdleConns:        100,
+          MaxIdleConnsPerHost: 10,
+          IdleConnTimeout:     90 * time.Second,
+          TLSHandshakeTimeout: 5 * time.Second,
+      },
+      Timeout: 30 * time.Second,
+  }
+  ```
+
+  6. PETICIONES CON http.NewRequest
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para control total, construye una Request y ejecútala con el Client:
+
+  ```go
+  package main
+
+  import (
+      "bytes"
+      "encoding/json"
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  type Usuario struct {
+      Nombre  string `json:"nombre"`
+      Email   string `json:"email"`
+  }
+
+  func main() {
+      usuario := Usuario{Nombre: "Ana García", Email: "ana@ejemplo.com"}
+      jsonData, _ := json.Marshal(usuario)
+
+      req, err := http.NewRequest("POST", "https://httpbin.org/post",
+          bytes.NewReader(jsonData))
+      if err != nil {
+          fmt.Println("Error al crear request:", err)
+          return
+      }
+
+      req.Header.Set("Content-Type", "application/json")
+      req.Header.Set("Authorization", "Bearer mi-token-secreto")
+      req.Header.Set("User-Agent", "GoMasterBook/1.0")
+
+      client := &http.Client{Timeout: 10 * time.Second}
+      resp, err := client.Do(req)
+      if err != nil {
+          fmt.Println("Error al ejecutar:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+      fmt.Println("Response:", string(body))
+  }
+  ```
+
+  7. POST CON JSON
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Go 1.13+ tiene http.Post con Content-Type personalizado:
+
+  ```go
+  package main
+
+  import (
+      "bytes"
+      "encoding/json"
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  func postJSON(url string, data interface{}) (*http.Response, error) {
+      jsonBytes, err := json.Marshal(data)
+      if err != nil {
+          return nil, err
+      }
+
+      req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBytes))
+      if err != nil {
+          return nil, err
+      }
+      req.Header.Set("Content-Type", "application/json")
+
+      client := &http.Client{Timeout: 10 * time.Second}
+      return client.Do(req)
+  }
+
+  func main() {
+      payload := map[string]interface{}{
+          "title":  "Nuevo Post",
+          "body":   "Contenido del post",
+          "userId": 1,
+      }
+
+      resp, err := postJSON("https://jsonplaceholder.typicode.com/posts", payload)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+      fmt.Println("Respuesta:", string(body))
+  }
+  ```
+
+  8. POST CON FORMULARIO (FORM DATA)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "net/url"
+      "time"
+  )
+
+  func main() {
+      data := url.Values{
+          "nombre": {"Ana García"},
+          "email":  {"ana@ejemplo.com"},
+          "edad":   {"30"},
+      }
+
+      resp, err := http.PostForm("https://httpbin.org/post", data)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Println(string(body))
+  }
+  ```
+
+  9. SUBIDA DE ARCHIVOS (MULTIPART)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "bytes"
+      "fmt"
+      "io"
+      "mime/multipart"
+      "net/http"
+      "os"
+      "path/filepath"
+      "time"
+  )
+
+  func subirArchivo(url, rutaArchivo, nombreCampo string) error {
+      file, err := os.Open(rutaArchivo)
+      if err != nil {
+          return err
+      }
+      defer file.Close()
+
+      var buffer bytes.Buffer
+      writer := multipart.NewWriter(&buffer)
+
+      part, err := writer.CreateFormFile(nombreCampo, filepath.Base(rutaArchivo))
+      if err != nil {
+          return err
+      }
+
+      _, err = io.Copy(part, file)
+      if err != nil {
+          return err
+      }
+      writer.Close()
+
+      req, err := http.NewRequest("POST", url, &buffer)
+      if err != nil {
+          return err
+      }
+      req.Header.Set("Content-Type", writer.FormDataContentType())
+
+      client := &http.Client{Timeout: 30 * time.Second}
+      resp, err := client.Do(req)
+      if err != nil {
+          return err
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+      fmt.Println("Respuesta:", string(body))
+      return nil
+  }
+
+  func main() {
+      // Crear archivo de prueba
+      os.WriteFile("ejemplo.txt", []byte("Hola, Go Master Book!"), 0644)
+      defer os.Remove("ejemplo.txt")
+
+      err := subirArchivo("https://httpbin.org/post", "ejemplo.txt", "archivo")
+      if err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+  ```
+
+  10. AUTENTICACIÓN BÁSICA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/base64"
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  func autenticacionBasica(url, usuario, password string) {
+      req, err := http.NewRequest("GET", url, nil)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      // Método 1: Header directo
+      auth := base64.StdEncoding.EncodeToString([]byte(usuario + ":" + password))
+      req.Header.Set("Authorization", "Basic "+auth)
+
+      // Método 2: usando Request.SetBasicAuth (recomendado)
+      req.SetBasicAuth(usuario, password)
+
+      client := &http.Client{Timeout: 10 * time.Second}
+      resp, err := client.Do(req)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+      fmt.Println(string(body))
+  }
+
+  func main() {
+      autenticacionBasica("https://httpbin.org/basic-auth/admin/1234",
+          "admin", "1234")
+  }
+  ```
+
+  11. AUTENTICACIÓN CON BEARER TOKEN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  type ClienteAutenticado struct {
+      client *http.Client
+      token  string
+  }
+
+  func NewClienteAutenticado(token string, timeout time.Duration) *ClienteAutenticado {
+      return &ClienteAutenticado{
+          client: &http.Client{Timeout: timeout},
+          token:  token,
+      }
+  }
+
+  func (c *ClienteAutenticado) Do(method, url string, body io.Reader) (*http.Response, error) {
+      req, err := http.NewRequest(method, url, body)
+      if err != nil {
+          return nil, err
+      }
+      req.Header.Set("Authorization", "Bearer "+c.token)
+      req.Header.Set("User-Agent", "GoMasterBook/1.0")
+      return c.client.Do(req)
+  }
+
+  func (c *ClienteAutenticado) Get(url string) (*http.Response, error) {
+      return c.Do("GET", url, nil)
+  }
+
+  func (c *ClienteAutenticado) PostJSON(url string, data []byte) (*http.Response, error) {
+      req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+      if err != nil {
+          return nil, err
+      }
+      req.Header.Set("Content-Type", "application/json")
+      req.Header.Set("Authorization", "Bearer "+c.token)
+      return c.client.Do(req)
+  }
+
+  func main() {
+      cliente := NewClienteAutenticado("mi-token-jwt", 30*time.Second)
+
+      resp, err := cliente.Get("https://api.github.com/user")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+      fmt.Println(string(body))
+  }
+
+  var bytes = bytes
+  ```
+
+  12. MANEJO DE ERRORES Y TIMEOUTS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "errors"
+      "fmt"
+      "net/http"
+      "net/url"
+      "os"
+      "time"
+  )
+
+  func peticionSegura(urlStr string, timeout time.Duration) (*http.Response, error) {
+      client := &http.Client{
+          Timeout: timeout,
+          Transport: &http.Transport{
+              MaxIdleConns:        5,
+              IdleConnTimeout:     30 * time.Second,
+              DisableKeepAlives:   false,
+          },
+      }
+
+      resp, err := client.Get(urlStr)
+      if err != nil {
+          // Verificar si es error de timeout
+          var urlErr *url.Error
+          if errors.As(err, &urlErr) {
+              if urlErr.Timeout() {
+                  return nil, fmt.Errorf("timeout después de %v", timeout)
+              }
+          }
+          return nil, fmt.Errorf("error de conexión: %w", err)
+      }
+
+      if resp.StatusCode >= 400 {
+          resp.Body.Close()
+          return nil, fmt.Errorf("error HTTP %d: %s", resp.StatusCode, resp.Status)
+      }
+
+      return resp, nil
+  }
+
+  func main() {
+      resp, err := peticionSegura("https://httpbin.org/delay/5", 3*time.Second)
+      if err != nil {
+          fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      fmt.Println("Éxito:", resp.Status)
+  }
+  ```
+
+  13. RETRY CON BACKOFF EXPONENCIAL
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  func peticionConReintentos(url string, maxReintentos int) (*http.Response, error) {
+      client := &http.Client{
+          Timeout: 5 * time.Second,
+      }
+
+      for intento := 0; intento < maxReintentos; intento++ {
+          resp, err := client.Get(url)
+          if err == nil && resp.StatusCode < 500 {
+              return resp, nil
+          }
+
+          if resp != nil {
+              resp.Body.Close()
+          }
+
+          if intento < maxReintentos-1 {
+              espera := time.Duration(1<<intento) * time.Second
+              fmt.Printf("Intento %d falló, esperando %v...\n", intento+1, espera)
+              time.Sleep(espera)
+          }
+      }
+
+      return nil, fmt.Errorf("falló después de %d intentos", maxReintentos)
+  }
+
+  func main() {
+      resp, err := peticionConReintentos("https://httpbin.org/status/503", 3)
+      if err != nil {
+          fmt.Println("Error final:", err)
+          return
+      }
+      defer resp.Body.Close()
+
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Printf("Status: %d, Body: %s\n", resp.StatusCode, string(body))
+  }
+  ```
+
+  14. CLIENTE HTTP CON COOKIES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "net/http/cookiejar"
+      "time"
+  )
+
+  func main() {
+      jar, err := cookiejar.New(nil)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      client := &http.Client{
+          Timeout: 10 * time.Second,
+          Jar:     jar, // almacena y envía cookies automáticamente
+      }
+
+      // Primera visita: recibe cookie
+      resp, _ := client.Get("https://httpbin.org/cookies/set?nombre=Ana")
+      resp.Body.Close()
+      fmt.Printf("Status: %d\n", resp.StatusCode)
+
+      // Segunda visita: envía cookie automáticamente
+      resp, _ = client.Get("https://httpbin.org/cookies")
+      defer resp.Body.Close()
+      body, _ := io.ReadAll(resp.Body)
+      fmt.Println("Cookies recibidas:", string(body))
+  }
+  ```
+
+  15. DESCARGA DE ARCHIVOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "os"
+      "path/filepath"
+      "time"
+  )
+
+  func descargarArchivo(url, destino string) error {
+      client := &http.Client{
+          Timeout: 60 * time.Second,
+      }
+
+      resp, err := client.Get(url)
+      if err != nil {
+          return err
+      }
+      defer resp.Body.Close()
+
+      if resp.StatusCode != 200 {
+          return fmt.Errorf("HTTP %d", resp.StatusCode)
+      }
+
+      // Crear directorio si no existe
+      os.MkdirAll(filepath.Dir(destino), 0755)
+
+      out, err := os.Create(destino)
+      if err != nil {
+          return err
+      }
+      defer out.Close()
+
+      n, err := io.Copy(out, resp.Body)
+      if err != nil {
+          return err
+      }
+
+      fmt.Printf("Descargado: %s (%d bytes)\n", destino, n)
+      return nil
+  }
+
+  func main() {
+      err := descargarArchivo(
+          "https://httpbin.org/image/png",
+          "/tmp/imagen.png",
+      )
+      if err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+  ```
+
+  16. DESCARGA CON BARRA DE PROGRESO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "os"
+      "time"
+  )
+
+  type ProgressReader struct {
+      reader     io.Reader
+      total      int64
+      leido      int64
+      lastUpdate time.Time
+  }
+
+  func (pr *ProgressReader) Read(p []byte) (int, error) {
+      n, err := pr.reader.Read(p)
+      pr.leido += int64(n)
+
+      if time.Since(pr.lastUpdate) > 100*time.Millisecond {
+          pr.lastUpdate = time.Now()
+          porcentaje := float64(pr.leido) / float64(pr.total) * 100
+          fmt.Printf("\rProgreso: %.1f%% (%d/%d bytes)",
+              porcentaje, pr.leido, pr.total)
+      }
+
+      return n, err
+  }
+
+  func descargarConProgreso(url, destino string) error {
+      client := &http.Client{Timeout: 60 * time.Second}
+      resp, err := client.Get(url)
+      if err != nil {
+          return err
+      }
+      defer resp.Body.Close()
+
+      if resp.StatusCode != 200 {
+          return fmt.Errorf("HTTP %d", resp.StatusCode)
+      }
+
+      out, err := os.Create(destino)
+      if err != nil {
+          return err
+      }
+      defer out.Close()
+
+      contentLength := resp.ContentLength
+      if contentLength < 0 {
+          contentLength = 0
+      }
+
+      progress := &ProgressReader{
+          reader: resp.Body,
+          total:  contentLength,
+      }
+
+      n, err := io.Copy(out, progress)
+      if err != nil {
+          return err
+      }
+
+      fmt.Printf("\nDescarga completada: %d bytes\n", n)
+      return nil
+  }
+
+  func main() {
+      err := descargarConProgreso(
+          "https://httpbin.org/bytes/10240",
+          "/tmp/archivo.bin",
+      )
+      if err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+  ```
+
+  17. CLIENTE HTTP PARA API REST
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "bytes"
+      "encoding/json"
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  type APIClient struct {
+      baseURL    string
+      httpClient *http.Client
+      token      string
+  }
+
+  func NewAPIClient(baseURL, token string) *APIClient {
+      return &APIClient{
+          baseURL: baseURL,
+          httpClient: &http.Client{
+              Timeout: 30 * time.Second,
+              Transport: &http.Transport{
+                  MaxIdleConns:    10,
+                  IdleConnTimeout: 60 * time.Second,
+              },
+          },
+          token: token,
+      }
+  }
+
+  func (c *APIClient) request(method, path string, body interface{}) ([]byte, error) {
+      var buf io.Reader
+      if body != nil {
+          jsonBytes, err := json.Marshal(body)
+          if err != nil {
+              return nil, err
+          }
+          buf = bytes.NewReader(jsonBytes)
+      }
+
+      req, err := http.NewRequest(method, c.baseURL+path, buf)
+      if err != nil {
+          return nil, err
+      }
+
+      req.Header.Set("Content-Type", "application/json")
+      req.Header.Set("Authorization", "Bearer "+c.token)
+
+      resp, err := c.httpClient.Do(req)
+      if err != nil {
+          return nil, fmt.Errorf("request error: %w", err)
+      }
+      defer resp.Body.Close()
+
+      respBody, err := io.ReadAll(resp.Body)
+      if err != nil {
+          return nil, err
+      }
+
+      if resp.StatusCode >= 400 {
+          return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+      }
+
+      return respBody, nil
+  }
+
+  func (c *APIClient) Get(path string, result interface{}) error {
+      data, err := c.request("GET", path, nil)
+      if err != nil {
+          return err
+      }
+      return json.Unmarshal(data, result)
+  }
+
+  func (c *APIClient) Post(path string, body, result interface{}) error {
+      data, err := c.request("POST", path, body)
+      if err != nil {
+          return err
+      }
+      return json.Unmarshal(data, result)
+  }
+
+  func (c *APIClient) Put(path string, body, result interface{}) error {
+      data, err := c.request("PUT", path, body)
+      if err != nil {
+          return err
+      }
+      return json.Unmarshal(data, result)
+  }
+
+  func (c *APIClient) Delete(path string) error {
+      _, err := c.request("DELETE", path, nil)
+      return err
+  }
+
+  type Post struct {
+      UserID int    `json:"userId"`
+      ID     int    `json:"id"`
+      Title  string `json:"title"`
+      Body   string `json:"body"`
+  }
+
+  func main() {
+      client := NewAPIClient("https://jsonplaceholder.typicode.com", "")
+
+      var posts []Post
+      err := client.Get("/posts", &posts)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+
+      fmt.Printf("Obtenidos %d posts\n", len(posts))
+      for _, p := range posts[:3] {
+          fmt.Printf("  %d: %s\n", p.ID, p.Title)
+      }
+
+      // Crear un nuevo post
+      nuevo := map[string]interface{}{
+          "title":  "Nuevo Post",
+          "body":   "Contenido",
+          "userId": 1,
+      }
+      var creado Post
+      err = client.Post("/posts", nuevo, &creado)
+      if err != nil {
+          fmt.Println("Error al crear:", err)
+      } else {
+          fmt.Printf("Creado post ID: %d\n", creado.ID)
+      }
+  }
+  ```
+
+  18. PROGRAMA COMPLETO — VERIFICADOR DE SALUD DE APIs
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "flag"
+      "fmt"
+      "net/http"
+      "os"
+      "sync"
+      "time"
+  )
+
+  type Resultado struct {
+      URL        string
+      StatusCode int
+      Latencia   time.Duration
+      Error      string
+  }
+
+  func verificarURL(url string, timeout time.Duration) Resultado {
+      client := &http.Client{Timeout: timeout}
+      inicio := time.Now()
+
+      resp, err := client.Get(url)
+      latencia := time.Since(inicio)
+
+      if err != nil {
+          return Resultado{
+              URL:      url,
+              Latencia: latencia,
+              Error:    err.Error(),
+          }
+      }
+      defer resp.Body.Close()
+
+      return Resultado{
+          URL:        url,
+          StatusCode: resp.StatusCode,
+          Latencia:   latencia,
+      }
+  }
+
+  func main() {
+      timeout := flag.Duration("timeout", 10*time.Second, "Timeout por petición")
+      paralelo := flag.Int("paralelo", 5, "Peticiones en paralelo")
+      flag.Parse()
+
+      urls := flag.Args()
+      if len(urls) == 0 {
+          urls = []string{
+              "https://google.com",
+              "https://github.com",
+              "https://stackoverflow.com",
+              "https://httpbin.org/delay/2",
+              "https://httpbin.org/status/404",
+          }
+      }
+
+      sem := make(chan struct{}, *paralelo)
+      resultados := make(chan Resultado, len(urls))
+      var wg sync.WaitGroup
+
+      fmt.Println("Verificando URLs...")
+      fmt.Printf("Timeout: %v, Paralelo: %d\n", *timeout, *paralelo)
+
+      for _, url := range urls {
+          wg.Add(1)
+          go func(u string) {
+              defer wg.Done()
+              sem <- struct{}{}
+              defer func() { <-sem }()
+
+              resultado := verificarURL(u, *timeout)
+              resultados <- resultado
+          }(url)
+      }
+
+      go func() {
+          wg.Wait()
+          close(resultados)
+      }()
+
+      fmt.Println("\nResultados:")
+      fmt.Println("=" + strings.Repeat("=", 60))
+      exitCode := 0
+
+      for r := range resultados {
+          if r.Error != "" {
+              fmt.Printf("❌ %-40s ERROR: %s\n", r.URL, r.Error)
+              exitCode = 1
+          } else if r.StatusCode >= 400 {
+              fmt.Printf("⚠️  %-40s HTTP %d (%v)\n", r.URL, r.StatusCode, r.Latencia)
+              if r.StatusCode >= 500 {
+                  exitCode = 1
+              }
+          } else {
+              fmt.Printf("✅ %-40s HTTP %d (%v)\n", r.URL, r.StatusCode, r.Latencia)
+          }
+      }
+
+      os.Exit(exitCode)
+  }
+
+  var strings strings
+  ```
+
+  19. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Siempre cierra resp.Body (con defer).
+  2. Configura timeouts en el cliente: Timeout, Dialer.Timeout.
+  3. Usa http.Client en lugar de funciones globales para tests.
+  4. Pool de conexiones: configura MaxIdleConnsPerHost.
+  5. Implementa retry con backoff para peticiones fallidas.
+  6. Usa context.Context para cancelación y timeouts.
+  7. Limita el tamaño de las respuestas que lees.
+  8. No confíes en Content-Length (puede ser incorrecto).
+  9. Verifica resp.StatusCode antes de procesar el body.
+  10. Para APIs, crea un cliente reutilizable con métodos.
+
+  20. COMPARATIVA CON OTRAS BIBLIOTECAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Biblioteca      | Ventajas                           | Desventajas             |
+  |-----------------|------------------------------------|--------------------------|
+  | net/http        | Estándar, sin dependencias          | Verboso para casos simples |
+  | valyala/fasthttp| 2-5x más rápido, baja memoria       | API diferente, menos pulida |
+  | go-resty        | API fluida, encadenamiento          | Dependencia externa      |
+  | heimdall        | Retry, circuit breaker              | Opinado, pesado          |
+
+  Para el 95% de los casos, net/http es suficiente y recomendado.
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • http.Get para peticiones GET simples.
+  • http.Client con configuración de timeouts y transporte.
+  • http.NewRequest + client.Do para control total.
+  • Siempre cerrar resp.Body para reciclar conexiones.
+  • Usa SetBasicAuth o Bearer token para autenticación.
+  • Implementa retry con backoff para robustez.
+  • Pool de conexiones con Transport.
+  • Context.Context para cancelación.
+  • Construye clientes reutilizables para APIs.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Haz una petición a https://api.github.com/users/google y muestra
+    el nombre, la URL del avatar y el número de repositorios públicos.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Descarga el contenido de una URL y guárdalo en un archivo local,
+    mostrando el progreso en la consola.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Crea un cliente HTTP que implemente reintentos con backoff
+    exponencial para peticiones que fallan con 5xx o timeout.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Implementa un programa que consulte el clima de una ciudad
+    usando la API pública de OpenWeatherMap y muestre la temperatura.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Construye un "load tester" simple que reciba una URL y realice
+    N peticiones concurrentes, reportando estadísticas (latencia
+    promedio, percentiles 95, errores).
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Crea un proxy HTTP inverso que reciba peticiones, las registre
+    en un log y las reenvíe a un servidor upstream.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Implementa un cliente HTTP con soporte para circuit breaker
+    (si hay más de N errores consecutivos, no hace peticiones
+    durante un tiempo).
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Escribe un scraper que descargue URLs de forma concurrente,
+    extraiga enlaces con regex y los guarde en un archivo CSV.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Por qué debo cerrar resp.Body incluso si no lo leo?
+  R: Las conexiones HTTP se reciclan. Body.Close() devuelve la
+  conexión al pool. Si no cierras, agotas los sockets.
+
+  ❓ ¿Cuál es la diferencia entre http.Get y http.Client.Get?
+  R: http.Get usa un DefaultClient sin configuración. http.Client.Get
+  usa tu cliente con timeouts y transporte personalizados.
+
+  ❓ ¿Qué timeout debo configurar?
+  R: Depende del servicio. 10-30 segundos es típico. Para subida
+  de archivos, 60+ segundos.
+
+  ❓ ¿Cómo cancelo una petición en curso?
+  R: Usa context.WithCancel o context.WithTimeout, y pásalo al
+  Request con req.WithContext(ctx).
+
+  ❓ ¿Puedo reutilizar http.Client?
+  R: Sí, de hecho debes hacerlo. Client es seguro para uso
+  concurrente. Crea uno y reutilízalo.
+
+  ❓ ¿Cómo manejo redirecciones?
+  R: Por defecto, Client sigue redirecciones. Configura
+  CheckRedirect para personalizar el comportamiento.
+
+  ❓ ¿Qué es el Transport y cómo configurarlo?
+  R: Transport maneja las conexiones subyacentes. Configura
+  MaxIdleConns, TLSHandshakeTimeout, etc.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 CLIENTE HTTP DISTRIBUIDO CON BALANCEO DE CARGA
+
+  Diseña e implementa un cliente HTTP distribuido que:
+
+  1. Mantenga un pool de conexiones a múltiples servidores backend.
+  2. Distribuya peticiones usando diferentes estrategias:
+     - Round-robin
+     - Least connections
+     - Random
+  3. Implemente health checking periódico de los backends.
+  4. Tenga circuit breaker por backend (si falla, se retira del pool).
+  5. Reporte métricas: latencia por backend, tasa de error, throughput.
+  6. Soporte timeouts y retry con backoff.
+  7. Sea configurable vía archivo YAML/JSON.
+
+  Esquema:
+  ```
+  Cliente → Balanceador → [Backend 1, Backend 2, Backend 3]
+  ```
+
+  Requisitos técnicos:
+  - Usa net/http como base.
+  - Implementa las estrategias de balanceo.
+  - Usa sync/atomic para contadores de conexiones activas.
+  - Implementa health checks con peticiones periódicas.
+  - Canal de métricas para observabilidad.
+
+  Este desafío integra:
+  - HTTP Cliente avanzado
+  - Concurrencia y sincronización
+  - Patrones de resiliencia
+  - Observabilidad
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 56. Ahora dominas el lado cliente
+  de HTTP en Go. Sabes hacer peticiones GET, POST, PUT, DELETE,
+  manejar autenticación, cookies, subir archivos, y construir
+  clientes robustos con timeouts, retries y pool de conexiones.
+
+  El cliente HTTP es tu puerta de entrada a las APIs del mundo.
+  Un cliente bien construido marca la diferencia entre una
+  integración frágil y una robusta.
+
+  En el próximo capítulo, cambiaremos de rol: construiremos
+  servidores HTTP para recibir y procesar peticiones.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 57: HTTP SERVER
+    Aprenderás a construir servidores HTTP en Go con http.HandleFunc,
+    http.ListenAndServe, el Handler interface, y manejo de peticiones
+    y respuestas.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 56 — FIN DEL CAPÍTULO
+================================================================================

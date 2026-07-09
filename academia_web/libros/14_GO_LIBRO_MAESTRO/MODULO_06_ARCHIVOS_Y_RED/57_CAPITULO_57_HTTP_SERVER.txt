@@ -1,0 +1,1068 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 57: HTTP SERVER (net/http)
+================================================================================
+
+  "Un servidor HTTP en Go no es solo código que responde en un puerto:
+   es la puerta de entrada a tu aplicación, y debe ser fuerte,
+   segura y bien diseñada."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 57 de GO MASTER BOOK. En el capítulo anterior
+  fuimos clientes HTTP; ahora seremos servidores. Aprenderás a construir
+  servidores HTTP en Go usando http.HandleFunc, http.ListenAndServe, el
+  Handler interface, y cómo manejar peticiones y respuestas de forma
+  correcta. Go es famoso por su facilidad para crear servidores HTTP,
+  y en este capítulo descubrirás por qué.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Un buen servidor no solo responde: escucha, procesa y responde
+   con gracia."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Crear un servidor HTTP básico con http.ListenAndServe.
+  ✓ Manejar rutas con http.HandleFunc.
+  ✓ Implementar el Handler interface (ServeHTTP).
+  ✓ Leer datos de la petición (query, body, headers).
+  ✓ Escribir respuestas (status codes, headers, body).
+  ✓ Manejar diferentes métodos HTTP (GET, POST, PUT, DELETE).
+  ✓ Trabajar con path parameters.
+  ✓ Implementar un servidor HTTPS con TLS.
+  ✓ Configurar timeouts del servidor.
+  ✓ Construir un servidor REST básico.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. SERVIDOR HTTP MÍNIMO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "¡Hola desde Go Master Book!")
+      })
+
+      fmt.Println("Servidor en http://localhost:8080")
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  En 5 líneas efectivas tenemos un servidor HTTP funcionando.
+
+  2. http.HandleFunc — MANEJADORES POR RUTA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/", handlerHome)
+      http.HandleFunc("/saludo", handlerSaludo)
+      http.HandleFunc("/acerca", handlerAcerca)
+
+      fmt.Println("Servidor en :8080")
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func handlerHome(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Bienvenido a la página principal")
+  }
+
+  func handlerSaludo(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "¡Hola, visitante!")
+  }
+
+  func handlerAcerca(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Acerca de GO MASTER BOOK")
+  }
+  ```
+
+  3. ESTRUCTURA DE http.Request
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  type Request struct {
+      Method           string
+      URL              *url.URL
+      Proto            string
+      ProtoMajor       int
+      ProtoMinor       int
+      Header           Header
+      Body             io.ReadCloser
+      ContentLength    int64
+      TransferEncoding []string
+      Host             string
+      Form             url.Values
+      PostForm         url.Values
+      MultipartForm    *multipart.Form
+      Trailer          Header
+      RemoteAddr       string
+      RequestURI       string
+      TLS              *tls.ConnectionState
+      Cancel           <-chan struct{}
+      Response         *Response
+      ctx              context.Context
+  }
+  ```
+
+  4. ESTRUCTURA DE http.ResponseWriter
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ResponseWriter es una interfaz que permite construir la respuesta:
+
+  ```go
+  type ResponseWriter interface {
+      Header() Header           // Obtener/escribir headers
+      Write([]byte) (int, error) // Escribir el body
+      WriteHeader(int)           // Escribir status code
+  }
+  ```
+
+  Orden de operaciones:
+  1. Escribir headers (opcional)
+  2. Escribir status code (WriteHeader, opcional, default 200)
+  3. Escribir body (Write)
+
+  Los headers deben escribirse antes de WriteHeader o Write.
+
+  5. LEYENDO QUERY PARAMETERS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+      "strconv"
+  )
+
+  func main() {
+      http.HandleFunc("/buscar", buscarHandler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func buscarHandler(w http.ResponseWriter, r *http.Request) {
+      // Query parameters: /buscar?q=golang&page=1&limit=10
+      query := r.URL.Query()
+      q := query.Get("q")
+      page, _ := strconv.Atoi(query.Get("page"))
+      limit, _ := strconv.Atoi(query.Get("limit"))
+
+      if page < 1 {
+          page = 1
+      }
+      if limit < 1 || limit > 100 {
+          limit = 20
+      }
+
+      fmt.Fprintf(w, "Buscando '%s' (página %d, %d resultados por página)",
+          q, page, limit)
+  }
+  ```
+
+  Prueba: curl "http://localhost:8080/buscar?q=golang&page=2&limit=10"
+
+  6. LEYENDO PATH PARAMETERS (SIN MUX)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Con Go 1.22+, http.ServeMux soporta patrones con variables:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.HandleFunc("GET /usuarios/{id}", obtenerUsuario)
+      mux.HandleFunc("GET /usuarios", listarUsuarios)
+      mux.HandleFunc("POST /usuarios", crearUsuario)
+
+      http.ListenAndServe(":8080", mux)
+  }
+
+  func obtenerUsuario(w http.ResponseWriter, r *http.Request) {
+      id := r.PathValue("id")
+      fmt.Fprintf(w, "Obteniendo usuario ID: %s", id)
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Listando todos los usuarios")
+  }
+
+  func crearUsuario(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "Creando nuevo usuario")
+  }
+  ```
+
+  7. LEYENDO EL BODY (JSON, FORM, ETC.)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "io"
+      "net/http"
+  )
+
+  type Usuario struct {
+      Nombre string `json:"nombre"`
+      Email  string `json:"email"`
+      Edad   int    `json:"edad"`
+  }
+
+  func main() {
+      http.HandleFunc("/usuario", usuarioHandler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func usuarioHandler(w http.ResponseWriter, r *http.Request) {
+      switch r.Method {
+      case "POST":
+          crearUsuario(w, r)
+      case "GET":
+          listarUsuarios(w, r)
+      default:
+          http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+      }
+  }
+
+  func crearUsuario(w http.ResponseWriter, r *http.Request) {
+      // Leer JSON del body
+      var u Usuario
+      err := json.NewDecoder(r.Body).Decode(&u)
+      if err != nil {
+          http.Error(w, "JSON inválido", http.StatusBadRequest)
+          return
+      }
+      defer r.Body.Close()
+
+      fmt.Printf("Usuario creado: %s (%s)\n", u.Nombre, u.Email)
+
+      // Responder con JSON
+      w.Header().Set("Content-Type", "application/json")
+      w.WriteHeader(http.StatusCreated)
+      json.NewEncoder(w).Encode(map[string]interface{}{
+          "mensaje": "Usuario creado exitosamente",
+          "usuario": u,
+      })
+  }
+
+  func listarUsuarios(w http.ResponseWriter, r *http.Request) {
+      usuarios := []Usuario{
+          {Nombre: "Ana García", Email: "ana@ejemplo.com", Edad: 30},
+          {Nombre: "Luis Pérez", Email: "luis@ejemplo.com", Edad: 25},
+      }
+
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(usuarios)
+  }
+  ```
+
+  Prueba:
+  ```
+  curl -X POST http://localhost:8080/usuario \
+    -H "Content-Type: application/json" \
+    -d '{"nombre":"Ana García","email":"ana@ejemplo.com","edad":30}'
+  ```
+
+  8. LEYENDO FORM DATA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/login", loginHandler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func loginHandler(w http.ResponseWriter, r *http.Request) {
+      if r.Method == "GET" {
+          // Mostrar formulario HTML
+          w.Header().Set("Content-Type", "text/html; charset=utf-8")
+          fmt.Fprint(w, `
+              <form method="POST" action="/login">
+                  <input type="text" name="usuario" placeholder="Usuario">
+                  <input type="password" name="password" placeholder="Contraseña">
+                  <button type="submit">Ingresar</button>
+              </form>
+          `)
+          return
+      }
+
+      // POST: procesar login
+      err := r.ParseForm()
+      if err != nil {
+          http.Error(w, "Error al parsear formulario", http.StatusBadRequest)
+          return
+      }
+
+      usuario := r.FormValue("usuario")
+      password := r.FormValue("password")
+
+      fmt.Printf("Login: usuario=%s, password=%s\n", usuario, password)
+
+      if usuario == "admin" && password == "1234" {
+          fmt.Fprintf(w, "Bienvenido, %s!", usuario)
+      } else {
+          http.Error(w, "Credenciales inválidas", http.StatusUnauthorized)
+      }
+  }
+  ```
+
+  9. LEYENDO HEADERS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/headers", headersHandler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func headersHandler(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+
+      headers := make(map[string]string)
+      headers["Host"] = r.Host
+      headers["Method"] = r.Method
+      headers["RemoteAddr"] = r.RemoteAddr
+      headers["UserAgent"] = r.UserAgent()
+
+      for k, v := range r.Header {
+          headers["Header_"+k] = v[0]
+      }
+
+      json.NewEncoder(w).Encode(headers)
+  }
+  ```
+
+  10. ESCRIBIENDO RESPUESTAS — STATUS CODES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/api", apiHandler)
+      http.ListenAndServe(":8080", nil)
+  }
+
+  func apiHandler(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+
+      switch r.Method {
+      case "GET":
+          // 200 OK (implícito)
+          json.NewEncoder(w).Encode(map[string]string{"mensaje": "GET exitoso"})
+
+      case "POST":
+          w.WriteHeader(http.StatusCreated)
+          json.NewEncoder(w).Encode(map[string]string{"mensaje": "Recurso creado"})
+
+      case "DELETE":
+          w.WriteHeader(http.StatusNoContent) // 204 sin body
+
+      default:
+          w.WriteHeader(http.StatusMethodNotAllowed)
+          json.NewEncoder(w).Encode(map[string]string{
+              "error": "Método no permitido",
+          })
+      }
+  }
+  ```
+
+  Códigos de estado comunes:
+  ```go
+  http.StatusOK                  // 200
+  http.StatusCreated             // 201
+  http.StatusNoContent           // 204
+  http.StatusMovedPermanently    // 301
+  http.StatusBadRequest          // 400
+  http.StatusUnauthorized        // 401
+  http.StatusForbidden           // 403
+  http.StatusNotFound            // 404
+  http.StatusMethodNotAllowed    // 405
+  http.StatusConflict            // 409
+  http.StatusInternalServerError // 500
+  http.StatusBadGateway          // 502
+  http.StatusServiceUnavailable  // 503
+  ```
+
+  11. SERVIDOR CONFIGURABLE CON http.Server
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+      "time"
+  )
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Hola desde servidor configurado")
+      })
+
+      server := &http.Server{
+          Addr:         ":8080",
+          Handler:      mux,
+          ReadTimeout:  10 * time.Second,
+          WriteTimeout: 10 * time.Second,
+          IdleTimeout:  30 * time.Second,
+          MaxHeaderBytes: 1 << 20, // 1 MB
+      }
+
+      fmt.Println("Servidor configurado en :8080")
+      if err := server.ListenAndServe(); err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+  ```
+
+  12. SERVIDOR HTTPS CON TLS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "log"
+      "net/http"
+  )
+
+  func main() {
+      http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Conexión segura! Protocolo: %s", r.Proto)
+      })
+
+      // Generar certificado autofirmado:
+      // go run /usr/local/go/src/crypto/tls/generate_cert.go \
+      //   --host localhost
+
+      log.Println("Servidor HTTPS en :8443")
+      err := http.ListenAndServeTLS(":8443", "cert.pem", "key.pem", nil)
+      if err != nil {
+          log.Fatal("Error HTTPS:", err)
+      }
+  }
+  ```
+
+  13. IMPLEMENTANDO LA INTERFAZ Handler
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "net/http"
+  )
+
+  // Handler personalizado
+  type Saludador struct {
+      Nombre string
+  }
+
+  func (s *Saludador) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      fmt.Fprintf(w, "¡Hola, %s!", s.Nombre)
+  }
+
+  func main() {
+      http.Handle("/saludo", &Saludador{Nombre: "Ana"})
+      http.Handle("/despedida", &Saludador{Nombre: "amigo"})
+
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  14. SERVIDOR CON GRACEFUL SHUTDOWN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "log"
+      "net/http"
+      "os"
+      "os/signal"
+      "syscall"
+      "time"
+  )
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, "Servidor funcionando")
+      })
+
+      server := &http.Server{
+          Addr:    ":8080",
+          Handler: mux,
+      }
+
+      // Canal para señal de terminación
+      quit := make(chan os.Signal, 1)
+      signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+      // Iniciar servidor en goroutine
+      go func() {
+          log.Println("Servidor iniciado en :8080")
+          if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+              log.Fatalf("Error: %v", err)
+          }
+      }()
+
+      // Esperar señal
+      <-quit
+      log.Println("Apagando servidor...")
+
+      // Graceful shutdown con timeout
+      ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+      defer cancel()
+
+      if err := server.Shutdown(ctx); err != nil {
+          log.Fatalf("Error al apagar: %v", err)
+      }
+
+      log.Println("Servidor apagado correctamente")
+  }
+  ```
+
+  15. MANEJANDO ARCHIVOS ESTÁTICOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "net/http"
+  )
+
+  func main() {
+      // Servir archivos estáticos desde el directorio "public"
+      fs := http.FileServer(http.Dir("./public"))
+      http.Handle("/static/", http.StripPrefix("/static/", fs))
+
+      // Página principal
+      http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+          http.ServeFile(w, r, "./public/index.html")
+      })
+
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  Estructura de directorio:
+  ```
+  public/
+    index.html
+    css/
+      style.css
+    js/
+      app.js
+  ```
+
+  16. PROGRAMA COMPLETO — API REST DE TAREAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "log"
+      "net/http"
+      "strconv"
+      "strings"
+      "sync"
+      "time"
+  )
+
+  type Tarea struct {
+      ID        int       `json:"id"`
+      Titulo    string    `json:"titulo"`
+      Completada bool     `json:"completada"`
+      CreadaEn  time.Time `json:"creada_en"`
+  }
+
+  type TareasAPI struct {
+      mu     sync.RWMutex
+      tareas []Tarea
+      nextID int
+  }
+
+  func NewTareasAPI() *TareasAPI {
+      return &TareasAPI{
+          tareas: []Tarea{
+              {ID: 1, Titulo: "Aprender Go", Completada: false, CreadaEn: time.Now()},
+              {ID: 2, Titulo: "Construir API REST", Completada: false, CreadaEn: time.Now()},
+          },
+          nextID: 3,
+      }
+  }
+
+  func (api *TareasAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+
+      // Parsear path: /tareas, /tareas/{id}
+      path := strings.TrimPrefix(r.URL.Path, "/tareas")
+      path = strings.TrimSuffix(path, "/")
+
+      switch {
+      case path == "" && r.Method == "GET":
+          api.listarTareas(w, r)
+      case path == "" && r.Method == "POST":
+          api.crearTarea(w, r)
+      case path != "" && r.Method == "GET":
+          api.obtenerTarea(w, r, path)
+      case path != "" && r.Method == "PUT":
+          api.actualizarTarea(w, r, path)
+      case path != "" && r.Method == "DELETE":
+          api.eliminarTarea(w, r, path)
+      default:
+          http.Error(w, `{"error":"método no permitido"}`, http.StatusMethodNotAllowed)
+      }
+  }
+
+  func (api *TareasAPI) listarTareas(w http.ResponseWriter, r *http.Request) {
+      api.mu.RLock()
+      defer api.mu.RUnlock()
+      json.NewEncoder(w).Encode(api.tareas)
+  }
+
+  func (api *TareasAPI) crearTarea(w http.ResponseWriter, r *http.Request) {
+      var tarea Tarea
+      if err := json.NewDecoder(r.Body).Decode(&tarea); err != nil {
+          http.Error(w, `{"error":"JSON inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      tarea.ID = api.nextID
+      api.nextID++
+      tarea.CreadaEn = time.Now()
+      api.tareas = append(api.tareas, tarea)
+      api.mu.Unlock()
+
+      w.WriteHeader(http.StatusCreated)
+      json.NewEncoder(w).Encode(tarea)
+  }
+
+  func (api *TareasAPI) obtenerTarea(w http.ResponseWriter, r *http.Request, idStr string) {
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.RLock()
+      defer api.mu.RUnlock()
+
+      for _, t := range api.tareas {
+          if t.ID == id {
+              json.NewEncoder(w).Encode(t)
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"tarea no encontrada"}`, http.StatusNotFound)
+  }
+
+  func (api *TareasAPI) actualizarTarea(w http.ResponseWriter, r *http.Request, idStr string) {
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      var actualizada Tarea
+      if err := json.NewDecoder(r.Body).Decode(&actualizada); err != nil {
+          http.Error(w, `{"error":"JSON inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      defer api.mu.Unlock()
+
+      for i, t := range api.tareas {
+          if t.ID == id {
+              if actualizada.Titulo != "" {
+                  api.tareas[i].Titulo = actualizada.Titulo
+              }
+              api.tareas[i].Completada = actualizada.Completada
+              json.NewEncoder(w).Encode(api.tareas[i])
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"tarea no encontrada"}`, http.StatusNotFound)
+  }
+
+  func (api *TareasAPI) eliminarTarea(w http.ResponseWriter, r *http.Request, idStr string) {
+      id, err := strconv.Atoi(idStr)
+      if err != nil {
+          http.Error(w, `{"error":"ID inválido"}`, http.StatusBadRequest)
+          return
+      }
+
+      api.mu.Lock()
+      defer api.mu.Unlock()
+
+      for i, t := range api.tareas {
+          if t.ID == id {
+              api.tareas = append(api.tareas[:i], api.tareas[i+1:]...)
+              w.WriteHeader(http.StatusNoContent)
+              return
+          }
+      }
+
+      http.Error(w, `{"error":"tarea no encontrada"}`, http.StatusNotFound)
+  }
+
+  func main() {
+      api := NewTareasAPI()
+
+      server := &http.Server{
+          Addr:         ":8080",
+          Handler:      api,
+          ReadTimeout:  10 * time.Second,
+          WriteTimeout: 10 * time.Second,
+          IdleTimeout:  30 * time.Second,
+      }
+
+      fmt.Println("API REST de Tareas en http://localhost:8080/tareas")
+      fmt.Println("Endpoints:")
+      fmt.Println("  GET    /tareas       - Listar tareas")
+      fmt.Println("  POST   /tareas       - Crear tarea")
+      fmt.Println("  GET    /tareas/{id}  - Obtener tarea")
+      fmt.Println("  PUT    /tareas/{id}  - Actualizar tarea")
+      fmt.Println("  DELETE /tareas/{id}  - Eliminar tarea")
+
+      log.Fatal(server.ListenAndServe())
+  }
+  ```
+
+  Prueba con curl:
+  ```bash
+  curl http://localhost:8080/tareas
+  curl -X POST http://localhost:8080/tareas \
+    -H "Content-Type: application/json" \
+    -d '{"titulo":"Nueva tarea"}'
+  curl http://localhost:8080/tareas/1
+  curl -X PUT http://localhost:8080/tareas/1 \
+    -H "Content-Type: application/json" \
+    -d '{"completada":true}'
+  curl -X DELETE http://localhost:8080/tareas/2
+  ```
+
+  17. SERVIDOR CON MÚLTIPLES HANDLERS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+  )
+
+  type HandlerSalud struct{}
+
+  func (h *HandlerSalud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(map[string]string{
+          "mensaje": "¡Salud desde Go!",
+      })
+  }
+
+  type HandlerSaludoPersonalizado struct {
+      Nombre string
+  }
+
+  func (h *HandlerSaludoPersonalizado) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(map[string]string{
+          "mensaje": "¡Hola, " + h.Nombre + "!",
+      })
+  }
+
+  func main() {
+      mux := http.NewServeMux()
+      mux.Handle("/salud", &HandlerSalud{})
+      mux.Handle("/saludo/ana", &HandlerSaludoPersonalizado{Nombre: "Ana"})
+      mux.Handle("/saludo/luis", &HandlerSaludoPersonalizado{Nombre: "Luis"})
+
+      http.ListenAndServe(":8080", mux)
+  }
+  ```
+
+  18. COMPRESIÓN DE RESPUESTAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "compress/gzip"
+      "fmt"
+      "io"
+      "net/http"
+      "strings"
+  )
+
+  type GzipHandler struct {
+      handler http.Handler
+  }
+
+  func (g *GzipHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+          g.handler.ServeHTTP(w, r)
+          return
+      }
+
+      w.Header().Set("Content-Encoding", "gzip")
+      gw := gzip.NewWriter(w)
+      defer gw.Close()
+
+      gzWriter := &gzipResponseWriter{ResponseWriter: w, Writer: gw}
+      g.handler.ServeHTTP(gzWriter, r)
+  }
+
+  type gzipResponseWriter struct {
+      http.ResponseWriter
+      Writer io.Writer
+  }
+
+  func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+      return w.Writer.Write(b)
+  }
+
+  func main() {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          fmt.Fprintf(w, strings.Repeat("Hola Go Master Book! ", 1000))
+      })
+
+      http.Handle("/", &GzipHandler{handler: handler})
+      http.ListenAndServe(":8080", nil)
+  }
+  ```
+
+  19. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Siempre configura ReadTimeout y WriteTimeout.
+  2. Implementa graceful shutdown para evitar cortar conexiones.
+  3. Usa Content-Type adecuado (application/json, text/html, etc.).
+  4. Valida todas las entradas del usuario.
+  5. Limita el tamaño del body con http.MaxBytesReader.
+  6. Usa recover() para evitar que el servidor caiga por panics.
+  7. Loggea las peticiones (método, ruta, status, duración).
+  8. Usa http.Server configurable en lugar de funciones globales.
+  9. No confíes en r.Host (puede ser manipulado).
+  10. Usa HTTPS en producción siempre.
+
+  20. COMPARATIVA CON FRAMEWORKS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  | Framework    | Ventajas                          | Cuándo usarlo               |
+  |--------------|-----------------------------------|------------------------------|
+  | net/http     | Estándar, sin dependencias         | APIs simples, microservicios |
+  | gin          | Routing rápido, middleware fácil   | APIs REST complejas          |
+  | echo         | Rendimiento, middleware            | APIs con muchos middlewares  |
+  | chi          | Ligero, compatible con net/http    | APIs modulares               |
+  | fiber        | Rápido, express-like               | Alta concurrencia            |
+
+  Para APIs simples, net/http es más que suficiente.
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • http.ListenAndServe + http.HandleFunc crean un servidor en 5 líneas.
+  • http.Request contiene toda la información de la petición.
+  • http.ResponseWriter construye la respuesta (headers, body, status).
+  • Los handlers implementan ServeHTTP (HandleFunc es un atajo).
+  • http.Server ofrece configuración profesional.
+  • Graceful shutdown con server.Shutdown().
+  • Go 1.22+ soporta patrones con variables en el mux.
+  • HTTPS con ListenAndServeTLS.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un servidor que tenga dos rutas: /hora que devuelva la
+    hora actual, y /fecha que devuelva la fecha actual en formato JSON.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Implementa un contador de visitas que incrementa cada vez que
+    se accede a /visitas y devuelve el número actual.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Crea un servidor que reciba un número por POST en /factorial
+    y devuelva su factorial. Maneja números negativos con error 400.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Implementa un servidor que sirva archivos de un directorio y
+    también tenga una API REST para subir archivos con POST.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Construye un servidor que implemente autenticación básica para
+    algunas rutas y pública para otras, usando el Header
+    Authorization.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Crea un proxy inverso que reciba peticiones en /api/* y las
+    reenvíe a otro servidor, añadiendo headers de log.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Implementa un servidor con rate limiting por IP usando un
+    token bucket algorithm.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Escribe un servidor WebSocket simple que permita chat en
+    tiempo real entre clientes conectados.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Qué diferencia hay entre Handle y HandleFunc?
+  R: Handle recibe un Handler (interface), HandleFunc recibe una
+  función. HandleFunc es un atajo que convierte la función en Handler.
+
+  ❓ ¿Por qué debería usar http.Server en lugar de ListenAndServe?
+  R: http.Server permite configurar timeouts, límites y graceful
+  shutdown. ListenAndServe es solo para prototipos rápidos.
+
+  ❓ ¿Cómo limito el tamaño del body?
+  R: Usa r.Body = http.MaxBytesReader(w, r.Body, maxSize).
+
+  ❓ ¿Cómo obtengo la IP del cliente?
+  R: r.RemoteAddr, pero ten en cuenta que si hay proxy, necesitas
+  el header X-Forwarded-For.
+
+  ❓ ¿Qué pasa si no llamo a WriteHeader?
+  R: La primera llamada a Write() establece el status a 200 OK
+  automáticamente.
+
+  ❓ ¿Cómo configuro CORS?
+  R: Añadiendo headers: Access-Control-Allow-Origin, Methods, Headers.
+
+  ❓ ¿Cómo hago debug del servidor?
+  R: Usa log.Println para cada petición, o implementa un middleware
+  de logging.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 SERVIDOR API GATEWAY CON PLUGINS
+
+  Diseña e implementa un API Gateway en Go que:
+
+  1. Reciba todas las peticiones en un punto único de entrada.
+  2. Enrute a diferentes servicios backend según la ruta.
+  3. Implemente un sistema de plugins que se ejecuten en el pipeline:
+     - Logging
+     - Autenticación (JWT, API Key)
+     - Rate limiting
+     - Compresión
+     - Caching
+  4. Los plugins sean configurables y componibles.
+  5. Reporte métricas en tiempo real vía una ruta /metrics.
+  6. Implemente circuit breaker para backends que fallan.
+  7. Tenga una consola de administración vía web.
+
+  Arquitectura:
+  ```
+  Cliente → API Gateway [plugin1 → plugin2 → ... → pluginN] → Backend
+  ```
+
+  Requisitos técnicos:
+  - Cada plugin implementa una interfaz Plugin con métodos Before/After.
+  - Usa http.Handler como base para el pipeline.
+  - Usa mapas concurrentes para configuración y métricas.
+  - Los plugins se cargan desde un directorio configurable.
+  - La configuración es un archivo JSON/YAML.
+
+  Este desafío integra:
+  - HTTP Server avanzado
+  - Patrón middleware/pipeline
+  - Concurrencia y caché
+  - Arquitectura de microservicios
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 57. Ahora sabes construir servidores
+  HTTP en Go, desde el más simple "Hola Mundo" hasta APIs REST
+  completas con graceful shutdown, timeouts y concurrencia.
+
+  Go brilla en el desarrollo de servidores: su rendimiento, su
+  modelo de concurrencia y su biblioteca estándar hacen que
+  construir servidores HTTP sea una experiencia placentera.
+
+  En el próximo capítulo, exploraremos el routing en profundidad:
+  ServeMux, Gorilla Mux y Chi router.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 58: ROUTING (Mux, Gorilla Mux, Chi)
+    Aprenderás las diferentes estrategias de enrutamiento HTTP
+    en Go: desde el ServeMux estándar hasta routers avanzados
+    como Gorilla Mux y Chi.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 57 — FIN DEL CAPÍTULO
+================================================================================

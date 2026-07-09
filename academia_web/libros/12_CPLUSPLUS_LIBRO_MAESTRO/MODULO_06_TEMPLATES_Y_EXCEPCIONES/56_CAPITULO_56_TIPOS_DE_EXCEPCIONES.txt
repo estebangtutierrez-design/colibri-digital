@@ -1,0 +1,1265 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 56: TIPOS DE EXCEPCIONES
+================================================================================
+
+  "No todas las excepciones son iguales. Una jerarquía bien diseñada
+   es la diferencia entre 'algo falló' y 'sé exactamente qué falló'."
+                                                   — C++ Best Practices
+
+================================================================================
+
+BIENVENIDA
+----------
+
+Bienvenido al capítulo sobre tipos de excepciones. En el capítulo anterior
+aprendimos la mecánica de try/catch/throw. Ahora nos centraremos en los
+tipos de excepciones: qué nos ofrece la biblioteca estándar, cómo crear
+nuestras propias clases de excepción, y cómo diseñar jerarquías de
+excepciones que transmitan información útil.
+
+std::exception es la clase base de todas las excepciones estándar. Pero
+hay mucho más: std::runtime_error, std::logic_error, std::out_of_range,
+std::invalid_argument, y otras especializaciones. Además, aprenderemos
+a implementar nuestra propia jerarquía con mensajes personalizados,
+códigos de error, y metadatos.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "Una buena clase de excepción no solo dice qué pasó, sino que
+   proporciona el contexto necesario para entender por qué pasó."
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+
+  1. Conocer la jerarquía de excepciones de la biblioteca estándar.
+  2. Entender std::exception y su método virtual what().
+  3. Usar std::runtime_error y std::logic_error correctamente.
+  4. Crear clases de excepción personalizadas.
+  5. Diseñar jerarquías de excepciones para dominios específicos.
+  6. Incluir información contextual en excepciones.
+  7. Conocer std::nested_exception y std::throw_with_nested.
+  8. Manejar excepciones de bibliotecas de terceros.
+  9. Implementar excepciones polimórficas.
+  10. Aplicar mejores prácticas en el diseño de excepciones.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+1. JERARQUÍA DE EXCEPCIONES ESTÁNDAR
+--------------------------------------
+
+  std::exception
+  ├── std::logic_error
+  │   ├── std::invalid_argument
+  │   ├── std::domain_error
+  │   ├── std::length_error
+  │   └── std::out_of_range
+  ├── std::runtime_error
+  │   ├── std::range_error
+  │   ├── std::overflow_error
+  │   └── std::underflow_error
+  └── std::bad_alloc (y otros)
+
+  logic_error: errores detectables antes de la ejecución (precondiciones)
+  runtime_error: errores que ocurren durante la ejecución
+
+  Otras: std::bad_cast, std::bad_typeid, std::bad_weak_ptr, etc.
+
+2. std::exception Y EL MÉTODO what()
+--------------------------------------
+
+  class exception {
+  public:
+      exception() noexcept;
+      exception(const exception&) noexcept;
+      exception& operator=(const exception&) noexcept;
+      virtual const char* what() const noexcept;
+      virtual ~exception();
+  };
+
+  what() devuelve un mensaje descriptivo. Es virtual, por lo que las
+  clases derivadas pueden proporcionar su propio mensaje.
+
+3. std::runtime_error Y std::logic_error
+------------------------------------------
+
+  std::runtime_error: errores que dependen de datos de ejecución.
+    - overflow_error: desbordamiento aritmético.
+    - underflow_error: subdesbordamiento.
+    - range_error: valor fuera de rango en operaciones internas.
+
+  std::logic_error: errores que podrían detectarse analizando el código.
+    - invalid_argument: argumento inválido.
+    - domain_error: dominio de función violado.
+    - length_error: tamaño excede el máximo permitido.
+    - out_of_range: índice fuera de rango.
+
+  Ambos reciben una std::string o const char* en el constructor.
+
+4. CLASES DE EXCEPCIÓN PERSONALIZADAS
+---------------------------------------
+
+Para crear una excepción personalizada, hereda de std::exception o de
+una clase derivada:
+
+  class MiExcepcion : public std::exception {
+      std::string mensaje;
+  public:
+      explicit MiExcepcion(const std::string& msg) : mensaje(msg) {}
+      const char* what() const noexcept override {
+          return mensaje.c_str();
+      }
+  };
+
+Mejores prácticas:
+  - Heredar de std::runtime_error o std::logic_error según el caso.
+  - Hacer que el constructor acepte información útil.
+  - Implementar what() para devolver un mensaje descriptivo.
+  - Marcar como noexcept las operaciones que no lanzan.
+  - Incluir código de error, timestamp, o contexto adicional.
+
+5. JERARQUÍAS DE EXCEPCIONES PARA DOMINIOS ESPECÍFICOS
+--------------------------------------------------------
+
+  class ErrorBanco : public std::runtime_error {
+      using std::runtime_error::runtime_error;
+  };
+
+  class SaldoInsuficiente : public ErrorBanco {
+      double saldo, requerido;
+  public:
+      SaldoInsuficiente(double s, double r)
+          : ErrorBanco("Saldo insuficiente"),
+            saldo(s), requerido(r) {}
+      double getSaldo() const { return saldo; }
+      double getRequerido() const { return requerido; }
+  };
+
+6. INFORMACIÓN CONTEXTUAL EN EXCEPCIONES
+------------------------------------------
+
+Además del mensaje, puedes incluir:
+  - Códigos de error numéricos.
+  - Valores que causaron el error.
+  - Timestamp del error.
+  - Nombre del archivo y línea (con __FILE__, __LINE__).
+  - Stack trace (en C++23 con std::stacktrace).
+
+  class ErrorConContexto : public std::runtime_error {
+      int codigoError;
+      std::string archivo;
+      int linea;
+  public:
+      ErrorConContexto(const std::string& msg, int cod,
+                       const char* file, int line)
+          : std::runtime_error(msg), codigoError(cod),
+            archivo(file), linea(line) {}
+      int getCodigo() const { return codigoError; }
+      // ...
+  };
+
+  #define LANZAR_ERROR(msg, cod) \
+      throw ErrorConContexto(msg, cod, __FILE__, __LINE__)
+
+7. EXCEPCIONES ANIDADAS (C++11)
+----------------------------------
+
+std::nested_exception permite capturar una excepción y anidarla dentro
+de otra, preservando la cadena de errores:
+
+  try {
+      try {
+          throw std::runtime_error("Error interno");
+      }
+      catch (...) {
+          std::throw_with_nested(
+              std::runtime_error("Error externo"));
+      }
+  }
+  catch (const std::exception& e) {
+      std::cout << e.what() << "\n";
+      try {
+          std::rethrow_if_nested(e);
+      }
+      catch (const std::exception& nested) {
+          std::cout << "  Anidado: " << nested.what() << "\n";
+      }
+  }
+
+8. MANEJO DE EXCEPCIONES DE BIBLIOTECAS
+-----------------------------------------
+
+Cuando usas bibliotecas de terceros, puedes envolver sus excepciones:
+
+  try {
+      biblioteca.operacion();
+  }
+  catch (const std::exception& e) {
+      // Ya es std::exception, propagar
+      throw;
+  }
+  catch (const ErrorBiblioteca& e) {
+      // Envolver en excepción propia
+      throw ErrorPropio(
+          std::string("Biblioteca fallo: ") + e.msg());
+  }
+  catch (...) {
+      // Excepción desconocida
+      throw ErrorPropio("Error desconocido de biblioteca");
+  }
+
+9. EXCEPCIONES POLIMÓRFICAS
+-----------------------------
+
+Capturar por referencia const a la clase base permite polimorfismo:
+
+  try {
+      // puede lanzar SaldoInsuficiente, CuentaBloqueada, etc.
+  }
+  catch (const ErrorBanco& e) {
+      // Captura cualquier ErrorBanco o derivada
+      std::cerr << "Error bancario: " << e.what() << "\n";
+  }
+
+10. MEJORES PRÁCTICAS DE DISEÑO
+--------------------------------
+
+  - Prefiere std::runtime_error sobre std::logic_error para errores
+    que dependen de entradas del usuario.
+  - Usa std::logic_error para violaciones de precondiciones.
+  - Cada módulo o capa debe tener su propia jerarquía de excepciones.
+  - Incluye suficiente contexto para diagnosticar el error.
+  - No uses excepciones para control de flujo.
+  - Documenta qué excepciones lanza cada función.
+
+================================================================================
+  CÓDIGO DE EJEMPLO
+================================================================================
+
+```cpp
+//==============================================================================
+// EJEMPLO 1: Jerarquía estándar - probando diferentes tipos
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+#include <string>
+
+void probarExcepcion(const std::string& desc, std::function<void()> fn) {
+    try {
+        fn();
+    }
+    catch (const std::out_of_range& e) {
+        std::cout << desc << " -> out_of_range: " << e.what() << "\n";
+    }
+    catch (const std::invalid_argument& e) {
+        std::cout << desc << " -> invalid_argument: " << e.what() << "\n";
+    }
+    catch (const std::length_error& e) {
+        std::cout << desc << " -> length_error: " << e.what() << "\n";
+    }
+    catch (const std::overflow_error& e) {
+        std::cout << desc << " -> overflow_error: " << e.what() << "\n";
+    }
+    catch (const std::runtime_error& e) {
+        std::cout << desc << " -> runtime_error: " << e.what() << "\n";
+    }
+    catch (const std::logic_error& e) {
+        std::cout << desc << " -> logic_error: " << e.what() << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cout << desc << " -> exception: " << e.what() << "\n";
+    }
+}
+
+int main() {
+    probarExcepcion("vector::at()",
+        []() { std::vector<int> v; v.at(10); });
+
+    probarExcepcion("stoi invalido",
+        []() { std::stoi("abc"); });
+
+    probarExcepcion("stoi out_of_range",
+        []() { std::stoi("999999999999999"); });
+
+    probarExcepcion("string::resize enorme",
+        []() { std::string s; s.resize(1000000000000ULL); });
+
+    probarExcepcion("bad_alloc",
+        []() { new int[1000000000000ULL]; });
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 2: what() - mensajes descriptivos
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+
+void demostrarWhat() {
+    try {
+        throw std::runtime_error("Error de runtime: archivo no encontrado");
+    }
+    catch (const std::exception& e) {
+        std::cout << "what(): " << e.what() << "\n";
+        std::cout << "tipo: " << typeid(e).name() << "\n";
+    }
+
+    try {
+        throw std::logic_error("Error de logica: indice negativo");
+    }
+    catch (const std::exception& e) {
+        std::cout << "what(): " << e.what() << "\n";
+    }
+
+    try {
+        throw std::out_of_range("Fuera de rango: posicion 100 en vector de 5");
+    }
+    catch (const std::exception& e) {
+        std::cout << "what(): " << e.what() << "\n";
+    }
+}
+
+int main() {
+    demostrarWhat();
+
+    // También puedes crear excepciones sin lanzar
+    std::runtime_error err("Mensaje de error");
+    std::cout << "\nObjeto error: " << err.what() << "\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 3: Creación de excepciones personalizadas básicas
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+// Excepción personalizada simple
+class ErrorMatematico : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+// Excepción personalizada con información extra
+class DivisionPorCero : public std::runtime_error {
+    double numerador;
+
+public:
+    explicit DivisionPorCero(double num)
+        : std::runtime_error("Division por cero"),
+          numerador(num) {}
+
+    double getNumerador() const { return numerador; }
+};
+
+class RaizNegativa : public std::runtime_error {
+    double valor;
+
+public:
+    explicit RaizNegativa(double v)
+        : std::runtime_error("Raiz cuadrada de numero negativo"),
+          valor(v) {}
+
+    double getValor() const { return valor; }
+};
+
+double dividirSeguro(double a, double b) {
+    if (b == 0.0) {
+        throw DivisionPorCero(a);
+    }
+    return a / b;
+}
+
+double raizSegura(double x) {
+    if (x < 0) {
+        throw RaizNegativa(x);
+    }
+    return sqrt(x);
+}
+
+int main() {
+    try {
+        double r = dividirSeguro(10.0, 0.0);
+    }
+    catch (const DivisionPorCero& e) {
+        std::cout << "Error: " << e.what()
+                  << " (numerador: " << e.getNumerador() << ")\n";
+    }
+
+    try {
+        double r = raizSegura(-4.0);
+    }
+    catch (const RaizNegativa& e) {
+        std::cout << "Error: " << e.what()
+                  << " (valor: " << e.getValor() << ")\n";
+    }
+
+    // Captura polimórfica
+    try {
+        dividirSeguro(5.0, 0.0);
+    }
+    catch (const std::exception& e) {
+        std::cout << "Capturado polimorficamente: " << e.what() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 4: Jerarquía completa para dominio bancario
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <ctime>
+
+// Base de la jerarquía
+class ErrorBanco : public std::runtime_error {
+    time_t timestamp;
+
+public:
+    explicit ErrorBanco(const std::string& msg)
+        : std::runtime_error(msg) {
+        time(&timestamp);
+    }
+
+    time_t getTimestamp() const { return timestamp; }
+};
+
+class SaldoInsuficiente : public ErrorBanco {
+    double saldoActual;
+    double cantidadRequerida;
+
+public:
+    SaldoInsuficiente(double saldo, double requerido)
+        : ErrorBanco("Saldo insuficiente"),
+          saldoActual(saldo), cantidadRequerida(requerido) {}
+
+    double getSaldo() const { return saldoActual; }
+    double getRequerido() const { return cantidadRequerida; }
+    double getDiferencia() const { return cantidadRequerida - saldoActual; }
+};
+
+class CuentaBloqueada : public ErrorBanco {
+    int idCuenta;
+    std::string razon;
+
+public:
+    CuentaBloqueada(int id, const std::string& r)
+        : ErrorBanco("Cuenta bloqueada"),
+          idCuenta(id), razon(r) {}
+
+    int getIdCuenta() const { return idCuenta; }
+    std::string getRazon() const { return razon; }
+};
+
+class MontoInvalido : public ErrorBanco {
+    double monto;
+    std::string motivo;
+
+public:
+    MontoInvalido(double m, const std::string& mot)
+        : ErrorBanco("Monto invalido"),
+          monto(m), motivo(mot) {}
+
+    double getMonto() const { return monto; }
+    std::string getMotivo() const { return motivo; }
+};
+
+class CuentaNoEncontrada : public ErrorBanco {
+    int idCuenta;
+
+public:
+    explicit CuentaNoEncontrada(int id)
+        : ErrorBanco("Cuenta no encontrada: " + std::to_string(id)),
+          idCuenta(id) {}
+
+    int getIdCuenta() const { return idCuenta; }
+};
+
+class Cuenta {
+    int id;
+    double saldo;
+    bool bloqueada;
+
+public:
+    Cuenta(int id_, double saldo_)
+        : id(id_), saldo(saldo_), bloqueada(false) {}
+
+    int getId() const { return id; }
+    double getSaldo() const { return saldo; }
+
+    void bloquear(const std::string& razon) {
+        bloqueada = true;
+        throw CuentaBloqueada(id, razon);
+    }
+
+    void retirar(double cantidad) {
+        if (bloqueada) throw CuentaBloqueada(id, "Cuenta bloqueada");
+        if (cantidad <= 0) throw MontoInvalido(cantidad, "Cantidad debe ser positiva");
+        if (cantidad > saldo) throw SaldoInsuficiente(saldo, cantidad);
+        saldo -= cantidad;
+    }
+
+    void depositar(double cantidad) {
+        if (bloqueada) throw CuentaBloqueada(id, "Cuenta bloqueada");
+        if (cantidad <= 0) throw MontoInvalido(cantidad, "Cantidad debe ser positiva");
+        saldo += cantidad;
+    }
+};
+
+int main() {
+    Cuenta c1(1001, 500.0);
+    Cuenta c2(1002, 1000.0);
+
+    try {
+        c1.retirar(600.0);  // Saldo insuficiente
+    }
+    catch (const SaldoInsuficiente& e) {
+        std::cout << "Error: " << e.what() << "\n";
+        std::cout << "  Saldo: $" << e.getSaldo() << "\n";
+        std::cout << "  Requerido: $" << e.getRequerido() << "\n";
+        std::cout << "  Diferencia: $" << e.getDiferencia() << "\n";
+    }
+
+    try {
+        c2.depositar(-50.0);  // Monto inválido
+    }
+    catch (const MontoInvalido& e) {
+        std::cout << "Error: " << e.what() << "\n";
+        std::cout << "  Monto: $" << e.getMonto() << "\n";
+        std::cout << "  Motivo: " << e.getMotivo() << "\n";
+    }
+
+    // Captura polimórfica
+    try {
+        c1.retirar(100.0);
+        c1.bloquear("Fraude sospechoso");
+    }
+    catch (const ErrorBanco& e) {
+        std::cout << "Error bancario: " << e.what() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 5: Excepciones con __FILE__ y __LINE__
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+class ExcepcionLocalizada : public std::runtime_error {
+    std::string archivo;
+    int linea;
+    int codigoError;
+
+public:
+    ExcepcionLocalizada(const std::string& msg, int cod,
+                        const char* arch, int lin)
+        : std::runtime_error(msg),
+          archivo(arch), linea(lin), codigoError(cod) {}
+
+    std::string getArchivo() const { return archivo; }
+    int getLinea() const { return linea; }
+    int getCodigo() const { return codigoError; }
+
+    std::string toString() const {
+        return std::string(what()) + " ["
+            + archivo + ":" + std::to_string(linea)
+            + " cod=" + std::to_string(codigoError) + "]";
+    }
+};
+
+// Macro para lanzar con localización
+#define LANZAR_ERROR(msg, cod) \
+    throw ExcepcionLocalizada(msg, cod, __FILE__, __LINE__)
+
+// Macro para lanzar con formato
+#define LANZAR_ERROR_FMT(cod, ...) \
+    throw ExcepcionLocalizada( \
+        std::string( \
+            [&]() { \
+                char buf[256]; \
+                snprintf(buf, sizeof(buf), __VA_ARGS__); \
+                return std::string(buf); \
+            }() \
+        ), cod, __FILE__, __LINE__)
+
+void funcA(int valor) {
+    if (valor < 0) {
+        LANZAR_ERROR("Valor negativo no permitido", 1001);
+    }
+    if (valor > 100) {
+        LANZAR_ERROR_FMT(1002, "Valor %d excede el maximo 100", valor);
+    }
+}
+
+void funcB() {
+    try {
+        funcA(-5);
+    }
+    catch (const ExcepcionLocalizada& e) {
+        std::cout << "Excepcion capturada:\n";
+        std::cout << "  " << e.toString() << "\n";
+        std::cout << "  Archivo: " << e.getArchivo() << "\n";
+        std::cout << "  Linea: " << e.getLinea() << "\n";
+    }
+
+    try {
+        funcA(200);
+    }
+    catch (const ExcepcionLocalizada& e) {
+        std::cout << "Excepcion capturada:\n";
+        std::cout << "  " << e.toString() << "\n";
+    }
+}
+
+int main() {
+    funcB();
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 6: Excepciones anidadas (nested_exception)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <exception>
+
+void nivel3() {
+    throw std::runtime_error("Error en nivel 3");
+}
+
+void nivel2() {
+    try {
+        nivel3();
+    }
+    catch (...) {
+        std::throw_with_nested(
+            std::runtime_error("Error en nivel 2"));
+    }
+}
+
+void nivel1() {
+    try {
+        nivel2();
+    }
+    catch (...) {
+        std::throw_with_nested(
+            std::runtime_error("Error en nivel 1"));
+    }
+}
+
+// Función recursiva para imprimir la cadena de excepciones anidadas
+void imprimirCadena(const std::exception& e, int nivel = 0) {
+    std::cout << std::string(nivel * 2, ' ')
+              << "Nivel " << nivel << ": " << e.what() << "\n";
+
+    try {
+        std::rethrow_if_nested(e);
+    }
+    catch (const std::exception& anidada) {
+        imprimirCadena(anidada, nivel + 1);
+    }
+    catch (...) {
+        std::cout << std::string((nivel + 1) * 2, ' ')
+                  << "Excepcion desconocida anidada\n";
+    }
+}
+
+int main() {
+    try {
+        nivel1();
+    }
+    catch (const std::exception& e) {
+        std::cout << "Cadena completa de excepciones:\n";
+        imprimirCadena(e);
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 7: Envolviendo excepciones de bibliotecas externas
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <fstream>
+
+// Simular una biblioteca externa con sus propias excepciones
+namespace LibExterna {
+    class ErrorLib {
+    public:
+        int codigo;
+        std::string mensaje;
+        ErrorLib(int c, const std::string& m) : codigo(c), mensaje(m) {}
+        std::string msg() const { return mensaje; }
+    };
+
+    void operacionPeligrosa(bool fallar) {
+        if (fallar) {
+            throw ErrorLib(42, "Fallo interno de la biblioteca");
+        }
+    }
+}
+
+// Nuestra aplicación
+class ErrorAplicacion : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+class ErrorRed : public ErrorAplicacion {
+public:
+    explicit ErrorRed(const std::string& msg)
+        : ErrorAplicacion("Error de red: " + msg) {}
+};
+
+class ErrorArchivo : public ErrorAplicacion {
+public:
+    explicit ErrorArchivo(const std::string& msg)
+        : ErrorAplicacion("Error de archivo: " + msg) {}
+};
+
+// Adaptador que envuelve excepciones de bibliotecas
+void operacionSegura(bool fallar) {
+    try {
+        LibExterna::operacionPeligrosa(fallar);
+    }
+    catch (const LibExterna::ErrorLib& e) {
+        throw ErrorAplicacion(
+            "Error de biblioteca externa: cod="
+            + std::to_string(e.codigo) + " msg=" + e.mensaje);
+    }
+    catch (const std::exception& e) {
+        throw ErrorAplicacion(
+            std::string("Error estandar de biblioteca: ") + e.what());
+    }
+    catch (...) {
+        throw ErrorAplicacion("Error desconocido de biblioteca");
+    }
+}
+
+int main() {
+    try {
+        operacionSegura(true);
+    }
+    catch (const ErrorAplicacion& e) {
+        std::cout << "Error de aplicacion: " << e.what() << "\n";
+    }
+
+    try {
+        operacionSegura(false);
+        std::cout << "Operacion exitosa\n";
+    }
+    catch (const ErrorAplicacion& e) {
+        std::cout << "Error: " << e.what() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 8: Excepción con valores de contexto
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <sstream>
+
+template <typename T>
+class ErrorValidacion : public std::invalid_argument {
+    std::string campo;
+    T valorRecibido;
+    std::string restriccion;
+
+public:
+    ErrorValidacion(const std::string& cmp, const T& val,
+                    const std::string& restr)
+        : std::invalid_argument("Error de validacion"),
+          campo(cmp), valorRecibido(val), restriccion(restr) {}
+
+    std::string getCampo() const { return campo; }
+    T getValor() const { return valorRecibido; }
+    std::string getRestriccion() const { return restriccion; }
+
+    const char* what() const noexcept override {
+        std::ostringstream oss;
+        oss << "Campo '" << campo << "' con valor "
+            << valorRecibido << " viola: " << restriccion;
+        static std::string mensaje;
+        mensaje = oss.str();
+        return mensaje.c_str();
+    }
+};
+
+template <typename T>
+void validarRango(const std::string& campo, T valor, T min, T max) {
+    if (valor < min || valor > max) {
+        std::ostringstream oss;
+        oss << "debe estar entre " << min << " y " << max;
+        throw ErrorValidacion<T>(campo, valor, oss.str());
+    }
+}
+
+struct Persona {
+    std::string nombre;
+    int edad;
+    double altura;
+
+    Persona(const std::string& n, int e, double a)
+        : nombre(n), edad(e), altura(a) {}
+
+    void validar() const {
+        validarRango("edad", edad, 0, 150);
+        validarRango("altura", altura, 0.5, 2.5);
+    }
+};
+
+int main() {
+    try {
+        Persona p("Juan", -5, 1.75);
+        p.validar();
+    }
+    catch (const ErrorValidacion<int>& e) {
+        std::cout << "Error: " << e.what() << "\n";
+        std::cout << "  Campo: " << e.getCampo() << "\n";
+        std::cout << "  Valor: " << e.getValor() << "\n";
+        std::cout << "  Restriccion: " << e.getRestriccion() << "\n";
+    }
+
+    try {
+        Persona p("Maria", 30, 3.0);
+        p.validar();
+    }
+    catch (const ErrorValidacion<double>& e) {
+        std::cout << "Error: " << e.what() << "\n";
+        std::cout << "  Campo: " << e.getCampo() << "\n";
+        std::cout << "  Valor: " << e.getValor() << "\n";
+        std::cout << "  Restriccion: " << e.getRestriccion() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 9: Excepciones con stack trace (C++23 demonstration)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <stacktrace>
+
+class ErrorConTraza : public std::runtime_error {
+    std::stacktrace traza;
+
+public:
+    explicit ErrorConTraza(const std::string& msg)
+        : std::runtime_error(msg),
+          traza(std::stacktrace::current()) {}
+
+    const std::stacktrace& getStacktrace() const {
+        return traza;
+    }
+
+    void imprimirTraza() const {
+        std::cout << "Stack trace:\n";
+        for (const auto& entrada : traza) {
+            std::cout << "  " << entrada << "\n";
+        }
+    }
+};
+
+void funcC() {
+    throw ErrorConTraza("Error desde funcC");
+}
+
+void funcB() {
+    funcC();
+}
+
+void funcA() {
+    funcB();
+}
+
+int main() {
+    try {
+        funcA();
+    }
+    catch (const ErrorConTraza& e) {
+        std::cout << "Excepcion: " << e.what() << "\n";
+        e.imprimirTraza();
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 10: Fábrica de excepciones con macros
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+// Sistema de códigos de error
+enum class CodigoError {
+    OK = 0,
+    NO_ENCONTRADO = 100,
+    ACCESO_DENEGADO = 101,
+    FORMATO_INVALIDO = 200,
+    DESBORDAMIENTO = 201,
+    CONEXION_PERDIDA = 300,
+    TIMEOUT = 301,
+    INTERNO = 500
+};
+
+std::string codigoToString(CodigoError cod) {
+    switch (cod) {
+        case CodigoError::NO_ENCONTRADO: return "NO_ENCONTRADO";
+        case CodigoError::ACCESO_DENEGADO: return "ACCESO_DENEGADO";
+        case CodigoError::FORMATO_INVALIDO: return "FORMATO_INVALIDO";
+        case CodigoError::DESBORDAMIENTO: return "DESBORDAMIENTO";
+        case CodigoError::CONEXION_PERDIDA: return "CONEXION_PERDIDA";
+        case CodigoError::TIMEOUT: return "TIMEOUT";
+        case CodigoError::INTERNO: return "INTERNO";
+        default: return "DESCONOCIDO";
+    }
+}
+
+class ErrorSistema : public std::runtime_error {
+    CodigoError codigo;
+
+public:
+    ErrorSistema(CodigoError cod, const std::string& msg)
+        : std::runtime_error(msg), codigo(cod) {}
+
+    CodigoError getCodigo() const { return codigo; }
+
+    std::string toString() const {
+        return "[" + codigoToString(codigo) + "] " + std::string(what());
+    }
+};
+
+#define LANZAR_SISTEMA(cod, msg) \
+    throw ErrorSistema(CodigoError::cod, msg)
+
+#define LANZAR_SISTEMA_FMT(cod, ...) do { \
+    char buf[512]; \
+    snprintf(buf, sizeof(buf), __VA_ARGS__); \
+    throw ErrorSistema(CodigoError::cod, buf); \
+} while(0)
+
+void conectar(const std::string& url) {
+    if (url.empty()) {
+        LANZAR_SISTEMA(ARGUMENTO_INVALIDO, "URL vacia");
+    }
+    if (url.find("://") == std::string::npos) {
+        LANZAR_SISTEMA(FORMATO_INVALIDO,
+            "URL mal formada: " + url);
+    }
+}
+
+void procesarDatos(int* datos, size_t n) {
+    if (n > 1000000) {
+        LANZAR_SISTEMA_FMT(DESBORDAMIENTO,
+            "Demasiados datos: %zu > 1000000", n);
+    }
+}
+
+int main() {
+    try {
+        conectar("");
+    }
+    catch (const ErrorSistema& e) {
+        std::cout << e.toString() << "\n";
+    }
+
+    try {
+        conectar("mal-formada");
+    }
+    catch (const ErrorSistema& e) {
+        std::cout << e.toString() << "\n";
+    }
+
+    try {
+        procesarDatos(nullptr, 2000000);
+    }
+    catch (const ErrorSistema& e) {
+        std::cout << e.toString() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 11: Excepción con causa raíz (root cause)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+class ErrorRaiz : public std::runtime_error {
+    std::string causaRaiz;
+    std::vector<std::string> detalles;
+
+public:
+    ErrorRaiz(const std::string& msg,
+              const std::string& raiz = "",
+              std::initializer_list<std::string> dets = {})
+        : std::runtime_error(msg), causaRaiz(raiz), detalles(dets) {}
+
+    std::string getCausaRaiz() const { return causaRaiz; }
+
+    std::string reporteCompleto() const {
+        std::string r = std::string(what());
+        if (!causaRaiz.empty()) {
+            r += "\n  Causa raiz: " + causaRaiz;
+        }
+        for (const auto& d : detalles) {
+            r += "\n  Detalle: " + d;
+        }
+        return r;
+    }
+
+    void agregarDetalle(const std::string& d) {
+        detalles.push_back(d);
+    }
+};
+
+void operacionRed() {
+    try {
+        throw std::runtime_error("Socket desconectado");
+    }
+    catch (const std::exception& e) {
+        ErrorRaiz error("Fallo en operacion de red",
+                        e.what(), {"host: ejemplo.com",
+                                   "puerto: 8080"});
+        error.agregarDetalle("timeout: 30s");
+        throw error;
+    }
+}
+
+int main() {
+    try {
+        operacionRed();
+    }
+    catch (const ErrorRaiz& e) {
+        std::cout << e.reporteCompleto() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 12: Excepción segura para hilos (thread-safe)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+class ErrorThreadSafe : public std::runtime_error {
+    mutable std::mutex mtx;
+    std::string detalleExtra;
+
+public:
+    ErrorThreadSafe(const std::string& msg,
+                    const std::string& extra = "")
+        : std::runtime_error(msg), detalleExtra(extra) {}
+
+    void agregarDetalle(const std::string& d) const {
+        std::lock_guard<std::mutex> lock(mtx);
+        detalleExtra += d + "; ";
+    }
+
+    std::string getDetalle() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return detalleExtra;
+    }
+};
+
+void tareaSegura(int id, bool fallar) {
+    try {
+        if (fallar) {
+            throw ErrorThreadSafe(
+                "Error en tarea " + std::to_string(id),
+                "inicio: OK");
+        }
+    }
+    catch (ErrorThreadSafe& e) {
+        e.agregarDetalle("hilo: " + std::to_string(id));
+        throw;
+    }
+}
+
+int main() {
+    std::vector<std::thread> hilos;
+
+    for (int i = 0; i < 5; ++i) {
+        hilos.emplace_back([i]() {
+            try {
+                tareaSegura(i, i % 2 == 0);
+            }
+            catch (const ErrorThreadSafe& e) {
+                std::lock_guard<std::mutex> lock(
+                    *reinterpret_cast<std::mutex*>(0)); // no-op
+                std::cout << "Hilo " << i << ": "
+                          << e.what()
+                          << " | " << e.getDetalle() << "\n";
+            }
+        });
+    }
+
+    for (auto& t : hilos) {
+        t.join();
+    }
+
+    return 0;
+}
+```
+
+RESUMEN DEL CAPÍTULO
+--------------------
+
+En este capítulo hemos aprendido:
+
+  1. La jerarquía de excepciones estándar: exception, logic_error,
+     runtime_error y sus derivadas.
+  2. std::exception y el método virtual what().
+  3. Diferencias entre logic_error (precondiciones) y runtime_error
+     (datos de ejecución).
+  4. Creación de excepciones personalizadas heredando de la jerarquía.
+  5. Jerarquías de dominio con información contextual.
+  6. Inclusión de código de error, archivo, línea, y valores.
+  7. Excepciones anidadas con nested_exception y throw_with_nested.
+  8. Envolver excepciones de bibliotecas de terceros.
+  9. Captura polimórfica por referencia a la clase base.
+  10. Buenas prácticas de diseño con tipos de excepción específicos.
+
+EJERCICIOS PROPUESTOS
+---------------------
+
+  EJERCICIO 1: Diseña una jerarquía de excepciones para un sistema de
+  archivos: ErrorArchivo, ArchivoNoEncontrado, PermisoDenegado,
+  DiscoLleno, ArchivoCorrupto.
+
+  EJERCICIO 2: Implementa una clase ErrorRed que incluya dirección IP,
+  puerto, código HTTP, y timestamp del error.
+
+  EJERCICIO 3: Crea un macro THROW_IF(cond, msg) que lance una
+  excepción con localización si la condición es verdadera.
+
+  EJERCICIO 4: Extiende la jerarquía de ErrorBanco para incluir
+  ErrorTransferencia, LimitDiarioExcedido, y BeneficiarioInvalido.
+
+  EJERCICIO 5: Implementa un sistema de logging que capture cualquier
+  excepción no manejada en main() y la registre antes de terminar.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿Por qué heredar de std::exception y no de otra clase?
+  R: Para que tus excepciones puedan ser capturadas con
+  catch(const std::exception&) de forma genérica, manteniendo
+  interoperabilidad con otras bibliotecas.
+
+  P: ¿Cuándo usar logic_error vs runtime_error?
+  R: logic_error para errores que podrían detectarse con análisis
+  estático (argumentos inválidos, fuera de rango). runtime_error
+  para errores que dependen de condiciones dinámicas (archivo no
+  encontrado, red caída).
+
+  P: ¿Debo crear una excepción por cada error posible?
+  R: No. Crea jerarquías por módulo o dominio, con niveles de
+  especificidad adecuados. Demasiadas clases de excepción son tan
+  malas como muy pocas.
+
+  P: ¿Puedo tener excepciones sin virtual?
+  R: Técnicamente sí, pero perderías polimorfismo. Capturarías el
+  tipo exacto, no la clase base. Siempre hereda de std::exception.
+
+  P: ¿Debo usar std::nested_exception siempre?
+  R: Solo cuando necesitas preservar la cadena completa de errores
+  a través de múltiples niveles de abstracción. Para errores simples,
+  un mensaje descriptivo basta.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Implementa un "ErrorHandler" centralizado que gestione todas las
+  excepciones de una aplicación, con capacidad de registro, notificación
+  y recuperación.
+
+  Requisitos:
+    - Clase ErrorHandler (singleton opcional).
+    - Registro de manejadores por tipo de excepción.
+    - Manejador por defecto para excepciones no registradas.
+    - Capacidad de propagar, tragar, o transformar excepciones.
+    - Logging automático con timestamp y contexto.
+    - Notificación a usuarios (UI) o administradores.
+    - Estadísticas de errores (frecuencia, tipo, módulo).
+    - Política de retry para errores recuperables.
+
+  Pistas:
+    - Usa std::type_index como clave para el mapa de manejadores.
+    - std::function<void(const std::exception&)> como manejador.
+    - Patrón Chain of Responsibility para probar manejadores.
+    - hilos separados para logging no bloqueante.
+
+CIERRE DEL CAPÍTULO
+-------------------
+
+Los tipos de excepciones son el vocabulario con el que tu código
+expresa lo que salió mal. Una jerarquía bien diseñada, con clases
+que transmiten información relevante, es tan importante como la
+lógica principal de tu programa.
+
+Hemos visto cómo la biblioteca estándar proporciona una base sólida
+y cómo podemos extenderla para nuestros dominios específicos. Recuerda:
+cada excepción es una oportunidad de aprendizaje sobre tu sistema.
+
+En el próximo capítulo, exploraremos RAII (Resource Acquisition Is
+Initialization), el patrón más importante de C++ para la gestión
+segura de recursos.
+
+  "Una excepción sin contexto es solo un ruido; una excepción con
+   contexto es una señal que te dice exactamente qué reparar."
+
+================================================================================
+  FIN DEL CAPÍTULO 56
+================================================================================

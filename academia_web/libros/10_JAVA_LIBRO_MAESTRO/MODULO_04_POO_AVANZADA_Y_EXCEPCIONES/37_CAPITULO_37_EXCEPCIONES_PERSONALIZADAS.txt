@@ -1,0 +1,1195 @@
+================================================================================
+  MÓDULO IV: POO AVANZADA Y EXCEPCIONES
+  CAPÍTULO 37: EXCEPCIONES PERSONALIZADAS
+================================================================================
+
+  "La perfección se alcanza no cuando no hay nada que añadir,
+   sino cuando no hay nada que quitar."
+   — Antoine de Saint-Exupéry
+
+--------------------------------------------------------------------------------
+
+  BIENVENIDO
+
+  En el capítulo anterior aprendiste a manejar las excepciones estándar
+  de Java. Sin embargo, las aplicaciones del mundo real tienen dominios
+  específicos con sus propias condiciones de error: saldo insuficiente,
+  formato de email inválido, producto agotado, etc.
+
+  Java te permite crear tus propias clases de excepción para modelar
+  estos escenarios. Las excepciones personalizadas hacen que tu código
+  sea más expresivo, mantenible y fácil de depurar. Cuando alguien ve
+  SaldoInsuficienteException, entiende inmediatamente qué ocurrió sin
+  necesidad de leer el mensaje.
+
+  Este capítulo te enseñará a diseñar, implementar y utilizar jerarquías
+  completas de excepciones personalizadas, tanto checked como unchecked,
+  siguiendo las mejores prácticas de la industria.
+
+--------------------------------------------------------------------------------
+
+  OBJETIVOS DEL CAPÍTULO
+
+  1. Diseñar y crear clases de excepción personalizadas.
+  2. Decidir entre extender Exception (checked) o RuntimeException
+     (unchecked).
+  3. Agregar campos y constructores útiles a las excepciones.
+  4. Construir jerarquías de excepciones para un dominio específico.
+  5. Implementar la causa raíz y supresión en excepciones propias.
+  6. Aplicar las mejores prácticas de diseño de excepciones.
+  7. Documentar excepciones con JavaDoc y @throws.
+
+--------------------------------------------------------------------------------
+
+  CONTENIDO
+
+  --- 1. ¿POR QUÉ EXCEPCIONES PERSONALIZADAS? ---
+
+  Las excepciones estándar de Java (IllegalArgumentException,
+  IOException, etc.) son genéricas. No comunican el contexto específico
+  del dominio de tu aplicación.
+
+  Ventajas de las excepciones personalizadas:
+  1. Semántica clara: el nombre revela el problema.
+  2. Información adicional: pueden llevar campos con datos relevantes.
+  3. Agrupación lógica: jerarquías que facilitan el manejo.
+  4. Documentación: cada excepción documenta un caso de error específico.
+  5. Mantenibilidad: más fácil buscar y corregir errores.
+
+  ```java
+  // Sin excepción personalizada (genérico, poco informativo)
+  throw new IllegalArgumentException("El producto está agotado");
+
+  // Con excepción personalizada (semántico y con contexto)
+  throw new ProductoAgotadoException("Laptop XYZ", 5);  // id producto, stock
+  ```
+
+  --- 2. CREACIÓN BÁSICA ---
+
+  La forma más simple es extender Exception (checked) o
+  RuntimeException (unchecked).
+
+  ```java
+  // Excepción checked (obliga a manejar)
+  class SaldoInsuficienteException extends Exception {
+      public SaldoInsuficienteException() {
+          super("Saldo insuficiente para realizar la operación");
+      }
+
+      public SaldoInsuficienteException(String mensaje) {
+          super(mensaje);
+      }
+
+      public SaldoInsuficienteException(String mensaje, Throwable causa) {
+          super(mensaje, causa);
+      }
+  }
+
+  // Excepción unchecked (no obliga a manejar)
+  class ConfiguracionInvalidaException extends RuntimeException {
+      public ConfiguracionInvalidaException(String mensaje) {
+          super(mensaje);
+      }
+
+      public ConfiguracionInvalidaException(String mensaje, Throwable causa) {
+          super(mensaje, causa);
+      }
+  }
+
+  public class CreacionBasica {
+      public static void main(String[] args) {
+          // Uso de checked: obligatorio try-catch o throws
+          try {
+              retirar(100, 50);
+          } catch (SaldoInsuficienteException e) {
+              System.out.println("Error: " + e.getMessage());
+          }
+
+          // Uso de unchecked: no obligatorio capturar
+          validarConfiguracion("timeout", "abc");
+      }
+
+      static void retirar(double saldo, double monto)
+              throws SaldoInsuficienteException {
+          if (monto > saldo) {
+              throw new SaldoInsuficienteException(
+                      "Saldo: $" + saldo + ", monto: $" + monto);
+          }
+          System.out.println("Retiro exitoso: $" + monto);
+      }
+
+      static void validarConfiguracion(String clave, String valor) {
+          if (clave.equals("timeout") && !valor.matches("\\d+")) {
+              throw new ConfiguracionInvalidaException(
+                      "El timeout debe ser un número: " + valor);
+          }
+      }
+  }
+  ```
+
+  --- 3. AÑADIR CAMPOS INFORMATIVOS ---
+
+  El verdadero poder de las excepciones personalizadas es transportar
+  información relevante del error en campos tipados.
+
+  ```java
+  // Excepción con campos informativos
+  class ErrorValidacionException extends Exception {
+      private final String campo;
+      private final Object valorInvalido;
+      private final String reglaViolada;
+
+      public ErrorValidacionException(String campo, Object valor,
+              String regla) {
+          super(String.format("Campo '%s' con valor '%s' viola: %s",
+                  campo, valor, regla));
+          this.campo = campo;
+          this.valorInvalido = valor;
+          this.reglaViolada = regla;
+      }
+
+      public String getCampo() { return campo; }
+      public Object getValorInvalido() { return valorInvalido; }
+      public String getReglaViolada() { return reglaViolada; }
+  }
+
+  class Usuario {
+      private String email;
+      private int edad;
+
+      public void setEmail(String email) throws ErrorValidacionException {
+          if (email == null || !email.contains("@")) {
+              throw new ErrorValidacionException(
+                      "email", email, "Debe contener @");
+          }
+          this.email = email;
+      }
+
+      public void setEdad(int edad) throws ErrorValidacionException {
+          if (edad < 0 || edad > 150) {
+              throw new ErrorValidacionException(
+                      "edad", edad, "Debe estar entre 0 y 150");
+          }
+          this.edad = edad;
+      }
+  }
+
+  public class PruebaCampos {
+      public static void main(String[] args) {
+          Usuario u = new Usuario();
+
+          try {
+              u.setEmail("email-invalido");
+          } catch (ErrorValidacionException e) {
+              System.out.println("=== ERROR DE VALIDACIÓN ===");
+              System.out.println("Campo: " + e.getCampo());
+              System.out.println("Valor: " + e.getValorInvalido());
+              System.out.println("Regla: " + e.getReglaViolada());
+              System.out.println("Mensaje: " + e.getMessage());
+          }
+
+          try {
+              u.setEdad(-5);
+          } catch (ErrorValidacionException e) {
+              System.out.println("\n=== OTRO ERROR ===");
+              System.out.println("Campo: " + e.getCampo());
+              System.out.println("Valor: " + e.getValorInvalido());
+              System.out.println("Regla: " + e.getReglaViolada());
+          }
+      }
+  }
+  ```
+
+  --- 4. CHECKED VS UNCHECKED: CRITERIOS DE DECISIÓN ---
+
+  +========================+========================================+========================================+
+  | Criterio               | Checked (Exception)                    | Unchecked (RuntimeException)          |
+  +========================+========================================+========================================+
+  | ¿El cliente puede      | Sí, debe manejar o propagar            | No, es opcional                        |
+  | recuperarse?           |                                        |                                        |
+  +------------------------+----------------------------------------+----------------------------------------+
+  | Naturaleza del error   | Predecible, externo (archivo, red)     | Impredecible, interno (bug, lógica)    |
+  +------------------------+----------------------------------------+----------------------------------------+
+  | Impacto en API         | Firma del método revela excepciones    | No aparece en la firma                 |
+  +------------------------+----------------------------------------+----------------------------------------+
+  | Carga para el cliente  | Alta (debe escribir try-catch)         | Baja (no obliga a manejar)             |
+  +------------------------+----------------------------------------+----------------------------------------+
+  | Ejemplo                | SaldoInsuficienteException             | IllegalArgumentException                |
+  +------------------------+----------------------------------------+----------------------------------------+
+
+  ```java
+  // Cuándo usar checked vs unchecked
+
+  // CHECKED: el llamador puede y debe recuperarse
+  class PagoRechazadoException extends Exception {
+      private String idTransaccion;
+      private String codigoRechazo;
+
+      public PagoRechazadoException(String idTrans, String codigo, String msg) {
+          super(msg);
+          this.idTransaccion = idTrans;
+          this.codigoRechazo = codigo;
+      }
+
+      public String getIdTransaccion() { return idTransaccion; }
+      public String getCodigoRechazo() { return codigoRechazo; }
+  }
+
+  // UNCHECKED: error de programación, no se espera recuperación
+  class EstadoInconsistenteException extends RuntimeException {
+      public EstadoInconsistenteException(String mensaje) {
+          super("Estado inconsistente: " + mensaje);
+      }
+  }
+
+  class ServicioPago {
+      public void procesarPago(double monto)
+              throws PagoRechazadoException {
+          if (monto <= 0) {
+              throw new EstadoInconsistenteException(
+                      "Monto debe ser positivo: " + monto);  // Bug, unchecked
+          }
+          // Simular rechazo de banco
+          if (monto > 10000) {
+              throw new PagoRechazadoException(
+                      "TXN-001", "EXCESO_LIMITE",
+                      "La transacción excede el límite permitido");
+          }
+          System.out.println("Pago procesado: $" + monto);
+      }
+  }
+
+  public class DecisionCheckedUnchecked {
+      public static void main(String[] args) {
+          ServicioPago servicio = new ServicioPago();
+
+          try {
+              servicio.procesarPago(15000);
+          } catch (PagoRechazadoException e) {
+              System.out.println("Pago rechazado: " + e.getMessage());
+              System.out.println("Código: " + e.getCodigoRechazo());
+              System.out.println("Transacción: " + e.getIdTransaccion());
+              // El llamador puede reintentar con otro método de pago
+          }
+
+          // EstadoInconsistenteException es unchecked: podría no capturarse
+          // servicio.procesarPago(-100);  // Lanzaría la unchecked
+      }
+  }
+  ```
+
+  --- 5. JERARQUÍAS DE EXCEPCIONES ---
+
+  Puedes crear familias de excepciones para manejar grupos de errores a
+  diferentes niveles de granularidad.
+
+  ```java
+  // Jerarquía de excepciones para un sistema bancario
+
+  // Base: excepción general del dominio bancario
+  class ExcepcionBancaria extends Exception {
+      private String codigoError;
+      private String idTransaccion;
+
+      public ExcepcionBancaria(String mensaje, String codigo) {
+          super(mensaje);
+          this.codigoError = codigo;
+      }
+
+      public ExcepcionBancaria(String mensaje, String codigo,
+              Throwable causa) {
+          super(mensaje, causa);
+          this.codigoError = codigo;
+      }
+
+      public String getCodigoError() { return codigoError; }
+      public String getIdTransaccion() { return idTransaccion; }
+      public void setIdTransaccion(String id) { this.idTransaccion = id; }
+  }
+
+  // Saldo
+  class SaldoInsuficienteException extends ExcepcionBancaria {
+      private double saldoActual;
+      private double montoRequerido;
+
+      public SaldoInsuficienteException(double saldo, double monto) {
+          super(String.format("Saldo insuficiente: $%.2f para $%.2f",
+                  saldo, monto), "ERR_SALDO");
+          this.saldoActual = saldo;
+          this.montoRequerido = monto;
+      }
+
+      public double getSaldoActual() { return saldoActual; }
+      public double getMontoRequerido() { return montoRequerido; }
+      public double getDiferencia() { return montoRequerido - saldoActual; }
+  }
+
+  // Cuenta
+  class CuentaNoEncontradaException extends ExcepcionBancaria {
+      private String numeroCuenta;
+
+      public CuentaNoEncontradaException(String numeroCuenta) {
+          super("Cuenta no encontrada: " + numeroCuenta, "ERR_CTANF");
+          this.numeroCuenta = numeroCuenta;
+      }
+
+      public String getNumeroCuenta() { return numeroCuenta; }
+  }
+
+  class CuentaBloqueadaException extends ExcepcionBancaria {
+      private String numeroCuenta;
+      private String motivo;
+
+      public CuentaBloqueadaException(String numeroCuenta, String motivo) {
+          super("Cuenta bloqueada: " + numeroCuenta + " (" + motivo + ")",
+                  "ERR_CTABLQ");
+          this.numeroCuenta = numeroCuenta;
+          this.motivo = motivo;
+      }
+
+      public String getNumeroCuenta() { return numeroCuenta; }
+      public String getMotivo() { return motivo; }
+  }
+
+  // Límites
+  class LimiteDiarioExcedidoException extends ExcepcionBancaria {
+      private double limiteDiario;
+      private double montoActual;
+
+      public LimiteDiarioExcedidoException(double limite, double actual) {
+          super(String.format("Límite diario excedido: $%.2f de $%.2f",
+                  actual, limite), "ERR_LIMDIA");
+          this.limiteDiario = limite;
+          this.montoActual = actual;
+      }
+
+      public double getLimiteDiario() { return limiteDiario; }
+      public double getMontoActual() { return montoActual; }
+  }
+
+  // Transferencia
+  class TransferenciaRechazadaException extends ExcepcionBancaria {
+      private String cuentaDestino;
+      private String bancoDestino;
+
+      public TransferenciaRechazadaException(String cuentaDest,
+              String bancoDest, String motivo) {
+          super("Transferencia rechazada a " + cuentaDest
+                  + " (" + bancoDest + "): " + motivo, "ERR_TRANSF");
+          this.cuentaDestino = cuentaDest;
+          this.bancoDestino = bancoDest;
+      }
+
+      public String getCuentaDestino() { return cuentaDestino; }
+      public String getBancoDestino() { return bancoDestino; }
+  }
+
+  // Uso de la jerarquía
+  class Banco {
+      public void transferir(String origen, String destino, double monto)
+              throws ExcepcionBancaria {
+          // Validaciones que lanzan diferentes excepciones de la jerarquía
+          if (origen == null) {
+              throw new CuentaNoEncontradaException("NULL");
+          }
+          if (monto > 5000) {
+              throw new LimiteDiarioExcedidoException(5000, monto);
+          }
+          if (monto > 1000) {
+              throw new TransferenciaRechazadaException(destino,
+                      "BancoX", "Requiere aprobación manual");
+          }
+          System.out.println("Transferencia exitosa: $" + monto);
+      }
+  }
+
+  public class PruebaJerarquia {
+      public static void main(String[] args) {
+          Banco banco = new Banco();
+
+          // Captura la excepción base (maneja TODAS las bancarias)
+          try {
+              banco.transferir("123", "456", 6000);
+          } catch (ExcepcionBancaria e) {
+              System.out.println("Error bancario [" + e.getCodigoError()
+                      + "]: " + e.getMessage());
+
+              // Polimorfismo de excepciones
+              if (e instanceof LimiteDiarioExcedidoException) {
+                  LimiteDiarioExcedidoException lim = (LimiteDiarioExcedidoException) e;
+                  System.out.println("Límite diario: $" + lim.getLimiteDiario());
+              } else if (e instanceof TransferenciaRechazadaException) {
+                  TransferenciaRechazadaException tr =
+                          (TransferenciaRechazadaException) e;
+                  System.out.println("Cuenta destino: " + tr.getCuentaDestino());
+              }
+          }
+
+          // O captura excepciones específicas
+          try {
+              banco.transferir("123", "999", 2000);
+          } catch (SaldoInsuficienteException e) {
+              System.out.println("Faltan: $" + e.getDiferencia());
+          } catch (LimiteDiarioExcedidoException e) {
+              System.out.println("Excede límite diario");
+          } catch (ExcepcionBancaria e) {
+              System.out.println("Otro error: " + e.getMessage());
+          }
+      }
+  }
+  ```
+
+  --- 6. EXCEPCIONES CON RECURSOS (AutoCloseable) ---
+
+  Puedes crear excepciones que contengan referencias a recursos para
+  facilitar la limpieza o reintento.
+
+  ```java
+  import java.io.*;
+
+  class ConexionBaseDatosException extends Exception {
+      private transient ConexionBD conexion;  // transient: no serializar
+
+      public ConexionBaseDatosException(String mensaje,
+              ConexionBD conexion, Throwable causa) {
+          super(mensaje, causa);
+          this.conexion = conexion;
+      }
+
+      public ConexionBD getConexion() { return conexion; }
+
+      public boolean esReintentable() {
+          return getCause() instanceof IOException;
+      }
+  }
+
+  class ConexionBD implements AutoCloseable {
+      private String url;
+      private boolean abierta = true;
+
+      public ConexionBD(String url) {
+          this.url = url;
+          System.out.println("Conectando a: " + url);
+      }
+
+      public void ejecutar(String sql) throws ConexionBaseDatosException {
+          if (Math.random() < 0.3) {  // 30% de fallo
+              throw new ConexionBaseDatosException(
+                      "Error ejecutando: " + sql,
+                      this,
+                      new IOException("Timeout de red simulado"));
+          }
+          System.out.println("Ejecutando: " + sql);
+      }
+
+      @Override
+      public void close() {
+          System.out.println("Cerrando conexión: " + url);
+          abierta = false;
+      }
+
+      public boolean isAbierta() { return abierta; }
+  }
+
+  public class ExcepcionesConRecursos {
+      public static void main(String[] args) {
+          for (int i = 0; i < 3; i++) {
+              try (ConexionBD conn = new ConexionBD("jdbc:db:test")) {
+                  conn.ejecutar("SELECT * FROM usuarios");
+                  break;  // Éxito: salir del bucle
+              } catch (ConexionBaseDatosException e) {
+                  System.out.println("Error: " + e.getMessage());
+                  System.out.println("Reintentable: " + e.esReintentable());
+
+                  // La conexión ya se cerró por try-with-resources
+                  if (!e.getConexion().isAbierta()) {
+                      System.out.println("Conexión cerrada automáticamente");
+                  }
+
+                  if (i == 2) {
+                      System.out.println("Fallaron todos los reintentos");
+                  } else {
+                      System.out.println("Reintentando... (" + (i + 1) + ")");
+                  }
+              }
+          }
+      }
+  }
+  ```
+
+  --- 7. EXCEPCIONES Y SERIALIZACIÓN ---
+
+  Las excepciones implementan Serializable. Si agregas campos no
+  serializables, debes marcarlos como transient o implementar
+  serialización personalizada.
+
+  ```java
+  import java.io.*;
+
+  class ExcepcionConDatos extends Exception {
+      // Campos serializables
+      private final int codigoError;
+      private final String detalleTecnico;
+
+      // Campo no serializable (marcar transient)
+      private transient final Object datosContexto;
+
+      public ExcepcionConDatos(int codigo, String mensaje,
+              String detalle, Object contexto) {
+          super(mensaje);
+          this.codigoError = codigo;
+          this.detalleTecnico = detalle;
+          this.datosContexto = contexto;
+      }
+
+      public int getCodigoError() { return codigoError; }
+      public String getDetalleTecnico() { return detalleTecnico; }
+
+      // Método writeObject personalizado (opcional)
+      private void writeObject(ObjectOutputStream out) throws IOException {
+          out.defaultWriteObject();
+          // Manejo especial de datosContexto si es necesario
+      }
+
+      private void readObject(ObjectInputStream in)
+              throws IOException, ClassNotFoundException {
+          in.defaultReadObject();
+          // Reconstruir datosContexto si es necesario
+      }
+  }
+  ```
+
+  --- 8. DOCUMENTACIÓN DE EXCEPCIONES CON JAVADOC ---
+
+  Las excepciones personalizadas deben documentarse con JavaDoc,
+  incluyendo la etiqueta @throws en los métodos que las lanzan.
+
+  ```java
+  /**
+   * Excepción lanzada cuando un producto solicitado no está disponible
+   * en el inventario.
+   */
+  class ProductoNoDisponibleException extends Exception {
+
+      /** Código único del producto */
+      private final String codigoProducto;
+
+      /** Cantidad solicitada */
+      private final int cantidadSolicitada;
+
+      /** Cantidad disponible actualmente */
+      private final int cantidadDisponible;
+
+      /**
+       * Crea una nueva excepción de producto no disponible.
+       *
+       * @param codigoProducto el código del producto solicitado
+       * @param solicitada     la cantidad solicitada
+       * @param disponible     la cantidad disponible en inventario
+       */
+      public ProductoNoDisponibleException(String codigoProducto,
+              int solicitada, int disponible) {
+          super(String.format("Producto '%s': solicitado %d, disponible %d",
+                  codigoProducto, solicitada, disponible));
+          this.codigoProducto = codigoProducto;
+          this.cantidadSolicitada = solicitada;
+          this.cantidadDisponible = disponible;
+      }
+
+      public String getCodigoProducto() { return codigoProducto; }
+      public int getCantidadSolicitada() { return cantidadSolicitada; }
+      public int getCantidadDisponible() { return cantidadDisponible; }
+  }
+
+  class Inventario {
+      /**
+       * Reserva una cantidad de producto del inventario.
+       *
+       * @param codigo   código del producto a reservar
+       * @param cantidad cantidad a reservar
+       * @throws ProductoNoDisponibleException si no hay suficiente stock
+       * @throws IllegalArgumentException si los parámetros son inválidos
+       */
+      public void reservar(String codigo, int cantidad)
+              throws ProductoNoDisponibleException {
+          if (codigo == null || codigo.isEmpty()) {
+              throw new IllegalArgumentException(
+                      "Código de producto inválido");
+          }
+          if (cantidad <= 0) {
+              throw new IllegalArgumentException(
+                      "Cantidad debe ser positiva: " + cantidad);
+          }
+          // Simular verificación de stock
+          if (cantidad > 10) {
+              throw new ProductoNoDisponibleException(codigo, cantidad, 10);
+          }
+          System.out.println("Reservados " + cantidad + " de " + codigo);
+      }
+  }
+
+  public class PruebaDocumentacion {
+      public static void main(String[] args) {
+          Inventario inv = new Inventario();
+          try {
+              inv.reservar("PROD-001", 15);
+          } catch (ProductoNoDisponibleException e) {
+              System.out.println("Error: " + e.getMessage());
+              System.out.println("Código: " + e.getCodigoProducto());
+              System.out.println("Disponible: " + e.getCantidadDisponible());
+          }
+      }
+  }
+  ```
+
+  --- 9. PATRÓN DE FÁBRICA DE EXCEPCIONES ---
+
+  Para proyectos grandes, puedes centralizar la creación de excepciones
+  con mensajes predefinidos y códigos de error.
+
+  ```java
+  import java.util.*;
+
+  // Códigos de error predefinidos
+  enum ErrorCode {
+      VALIDACION_EMAIL("ERR-001", "Email inválido: %s"),
+      VALIDACION_EDAD("ERR-002", "Edad fuera de rango: %d"),
+      VALIDACION_PASSWORD("ERR-003", "Password no cumple requisitos"),
+      AUTENTICACION_FALLIDA("ERR-101", "Credenciales inválidas"),
+      AUTORIZACION_DENEGADA("ERR-102", "Acceso denegado al recurso: %s"),
+      RECURSO_NO_ENCONTRADO("ERR-201", "Recurso no encontrado: %s"),
+      OPERACION_FALLIDA("ERR-301", "Error en operación: %s");
+
+      private final String codigo;
+      private final String formato;
+
+      ErrorCode(String codigo, String formato) {
+          this.codigo = codigo;
+          this.formato = formato;
+      }
+
+      public String getCodigo() { return codigo; }
+      public String getFormato() { return formato; }
+  }
+
+  // Excepción base
+  class AppException extends RuntimeException {
+      private final ErrorCode errorCode;
+      private final Map<String, Object> metadatos = new HashMap<>();
+
+      public AppException(ErrorCode errorCode, Object... args) {
+          super(String.format(errorCode.getFormato(), args));
+          this.errorCode = errorCode;
+      }
+
+      public AppException(ErrorCode errorCode, Throwable causa,
+              Object... args) {
+          super(String.format(errorCode.getFormato(), args), causa);
+          this.errorCode = errorCode;
+      }
+
+      public ErrorCode getErrorCode() { return errorCode; }
+
+      public AppException conMetadato(String clave, Object valor) {
+          metadatos.put(clave, valor);
+          return this;
+      }
+
+      public Map<String, Object> getMetadatos() {
+          return Collections.unmodifiableMap(metadatos);
+      }
+  }
+
+  // Fábrica (opcional: método estático)
+  class Exceptions {
+      public static AppException validacionEmail(String email) {
+          return new AppException(ErrorCode.VALIDACION_EMAIL, email);
+      }
+
+      public static AppException autenticacionFallida(String usuario) {
+          return new AppException(ErrorCode.AUTENTICACION_FALLIDA)
+                  .conMetadato("usuario", usuario)
+                  .conMetadato("timestamp", System.currentTimeMillis());
+      }
+  }
+
+  public class FabricaExcepciones {
+      public static void main(String[] args) {
+          try {
+              validarUsuario("invalido", -1);
+          } catch (AppException e) {
+              System.out.println("Error [" + e.getErrorCode().getCodigo()
+                      + "]: " + e.getMessage());
+              System.out.println("Metadatos: " + e.getMetadatos());
+          }
+      }
+
+      static void validarUsuario(String email, int edad) {
+          if (email == null || !email.contains("@")) {
+              throw Exceptions.validacionEmail(email);
+          }
+          if (edad < 0 || edad > 150) {
+              throw new AppException(ErrorCode.VALIDACION_EDAD, edad)
+                      .conMetadato("edad_maxima", 150);
+          }
+      }
+  }
+  ```
+
+  --- 10. EJEMPLO INTEGRADOR: SISTEMA DE E-COMMERCE ---
+
+  ```java
+  import java.util.*;
+
+  // Jerarquía de excepciones para un sistema de e-commerce
+
+  // Base
+  class ECommerceException extends Exception {
+      private final String codigo;
+
+      public ECommerceException(String codigo, String mensaje) {
+          super(mensaje);
+          this.codigo = codigo;
+      }
+
+      public ECommerceException(String codigo, String mensaje,
+              Throwable causa) {
+          super(mensaje, causa);
+          this.codigo = codigo;
+      }
+
+      public String getCodigo() { return codigo; }
+  }
+
+  // Producto
+  class ProductoNoEncontradoException extends ECommerceException {
+      private final String sku;
+
+      public ProductoNoEncontradoException(String sku) {
+          super("PROD-NF",
+                  "Producto con SKU '" + sku + "' no encontrado");
+          this.sku = sku;
+      }
+
+      public String getSku() { return sku; }
+  }
+
+  class StockInsuficienteException extends ECommerceException {
+      private final String sku;
+      private final int solicitado;
+      private final int disponible;
+
+      public StockInsuficienteException(String sku,
+              int solicitado, int disponible) {
+          super("PROD-STK",
+                  String.format("Stock insuficiente para '%s': "
+                          + "solicitado %d, disponible %d",
+                          sku, solicitado, disponible));
+          this.sku = sku;
+          this.solicitado = solicitado;
+          this.disponible = disponible;
+      }
+
+      public String getSku() { return sku; }
+      public int getSolicitado() { return solicitado; }
+      public int getDisponible() { return disponible; }
+  }
+
+  // Pago
+  class PagoRechazadoException extends ECommerceException {
+      private final String idTransaccion;
+      private final String motivoRechazo;
+
+      public PagoRechazadoException(String idTrans, String motivo) {
+          super("PAGO-REC",
+                  "Pago " + idTrans + " rechazado: " + motivo);
+          this.idTransaccion = idTrans;
+          this.motivoRechazo = motivo;
+      }
+
+      public String getIdTransaccion() { return idTransaccion; }
+      public String getMotivoRechazo() { return motivoRechazo; }
+  }
+
+  class MetodoPagoNoSoportadoException extends ECommerceException {
+      private final String metodoPago;
+
+      public MetodoPagoNoSoportadoException(String metodo) {
+          super("PAGO-MET",
+                  "Método de pago no soportado: " + metodo);
+          this.metodoPago = metodo;
+      }
+
+      public String getMetodoPago() { return metodoPago; }
+  }
+
+  // Envío
+  class DireccionInvalidaException extends ECommerceException {
+      private final String direccion;
+      private final String campoInvalido;
+
+      public DireccionInvalidaException(String direccion,
+              String campoInvalido) {
+          super("ENV-DIR",
+                  "Dirección inválida: " + direccion
+                          + " (campo: " + campoInvalido + ")");
+          this.direccion = direccion;
+          this.campoInvalido = campoInvalido;
+      }
+
+      public String getDireccion() { return direccion; }
+      public String getCampoInvalido() { return campoInvalido; }
+  }
+
+  class ZonaNoCubiertaException extends ECommerceException {
+      private final String codigoPostal;
+
+      public ZonaNoCubiertaException(String cp) {
+          super("ENV-ZONA",
+                  "Código postal no cubierto: " + cp);
+          this.codigoPostal = cp;
+      }
+
+      public String getCodigoPostal() { return codigoPostal; }
+  }
+
+  // Servicios
+  class InventarioService {
+      private Map<String, Integer> stock = new HashMap<>();
+
+      public InventarioService() {
+          stock.put("SKU-001", 10);
+          stock.put("SKU-002", 5);
+          stock.put("SKU-003", 0);
+      }
+
+      public void reservar(String sku, int cantidad)
+              throws ProductoNoEncontradoException,
+                     StockInsuficienteException {
+          if (!stock.containsKey(sku)) {
+              throw new ProductoNoEncontradoException(sku);
+          }
+          int disponible = stock.get(sku);
+          if (cantidad > disponible) {
+              throw new StockInsuficienteException(
+                      sku, cantidad, disponible);
+          }
+          stock.put(sku, disponible - cantidad);
+          System.out.println("Reservados " + cantidad + " de " + sku);
+      }
+  }
+
+  class PagoService {
+      public void procesarPago(String metodo, double monto, String idTrans)
+              throws MetodoPagoNoSoportadoException,
+                     PagoRechazadoException {
+          if (!metodo.equals("TARJETA") && !metodo.equals("PAYPAL")) {
+              throw new MetodoPagoNoSoportadoException(metodo);
+          }
+          if (monto > 5000) {
+              throw new PagoRechazadoException(idTrans,
+                      "Monto excede límite sin verificación");
+          }
+          System.out.println("Pago procesado: $" + monto
+                  + " con " + metodo);
+      }
+  }
+
+  class EnvioService {
+      public void validarDireccion(String direccion, String cp)
+              throws DireccionInvalidaException, ZonaNoCubiertaException {
+          if (direccion == null || direccion.length() < 10) {
+              throw new DireccionInvalidaException(direccion, "direccion");
+          }
+          if (!cp.matches("\\d{5}")) {
+              throw new DireccionInvalidaException(direccion, "codigoPostal");
+          }
+          if (cp.startsWith("000")) {
+              throw new ZonaNoCubiertaException(cp);
+          }
+          System.out.println("Dirección válida: " + direccion);
+      }
+  }
+
+  // Orquestador
+  class OrquestadorPedido {
+      private InventarioService inventario = new InventarioService();
+      private PagoService pago = new PagoService();
+      private EnvioService envio = new EnvioService();
+
+      public void realizarPedido(String sku, int cantidad,
+              String metodoPago, String direccion, String cp)
+              throws ECommerceException {
+
+          System.out.println("\n=== Procesando pedido ===");
+
+          // 1. Validar y reservar inventario
+          inventario.reservar(sku, cantidad);
+
+          // 2. Procesar pago
+          String idTrans = "TXN-" + System.currentTimeMillis();
+          pago.procesarPago(metodoPago, cantidad * 100.0, idTrans);
+
+          // 3. Validar envío
+          envio.validarDireccion(direccion, cp);
+
+          System.out.println("*** PEDIDO COMPLETADO CON ÉXITO ***");
+      }
+  }
+
+  public class ECommerceApp {
+      public static void main(String[] args) {
+          OrquestadorPedido orquestador = new OrquestadorPedido();
+
+          // Pedido exitoso
+          try {
+              orquestador.realizarPedido(
+                      "SKU-001", 2, "TARJETA",
+                      "Av. Siempre Viva 123", "15000");
+          } catch (ECommerceException e) {
+              System.out.println("Error [" + e.getCodigo()
+                      + "]: " + e.getMessage());
+          }
+
+          // Pedido con stock insuficiente
+          try {
+              orquestador.realizarPedido(
+                      "SKU-003", 1, "TARJETA",
+                      "Av. Siempre Viva 123", "15000");
+          } catch (ECommerceException e) {
+              System.out.println("Error [" + e.getCodigo()
+                      + "]: " + e.getMessage());
+              if (e instanceof StockInsuficienteException) {
+                  StockInsuficienteException si =
+                          (StockInsuficienteException) e;
+                  System.out.println("  SKU: " + si.getSku());
+                  System.out.println("  Disponible: "
+                          + si.getDisponible());
+              }
+          }
+
+          // Pedido con zona no cubierta
+          try {
+              orquestador.realizarPedido(
+                      "SKU-002", 1, "PAYPAL",
+                      "Av. Siempre Viva 123", "00001");
+          } catch (ECommerceException e) {
+              System.out.println("Error [" + e.getCodigo()
+                      + "]: " + e.getMessage());
+          }
+      }
+  }
+  ```
+
+  --- 11. BUENAS PRÁCTICAS ---
+
+  1. Nombra las excepciones con sufijo Exception (convención Java).
+  2. Proporciona constructores que acepten mensaje y causa.
+  3. Incluye campos relevantes para el diagnóstico y recuperación.
+  4. Documenta con JavaDoc la excepción y su uso (@throws).
+  5. Prefiere checked para condiciones recuperables.
+  6. Prefiere unchecked para errores de programación.
+  7. Diseña jerarquías que permitan captura granular y genérica.
+  8. No crees excepciones sin información adicional (usa las estándar).
+  9. Implementa Serializable si la excepción viajará por red.
+  10. Centraliza códigos de error (enum) para proyectos grandes.
+
+  ```java
+  // Plantilla recomendada para excepción personalizada
+
+  /**
+   * Excepción lanzada cuando ocurre un error específico del dominio.
+   */
+  class DominioException extends Exception {
+
+      /** Código de error único para identificar el tipo de fallo */
+      private final String codigoError;
+
+      /**
+       * Construye una excepción de dominio.
+       *
+       * @param codigoError código único del error
+       * @param mensaje     descripción del error
+       */
+      public DominioException(String codigoError, String mensaje) {
+          super(mensaje);
+          this.codigoError = codigoError;
+      }
+
+      /**
+       * Construye una excepción de dominio con causa.
+       *
+       * @param codigoError código único del error
+       * @param mensaje     descripción del error
+       * @param causa       excepción original
+       */
+      public DominioException(String codigoError, String mensaje,
+              Throwable causa) {
+          super(mensaje, causa);
+          this.codigoError = codigoError;
+      }
+
+      public String getCodigoError() { return codigoError; }
+  }
+  ```
+
+--------------------------------------------------------------------------------
+
+  PREGUNTAS FRECUENTES (FAQ)
+
+  1. ¿Debo extender Exception o RuntimeException?
+     Exception para condiciones que el llamador debe manejar (checked).
+     RuntimeException para errores de programación (unchecked).
+
+  2. ¿Cuántos constructores debe tener una excepción personalizada?
+     Al menos 4: sin args, solo mensaje, mensaje+causa, solo causa.
+     Opcionalmente con campos específicos.
+
+  3. ¿Puedo tener una excepción que no herede de Exception?
+     Sí, de Throwable directamente, pero no es recomendable. Exception y
+     RuntimeException son las clases adecuadas.
+
+  4. ¿Las excepciones personalizadas son serializables?
+     Sí, porque Throwable implementa Serializable. Pero debes marcar
+     campos no serializables como transient.
+
+  5. ¿Puedo tener una jerarquía de excepciones muy profunda?
+     No es recomendable. 2-3 niveles es suficiente. Demasiada jerarquía
+     complica el manejo.
+
+  6. ¿Debo crear una excepción para cada error posible?
+     No. Agrupa errores relacionados en una misma excepción con campos
+     que diferencien el caso específico.
+
+  7. ¿Puedo tener campos mutables en excepciones?
+     Técnicamente sí, pero no es recomendable. Las excepciones deben ser
+     inmutables (final).
+
+  8. ¿Cómo manejo internacionalización (i18n) en mensajes de excepción?
+     Puedes almacenar un código de mensaje y usar ResourceBundle para
+     obtener el texto localizado.
+
+  9. ¿Puedo usar enums para códigos de error?
+     Sí, es una práctica recomendada para centralizar y tipar los códigos.
+
+  10. ¿Debo documentar cada excepción con JavaDoc?
+        Sí. Las excepciones son parte de la API pública y deben
+        documentarse adecuadamente.
+
+--------------------------------------------------------------------------------
+
+  EJERCICIOS PROPUESTOS
+
+  Ejercicio 1: Sistema de Reservas de Hotel
+  Diseña una jerarquía de excepciones para un sistema de reservas:
+  ReservaException (base), HabitacionNoDisponibleException,
+  FechaInvalidaException, HuespedInvalidoException,
+  PagoNoProcesadoException. Cada una debe tener campos informativos.
+
+  Ejercicio 2: Validador de Formularios
+  Crea excepciones checked para validación: CampoObligatorioException,
+  FormatoInvalidoException (con campo, valor, formato esperado),
+  LongitudInvalidaException. Implementa un validador de formulario que
+  lance estas excepciones con mensajes descriptivos y datos de contexto.
+
+  Ejercicio 3: Fábrica de Excepciones con Enum
+  Implementa un enum ErrorCode con al menos 8 códigos y una clase
+  SistemaException que use el enum. Agrega un mapa de metadatos para
+  transportar información adicional. Crea métodos estáticos en una
+  clase Exceptions para crear cada tipo.
+
+  Ejercicio 4: Red Social con Excepciones
+  Diseña excepciones para una red social: UsuarioNoEncontradoException,
+  AmistadYaExistenteException, SolicitudPendienteException,
+  ContenidoNoPermitidoException, LimiteAmigosExcedidoException.
+  Implementa métodos en una clase RedSocial que lancen estas
+  excepciones según las reglas de negocio.
+
+  Ejercicio 5: Motor de Reglas de Negocio
+  Crea un sistema de reglas de negocio configurables. Define
+  excepciones: ReglaNoCumplidaException (checked, con código de regla,
+  descripción, nivel de severidad), y ReglaCriticaException (unchecked,
+  para reglas que indican bugs). Implementa 5 reglas de negocio y un
+  motor que las ejecute acumulando todas las violaciones.
+
+--------------------------------------------------------------------------------
+
+  RESUMEN DEL CAPÍTULO
+
+  En este capítulo has aprendido:
+
+  • Las excepciones personalizadas mejoran la semántica y el diagnóstico
+    de errores en aplicaciones Java.
+
+  • Extiende Exception para excepciones checked (el llamador debe
+    manejarlas) y RuntimeException para unchecked.
+
+  • Los campos adicionales en excepciones transportan información valiosa
+    para la recuperación y el logging.
+
+  • Las jerarquías de excepciones permiten manejo granular y genérico
+    mediante polimorfismo.
+
+  • Los códigos de error (enum) centralizan y tipan los errores.
+
+  • La documentación JavaDoc es esencial para excepciones de API.
+
+  • El patrón de fábrica simplifica la creación consistente de
+    excepciones.
+
+  • Las excepciones deben ser inmutables y bien estructuradas.
+
+  • No abuses: usa excepciones estándar cuando sean suficientes.
+
+  • Las excepciones personalizadas son parte del diseño de dominio.
+
+--------------------------------------------------------------------------------
+
+  DESAFÍO DEL ARQUITECTO
+
+  Diseña e implementa un sistema completo de procesamiento de pedidos
+  para un restaurante con una jerarquía de excepciones sofisticada.
+
+  Requisitos:
+  - Jerarquía con al menos 3 niveles y 8 excepciones concretas:
+    * RestauranteException (base)
+      - PedidoException: PedidoNoEncontradoException,
+        PedidoCanceladoException, PedidoYaEntregadoException
+      - MenuException: PlatoNoDisponibleException,
+        IngredienteAgotadoException, CombinacionInvalidaException
+      - CocinaException: TiempoPreparacionExcedidoException,
+        ErrorPreparacionException (con plato, tiempo, chefcito)
+  - Cada excepción debe tener al menos 2 campos informativos
+  - Enum CodigoError con 10 códigos distintos
+  - Clase ExceptionsFactory con métodos estáticos
+  - Un orquestador PedidoService que coordine MeseroService,
+    CocinaService y PagoService, lanzando las excepciones apropiadas
+  - Captura en el main que muestre información detallada usando
+    instanceof y getCause()
+
+  Extensión opcional: Implementa un manejador centralizado de errores
+  con patrón Observer que registre todas las excepciones en un log y
+  notifique al administrador cuando se superen ciertos umbrales
+  (más de 5 errores por minuto).
+
+--------------------------------------------------------------------------------
+
+  CIERRE DEL CAPÍTULO
+
+  Las excepciones personalizadas son una herramienta esencial para el
+  diseño de software profesional. Transforman errores genéricos y
+  opacos en mensajes ricos y significativos que facilitan el diagnóstico,
+  la recuperación y el mantenimiento.
+
+  Invertir tiempo en diseñar una buena jerarquía de excepciones para tu
+  dominio es invertir en la calidad y robustez de tu aplicación.
+
+  En el próximo capítulo exploraremos las aserciones (assert): una
+  herramienta complementaria para verificar invariantes y condiciones
+  que deberían cumplirse siempre en tu código.
+
+  ¡Nos vemos en el Capítulo 38!
+
+================================================================================
+  FIN DEL CAPÍTULO 37
+================================================================================

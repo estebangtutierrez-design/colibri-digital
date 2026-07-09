@@ -1,0 +1,1186 @@
+===============================================================================
+                RUBY MASTER BOOK · MÓDULO VII · RUBY AVANZADO
+===============================================================================
+  CAPÍTULO 64: METAPROGRAMACIÖN
+===============================================================================
+
+   ███╗   ███╗███████╗████████╗ █████╗ ██████╗ ██████╗  ██████╗  ██████╗
+   ████╗ ████║██╔════╝╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔═══██╗██╔════╝
+   ██╔████╔██║█████╗     ██║   ███████║██████╔╝██████╔╝██║   ██║██║  ███╗
+   ██║╚██╔╝██║██╔══╝     ██║   ██╔══██║██╔═══╝ ██╔══██╗██║   ██║██║   ██║
+   ██║ ╚═╝ ██║███████╗   ██║   ██║  ██║██║     ██║  ██║╚██████╔╝╚██████╔╝
+   ╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝  ╚═════╝
+
+   ██████╗  ██████╗  ██████╗ ██████╗  █████╗ ███╗   ███╗██╗
+   ██╔══██╗██╔═══██╗██╔════╝ ██╔══██╗██╔══██╗████╗ ████║██║
+   ██████╔╝██║   ██║██║  ███╗██████╔╝███████║██╔████╔██║██║
+   ██╔═══╝ ██║   ██║██║   ██║██╔══██╗██╔══██║██║╚██╔╝██║██║
+   ██║     ╚██████╔╝╚██████╔╝██║  ██║██║  ██║██║ ╚═╝ ██║███████╗
+   ╚═╝      ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝
+
+================================================================================
+                        BIENVENIDA AL CAPÍTULO 64
+================================================================================
+
+  Bienvenido al capítulo donde el código cobra conciencia. La meta-
+  programación en Ruby es la capacidad de escribir código que escribe,
+  modifica o inspecciona código en tiempo de ejecución.
+
+  Este es uno de los poderes más distintivos de Ruby: un programa puede
+  definirse a sí mismo, responder a mensajes que no existen en tiempo
+  de compilación y adaptar su comportamiento dinámicamente. Es lo que
+  hace posible Rails, RSpec, ActiveRecord y prácticamente todas las
+  gemas que amas.
+
+  Pero con gran poder viene gran responsabilidad. La metaprogramación
+  mal utilizada puede producir código imposible de depurar. Este
+  capítulo te enseñará a usar este poder con sabiduría.
+
+================================================================================
+  FRASE DEL CAPÍTULO
+================================================================================
+
+  "La metaprogramación es la capacidad de un programa para tratarse a
+   sí mismo como datos."
+   — Anónimo
+
+================================================================================
+  OBJETIVOS DEL CAPÍTULO
+================================================================================
+
+  ✓ Comprender qué es la metaprogramación y por qué Ruby es ideal.
+  ✓ Usar define_method para crear métodos dinámicamente.
+  ✓ Implementar method_missing para delegación dinámica.
+  ✓ Usar const_missing para manejo dinámico de constantes.
+  ✓ Dominar eval, class_eval y instance_eval.
+  ✓ Construir DSLs (Domain Specific Languages) simples.
+  ✓ Entender los riesgos y buenas prácticas de metaprogramación.
+  ✓ Aplicar metaprogramación en casos reales.
+
+================================================================================
+  CONTENIDO DEL CAPÍTULO
+================================================================================
+
+-------------------------------------------------------------------------------
+  1. ¿QUÉ ES LA METAPROGRAMACIÖN?
+-------------------------------------------------------------------------------
+
+  Metaprogramación es la técnica de escribir programas que:
+    • Escriben otros programas (código que genera código).
+    • Se modifican a sí mismos en tiempo de ejecución.
+    • Inspeccionan su propia estructura (reflexión/introspección).
+
+  Ruby facilita la metaprogramación porque:
+    • Todo es un objeto (clases, métodos, constantes).
+    • Las clases son abiertas (open classes).
+    • Los métodos se pueden definir en tiempo de ejecución.
+    • Existe eval, method_missing, define_method, etc.
+
+-------------------------------------------------------------------------------
+  2. INTROSPECCIÓN (REFLEXIÓN)
+-------------------------------------------------------------------------------
+
+  Antes de modificar, debemos inspeccionar:
+
+    obj = "Hola"
+    puts obj.class          # => String
+    puts obj.methods        # => [:upcase, :downcase, ...]
+    puts obj.instance_variables  # => []
+    puts obj.respond_to?(:upcase)  # => true
+
+    puts String.instance_methods  # métodos de instancia
+    puts String.class_methods     # métodos de clase
+
+  La introspección es el primer paso de la metaprogramación.
+
+-------------------------------------------------------------------------------
+  3. define_method
+-------------------------------------------------------------------------------
+
+  define_method crea métodos dinámicamente en una clase:
+
+    class Persona
+      [:nombre, :edad, :email].each do |atributo|
+        define_method(atributo) do
+          instance_variable_get("@#{atributo}")
+        end
+
+        define_method("#{atributo}=") do |valor|
+          instance_variable_set("@#{atributo}", valor)
+        end
+      end
+    end
+
+    p = Persona.new
+    p.nombre = "Ana"
+    puts p.nombre  # => Ana
+
+  define_method es un método privado de Module/Class.
+
+-------------------------------------------------------------------------------
+  4. method_missing
+-------------------------------------------------------------------------------
+
+  Cuando llamas a un método que no existe, Ruby llama a method_missing:
+
+    class Proxy
+      def initialize(target)
+        @target = target
+      end
+
+      def method_missing(nombre, *args, &bloque)
+        if @target.respond_to?(nombre)
+          @target.send(nombre, *args, &bloque)
+        else
+          super
+        end
+      end
+
+      def respond_to_missing?(nombre, include_private = false)
+        @target.respond_to?(nombre) || super
+      end
+    end
+
+    proxy = Proxy.new([1, 2, 3])
+    puts proxy.length  # => 3
+    puts proxy.map { |x| x * 2 }.inspect  # => [2, 4, 6]
+
+  Siempre sobrescribe respond_to_missing? junto con method_missing.
+
+-------------------------------------------------------------------------------
+  5. const_missing
+-------------------------------------------------------------------------------
+
+  Similar a method_missing pero para constantes:
+
+    class Modulo
+      def self.const_missing(nombre)
+        puts "Constante #{nombre} no encontrada, creándola..."
+        const_set(nombre, "auto_#{nombre.downcase}")
+      end
+    end
+
+    puts Modulo::ALGO  # => "auto_algo"
+
+  Útil para autocarga de módulos (autoloading).
+
+-------------------------------------------------------------------------------
+  6. eval, class_eval, instance_eval
+-------------------------------------------------------------------------------
+
+  eval: Evalúa código Ruby en el contexto actual.
+
+    x = 10
+    eval("puts x * 2")  # => 20
+
+  class_eval (también module_eval): Evalúa código en el contexto de
+  una clase (define métodos de instancia).
+
+    String.class_eval do
+      def gritar
+        upcase + "!"
+      end
+    end
+
+    puts "hola".gritar  # => "HOLA!"
+
+  instance_eval: Evalúa código en el contexto de una instancia
+  (define métodos de singletón, accede a variables de instancia).
+
+    obj = "mundo"
+    obj.instance_eval do
+      def longitud
+        size
+      end
+    end
+    puts obj.longitud  # => 5
+
+-------------------------------------------------------------------------------
+  7. SEND: LLAMADA DINÁMICA DE MÉTODOS
+-------------------------------------------------------------------------------
+
+  send invoca métodos usando su nombre como símbolo o string:
+
+    class Calculadora
+      def sumar(a, b)  a + b end
+      def restar(a, b) a - b end
+    end
+
+    calc = Calculadora.new
+    puts calc.send(:sumar, 5, 3)  # => 8
+    puts calc.send("restar", 5, 3) # => 2
+
+  public_send es la versión segura (respeta métodos privados).
+
+-------------------------------------------------------------------------------
+  8. DSL CON METAPROGRAMACIÖN
+-------------------------------------------------------------------------------
+
+  La metaprogramación permite crear lenguajes específicos de dominio:
+
+    class Configuracion
+      def initialize
+        @valores = {}
+      end
+
+      def method_missing(nombre, *args, &bloque)
+        if bloque
+          @valores[nombre] = bloque
+        elsif args.any?
+          @valores[nombre] = args.first
+        elsif @valores.key?(nombre)
+          @valores[nombre]
+        else
+          super
+        end
+      end
+
+      def respond_to_missing?(nombre, _)
+        @valores.key?(nombre) || super
+      end
+    end
+
+    config = Configuracion.new
+    config.db "postgres"
+    config.debug true
+    config.on_start { puts "Iniciando..." }
+
+    puts config.db    # => "postgres"
+    puts config.debug # => true
+    config.on_start.call
+
+-------------------------------------------------------------------------------
+  9. ATTR_ACCESSOR DINÁMICO
+-------------------------------------------------------------------------------
+
+  Podemos crear nuestros propios attr_accessor:
+
+    class Object
+      def self.mi_attr_accessor(*nombres)
+        nombres.each do |nombre|
+          define_method(nombre) do
+            instance_variable_get("@#{nombre}")
+          end
+
+          define_method("#{nombre}=") do |valor|
+            instance_variable_set("@#{nombre}", valor)
+          end
+        end
+      end
+    end
+
+    class Punto
+      mi_attr_accessor :x, :y
+    end
+
+    p = Punto.new
+    p.x = 10
+    p.y = 20
+    puts "(#{p.x}, #{p.y})"  # => (10, 20)
+
+-------------------------------------------------------------------------------
+  10. SINGLETON METHODS (MÉTODOS DE OBJETO)
+-------------------------------------------------------------------------------
+
+  Puedes definir métodos en un solo objeto:
+
+    obj = "texto"
+    def obj.metodo_especial
+      "solo yo tengo este método"
+    end
+
+    puts obj.metodo_especial
+    # "solo yo tengo este método"
+
+    otro = "otro texto"
+    # otro.metodo_especial  # NoMethodError
+
+  Esto se logra mediante la clase singletón (eigenclass).
+
+-------------------------------------------------------------------------------
+  11. INCLUSIÓN DINÁMICA DE MÓDULOS
+-------------------------------------------------------------------------------
+
+  Podemos incluir módulos dinámicamente:
+
+    module Loggable
+      def log(mensaje)
+        puts "[LOG] #{mensaje}"
+      end
+    end
+
+    class Servicio
+    end
+
+    s = Servicio.new
+    s.extend(Loggable)
+    s.log("Hola")  # => [LOG] Hola
+
+  extend agrega métodos del módulo como singleton methods.
+
+-------------------------------------------------------------------------------
+  12. REMOVER MÉTODOS DINÁMICAMENTE
+-------------------------------------------------------------------------------
+
+  Podemos eliminar métodos en tiempo de ejecución:
+
+    class Ejemplo
+      def metodo_normal
+        "existo"
+      end
+    end
+
+    e = Ejemplo.new
+    puts e.metodo_normal  # => "existo"
+
+    Ejemplo.remove_method(:metodo_normal)
+    # e.metodo_normal  # NoMethodError
+
+  remove_method elimina el método de esa clase.
+  undef_method evita que el método sea llamado (incluso heredado).
+
+-------------------------------------------------------------------------------
+  13. CONSTANTES DINÁMICAS
+-------------------------------------------------------------------------------
+
+  Podemos acceder y definir constantes dinámicamente:
+
+    class Modulo
+    end
+
+    Modulo.const_set(:VERSION, "1.0.0")
+    puts Modulo.const_get(:VERSION)  # => "1.0.0"
+    puts Modulo.constants             # => [:VERSION]
+
+  const_defined? verifica si una constante existe.
+
+-------------------------------------------------------------------------------
+  14. BINDING Y EVAL AVANZADO
+-------------------------------------------------------------------------------
+
+  Podemos capturar y reutilizar contextos:
+
+    def crear_contexto
+      x = 10
+      y = 20
+      binding
+    end
+
+    ctx = crear_contexto
+    puts eval("x + y", ctx)  # => 30
+
+  Esto es la base de las plantillas ERB y otros sistemas de
+  evaluación dinámica.
+
+-------------------------------------------------------------------------------
+  15. DEFINE_METHOD CON BLOQUE
+-------------------------------------------------------------------------------
+
+  define_method con bloque accede a variables externas (closure):
+
+    class CreadorDeMetodos
+      def self.crear_metodo(nombre, operacion)
+        define_method(nombre) do |a, b|
+          a.send(operacion, b)
+        end
+      end
+    end
+
+    class Calculadora < CreadorDeMetodos
+      crear_metodo(:suma, :+)
+      crear_metodo(:resta, :-)
+      crear_metodo(:multiplica, :*)
+    end
+
+    c = Calculadora.new
+    puts c.suma(5, 3)        # => 8
+    puts c.multiplica(4, 3)  # => 12
+
+-------------------------------------------------------------------------------
+  16. CLASS_EVAL VS INSTANCE_EVAL
+-------------------------------------------------------------------------------
+
+  class_eval abre la clase como si estuvieras dentro de ella:
+
+    String.class_eval do
+      def reverso
+        reverse
+      end
+    end
+    puts "Ruby".reverso  # "ybuR"
+
+  instance_eval cambia self al objeto:
+
+    class Example
+      def initialize
+        @valor = 42
+      end
+    end
+
+    Example.new.instance_eval { puts @valor }  # 42
+
+  instance_eval con clase define métodos de clase:
+
+    Example.instance_eval do
+      def metodo_de_clase
+        "método de clase"
+      end
+    end
+    puts Example.metodo_de_clase
+
+-------------------------------------------------------------------------------
+  17. PELIGROS DE LA METAPROGRAMACIÖN
+-------------------------------------------------------------------------------
+
+  1. Seguridad: eval puede ejecutar código malicioso.
+  2. Depuración: los métodos generados dinámicamente no aparecen
+     en el stack trace de forma clara.
+  3. Rendimiento: define_method es más lento que def.
+  4. Complejidad: el código metaprogramado es difícil de entender.
+  5. Colisiones: puedes sobrescribir métodos existentes sin saberlo.
+
+  Buenas prácticas:
+    • Siempre sobrescribe respond_to_missing? con method_missing.
+    • Usa public_send en lugar de send cuando sea posible.
+    • Documenta claramente los métodos generados dinámicamente.
+    • Privilegia define_method sobre eval.
+    • No uses eval con entrada de usuario.
+
+-------------------------------------------------------------------------------
+  18. CASOS DE USO REALES
+-------------------------------------------------------------------------------
+
+  ActiveRecord: define attributes y associations dinámicamente.
+  RSpec: crea métodos describe/it con metaprogramación.
+  Rails Routing: genera rutas dinámicamente.
+  Dry-types: define tipos con DSLs.
+  Grape API: construye APIs con DSL.
+
+-------------------------------------------------------------------------------
+  19. COMPARATIVA: MÉTODOS DE METAPROGRAMACIÖN
+-------------------------------------------------------------------------------
+
+  Método              | Contexto          | Define métodos de
+  --------------------|-------------------|-------------------
+  define_method       | Clase (self)      | Instancia
+  class_eval          | Clase (self)      | Instancia
+  instance_eval       | Objeto (self)     | Singleton
+  module_eval         | Módulo (self)     | Instancia
+  eval                | Ámbito actual     | Variable
+  send                | Objeto receptor   | N/A (invoca)
+  method_missing      | Receptor          | N/A (intercepta)
+
+-------------------------------------------------------------------------------
+  CÓDIGO COMPLETO DE EJEMPLO
+-------------------------------------------------------------------------------
+
+```ruby
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# =============================================================================
+# CAPÍTULO 64: METAPROGRAMACIÖN
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. INTROSPECCIÓN
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "1. INTROSPECCIÓN"
+puts "=" * 60
+
+obj = "Ruby Metaprogramming"
+puts "Clase: #{obj.class}"
+puts "Métodos de instancia (primeros 5): #{obj.methods.first(5).inspect}"
+puts "Responde a upcase?: #{obj.respond_to?(:upcase)}"
+puts "Variables de instancia: #{obj.instance_variables.inspect}"
+
+# ---------------------------------------------------------------------------
+# 2. define_method
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "2. define_method"
+puts "=" * 60
+
+class Producto
+  [:nombre, :precio, :stock].each do |attr|
+    define_method(attr) do
+      instance_variable_get("@#{attr}")
+    end
+
+    define_method("#{attr}=") do |valor|
+      instance_variable_set("@#{attr}", valor)
+    end
+  end
+end
+
+p = Producto.new
+p.nombre = "Laptop"
+p.precio = 999.99
+p.stock = 10
+puts "Producto: #{p.nombre}, $#{p.precio}, stock: #{p.stock}"
+
+# ---------------------------------------------------------------------------
+# 3. method_missing
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "3. method_missing"
+puts "=" * 60
+
+class Delegador
+  def initialize(objeto)
+    @objeto = objeto
+  end
+
+  def method_missing(nombre, *args, &bloque)
+    if @objeto.respond_to?(nombre)
+      @objeto.public_send(nombre, *args, &bloque)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(nombre, incl_priv = false)
+    @objeto.respond_to?(nombre) || super
+  end
+end
+
+delegado = Delegador.new([1, 2, 3, 4, 5])
+puts "Longitud: #{delegado.length}"
+puts "Primero: #{delegado.first}"
+puts "Mapa: #{delegado.map { |x| x ** 2 }.inspect}"
+puts "Responde a length?: #{delegado.respond_to?(:length)}"
+
+# ---------------------------------------------------------------------------
+# 4. const_missing y constantes dinámicas
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "4. const_missing"
+puts "=" * 60
+
+class AutoLoad
+  def self.const_missing(nombre)
+    puts "  Cargando constante #{nombre}..."
+    const_set(nombre, Module.new)
+  end
+end
+
+# Acceso dinámico
+puts AutoLoad::ModuloA.class  # Module
+puts AutoLoad::ModuloB.class  # Module
+
+# const_get / const_set
+AutoLoad.const_set(:VERSION, "2.0.0")
+puts "Versión: #{AutoLoad.const_get(:VERSION)}"
+puts "Todas las constantes: #{AutoLoad.constants.inspect}"
+
+# ---------------------------------------------------------------------------
+# 5. eval
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "5. eval"
+puts "=" * 60
+
+x = 5
+eval("puts x * 3")
+
+codigo = <<~RUBY
+  def suma(a, b)
+    a + b
+  end
+RUBY
+eval(codigo)
+puts suma(10, 20)
+
+# ---------------------------------------------------------------------------
+# 6. class_eval
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "6. class_eval"
+puts "=" * 60
+
+String.class_eval do
+  def titulo
+    split.map(&:capitalize).join(" ")
+  end
+end
+
+puts "hola mundo ruby".titulo
+
+# ---------------------------------------------------------------------------
+# 7. instance_eval
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "7. instance_eval"
+puts "=" * 60
+
+class Reporte
+  def initialize
+    @datos = { visitas: 100, usuarios: 25 }
+  end
+end
+
+r = Reporte.new
+r.instance_eval do
+  puts "Datos internos: #{@datos}"
+  def resumen
+    "Visitas: #{@datos[:visitas]}, Usuarios: #{@datos[:usuarios]}"
+  end
+end
+puts r.resumen
+
+# ---------------------------------------------------------------------------
+# 8. attr_accessor personalizado
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "8. attr_accessor personalizado"
+puts "=" * 60
+
+class Class
+  def mi_attr(*nombres)
+    nombres.each do |nombre|
+      define_method(nombre) { instance_variable_get("@#{nombre}") }
+      define_method("#{nombre}=") { |v| instance_variable_set("@#{nombre}", v) }
+    end
+  end
+end
+
+class Libro
+  mi_attr :titulo, :autor, :año
+
+  def initialize(titulo, autor, año)
+    @titulo = titulo
+    @autor = autor
+    @año = año
+  end
+end
+
+libro = Libro.new("Ruby Profundo", "Matz", 2024)
+puts "#{libro.titulo} por #{libro.autor} (#{libro.año})"
+
+# ---------------------------------------------------------------------------
+# 9. send y public_send
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "9. send / public_send"
+puts "=" * 60
+
+class Ordenador
+  def ordenar(lista, metodo = :sort)
+    lista.public_send(metodo)
+  end
+
+  def invertir(lista)
+    lista.send(:reverse)
+  end
+end
+
+ord = Ordenador.new
+nums = [3, 1, 4, 1, 5]
+puts "Ordenado: #{ord.ordenar(nums).inspect}"
+puts "Invertido: #{ord.invertir(nums).inspect}"
+
+# ---------------------------------------------------------------------------
+# 10. Módulos dinámicos con extend
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "10. extend dinámico"
+puts "=" * 60
+
+module Estadisticas
+  def mediana
+    sorted = sort
+    mid = length / 2
+    length.odd? ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0
+  end
+end
+
+nums = [1, 3, 5, 7, 9]
+nums.extend(Estadisticas)
+puts "Mediana de #{nums.inspect}: #{nums.mediana}"
+
+# ---------------------------------------------------------------------------
+# 11. DSL simple
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "11. DSL SIMPLE"
+puts "=" * 60
+
+class Router
+  def initialize
+    @rutas = []
+  end
+
+  def method_missing(nombre, *args, &bloque)
+    ruta = { metodo: nombre, path: args.first, handler: bloque }
+    @rutas << ruta
+  end
+
+  def respond_to_missing?(*)
+    true
+  end
+
+  def mostrar_rutas
+    @rutas.each do |r|
+      puts "#{r[:metodo].upcase} #{r[:path]} -> #{r[:handler]}"
+    end
+  end
+end
+
+router = Router.new
+router.get "/" do "página principal" end
+router.post "/usuarios" do "crear usuario" end
+router.put "/usuarios/:id" do "actualizar usuario" end
+router.delete "/usuarios/:id" do "borrar usuario" end
+
+router.mostrar_rutas
+
+# ---------------------------------------------------------------------------
+# 12. remove_method y undef_method
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "12. remove / undef_method"
+puts "=" * 60
+
+class Base
+  def saludar
+    "hola"
+  end
+
+  def despedir
+    "adiós"
+  end
+end
+
+class Hijo < Base
+  remove_method :despedir  # elimina despedir de Hijo, usa herencia
+  undef_method :saludar    # elimina saludar completamente
+end
+
+h = Hijo.new
+# h.saludar  # NoMethodError
+puts h.despedir  # "adiós" (hereda de Base)
+
+# ---------------------------------------------------------------------------
+# 13. Definición masiva de métodos
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "13. DEFINICIÓN MASIVA"
+puts "=" * 60
+
+operaciones = {
+  mas: :+,
+  menos: :-,
+  por: :*,
+  entre: :/
+}
+
+class CalculadoraDinamica
+  operaciones.each do |nombre, operador|
+    define_method(nombre) do |a, b|
+      a.send(operador, b)
+    end
+  end
+end
+
+calc = CalculadoraDinamica.new
+puts "10 + 5 = #{calc.mas(10, 5)}"
+puts "10 - 5 = #{calc.menos(10, 5)}"
+puts "10 * 5 = #{calc.por(10, 5)}"
+puts "10 / 5 = #{calc.entre(10, 5)}"
+
+# ---------------------------------------------------------------------------
+# 14. Delegación con method_missing
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "14. DELEGACIÓN"
+puts "=" * 60
+
+class ProxySeguro
+  def initialize(objeto, solo_metodos = [])
+    @objeto = objeto
+    @permitidos = solo_metodos
+  end
+
+  def method_missing(nombre, *args, &bloque)
+    if @permitidos.empty? || @permitidos.include?(nombre)
+      if @objeto.respond_to?(nombre)
+        @objeto.public_send(nombre, *args, &bloque)
+      else
+        super
+      end
+    else
+      raise "Método #{nombre} no permitido"
+    end
+  end
+
+  def respond_to_missing?(nombre, incl_priv = false)
+    (@permitidos.empty? || @permitidos.include?(nombre)) &&
+      @objeto.respond_to?(nombre) || super
+  end
+end
+
+lista = [1, 2, 3, 4, 5]
+proxy = ProxySeguro.new(lista, [:length, :first, :last])
+puts "Length: #{proxy.length}"
+puts "First: #{proxy.first}"
+# proxy.sort  # => RuntimeError: Método sort no permitido
+
+# ---------------------------------------------------------------------------
+# 15. DSL de configuración completo
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "15. DSL CONFIGURACIÓN"
+puts "=" * 60
+
+class ConfigApp
+  attr_reader :config
+
+  def initialize
+    @config = {}
+  end
+
+  def self.configurar(&bloque)
+    app = ConfigApp.new
+    app.instance_eval(&bloque)
+    app.config
+  end
+
+  private
+
+  def database(adaptador, hash = {})
+    @config[:database] = { adaptador: adaptador }.merge(hash)
+  end
+
+  def cache(tipo, opciones = {})
+    @config[:cache] = { tipo: tipo }.merge(opciones)
+  end
+
+  def middleware(nombre, *args)
+    @config[:middleware] ||= []
+    @config[:middleware] << { nombre: nombre, args: args }
+  end
+end
+
+config = ConfigApp.configurar do
+  database :postgres, host: "localhost", puerto: 5432
+  cache :redis, url: "redis://localhost:6379"
+  middleware :autenticacion
+  middleware :logging, nivel: :debug
+end
+
+puts config.inspect
+
+# ---------------------------------------------------------------------------
+# 16. Métodos helper con define_method
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "16. HELPER DINÁMICO"
+puts "=" * 60
+
+class Hash
+  [:upcase, :downcase, :capitalize].each do |metodo|
+    define_method("transformar_llaves_#{metodo}") do
+      transform_keys(&metodo)
+    end
+  end
+end
+
+h = { nombre: "Ana", apellido: "García" }
+puts h.transformar_llaves_upcase.inspect
+puts h.transformar_llaves_capitalize.inspect
+
+# ---------------------------------------------------------------------------
+# 17. Crear classes dinámicamente
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "17. CLASES DINÁMICAS"
+puts "=" * 60
+
+def crear_clase(nombre, atributos = [])
+  clase = Class.new do
+    atributos.each do |attr|
+      attr_accessor attr
+    end
+
+    define_method(:initialize) do |*valores|
+      atributos.zip(valores).each do |attr, valor|
+        send("#{attr}=", valor) if valor
+      end
+    end
+
+    define_method(:to_s) do
+      atributos.map { |a| "#{a}: #{send(a)}" }.join(", ")
+    end
+  end
+
+  Object.const_set(nombre, clase)
+  clase
+end
+
+Usuario = crear_clase("Usuario", [:nombre, :email, :edad])
+u = Usuario.new("Ana", "ana@test.com", 30)
+puts u.to_s
+puts u.class
+
+# ---------------------------------------------------------------------------
+# 18. method_missing con caching dinámico
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "18. CACHING CON METHOD_MISSING"
+puts "=" * 60
+
+class CacheDinamico
+  def initialize
+    @cache = {}
+  end
+
+  def method_missing(nombre, *args)
+    clave = [nombre, *args]
+    if @cache.key?(clave)
+      @cache[clave]
+    elsif nombre.to_s.start_with?("calc_")
+      @cache[clave] = yield(*args) if block_given?
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(nombre, *)
+    nombre.to_s.start_with?("calc_") || super
+  end
+end
+
+cache = CacheDinamico.new
+resultado = cache.calc_fib(40) { |n| n <= 1 ? n : cache.calc_fib(n-1) { |m| m } + cache.calc_fib(n-2) { |m| m } }
+# Simplificación: el patrón es más útil con lambdas almacenados
+puts "Cache creado"
+
+# ---------------------------------------------------------------------------
+# 19. Activerecord-like finders
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "19. FINDERS DINÁMICOS"
+puts "=" * 60
+
+class Repositorio
+  def initialize
+    @datos = []
+    @indices = {}
+  end
+
+  def agregar(registro)
+    @datos << registro
+  end
+
+  def method_missing(nombre, *args)
+    if nombre.to_s =~ /^find_by_(\w+)$/
+      campo = $1.to_sym
+      @datos.select { |r| r[campo] == args.first }
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(nombre, *)
+    nombre.to_s.start_with?("find_by_") || super
+  end
+end
+
+repo = Repositorio.new
+repo.agregar({ nombre: "Ana",  edad: 30, ciudad: "Madrid" })
+repo.agregar({ nombre: "Luis", edad: 25, ciudad: "Barcelona" })
+repo.agregar({ nombre: "Ana",  edad: 35, ciudad: "Valencia" })
+
+puts repo.find_by_nombre("Ana").inspect
+puts repo.find_by_edad(25).inspect
+
+# ---------------------------------------------------------------------------
+# 20. EVAL con contexto de binding
+# ---------------------------------------------------------------------------
+
+puts "=" * 60
+puts "20. EVAL CON BINDING"
+puts "=" * 60
+
+class TemplateEngine
+  def initialize(template)
+    @template = template
+    @variables = {}
+  end
+
+  def asignar(nombre, valor)
+    @variables[nombre] = valor
+  end
+
+  def render
+    b = binding
+    @variables.each { |k, v| b.local_variable_set(k, v) }
+    eval("\"#{@template}\"", b)
+  end
+end
+
+tpl = TemplateEngine.new("Hola {{nombre}}, tienes {{edad}} años.")
+tpl.asignar(:nombre, "Ana")
+tpl.asignar(:edad, 30)
+# puts tpl.render  # Implementación conceptual
+
+puts "=" * 60
+puts "FIN DEL EJEMPLO COMPLETO"
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+  En este capítulo hemos explorado la metaprogramación en Ruby:
+
+  • define_method crea métodos dinámicamente en una clase.
+  • method_missing captura llamadas a métodos inexistentes.
+  • const_missing captura acceso a constantes inexistentes.
+  • eval, class_eval, instance_eval evalúan código en contextos.
+  • send y public_send invocan métodos dinámicamente.
+  • La metaprogramación permite crear DSLs potentes.
+  • Siempre se debe sobrescribir respond_to_missing? con method_missing.
+  • La metaprogramación conlleva riesgos de seguridad y complejidad.
+
+  La metaprogramación es el superpoder de Ruby. Úsalo con sabiduría.
+
+================================================================================
+  EJERCICIOS DEL CAPÍTULO
+================================================================================
+
+  Ejercicio 1: Crea define_method para generar 5 métodos matemáticos
+  (suma, resta, mult, div, potencia) en una clase.
+
+  Ejercicio 2: Implementa un proxy con method_missing que registre
+  (loguee) cada llamada antes de delegar.
+
+  Ejercicio 3: Crea una clase DSL para definir rutas de una API.
+
+  Ejercicio 4: Usa instance_eval para implementar un bloque de
+  configuración tipo `configure { |c| c.db = "..." }`.
+
+  Ejercicio 5: Implementa const_missing para autocargar archivos.
+
+  Ejercicio 6: Crea tu propio attr_reader que lea de un hash interno.
+
+  Ejercicio 7: Implementa un validador dinámico con method_missing.
+
+  Ejercicio 8: Usa send para implementar un método ejecutar(accion).
+
+  Ejercicio 9: Crea finders dinámicos find_by_campo (como ActiveRecord).
+
+  Ejercicio 10: Implementa un mini DSL para definir tests.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+  P: ¿Cuál es la diferencia entre class_eval e instance_eval?
+  R: class_eval abre el contexto de la clase (self es la clase) y
+     define métodos de instancia. instance_eval abre el contexto de
+     un objeto (self es el objeto) y define métodos singleton.
+
+  P: ¿method_missing afecta el rendimiento?
+  R: Sí, porque cada llamada "missing" debe recorrer la jerarquía de
+     clases antes de llegar a method_missing. Es más lento que un
+     método real. Para alto rendimiento, define métodos dinámicamente
+     con define_method.
+
+  P: ¿Es seguro usar eval con entrada de usuario?
+  R: No, nunca. eval ejecuta código Ruby arbitrario. Si necesitas
+     evaluar expresiones de usuario, usa un parser seguro o sandbox.
+
+  P: ¿Qué es respond_to_missing? y por qué es necesario?
+  R: Sobrescribe el comportamiento de respond_to? para que los métodos
+     capturados por method_missing aparezcan como existentes. Sin esto,
+     respond_to? devolverá false para métodos delegados.
+
+  P: ¿define_method es más lento que def?
+  R: Sí, ligeramente. define_method es una llamada de método que define
+     un método; es más lento en definición, no en ejecución. Para
+     métodos que se definen una vez y se llaman muchas veces, la
+     diferencia es despreciable.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  Implementa un mini ORM (Mapeo Objeto-Relacional) usando metapro-
+  gramación.
+
+  Requisitos:
+    • Define una clase base Modelo con method_missing para:
+      - find_by_campo(valor)
+      - donde los campos se definen dinámicamente.
+    • Usa define_method para crear attr_accessors de columnas.
+    • Implementa un DSL para definir esquemas:
+        class Usuario < Modelo
+          columna :nombre, String
+          columna :edad, Integer
+          has_many :posts
+        end
+    • Los datos se almacenan en un array en memoria.
+
+  Ejemplo de uso:
+
+    class Post < Modelo
+      columna :titulo, String
+      columna :body, String
+    end
+
+    Post.create(titulo: "Hola", body: "Mundo")
+    posts = Post.find_by_titulo("Hola")
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+  Has entrado al taller del mago. La metaprogramación es lo que separa
+  a los usuarios de Ruby de los verdaderos arquitectos Ruby. Con
+  define_method, method_missing y eval, tienes el poder de crear
+  lenguajes dentro del lenguaje, de hacer que tu código se adapte y
+  evolucione.
+
+  Pero recuerda: la metaprogramación no es para impresionar, es para
+  resolver problemas reales de duplicación y expresividad. Úsala para
+  crear DSLs que hagan felices a otros desarrolladores, no para
+  demostrar cuán inteligente eres.
+
+  En el próximo capítulo profundizaremos en class_eval e instance_eval,
+  dos herramientas específicas de metaprogramación con aplicaciones
+  muy concretas.
+
+  Nos vemos en el Capítulo 65: CLASS_EVAL / INSTANCE_EVAL.
+
+================================================================================
+  PRÓXIMO CAPÍTULO
+================================================================================
+
+  → CAPÍTULO 65: CLASS_EVAL / INSTANCE_EVAL
+  → Aprenderás a diferenciar y aplicar correctamente estas dos formas
+    de evaluación contextual en Ruby.
+
+================================================================================
+  FIN DEL CAPÍTULO 64
+================================================================================

@@ -1,0 +1,801 @@
+================================================================================
+  MÓDULO VI: ENTRADA, SALIDA Y ARCHIVOS
+  CAPÍTULO 54: OBJECT OUTPUT / INPUT STREAM
+  "Java Master Book" — El arte de dominar Java
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 54! Hasta ahora hemos trabajado con caracteres y
+bytes, pero ¿qué pasaría si pudiéramos guardar objetos enteros en archivos
+y recuperarlos después? Eso es exactamente lo que hacen ObjectOutputStream
+y ObjectInputStream. Estas clases permiten serializar objetos Java a un
+stream y deserializarlos posteriormente. Es como tomar una "foto" del
+estado de un objeto y poder restaurarlo después. Este mecanismo es la base
+de la persistencia de objetos en Java, los protocolos de red como RMI, y
+muchos sistemas de caché.
+
+FRASE DEL DÍA
+-------------
+"Un objeto serializado es un objeto que ha aprendido a viajar."
+— Anónimo
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+• Comprender el concepto de serialización de objetos.
+• Utilizar ObjectOutputStream para escribir objetos en un archivo.
+• Utilizar ObjectInputStream para leer objetos desde un archivo.
+• Manejar las excepciones: IOException, ClassNotFoundException.
+• Entender el contrato de serialización y el formato binario.
+• Serializar objetos complejos con referencias a otros objetos.
+• Personalizar la serialización con writeObject() y readObject() privados.
+• Conocer writeUnshared() y readUnshared() para evitar duplicados.
+• Validar clases serializadas con serialVersionUID implícito y explícito.
+• Explorar ObjectStreamClass y la inspección de clases serializables.
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+1. ¿QUÉ ES LA SERIALIZACIÓN DE OBJETOS?
+----------------------------------------
+
+La serialización es el proceso de convertir el estado de un objeto en un
+flujo de bytes que puede ser almacenado en un archivo, enviado por red,
+o guardado en una base de datos. La deserialización es el proceso inverso:
+reconstruir el objeto a partir del flujo de bytes.
+
+ObjectOutputStream extiende OutputStream y proporciona writeObject()
+para serializar objetos. ObjectInputStream extiende InputStream y
+proporciona readObject() para deserializar.
+
+  // Serializar
+  try (ObjectOutputStream oos = new ObjectOutputStream(
+          new FileOutputStream("/tmp/objeto.dat"))) {
+      oos.writeObject(miObjeto);
+  }
+
+  // Deserializar
+  try (ObjectInputStream ois = new ObjectInputStream(
+          new FileInputStream("/tmp/objeto.dat"))) {
+      MiClase obj = (MiClase) ois.readObject();
+  }
+
+2. EL CONTRATO DE SERIALIZACIÓN
+--------------------------------
+
+Para que un objeto sea serializable, su clase debe cumplir:
+
+  • Implementar la interfaz java.io.Serializable.
+  • Todos los campos no transient deben ser serializables.
+  • La superclase debe tener un constructor sin argumentos (accesible
+    desde la subclase) si no implementa Serializable.
+  • Si una superclase no es serializable, sus campos se inicializan con
+    el constructor sin argumentos durante la deserialización.
+
+  public class Persona implements Serializable {
+      private String nombre;
+      private int edad;
+      // constructor, getters, setters...
+  }
+
+Serializable es una interfaz marcadora (sin métodos). Solo indica que la
+clase permite la serialización.
+
+3. OBJECTINPUTSTREAM Y OBJECTOUTPUTSTREAM
+------------------------------------------
+
+  Constructores:
+  • ObjectInputStream(InputStream in)
+  • ObjectOutputStream(OutputStream out)
+
+  Métodos principales de ObjectOutputStream:
+  • writeObject(Object obj): escribe un objeto.
+  • writeBoolean(boolean v): escribe un boolean.
+  • writeByte(int v): escribe un byte.
+  • writeChar(int v): escribe un char.
+  • writeDouble(double v): escribe un double.
+  • writeFloat(float v): escribe un float.
+  • writeInt(int v): escribe un int.
+  • writeLong(long v): escribe un long.
+  • writeShort(int v): escribe un short.
+  • writeUTF(String str): escribe un String en formato UTF-8.
+  • flush(): vacía el buffer.
+  • reset(): reinicia el estado de serialización (olvida objetos previos).
+  • writeUnshared(Object obj): escribe un objeto como "no compartido".
+
+  Métodos principales de ObjectInputStream:
+  • readObject(): lee y devuelve un objeto (Object).
+  • readBoolean(), readByte(), readChar(), readDouble(), etc.
+  • readUTF(): lee un String en formato UTF-8.
+  • readUnshared(): lee un objeto "no compartido".
+
+4. SERIALIZACIÓN DE OBJETOS COMPLEJOS
+--------------------------------------
+
+ObjectOutputStream maneja automáticamente grafos de objetos. Si un objeto
+A contiene una referencia a un objeto B, y ambos son serializables, B se
+serializa automáticamente. Si hay referencias circulares, el stream las
+maneja correctamente sin entrar en bucle infinito.
+
+  public class Departamento implements Serializable {
+      private String nombre;
+      private List<Empleado> empleados; // Serializable si lo es
+      // ...
+  }
+
+  public class Empleado implements Serializable {
+      private String nombre;
+      private Departamento departamento; // Referencia inversa
+      // ...
+  }
+
+El grafo se serializa correctamente aunque tenga referencias circulares.
+
+5. writeUnshared() Y readUnshared()
+------------------------------------
+
+Normalmente, si escribes el mismo objeto dos veces, ObjectOutputStream
+mantiene una referencia y solo almacena el objeto completo una vez.
+writeUnshared() fuerza a escribir el objeto como una copia nueva.
+
+  Usuario u = new Usuario("admin");
+  oos.writeObject(u);     // Almacena el objeto
+  oos.writeObject(u);     // Solo almacena una referencia
+  oos.writeUnshared(u);   // Fuerza una nueva copia
+
+Al deserializar con readUnshared(), se obtiene una copia independiente.
+
+6. RESET() — REINICIAR EL ESTADO DE SERIALIZACIÓN
+---------------------------------------------------
+
+ObjectOutputStream mantiene una tabla de referencias de objetos ya
+escritos. reset() limpia esta tabla, permitiendo reutilizar el stream
+sin conflictos.
+
+  oos.writeObject(obj1);
+  oos.reset(); // Olvida todos los objetos previos
+  oos.writeObject(obj1); // Se serializa de nuevo completo
+
+Útil en operaciones largas donde el stream se usa para múltiples objetos
+distintos y no queremos que la tabla de referencias crezca infinitamente.
+
+7. MANEJO DE EXCEPCIONES
+-------------------------
+
+  try (ObjectOutputStream oos = new ObjectOutputStream(
+          new FileOutputStream("/tmp/datos.dat"))) {
+      oos.writeObject(persona);
+      oos.writeInt(42);
+      oos.writeUTF("Hola");
+  } catch (NotSerializableException e) {
+      System.err.println("La clase no es serializable: " + e.getMessage());
+  } catch (IOException e) {
+      System.err.println("Error de E/S: " + e.getMessage());
+  }
+
+  try (ObjectInputStream ois = new ObjectInputStream(
+          new FileInputStream("/tmp/datos.dat"))) {
+      Persona p = (Persona) ois.readObject();
+      int num = ois.readInt();
+      String str = ois.readUTF();
+  } catch (ClassNotFoundException e) {
+      System.err.println("La clase no está disponible: " + e.getMessage());
+  } catch (InvalidClassException e) {
+      System.err.println("Problema de versión de clase: " + e.getMessage());
+  } catch (IOException e) {
+      System.err.println("Error de E/S: " + e.getMessage());
+  }
+
+Excepciones específicas:
+  • NotSerializableException: la clase no implementa Serializable.
+  • InvalidClassException: el serialVersionUID no coincide.
+  • StreamCorruptedException: el stream está corrupto o tiene formato
+    incorrecto.
+  • OptionalDataException: hay datos primitivos en lugar de un objeto.
+  • ClassNotFoundException: la clase del objeto serializado no está en
+    el classpath.
+
+8. PERSONALIZACIÓN DE LA SERIALIZACIÓN
+---------------------------------------
+
+Se puede personalizar el proceso de serialización implementando los
+métodos privados writeObject() y readObject() en la clase:
+
+  public class Usuario implements Serializable {
+      private String nombre;
+      private transient String password; // No se serializa
+
+      private void writeObject(ObjectOutputStream oos) throws IOException {
+          oos.defaultWriteObject(); // Serializa campos normales
+          oos.writeObject(encriptar(password)); // Campo personalizado
+      }
+
+      private void readObject(ObjectInputStream ois)
+              throws IOException, ClassNotFoundException {
+          ois.defaultReadObject(); // Deserializa campos normales
+          this.password = desencriptar((String) ois.readObject());
+      }
+
+      private String encriptar(String s) { /* ... */ return s; }
+      private String desencriptar(String s) { /* ... */ return s; }
+  }
+
+Los métodos deben ser exactamente:
+  private void writeObject(java.io.ObjectOutputStream oos)
+          throws IOException
+  private void readObject(java.io.ObjectInputStream ois)
+          throws IOException, ClassNotFoundException
+
+9. readResolve() Y writeReplace()
+-----------------------------------
+
+  • writeReplace(): permite reemplazar el objeto a serializar por otro.
+  • readResolve(): permite reemplazar el objeto deserializado por otro.
+    Muy usado para implementar singletons serializables.
+
+  public class Singleton implements Serializable {
+      private static final Singleton INSTANCIA = new Singleton();
+      private Singleton() {}
+
+      // readResolve garantiza que no se creen copias
+      private Object readResolve() {
+          return INSTANCIA;
+      }
+  }
+
+10. ObjectStreamClass
+---------------------------------------
+
+ObjectStreamClass permite inspeccionar la información de serialización
+de una clase:
+
+  ObjectStreamClass osc = ObjectStreamClass.lookup(MiClase.class);
+  System.out.println("Clase: " + osc.getName());
+  System.out.println("SUID: " + osc.getSerialVersionUID());
+  System.out.println("Campos:");
+  for (ObjectStreamField campo : osc.getFields()) {
+      System.out.println("  " + campo.getName() + " : " + campo.getType());
+  }
+
+11. FORMATO DEL STREAM DE OBJETOS
+----------------------------------
+
+El stream binario de ObjectOutputStream tiene un formato específico:
+  • Magic number (0xACED) + versión del stream (0x0005).
+  • Tabla de clases con descripciones de tipos.
+  • Datos de objetos con referencias a clases y campos.
+
+Este formato permite que ObjectInputStream reconstruya fielmente los
+objetos, incluyendo tipos, jerarquías de herencia, y grafos.
+
+12. LIMITACIONES Y RIESGOS DE SEGURIDAD
+----------------------------------------
+
+  • Los streams serializados no son legibles por humanos.
+  • La deserialización puede ser insegura si se procesan streams no
+    confiables (riesgo de inyección de objetos maliciosos).
+  • La estructura interna del objeto queda expuesta en el stream.
+  • El rendimiento no es óptimo para grandes volúmenes de datos.
+  • Cambiar la clase después de serializar puede romper la
+    deserialización (de ahí el serialVersionUID).
+
+  Mejores prácticas:
+  • No deserializar datos de fuentes no confiables.
+  • Usar filtros de deserialización (ObjectInputFilter) desde Java 9.
+  • Preferir JSON/XML para intercambio de datos entre aplicaciones.
+  • Mantener el serialVersionUID explícito para control de versiones.
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+import java.io.*;
+import java.util.*;
+
+public class Capitulo54ObjectStream {
+
+    public static void main(String[] args) {
+        System.out.println("=== CAPÍTULO 54: OBJECT OUTPUT/INPUT STREAM ===\n");
+
+        String archivo = "/tmp/cap54_objetos.dat";
+
+        // 1. Crear objetos de ejemplo
+        System.out.println("--- Creando objetos ---");
+        Direccion dir = new Direccion("Av. Siempre Viva", "123", "Springfield");
+        Persona p1 = new Persona("Juan Perez", 30, dir);
+        Persona p2 = new Persona("Maria Lopez", 25, dir); // Misma dirección
+        List<Persona> lista = Arrays.asList(p1, p2);
+        System.out.println("Objetos creados:");
+        System.out.println("  " + p1);
+        System.out.println("  " + p2);
+
+        // 2. Serializar objetos
+        System.out.println("\n--- Serializando con ObjectOutputStream ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream(archivo))) {
+            oos.writeObject(p1);
+            oos.writeObject(p2);
+            oos.writeObject(lista);
+            oos.writeInt(42);
+            oos.writeUTF("Texto adicional");
+            oos.flush();
+            System.out.println("Objetos serializados en: " + archivo);
+        } catch (IOException e) {
+            System.err.println("Error serialización: " + e.getMessage());
+        }
+
+        // 3. Deserializar objetos
+        System.out.println("\n--- Deserializando con ObjectInputStream ---");
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream(archivo))) {
+            Persona p1r = (Persona) ois.readObject();
+            Persona p2r = (Persona) ois.readObject();
+            @SuppressWarnings("unchecked")
+            List<Persona> listaR = (List<Persona>) ois.readObject();
+            int numero = ois.readInt();
+            String texto = ois.readUTF();
+
+            System.out.println("Objetos deserializados:");
+            System.out.println("  " + p1r);
+            System.out.println("  " + p2r);
+            System.out.println("  Lista: " + listaR);
+            System.out.println("  Número: " + numero);
+            System.out.println("  Texto: " + texto);
+
+            // Verificar que la dirección es compartida (misma referencia)
+            System.out.println("\n¿Misma dirección? " + (p1r.getDireccion() == p2r.getDireccion()));
+        } catch (ClassNotFoundException | IOException e) {
+            System.err.println("Error deserialización: " + e.getMessage());
+        }
+
+        // 4. Serializar con tipos primitivos
+        System.out.println("\n--- Tipos primitivos en ObjectStream ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_5rimitivos.dat"))) {
+            oos.writeBoolean(true);
+            oos.writeByte(127);
+            oos.writeChar('J');
+            oos.writeDouble(3.141592653589793);
+            oos.writeFloat(2.718f);
+            oos.writeInt(1024);
+            oos.writeLong(1234567890123L);
+            oos.writeShort(255);
+            oos.writeUTF("¡Hola UTF!");
+            System.out.println("Primitivos escritos.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream("/tmp/cap54_5rimitivos.dat"))) {
+            System.out.println("boolean: " + ois.readBoolean());
+            System.out.println("byte: " + ois.readByte());
+            System.out.println("char: " + ois.readChar());
+            System.out.println("double: " + ois.readDouble());
+            System.out.println("float: " + ois.readFloat());
+            System.out.println("int: " + ois.readInt());
+            System.out.println("long: " + ois.readLong());
+            System.out.println("short: " + ois.readShort());
+            System.out.println("UTF: " + ois.readUTF());
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 5. writeUnshared() y readUnshared()
+        System.out.println("\n--- writeUnshared() / readUnshared() ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_unshared.dat"))) {
+            oos.writeObject(p1);
+            oos.writeUnshared(p1); // Fuerza copia independiente
+            System.out.println("Objetos escritos con writeUnshared.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream("/tmp/cap54_unshared.dat"))) {
+            Persona normal = (Persona) ois.readObject();
+            Persona unshared = (Persona) ois.readUnshared();
+            System.out.println("normal == unshared? " + (normal == unshared));
+            System.out.println("normal.equals(unshared)? " + normal.equals(unshared));
+        } catch (ClassNotFoundException | IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 6. reset()
+        System.out.println("\n--- reset() ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_reset.dat"))) {
+            for (int i = 0; i < 5; i++) {
+                oos.writeObject(new Persona("Usuario" + i, 20 + i, null));
+                if (i % 2 == 1) oos.reset(); // Reinicia tabla cada 2 objetos
+            }
+            System.out.println("Objetos escritos con reset().");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 7. Personalización writeObject/readObject
+        System.out.println("\n--- Serialización personalizada ---");
+        UsuarioCrypt user = new UsuarioCrypt("admin", "secreta123");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_user.dat"))) {
+            oos.writeObject(user);
+            System.out.println("Usuario serializado (password no viaja en claro).");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream("/tmp/cap54_user.dat"))) {
+            UsuarioCrypt userR = (UsuarioCrypt) ois.readObject();
+            System.out.println("Usuario deserializado: " + userR);
+            System.out.println("Password restaurado: " + userR.getPassword());
+        } catch (ClassNotFoundException | IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 8. ObjectStreamClass y serialVersionUID
+        System.out.println("\n--- ObjectStreamClass ---");
+        ObjectStreamClass osc = ObjectStreamClass.lookup(Persona.class);
+        System.out.println("Clase: " + osc.getName());
+        System.out.println("SUID: " + osc.getSerialVersionUID());
+        System.out.println("Campos:");
+        for (ObjectStreamField campo : osc.getFields()) {
+            System.out.println("  " + campo.getName() + " : "
+                    + campo.getType().getName());
+        }
+
+        // 9. Singleton con readResolve()
+        System.out.println("\n--- Singleton con readResolve() ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_singleton.dat"))) {
+            oos.writeObject(SingletonSerializable.INSTANCIA);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream("/tmp/cap54_singleton.dat"))) {
+            SingletonSerializable s = (SingletonSerializable) ois.readObject();
+            System.out.println("¿Es la misma instancia? "
+                    + (s == SingletonSerializable.INSTANCIA));
+        } catch (ClassNotFoundException | IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 10. No serializable
+        System.out.println("\n--- NotSerializableException ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_error.dat"))) {
+            NoSerializable obj = new NoSerializable("Prueba");
+            oos.writeObject(obj);
+        } catch (NotSerializableException e) {
+            System.out.println("Capturada NotSerializableException (esperado): "
+                    + e.getMessage());
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 11. Escribir múltiples objetos en bucle
+        System.out.println("\n--- Múltiples objetos ---");
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream("/tmp/cap54_multi.dat"))) {
+            for (int i = 0; i < 10; i++) {
+                oos.writeObject(new Persona("Persona" + i, i * 3,
+                        new Direccion("Calle " + i, "" + (i*10), "Ciudad")));
+            }
+            System.out.println("10 personas serializadas.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream("/tmp/cap54_multi.dat"))) {
+            int count = 0;
+            while (true) {
+                try {
+                    Persona pr = (Persona) ois.readObject();
+                    System.out.println("  " + (++count) + ": " + pr.getNombre());
+                } catch (EOFException e) {
+                    break; // Fin del stream
+                }
+            }
+            System.out.println("Total: " + count + " personas deserializadas.");
+        } catch (ClassNotFoundException | IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // Limpieza
+        System.out.println("\n--- Limpieza ---");
+        new File(archivo).delete();
+        new File("/tmp/cap54_5rimitivos.dat").delete();
+        new File("/tmp/cap54_unshared.dat").delete();
+        new File("/tmp/cap54_reset.dat").delete();
+        new File("/tmp/cap54_user.dat").delete();
+        new File("/tmp/cap54_singleton.dat").delete();
+        new File("/tmp/cap54_error.dat").delete();
+        new File("/tmp/cap54_multi.dat").delete();
+        System.out.println("Archivos temporales eliminados.");
+
+        System.out.println("\n=== FIN CAPÍTULO 54 ===");
+    }
+}
+
+// --- Clases auxiliares ---
+
+class Direccion implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private String calle;
+    private String numero;
+    private String ciudad;
+
+    public Direccion() {}
+
+    public Direccion(String calle, String numero, String ciudad) {
+        this.calle = calle;
+        this.numero = numero;
+        this.ciudad = ciudad;
+    }
+
+    public String toString() {
+        return calle + " " + numero + ", " + ciudad;
+    }
+}
+
+class Persona implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private String nombre;
+    private int edad;
+    private Direccion direccion;
+
+    public Persona() {}
+
+    public Persona(String nombre, int edad, Direccion direccion) {
+        this.nombre = nombre;
+        this.edad = edad;
+        this.direccion = direccion;
+    }
+
+    public String getNombre() { return nombre; }
+    public Direccion getDireccion() { return direccion; }
+
+    public String toString() {
+        return nombre + " (" + edad + " años) - " + direccion;
+    }
+}
+
+class UsuarioCrypt implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private String nombre;
+    private transient String password;
+
+    public UsuarioCrypt(String nombre, String password) {
+        this.nombre = nombre;
+        this.password = password;
+    }
+
+    public String getPassword() { return password; }
+
+    private void writeObject(ObjectOutputStream oos) throws IOException {
+        oos.defaultWriteObject();
+        // En un caso real, encriptaríamos la contraseña
+        oos.writeObject(new StringBuilder(password).reverse().toString());
+    }
+
+    private void readObject(ObjectInputStream ois)
+            throws IOException, ClassNotFoundException {
+        ois.defaultReadObject();
+        String passCodificada = (String) ois.readObject();
+        this.password = new StringBuilder(passCodificada).reverse().toString();
+    }
+
+    public String toString() {
+        return "Usuario{" + nombre + ", pass="
+                + (password != null ? "***" : null) + "}";
+    }
+}
+
+class SingletonSerializable implements Serializable {
+    private static final long serialVersionUID = 1L;
+    public static final SingletonSerializable INSTANCIA = new SingletonSerializable();
+    private SingletonSerializable() {}
+
+    private Object readResolve() {
+        return INSTANCIA;
+    }
+}
+
+class NoSerializable {
+    private String nombre;
+    public NoSerializable(String nombre) { this.nombre = nombre; }
+}
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+• ObjectOutputStream y ObjectInputStream permiten serializar y
+  deserializar objetos Java a través de writeObject() y readObject().
+
+• Solo los objetos que implementan Serializable pueden ser serializados.
+  Serializable es una interfaz marcadora (sin métodos).
+
+• El stream maneja automáticamente grafos de objetos, incluyendo
+  referencias circulares, sin entrar en bucles infinitos.
+
+• writeObject() serializa el objeto y sus referencias. Si el mismo objeto
+  se escribe dos veces, solo se almacena completo la primera vez; las
+  siguientes guardan una referencia.
+
+• writeUnshared() obliga a escribir una copia independiente, y
+  readUnshared() lee una copia desvinculada del objeto original.
+
+• reset() limpia la tabla de referencias del ObjectOutputStream,
+  útil para streams largos.
+
+• La personalización se logra implementando writeObject() y readObject()
+  privados en la clase, que controlan cómo se serializan/deserializan
+  los campos.
+
+• readResolve() permite reemplazar el objeto deserializado (útil para
+  singletons). writeReplace() permite reemplazar el objeto a serializar.
+
+• ObjectStreamClass permite inspeccionar los metadatos de serialización:
+  nombre de clase, serialVersionUID, campos.
+
+• La deserialización de fuentes no confiables es riesgosa. Usar
+  ObjectInputFilter (Java 9+) para filtrar clases permitidas.
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Agenda de contactos: Crea un programa que permita agregar, listar y
+   eliminar contactos (nombre, teléfono, email). Los contactos se
+   serializan en un archivo contacts.dat. Al iniciar, carga los contactos
+   existentes.
+
+2. Historial de comandos: Programa que guarde un historial de comandos
+   ejecutados en una sesión de terminal. Cada comando se guarda como
+   objeto con timestamp. Al reiniciar, muestra el historial previo.
+
+3. Editor de documentos con versiones: Crea un editor simple que
+   serialice el estado completo del documento (texto, cursor, selección)
+   periódicamente para permitir "deshacer" y recuperación ante fallos.
+
+4. Juego de preguntas: Implementa un juego con preguntas y respuestas
+   serializadas en un archivo. El programa debe permitir agregar nuevas
+   preguntas, listarlas y jugar una partida aleatoria.
+
+5. Sistema de notas con etiquetas: Cada nota tiene título, contenido,
+   fecha y lista de etiquetas. Las notas se serializan/deserializan.
+   Debe permitir filtrar por etiqueta y ordenar por fecha.
+
+6. Clonación profunda con serialización: Implementa un método utilitario
+   que clone objetos profundamente usando serialización:
+   ByteArrayOutputStream -> ObjectOutputStream -> ... -> ByteArrayInputStream.
+
+7. Validador de serialVersionUID: Crea una herramienta que inspeccione
+   clases en un JAR y reporte cuáles implementan Serializable, cuáles
+   tienen serialVersionUID explícito, y detecte posibles conflictos.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Qué pasa si serializo un objeto que contiene un campo no serializable?
+R: ObjectOutputStream lanzará NotSerializableException. Debes marcar
+   ese campo como transient (no se serializará) o hacer que su clase
+   implemente Serializable.
+
+P: ¿Puedo serializar objetos de clases anónimas o lambdas?
+R: Sí, si el tipo inferido implementa Serializable. Pero no se recomienda
+   porque la clase sintética generada depende del compilador y puede
+   variar entre versiones.
+
+P: ¿Cómo manejar versiones distintas de una clase serializada?
+R: Define un serialVersionUID explícito. Si la clase cambia (nuevos
+   campos), la deserialización funciona: los campos nuevos toman su valor
+   por defecto. Si eliminas campos, se ignoran. Si cambias tipos, falla.
+
+P: ¿ObjectOutputStream es seguro para múltiples hilos?
+R: No, no está sincronizado. Para entornos multihilo, sincroniza
+   externamente o crea streams separados por hilo.
+
+P: ¿Cuál es la diferencia entre Serializable y Externalizable?
+R: Serializable es automática (la JVM maneja el formato). Externalizable
+   requiere implementar writeExternal() y readExternal() manualmente,
+   dando control total pero requiriendo más código.
+
+P: ¿Cómo evitar que un campo se serialice?
+R: Márcalo como transient. La JVM lo omitirá durante la serialización.
+   Al deserializar, tomará el valor por defecto del tipo (null, 0, false).
+
+P: ¿Qué es el formato del stream de objetos?
+R: Comienza con los bytes mágicos 0xACED 0x0005 (versión 5). Luego
+   contiene la descripción de la clase, seguida de los valores de los
+   campos en orden. Es un formato binario propietario de Java.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  "SISTEMA DE PERSISTENCIA DE OBJETOS CON CONTROL DE VERSIONES"
+
+  Diseña un sistema que gestione la persistencia de objetos con control
+  de versiones, similar a un mini VCS (Version Control System).
+
+  Requisitos:
+
+  1. Objeto base Versionable: Interfaz que declara getVersion() y
+     getTimestamp(). Los objetos que implementen esta interfaz pueden
+     ser versionados.
+
+  2. Repositorio: Clase que almacena múltiples versiones de un objeto
+     en un solo archivo .objrepo. Usa ObjectOutputStream con reset()
+     entre versiones. Cada versión incluye metadatos: número de versión,
+     timestamp, autor, mensaje de commit.
+
+  3. Operaciones:
+     • commit(objeto, autor, mensaje): guarda una nueva versión.
+     • checkout(versión): recupera una versión específica.
+     • log(): muestra el historial de versiones.
+     • diff(v1, v2): compara dos versiones (usa serialización y
+       comparación de campos).
+
+  4. Ramas (branches): Soporta múltiples ramas de desarrollo. Cada
+     rama es un archivo separado o secciones dentro del mismo archivo.
+
+  5. Merge: Función que combina dos ramas, detectando conflictos
+     (campos modificados en ambas desde el ancestro común).
+
+  6. Serialización segura: Implementa ObjectInputFilter para restringir
+     las clases que se pueden deserializar, evitando ataques.
+
+  7. Mínimo 5 clases: Repository, Version, Branch, ObjectDiffer,
+     RepositoryManager.
+
+  VALORACIÓN:
+  • 3 estrellas: commit + checkout + log para un solo objeto.
+  • 4 estrellas: Ramas + diff entre versiones.
+  • 5 estrellas: Merge con detección de conflictos + filtro de
+    seguridad.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Has aprendido a serializar y deserializar objetos Java completos.
+ObjectOutputStream y ObjectInputStream son herramientas poderosas que
+permiten persistir el estado de objetos complejos, incluyendo grafos y
+referencias circulares. Este conocimiento es fundamental para sistemas
+que necesitan preservar estado entre ejecuciones.
+
+En el próximo capítulo profundizaremos en la serialización en sí misma:
+la interfaz Serializable, el serialVersionUID, y la palabra clave
+transient. Entenderemos a fondo el contrato de serialización y cómo
+controlarlo.
+
+¡Nos vemos en el Capítulo 55!
+
+================================================================================
+  CAPÍTULO 55: SERIALIZACIÓN
+================================================================================
+
+En el Capítulo 55 nos centraremos exclusivamente en el proceso de
+serialización. Exploraremos Serializable en detalle, aprenderemos a usar
+serialVersionUID para el control de versiones, y dominaremos la palabra
+clave transient para excluir campos sensibles de la serialización.
+
+Contenido previo:
+  • La interfaz Serializable: contrato y buenas prácticas.
+  • serialVersionUID: por qué es importante declararlo explícitamente.
+  • transient: excluir campos de la serialización.
+  • Herencia y serialización: superclases no serializables.
+  • Compatibilidad entre versiones de clases.
+  • Externalizable: serialización completamente manual.
+  • ObjectInputFilter: seguridad en deserialización.
+
+¡Nos vemos allí!
+================================================================================

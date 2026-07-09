@@ -1,0 +1,1376 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 60: PROYECTO DEL MÓDULO VI
+================================================================================
+
+  "El conocimiento sin práctica es como un barco sin vela.
+   Este proyecto es tu vela hacia el mar de Go."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 60 de GO MASTER BOOK, el proyecto final del
+  Módulo VI. Este capítulo integra todo lo aprendido: archivos, JSON,
+  CSV, cliente HTTP, servidor, routing y middleware en una aplicación
+  completa del mundo real.
+
+  Construiremos un Sistema de Monitoreo de APIs que:
+  - Lee configuración desde archivos JSON y CSV
+  - Consulta APIs externas periódicamente
+  - Expone una API REST con diferentes endpoints
+  - Genera reportes en múltiples formatos
+  - Implementa middleware de logging, autenticación y caché
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "El mejor maestro es la práctica. El mejor proyecto es el que
+   resuelve un problema real."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Integrar los conceptos de los capítulos 51-59.
+  ✓ Construir una aplicación completa y funcional.
+  ✓ Aplicar patrones profesionales de organización de código.
+  ✓ Implementar testing y documentación.
+  ✓ Usar la biblioteca estándar sin dependencias externas.
+  ✓ Desplegar la aplicación.
+
+  DESCRIPCIÓN DEL PROYECTO
+  -------------------------------------------------------------------------------
+
+  APLICACIÓN: API MONITOR
+
+  Un sistema que monitorea APIs externas, registra su estado
+  y disponibilidad, y expone esta información a través de su
+  propia API REST.
+
+  Funcionalidades:
+  1. Configuración vía archivo JSON (APIs a monitorear).
+  2. Archivo CSV con histórico de verificaciones.
+  3. Cliente HTTP que verifica el estado de cada API.
+  4. Servidor HTTP con múltiples endpoints.
+  5. Routing con ServeMux (Go 1.22+).
+  6. Middleware de logging, autenticación, CORS y caché.
+  7. Exportación de reportes en JSON y CSV.
+  8. Notificaciones de APIs caídas (simuladas).
+
+  ESTRUCTURA DEL PROYECTO
+  -------------------------------------------------------------------------------
+
+  ```
+  api-monitor/
+    main.go
+    config.json
+    monitor.go
+    server.go
+    client.go
+    exporter.go
+    middleware.go
+    models.go
+    go.mod
+  ```
+
+  1. MODELS.GO — DEFINICIÓN DE ESTRUCTURAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "time"
+  )
+
+  type APIConfig struct {
+      Nombre   string `json:"nombre"`
+      URL      string `json:"url"`
+      Metodo   string `json:"metodo,omitempty"`
+      Timeout  int    `json:"timeout,omitempty"` // segundos
+      Esperado int    `json:"codigo_esperado"`
+  }
+
+  type Config struct {
+      APIs        []APIConfig `json:"apis"`
+      Intervalo   int         `json:"intervalo_segundos"`
+      Puerto      int         `json:"puerto"`
+      Token       string      `json:"token_acceso"`
+  }
+
+  type Resultado struct {
+      Nombre     string    `json:"nombre"`
+      URL        string    `json:"url"`
+      Estado     string    `json:"estado"` // "ok", "error", "timeout"
+      StatusCode int       `json:"status_code"`
+      LatenciaMs int64     `json:"latencia_ms"`
+      Error      string    `json:"error,omitempty"`
+      Verificado time.Time `json:"verificado"`
+  }
+
+  type Reporte struct {
+      Total     int         `json:"total"`
+      Exitosos  int         `json:"exitosos"`
+      Fallidos  int         `json:"fallidos"`
+      Resultados []Resultado `json:"resultados"`
+  }
+  ```
+
+  2. MONITOR.GO — LÓGICA DE MONITOREO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/csv"
+      "encoding/json"
+      "fmt"
+      "log"
+      "os"
+      "sync"
+      "time"
+  )
+
+  type Monitor struct {
+      config     Config
+      resultados []Resultado
+      mu         sync.RWMutex
+      archivoCSV string
+  }
+
+  func NewMonitor(rutaConfig string) (*Monitor, error) {
+      datos, err := os.ReadFile(rutaConfig)
+      if err != nil {
+          return nil, fmt.Errorf("error al leer config: %w", err)
+      }
+
+      var config Config
+      if err := json.Unmarshal(datos, &config); err != nil {
+          return nil, fmt.Errorf("error al parsear config: %w", err)
+      }
+
+      if config.Puerto == 0 {
+          config.Puerto = 8080
+      }
+      if config.Intervalo == 0 {
+          config.Intervalo = 60
+      }
+      if config.Token == "" {
+          config.Token = "api-monitor-token"
+      }
+      for i := range config.APIs {
+          if config.APIs[i].Metodo == "" {
+              config.APIs[i].Metodo = "GET"
+          }
+          if config.APIs[i].Timeout == 0 {
+              config.APIs[i].Timeout = 10
+          }
+          if config.APIs[i].Esperado == 0 {
+              config.APIs[i].Esperado = 200
+          }
+      }
+
+      m := &Monitor{
+          config:     config,
+          archivoCSV: "historial.csv",
+      }
+
+      // Inicializar CSV con cabeceras
+      m.inicializarCSV()
+
+      return m, nil
+  }
+
+  func (m *Monitor) GetConfig() Config {
+      return m.config
+  }
+
+  func (m *Monitor) GetResultados() []Resultado {
+      m.mu.RLock()
+      defer m.mu.RUnlock()
+      copia := make([]Resultado, len(m.resultados))
+      copy(copia, m.resultados)
+      return copia
+  }
+
+  func (m *Monitor) inicializarCSV() {
+      if _, err := os.Stat(m.archivoCSV); os.IsNotExist(err) {
+          f, err := os.Create(m.archivoCSV)
+          if err != nil {
+              log.Printf("Error al crear CSV: %v", err)
+              return
+          }
+          defer f.Close()
+
+          writer := csv.NewWriter(f)
+          writer.Write([]string{
+              "timestamp", "nombre", "url", "estado",
+              "status_code", "latencia_ms", "error",
+          })
+          writer.Flush()
+      }
+  }
+
+  func (m *Monitor) AgregarResultado(r Resultado) {
+      m.mu.Lock()
+      m.resultados = append(m.resultados, r)
+      if len(m.resultados) > 1000 {
+          m.resultados = m.resultados[len(m.resultados)-1000:]
+      }
+      m.mu.Unlock()
+
+      // Guardar en CSV
+      m.guardarEnCSV(r)
+  }
+
+  func (m *Monitor) guardarEnCSV(r Resultado) {
+      f, err := os.OpenFile(m.archivoCSV,
+          os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+      if err != nil {
+          log.Printf("Error al abrir CSV: %v", err)
+          return
+      }
+      defer f.Close()
+
+      writer := csv.NewWriter(f)
+      defer writer.Flush()
+
+      errMsg := r.Error
+      if errMsg == "" {
+          errMsg = "-"
+      }
+
+      writer.Write([]string{
+          r.Verificado.Format(time.RFC3339),
+          r.Nombre,
+          r.URL,
+          r.Estado,
+          fmt.Sprintf("%d", r.StatusCode),
+          fmt.Sprintf("%d", r.LatenciaMs),
+          errMsg,
+      })
+  }
+
+  func (m *Monitor) Iniciar() {
+      log.Printf("Iniciando monitoreo de %d APIs cada %d segundos",
+          len(m.config.APIs), m.config.Intervalo)
+
+      for _, api := range m.config.APIs {
+          resultado := m.verificarAPI(api)
+          m.AgregarResultado(resultado)
+          log.Printf("[%s] %s (%dms)",
+              resultado.Estado, api.Nombre, resultado.LatenciaMs)
+      }
+
+      ticker := time.NewTicker(time.Duration(m.config.Intervalo) * time.Second)
+      go func() {
+          for range ticker.C {
+              for _, api := range m.config.APIs {
+                  resultado := m.verificarAPI(api)
+                  m.AgregarResultado(resultado)
+                  log.Printf("[%s] %s (%dms)",
+                      resultado.Estado, api.Nombre, resultado.LatenciaMs)
+              }
+          }
+      }()
+  }
+
+  func (m *Monitor) verificarAPI(api APIConfig) Resultado {
+      return VerificarAPI(api)
+  }
+
+  func (m *Monitor) GenerarReporte() Reporte {
+      resultados := m.GetResultados()
+      reporte := Reporte{Resultados: make([]Resultado, 0)}
+
+      // Solo el último resultado por API
+      vistos := make(map[string]bool)
+      for i := len(resultados) - 1; i >= 0; i-- {
+          if vistos[resultados[i].Nombre] {
+              continue
+          }
+          vistos[resultados[i].Nombre] = true
+          reporte.Resultados = append(reporte.Resultados, resultados[i])
+          if resultados[i].Estado == "ok" {
+              reporte.Exitosos++
+          } else {
+              reporte.Fallidos++
+          }
+          reporte.Total++
+      }
+
+      return reporte
+  }
+
+  func (m *Monitor) GenerarHistorial() []Resultado {
+      return m.GetResultados()
+  }
+
+  func (m *Monitor) ExportarCSV(ruta string) error {
+      resultados := m.GetResultados()
+      f, err := os.Create(ruta)
+      if err != nil {
+          return err
+      }
+      defer f.Close()
+
+      writer := csv.NewWriter(f)
+      defer writer.Flush()
+
+      writer.Write([]string{
+          "timestamp", "nombre", "url", "estado",
+          "status_code", "latencia_ms", "error",
+      })
+
+      for _, r := range resultados {
+          errMsg := r.Error
+          if errMsg == "" {
+              errMsg = "-"
+          }
+          writer.Write([]string{
+              r.Verificado.Format(time.RFC3339),
+              r.Nombre,
+              r.URL,
+              r.Estado,
+              fmt.Sprintf("%d", r.StatusCode),
+              fmt.Sprintf("%d", r.LatenciaMs),
+              errMsg,
+          })
+      }
+
+      return writer.Error()
+  }
+
+  func (m *Monitor) ExportarJSON(ruta string) error {
+      reporte := m.GenerarReporte()
+      datos, err := json.MarshalIndent(reporte, "", "  ")
+      if err != nil {
+          return err
+      }
+      return os.WriteFile(ruta, datos, 0644)
+  }
+  ```
+
+  3. CLIENT.GO — CLIENTE HTTP PARA VERIFICAR APIs
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+      "time"
+  )
+
+  func VerificarAPI(api APIConfig) Resultado {
+      inicio := time.Now()
+
+      resultado := Resultado{
+          Nombre:     api.Nombre,
+          URL:        api.URL,
+          Verificado: time.Now(),
+      }
+
+      timeout := time.Duration(api.Timeout) * time.Second
+      client := &http.Client{
+          Timeout: timeout,
+          Transport: &http.Transport{
+              MaxIdleConnsPerHost: 1,
+              DisableKeepAlives:   true,
+          },
+      }
+
+      req, err := http.NewRequest(api.Metodo, api.URL, nil)
+      if err != nil {
+          resultado.Estado = "error"
+          resultado.Error = fmt.Sprintf("error al crear request: %v", err)
+          resultado.LatenciaMs = time.Since(inicio).Milliseconds()
+          return resultado
+      }
+
+      req.Header.Set("User-Agent", "APIMonitor/1.0")
+
+      resp, err := client.Do(req)
+      if err != nil {
+          resultado.Estado = "error"
+          resultado.Error = fmt.Sprintf("error en petición: %v", err)
+          resultado.LatenciaMs = time.Since(inicio).Milliseconds()
+          return resultado
+      }
+      defer resp.Body.Close()
+
+      // Leer y descartar body (necesario para reciclar conexión)
+      io.Copy(io.Discard, resp.Body)
+
+      latencia := time.Since(inicio).Milliseconds()
+      resultado.LatenciaMs = latencia
+      resultado.StatusCode = resp.StatusCode
+
+      if resp.StatusCode == api.Esperado {
+          resultado.Estado = "ok"
+      } else {
+          resultado.Estado = "error"
+          resultado.Error = fmt.Sprintf(
+              "código esperado %d, recibido %d",
+              api.Esperado, resp.StatusCode)
+      }
+
+      return resultado
+  }
+  ```
+
+  4. MIDDLEWARE.GO — MIDDLEWARE REUTILIZABLE
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "encoding/json"
+      "log"
+      "net/http"
+      "strings"
+      "time"
+  )
+
+  type contextKey string
+
+  const (
+      KeyRequestID contextKey = "request_id"
+      KeyStartTime contextKey = "start_time"
+  )
+
+  type Middleware func(http.Handler) http.Handler
+
+  func Chain(handler http.Handler, middlewares ...Middleware) http.Handler {
+      for i := len(middlewares) - 1; i >= 0; i-- {
+          handler = middlewares[i](handler)
+      }
+      return handler
+  }
+
+  func RequestID(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          id := r.Header.Get("X-Request-ID")
+          if id == "" {
+              id = fmt.Sprintf("%d", time.Now().UnixNano())
+          }
+          ctx := context.WithValue(r.Context(), KeyRequestID, id)
+          w.Header().Set("X-Request-ID", id)
+          next.ServeHTTP(w, r.WithContext(ctx))
+      })
+  }
+
+  func Logger(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          inicio := time.Now()
+          lw := &logWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+          next.ServeHTTP(lw, r)
+
+          reqID := r.Context().Value(KeyRequestID)
+          log.Printf("[%v] %s %s %d %d %v",
+              reqID, r.Method, r.URL.Path,
+              lw.statusCode, lw.bytesEscritos, time.Since(inicio))
+      })
+  }
+
+  type logWriter struct {
+      http.ResponseWriter
+      statusCode    int
+      bytesEscritos int
+  }
+
+  func (w *logWriter) WriteHeader(code int) {
+      w.statusCode = code
+      w.ResponseWriter.WriteHeader(code)
+  }
+
+  func (w *logWriter) Write(b []byte) (int, error) {
+      n, err := w.ResponseWriter.Write(b)
+      w.bytesEscritos += n
+      return n, err
+  }
+
+  func Recoverer(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          defer func() {
+              if err := recover(); err != nil {
+                  log.Printf("PANIC: %v", err)
+                  w.Header().Set("Content-Type", "application/json")
+                  w.WriteHeader(http.StatusInternalServerError)
+                  json.NewEncoder(w).Encode(map[string]string{
+                      "error": "error interno del servidor",
+                  })
+              }
+          }()
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  func Auth(token string) Middleware {
+      return func(next http.Handler) http.Handler {
+          return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+              auth := r.Header.Get("Authorization")
+              if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+                  w.Header().Set("Content-Type", "application/json")
+                  w.WriteHeader(http.StatusUnauthorized)
+                  json.NewEncoder(w).Encode(map[string]string{
+                      "error": "no autorizado: token inválido o ausente",
+                  })
+                  return
+              }
+              next.ServeHTTP(w, r)
+          })
+      }
+  }
+
+  func CORS(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Header().Set("Access-Control-Allow-Origin", "*")
+          w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+          w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+          if r.Method == "OPTIONS" {
+              w.WriteHeader(http.StatusNoContent)
+              return
+          }
+
+          next.ServeHTTP(w, r)
+      })
+  }
+
+  var fmt fmt
+  ```
+
+  5. SERVER.GO — SERVIDOR HTTP CON RUTAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "fmt"
+      "log"
+      "net/http"
+      "strconv"
+      "time"
+  )
+
+  type Server struct {
+      monitor *Monitor
+      mux     *http.ServeMux
+  }
+
+  func NewServer(monitor *Monitor) *Server {
+      s := &Server{
+          monitor: monitor,
+          mux:     http.NewServeMux(),
+      }
+      s.registrarRutas()
+      return s
+  }
+
+  func (s *Server) registrarRutas() {
+      config := s.monitor.GetConfig()
+
+      // Rutas públicas
+      s.mux.HandleFunc("GET /", s.handleHome)
+      s.mux.HandleFunc("GET /health", s.handleHealth)
+      s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
+
+      // Rutas protegidas (requieren token)
+      s.mux.HandleFunc("GET /api/v1/apis", s.handleListarAPIs)
+      s.mux.HandleFunc("GET /api/v1/report", s.handleReport)
+      s.mux.HandleFunc("GET /api/v1/history", s.handleHistory)
+      s.mux.HandleFunc("GET /api/v1/export/json", s.handleExportJSON)
+      s.mux.HandleFunc("GET /api/v1/export/csv", s.handleExportCSV)
+      s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
+
+      // Crear handler con middleware
+      handler := Chain(
+          s.mux,
+          RequestID,
+          Logger,
+          Recoverer,
+          CORS,
+          Auth(config.Token),
+      )
+
+      // Reemplazar mux con handler protegido
+      // Las rutas públicas se manejan antes
+      publicHandler := Chain(
+          http.HandlerFunc(s.handlePublic),
+          RequestID,
+          Logger,
+          Recoverer,
+          CORS,
+      )
+
+      muxFinal := http.NewServeMux()
+      muxFinal.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+          if r.URL.Path == "/" || r.URL.Path == "/health" || r.URL.Path == "/api/v1/status" {
+              publicHandler.ServeHTTP(w, r)
+          } else {
+              handler.ServeHTTP(w, r)
+          }
+      })
+
+      s.mux = muxFinal
+  }
+
+  func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
+      switch r.URL.Path {
+      case "/":
+          s.handleHome(w, r)
+      case "/health":
+          s.handleHealth(w, r)
+      case "/api/v1/status":
+          s.handleStatus(w, r)
+      default:
+          http.NotFound(w, r)
+      }
+  }
+
+  func (s *Server) Handler() http.Handler {
+      return s.mux
+  }
+
+  func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(map[string]interface{}{
+          "nombre":      "API Monitor",
+          "version":     "1.0.0",
+          "modulo":      "Módulo VI - Archivos y Red",
+          "libro":       "GO MASTER BOOK",
+          "endpoints": map[string]string{
+              "/health":          "Health check",
+              "/api/v1/status":   "Estado del monitor",
+              "/api/v1/apis":     "Lista de APIs monitoreadas",
+              "/api/v1/report":   "Reporte actual",
+              "/api/v1/history":  "Historial de verificaciones",
+              "/api/v1/export/json": "Exportar reporte JSON",
+              "/api/v1/export/csv":  "Exportar historial CSV",
+              "/api/v1/config":   "Configuración actual",
+          },
+      })
+  }
+
+  func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(map[string]interface{}{
+          "status":    "healthy",
+          "timestamp": time.Now().Format(time.RFC3339),
+          "apis_monitoreadas": len(s.monitor.GetConfig().APIs),
+      })
+  }
+
+  func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      resultados := s.monitor.GetResultados()
+      if len(resultados) == 0 {
+          json.NewEncoder(w).Encode(map[string]string{
+              "mensaje": "No hay verificaciones aún. Espera al primer ciclo.",
+          })
+          return
+      }
+      ultimo := resultados[len(resultados)-1]
+      reporte := s.monitor.GenerarReporte()
+      json.NewEncoder(w).Encode(map[string]interface{}{
+          "ultima_verificacion": ultimo.Verificado,
+          "total_apis":          reporte.Total,
+          "exitosos":            reporte.Exitosos,
+          "fallidos":            reporte.Fallidos,
+          "resultados":          reporte.Resultados,
+      })
+  }
+
+  func (s *Server) handleListarAPIs(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      config := s.monitor.GetConfig()
+      json.NewEncoder(w).Encode(config.APIs)
+  }
+
+  func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      reporte := s.monitor.GenerarReporte()
+      json.NewEncoder(w).Encode(reporte)
+  }
+
+  func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+      limiteStr := r.URL.Query().Get("limite")
+      limite := 100
+      if limiteStr != "" {
+          if l, err := strconv.Atoi(limiteStr); err == nil && l > 0 && l <= 1000 {
+              limite = l
+          }
+      }
+
+      historia := s.monitor.GenerarHistorial()
+      if len(historia) > limite {
+          historia = historia[len(historia)-limite:]
+      }
+
+      w.Header().Set("Content-Type", "application/json")
+      json.NewEncoder(w).Encode(historia)
+  }
+
+  func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      w.Header().Set("Content-Disposition", "attachment; filename=reporte.json")
+      reporte := s.monitor.GenerarReporte()
+      json.NewEncoder(w).Encode(reporte)
+  }
+
+  func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "text/csv")
+      w.Header().Set("Content-Disposition", "attachment; filename=historial.csv")
+
+      resultados := s.monitor.GenerarHistorial()
+      // Escribir CSV directamente a la respuesta
+      fmt.Fprintf(w, "timestamp,nombre,url,estado,status_code,latencia_ms,error\n")
+      for _, r := range resultados {
+          errMsg := r.Error
+          if errMsg == "" {
+              errMsg = "-"
+          }
+          fmt.Fprintf(w, "%s,%s,%s,%s,%d,%d,%s\n",
+              r.Verificado.Format(time.RFC3339),
+              r.Nombre, r.URL, r.Estado,
+              r.StatusCode, r.LatenciaMs, errMsg)
+      }
+  }
+
+  func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      config := s.monitor.GetConfig()
+      // Ocultar token por seguridad
+      config.Token = "****"
+      json.NewEncoder(w).Encode(config)
+  }
+
+  func (s *Server) Iniciar() {
+      config := s.monitor.GetConfig()
+      addr := fmt.Sprintf(":%d", config.Puerto)
+
+      server := &http.Server{
+          Addr:         addr,
+          Handler:      s.Handler(),
+          ReadTimeout:  15 * time.Second,
+          WriteTimeout: 15 * time.Second,
+          IdleTimeout:  60 * time.Second,
+      }
+
+      log.Printf("Servidor HTTP iniciado en %s", addr)
+      log.Printf("Endpoints disponibles:")
+      log.Printf("  GET /")
+      log.Printf("  GET /health")
+      log.Printf("  GET /api/v1/status")
+      log.Printf("  GET /api/v1/apis")
+      log.Printf("  GET /api/v1/report")
+      log.Printf("  GET /api/v1/history?limite=100")
+      log.Printf("  GET /api/v1/export/json")
+      log.Printf("  GET /api/v1/export/csv")
+      log.Printf("  GET /api/v1/config")
+      log.Printf("Usa header 'Authorization: Bearer <token>' para rutas protegidas")
+
+      if err := server.ListenAndServe(); err != nil {
+          log.Fatalf("Error en servidor: %v", err)
+      }
+  }
+  ```
+
+  6. EXPORTER.GO — EXPORTACIÓN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "encoding/csv"
+      "encoding/json"
+      "fmt"
+      "os"
+      "time"
+  )
+
+  type Exporter struct {
+      monitor *Monitor
+  }
+
+  func NewExporter(monitor *Monitor) *Exporter {
+      return &Exporter{monitor: monitor}
+  }
+
+  func (e *Exporter) ExportarJSON(ruta string) error {
+      reporte := e.monitor.GenerarReporte()
+      datos, err := json.MarshalIndent(reporte, "", "  ")
+      if err != nil {
+          return fmt.Errorf("error al serializar JSON: %w", err)
+      }
+
+      return os.WriteFile(ruta, datos, 0644)
+  }
+
+  func (e *Exporter) ExportarCSV(ruta string) error {
+      f, err := os.Create(ruta)
+      if err != nil {
+          return fmt.Errorf("error al crear archivo: %w", err)
+      }
+      defer f.Close()
+
+      writer := csv.NewWriter(f)
+      defer writer.Flush()
+
+      writer.Write([]string{
+          "timestamp", "nombre", "url", "estado",
+          "status_code", "latencia_ms", "error",
+      })
+
+      resultados := e.monitor.GenerarHistorial()
+      for _, r := range resultados {
+          errMsg := r.Error
+          if errMsg == "" {
+              errMsg = "-"
+          }
+          writer.Write([]string{
+              r.Verificado.Format(time.RFC3339),
+              r.Nombre,
+              r.URL,
+              r.Estado,
+              fmt.Sprintf("%d", r.StatusCode),
+              fmt.Sprintf("%d", r.LatenciaMs),
+              errMsg,
+          })
+      }
+
+      return writer.Error()
+  }
+
+  func (e *Exporter) ExportarReporteTexto(ruta string) error {
+      reporte := e.monitor.GenerarReporte()
+
+      f, err := os.Create(ruta)
+      if err != nil {
+          return err
+      }
+      defer f.Close()
+
+      fmt.Fprintf(f, "===================================\n")
+      fmt.Fprintf(f, "  REPORTE DE MONITOREO\n")
+      fmt.Fprintf(f, "  Generado: %s\n", time.Now().Format(time.RFC1123))
+      fmt.Fprintf(f, "===================================\n\n")
+      fmt.Fprintf(f, "Total APIs: %d\n", reporte.Total)
+      fmt.Fprintf(f, "Exitosas:   %d\n", reporte.Exitosos)
+      fmt.Fprintf(f, "Fallidas:   %d\n", reporte.Fallidos)
+      fmt.Fprintf(f, "Disponibilidad: %.1f%%\n\n",
+          float64(reporte.Exitosos)/float64(reporte.Total)*100)
+
+      fmt.Fprintf(f, "Detalle:\n")
+      fmt.Fprintf(f, "--------\n")
+      for _, r := range reporte.Resultados {
+          estado := "✅"
+          if r.Estado != "ok" {
+              estado = "❌"
+          }
+          fmt.Fprintf(f, "%s %s (%dms)\n", estado, r.Nombre, r.LatenciaMs)
+          if r.Error != "" {
+              fmt.Fprintf(f, "   Error: %s\n", r.Error)
+          }
+      }
+
+      return nil
+  }
+  ```
+
+  7. CONFIG.JSON — ARCHIVO DE CONFIGURACIÓN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```json
+  {
+      "apis": [
+          {
+              "nombre": "JSONPlaceholder",
+              "url": "https://jsonplaceholder.typicode.com/posts/1",
+              "metodo": "GET",
+              "timeout": 10,
+              "codigo_esperado": 200
+          },
+          {
+              "nombre": "HTTPBin GET",
+              "url": "https://httpbin.org/get",
+              "metodo": "GET",
+              "timeout": 10,
+              "codigo_esperado": 200
+          },
+          {
+              "nombre": "HTTPBin Delay",
+              "url": "https://httpbin.org/delay/1",
+              "metodo": "GET",
+              "timeout": 5,
+              "codigo_esperado": 200
+          },
+          {
+              "nombre": "Google",
+              "url": "https://www.google.com",
+              "metodo": "GET",
+              "timeout": 10,
+              "codigo_esperado": 200
+          }
+      ],
+      "intervalo_segundos": 30,
+      "puerto": 8080,
+      "token_acceso": "mi-token-super-secreto"
+  }
+  ```
+
+  8. MAIN.GO — PUNTO DE ENTRADA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "flag"
+      "log"
+      "os"
+      "os/signal"
+      "syscall"
+  )
+
+  func main() {
+      configPath := flag.String("config", "config.json", "Ruta al archivo de configuración")
+      flag.Parse()
+
+      log.SetFlags(log.LstdFlags | log.Lshortfile)
+      log.Println("=== API MONITOR - GO MASTER BOOK ===")
+
+      // Cargar configuración
+      monitor, err := NewMonitor(*configPath)
+      if err != nil {
+          log.Fatalf("Error al iniciar monitor: %v", err)
+      }
+      log.Printf("Configuración cargada: %d APIs, puerto %d",
+          len(monitor.GetConfig().APIs),
+          monitor.GetConfig().Puerto)
+
+      // Iniciar monitoreo en segundo plano
+      monitor.Iniciar()
+
+      // Iniciar servidor HTTP
+      server := NewServer(monitor)
+
+      // Manejar señales para graceful shutdown
+      sigChan := make(chan os.Signal, 1)
+      signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+      go func() {
+          <-sigChan
+          log.Println("Apagando servidor...")
+          os.Exit(0)
+      }()
+
+      server.Iniciar()
+  }
+  ```
+
+  9. GO.MOD — MÓDULO GO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```
+  module github.com/gomasterbook/api-monitor
+
+  go 1.22
+  ```
+
+  EJECUCIÓN DEL PROYECTO
+  ----------------------------------------------------------------------------
+
+  1. Guarda todos los archivos en un directorio api-monitor/.
+  2. Crea el archivo config.json con el contenido anterior.
+  3. Ejecuta:
+
+  ```bash
+  cd api-monitor
+  go mod init api-monitor
+  go run .
+  ```
+
+  4. En otra terminal, prueba los endpoints:
+
+  ```bash
+  # Endpoints públicos
+  curl http://localhost:8080/
+  curl http://localhost:8080/health
+  curl http://localhost:8080/api/v1/status
+
+  # Endpoints protegidos (requieren token)
+  curl -H "Authorization: Bearer mi-token-super-secreto" \
+    http://localhost:8080/api/v1/report
+
+  curl -H "Authorization: Bearer mi-token-super-secreto" \
+    http://localhost:8080/api/v1/history?limite=5
+
+  curl -H "Authorization: Bearer mi-token-super-secreto" \
+    http://localhost:8080/api/v1/export/json
+
+  curl -H "Authorization: Bearer mi-token-super-secreto" \
+    http://localhost:8080/api/v1/config
+  ```
+
+  SALIDA ESPERADA
+  ----------------------------------------------------------------------------
+
+  ```
+  === API MONITOR - GO MASTER BOOK ===
+  Configuración cargada: 4 APIs, puerto 8080
+  Iniciando monitoreo de 4 APIs cada 30 segundos
+  [ok] JSONPlaceholder (342ms)
+  [ok] HTTPBin GET (215ms)
+  [ok] HTTPBin Delay (1120ms)
+  [ok] Google (89ms)
+  Servidor HTTP iniciado en :8080
+  ```
+
+  Respuesta de /api/v1/report:
+  ```json
+  {
+    "total": 4,
+    "exitosos": 4,
+    "fallidos": 0,
+    "resultados": [
+      {
+        "nombre": "Google",
+        "url": "https://www.google.com",
+        "estado": "ok",
+        "status_code": 200,
+        "latencia_ms": 89,
+        "verificado": "2026-07-02T12:00:00Z"
+      },
+      ...
+    ]
+  }
+  ```
+
+  10. TEST DEL PROYECTO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Crea un archivo monitor_test.go:
+
+  ```go
+  package main
+
+  import (
+      "encoding/json"
+      "net/http"
+      "net/http/httptest"
+      "os"
+      "testing"
+      "time"
+  )
+
+  func TestCargarConfig(t *testing.T) {
+      // Crear config temporal
+      configJSON := `{
+          "apis": [
+              {"nombre":"Test","url":"http://test.com","metodo":"GET","timeout":5,"codigo_esperado":200}
+          ],
+          "intervalo_segundos": 60,
+          "puerto": 9090,
+          "token_acceso": "test-token"
+      }`
+
+      os.WriteFile("/tmp/test_config.json", []byte(configJSON), 0644)
+      defer os.Remove("/tmp/test_config.json")
+
+      monitor, err := NewMonitor("/tmp/test_config.json")
+      if err != nil {
+          t.Fatalf("Error al crear monitor: %v", err)
+      }
+
+      config := monitor.GetConfig()
+      if len(config.APIs) != 1 {
+          t.Errorf("esperado 1 API, obtenido %d", len(config.APIs))
+      }
+      if config.Puerto != 9090 {
+          t.Errorf("esperado puerto 9090, obtenido %d", config.Puerto)
+      }
+  }
+
+  func TestVerificarAPI(t *testing.T) {
+      // Crear servidor de prueba
+      server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.WriteHeader(http.StatusOK)
+          w.Write([]byte(`{"status":"ok"}`))
+      }))
+      defer server.Close()
+
+      api := APIConfig{
+          Nombre:   "TestServer",
+          URL:      server.URL,
+          Metodo:   "GET",
+          Timeout:  5,
+          Esperado: 200,
+      }
+
+      resultado := VerificarAPI(api)
+      if resultado.Estado != "ok" {
+          t.Errorf("esperado 'ok', obtenido '%s': %s", resultado.Estado, resultado.Error)
+      }
+      if resultado.StatusCode != 200 {
+          t.Errorf("esperado 200, obtenido %d", resultado.StatusCode)
+      }
+  }
+
+  func TestGenerarReporte(t *testing.T) {
+      monitor := &Monitor{
+          resultados: []Resultado{
+              {Nombre: "API1", Estado: "ok", LatenciaMs: 100, Verificado: time.Now()},
+              {Nombre: "API2", Estado: "error", Error: "timeout", LatenciaMs: 5000, Verificado: time.Now()},
+          },
+      }
+
+      reporte := monitor.GenerarReporte()
+      if reporte.Total != 2 {
+          t.Errorf("esperado 2 APIs, obtenido %d", reporte.Total)
+      }
+      if reporte.Exitosos != 1 {
+          t.Errorf("esperado 1 exitoso, obtenido %d", reporte.Exitosos)
+      }
+      if reporte.Fallidos != 1 {
+          t.Errorf("esperado 1 fallido, obtenido %d", reporte.Fallidos)
+      }
+  }
+
+  func TestExportarJSON(t *testing.T) {
+      monitor := &Monitor{
+          resultados: []Resultado{
+              {Nombre: "API1", Estado: "ok", LatenciaMs: 100, Verificado: time.Now()},
+          },
+      }
+
+      err := monitor.ExportarJSON("/tmp/test_reporte.json")
+      if err != nil {
+          t.Fatalf("Error al exportar: %v", err)
+      }
+      defer os.Remove("/tmp/test_reporte.json")
+
+      datos, _ := os.ReadFile("/tmp/test_reporte.json")
+      var reporte Reporte
+      if err := json.Unmarshal(datos, &reporte); err != nil {
+          t.Fatalf("Error al deserializar: %v", err)
+      }
+      if reporte.Total != 1 {
+          t.Errorf("esperado 1, obtenido %d", reporte.Total)
+      }
+  }
+
+  func TestExportarCSV(t *testing.T) {
+      monitor := &Monitor{
+          resultados: []Resultado{
+              {Nombre: "API1", Estado: "ok", LatenciaMs: 100, Verificado: time.Now()},
+          },
+      }
+
+      err := monitor.ExportarCSV("/tmp/test_historial.csv")
+      if err != nil {
+          t.Fatalf("Error al exportar CSV: %v", err)
+      }
+      defer os.Remove("/tmp/test_historial.csv")
+
+      datos, _ := os.ReadFile("/tmp/test_historial.csv")
+      contenido := string(datos)
+      if len(contenido) == 0 {
+          t.Fatal("CSV vacío")
+      }
+  }
+
+  func TestMiddlewareAuth(t *testing.T) {
+      handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          w.Write([]byte(`{"mensaje":"ok"}`))
+      })
+
+      middleware := Auth("token123")(handler)
+
+      // Sin token
+      req := httptest.NewRequest("GET", "/test", nil)
+      rec := httptest.NewRecorder()
+      middleware.ServeHTTP(rec, req)
+      if rec.Code != http.StatusUnauthorized {
+          t.Errorf("esperado 401, obtenido %d", rec.Code)
+      }
+
+      // Con token correcto
+      req = httptest.NewRequest("GET", "/test", nil)
+      req.Header.Set("Authorization", "Bearer token123")
+      rec = httptest.NewRecorder()
+      middleware.ServeHTTP(rec, req)
+      if rec.Code != http.StatusOK {
+          t.Errorf("esperado 200, obtenido %d", rec.Code)
+      }
+  }
+
+  func TestServerEndpoints(t *testing.T) {
+      monitor := &Monitor{
+          resultados: []Resultado{
+              {Nombre: "API1", Estado: "ok", LatenciaMs: 100, Verificado: time.Now()},
+          },
+          config: Config{
+              Puerto: 8080,
+              Token:  "test-token",
+          },
+      }
+
+      server := NewServer(monitor)
+
+      tests := []struct {
+          ruta   string
+          codigo int
+          auth   bool
+      }{
+          {"/", 200, false},
+          {"/health", 200, false},
+          {"/api/v1/status", 200, false},
+          {"/api/v1/report", 401, false},
+          {"/api/v1/report", 200, true},
+          {"/api/v1/history", 200, true},
+          {"/api/v1/config", 200, true},
+      }
+
+      for _, tt := range tests {
+          req := httptest.NewRequest("GET", tt.ruta, nil)
+          if tt.auth {
+              req.Header.Set("Authorization", "Bearer test-token")
+          }
+          rec := httptest.NewRecorder()
+          server.Handler().ServeHTTP(rec, req)
+
+          if rec.Code != tt.codigo {
+              t.Errorf("%s: esperado %d, obtenido %d", tt.ruta, tt.codigo, rec.Code)
+          }
+      }
+  }
+  ```
+
+  Para ejecutar los tests:
+
+  ```bash
+  cd api-monitor
+  go test -v ./...
+  ```
+
+  POSIBLES MEJORAS
+  ----------------------------------------------------------------------------
+
+  El proyecto es funcional pero puedes extenderlo:
+
+  1. **Base de datos**: Guarda el historial en SQLite en lugar de CSV.
+  2. **Notificaciones**: Envía emails o mensajes Slack cuando una API falle.
+  3. **Dashboard web**: Añade una interfaz HTML con gráficos.
+  4. **Autenticación JWT**: Implementa login y generación de tokens.
+  5. **Múltiples usuarios**: Diferentes tokens con diferentes permisos.
+  6. **WebSocket**: Actualizaciones en tiempo real del dashboard.
+  7. **Configuración dinámica**: APIs configurables vía API (POST /api/v1/apis).
+  8. **Alertas**: Define umbrales de latencia y disponibilidad.
+  9. **Exportación PDF**: Genera reportes en PDF con gofpdf.
+  10. **Contenedor Docker**: Empaqueta la aplicación en una imagen.
+
+  RESUMEN DEL MÓDULO VI
+  ----------------------------------------------------------------------------
+
+  A lo largo de este módulo has aprendido:
+
+  ✓ Capítulo 51: Archivos (os.File, Open, Create, permisos)
+  ✓ Capítulo 52: Lectura de archivos (bufio.Scanner, Reader, io)
+  ✓ Capítulo 53: Escritura de archivos (bufio.Writer, atómica)
+  ✓ Capítulo 54: JSON (Marshal/Unmarshal, Encoder/Decoder, tags)
+  ✓ Capítulo 55: CSV (Reader/Writer, configuraciones)
+  ✓ Capítulo 56: HTTP Client (Get, Client, autenticación, retry)
+  ✓ Capítulo 57: HTTP Server (HandleFunc, Handler, ListenAndServe)
+  ✓ Capítulo 58: Routing (ServeMux, Gorilla Mux, Chi)
+  ✓ Capítulo 59: Middleware (patrón, composición, auth, logging)
+  ✓ Capítulo 60: Proyecto completo (API Monitor)
+
+  Has pasado de manejar archivos locales a construir un sistema
+  distribuido que interactúa con APIs externas, las monitorea,
+  y expone su propia API REST con seguridad y observabilidad.
+
+  EJERCICIOS DE REPASO DEL MÓDULO
+  ----------------------------------------------------------------------------
+
+  ★ EJERCICIO 1:
+    Añade al proyecto un endpoint POST /api/v1/apis que permita
+    agregar nuevas APIs a monitorear en caliente (sin reiniciar).
+
+  ★ EJERCICIO 2:
+    Implementa un sistema de notificaciones que envíe un log
+    especial cuando una API lleve 3 verificaciones consecutivas fallidas.
+
+  ★ EJERCICIO 3:
+    Añade autenticación JWT real usando la biblioteca
+    github.com/golang-jwt/jwt/v5.
+
+  ★ EJERCICIO 4:
+    Implementa un dashboard web HTML con Bootstrap que muestre
+    el estado de las APIs con indicadores visuales (verde/rojo).
+
+  ★ EJERCICIO 5:
+    Añade un endpoint GET /api/v1/stats que devuelva estadísticas
+    agregadas: uptime promedio, latencia promedio, p95, p99.
+
+  PREGUNTAS FRECUENTES (FAQ) DEL MÓDULO
+  ----------------------------------------------------------------------------
+
+  ❓ ¿Cómo elijo entre bufio.Scanner y bufio.Reader?
+  R: Scanner para texto línea por línea; Reader para control
+  binario o de bytes.
+
+  ❓ ¿Cuándo usar Marshal vs Encoder?
+  R: Marshal para []byte en memoria; Encoder para streams.
+
+  ❓ ¿ServeMux o Chi?
+  R: ServeMux para proyectos simples (Go 1.22+); Chi para
+  proyectos con middleware y organización compleja.
+
+  ❓ ¿Cómo asegurar mi API?
+  R: Usa middleware de autenticación, valida entradas, limita
+  tamaños, configura timeouts, usa HTTPS.
+
+  CIERRE DEL MÓDULO VI
+  ----------------------------------------------------------------------------
+
+  Has completado el Módulo VI de GO MASTER BOOK. Este módulo
+  te ha llevado desde los fundamentos de archivos hasta la
+  construcción de un sistema completo de monitoreo de APIs.
+
+  Las habilidades que has adquirido — manejo de archivos,
+  serialización, comunicación en red, routing y middleware —
+  son la base de prácticamente cualquier aplicación backend
+  moderna.
+
+  El proyecto final integra todo en una aplicación cohesiva
+  que refleja problemas del mundo real: leer configuración,
+  monitorear servicios externos, exponer APIs propias, y
+  generar reportes en múltiples formatos.
+
+  Ahora tienes las herramientas para construir desde una
+  simple herramienta de línea de comandos hasta un sistema
+  distribuido completo. El límite es tu imaginación (y
+  las leyes de la física).
+
+  ¡Felicitaciones por completar el Módulo VI!
+
+  PRÓXIMO MÓDULO
+  -------------------------------------------------------------------------------
+  ▶ MÓDULO VII: CONCURRENCIA AVANZADA Y PATRONES
+    Explorarás patrones avanzados de concurrencia: worker pools,
+    pipelines, fan-in/fan-out, contextos, select, y sincronización
+    compleja con semáforos y barreras.
+
+================================================================================
+  GO MASTER BOOK — MÓDULO VI — FIN DEL MÓDULO
+================================================================================

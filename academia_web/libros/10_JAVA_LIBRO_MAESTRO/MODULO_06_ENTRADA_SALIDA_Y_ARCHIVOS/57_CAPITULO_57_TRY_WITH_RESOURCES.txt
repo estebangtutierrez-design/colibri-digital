@@ -1,0 +1,753 @@
+================================================================================
+  MÓDULO VI: ENTRADA, SALIDA Y ARCHIVOS
+  CAPÍTULO 57: TRY-WITH-RESOURCES
+  "Java Master Book" — El arte de dominar Java
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 57! Si has seguido los capítulos anteriores, habrás
+notado que constantemente usamos try-with-resources para abrir y cerrar
+archivos. ¿Pero sabes realmente cómo funciona por dentro? Este capítulo
+está dedicado a esta construcción fundamental de Java. Entender
+try-with-resources no solo hará tu código más limpio, sino que también
+evitará fugas de recursos, simplificará el manejo de excepciones y hará
+tu código más robusto. Incluso puedes crear tus propios recursos
+AutoCloseable.
+
+FRASE DEL DÍA
+-------------
+"Un recurso abierto sin cerrar es una fuga esperando a ocurrir."
+— Anónimo
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+• Comprender la sintaxis y el funcionamiento de try-with-resources.
+• Diferenciar entre AutoCloseable y Closeable.
+• Usar try-with-resources con múltiples recursos.
+• Entender el mecanismo de excepciones suprimidas (suppressed).
+• Conocer el orden de cierre de los recursos.
+• Implementar recursos personalizados con AutoCloseable.
+• Migrar código legacy de try-catch-finally a try-with-resources.
+• Manejar casos especiales: recursos que no implementan AutoCloseable.
+
+================================================================================
+  DESARROLLO DEL CAPÍTULO
+================================================================================
+
+1. EL PROBLEMA ANTES DE JAVA 7
+--------------------------------
+
+Antes de Java 7, el manejo de recursos requería un bloque finally
+explícito para cerrar los recursos. Esto era verboso y propenso a errores:
+
+  FileReader fr = null;
+  BufferedReader br = null;
+  try {
+      fr = new FileReader("/tmp/archivo.txt");
+      br = new BufferedReader(fr);
+      String linea = br.readLine();
+      System.out.println(linea);
+  } catch (IOException e) {
+      e.printStackTrace();
+  } finally {
+      if (br != null) {
+          try { br.close(); } catch (IOException e) { /* ignorado */ }
+      }
+      if (fr != null) {
+          try { fr.close(); } catch (IOException e) { /* ignorado */ }
+      }
+  }
+
+Problemas:
+  • Código verboso y repetitivo.
+  • Fácil olvidar cerrar un recurso.
+  • Si close() lanza excepción, puede ocultar la excepción original.
+  • El orden de cierre debe ser inverso al de apertura.
+
+2. TRY-WITH-RESOURCES — SINTAXIS BÁSICA
+-----------------------------------------
+
+Desde Java 7, podemos declarar recursos en la cabecera del try, y Java
+los cerrará automáticamente al finalizar el bloque:
+
+  try (FileReader fr = new FileReader("/tmp/archivo.txt");
+       BufferedReader br = new BufferedReader(fr)) {
+      String linea = br.readLine();
+      System.out.println(linea);
+  } catch (IOException e) {
+      e.printStackTrace();
+  }
+
+Características:
+  • Los recursos se declaran entre paréntesis después de try.
+  • Pueden ser múltiples, separados por punto y coma (;).
+  • Cada recurso debe implementar AutoCloseable.
+  • Los recursos se cierran automáticamente al salir del bloque.
+  • El orden de cierre es inverso al de declaración.
+  • Puede tener bloques catch y/o finally adicionales.
+
+3. AUTOCLOSEABLE Y CLOSEABLE
+-----------------------------
+
+  • AutoCloseable (Java 7+):
+    - Interfaz funcional con un solo método: void close() throws Exception.
+    - Puede lanzar Exception (genérica).
+    - Pensada para try-with-resources.
+
+  • Closeable (Java 5+):
+    - Extiende AutoCloseable.
+    - Método: void close() throws IOException.
+    - Más restrictiva (solo IOException).
+    - Implementada por streams de E/S.
+
+  public interface AutoCloseable {
+      void close() throws Exception;
+  }
+
+  public interface Closeable extends AutoCloseable {
+      void close() throws IOException;
+  }
+
+  // Implementación personalizada
+  public class MiRecurso implements AutoCloseable {
+      public void usar() { System.out.println("Usando recurso..."); }
+      @Override
+      public void close() {
+          System.out.println("Cerrando recurso...");
+      }
+  }
+
+  // Uso
+  try (MiRecurso r = new MiRecurso()) {
+      r.usar();
+  }
+
+4. MÚLTIPLES RECURSOS
+----------------------
+
+Se pueden declarar múltiples recursos separados por ; (punto y coma).
+
+  try (FileInputStream fis = new FileInputStream("/tmp/a.bin");
+       FileOutputStream fos = new FileOutputStream("/tmp/b.bin");
+       BufferedInputStream bis = new BufferedInputStream(fis);
+       BufferedOutputStream bos = new BufferedOutputStream(fos)) {
+      bis.transferTo(bos);
+  }
+
+El orden de cierre es inverso al de declaración:
+  bos → bis → fos → fis
+
+5. EXCEPCIONES SUPRIMIDAS (SUPPRESSED)
+---------------------------------------
+
+Cuando tanto el bloque try como el close() lanzan excepciones, la
+excepción del bloque try es la principal, y las de close() se agregan
+como "suprimidas".
+
+  try (MiRecursoQueFalla r = new MiRecursoQueFalla()) {
+      throw new IOException("Error en try");
+  } catch (IOException e) {
+      System.out.println("Principal: " + e.getMessage());
+      for (Throwable suprimida : e.getSuppressed()) {
+          System.out.println("  Suprimida: " + suprimida.getMessage());
+      }
+  }
+
+Métodos relacionados:
+  • Throwable.getSuppressed(): devuelve las excepciones suprimidas.
+  • Throwable.addSuppressed(Throwable): añade una excepción suprimida.
+    (útil en implementaciones personalizadas de close()).
+
+6. TRADUCIENDO: TRY-CATCH-FINALLY A TRY-WITH-RESOURCES
+--------------------------------------------------------
+
+ANTES (Java 6 y anteriores):
+
+  InputStream in = null;
+  OutputStream out = null;
+  try {
+      in = new FileInputStream("/tmp/origen.txt");
+      out = new FileOutputStream("/tmp/destino.txt");
+      byte[] buf = new byte[8192];
+      int n;
+      while ((n = in.read(buf)) != -1) {
+          out.write(buf, 0, n);
+      }
+  } catch (IOException e) {
+      e.printStackTrace();
+  } finally {
+      if (in != null) {
+          try { in.close(); } catch (IOException e) { }
+      }
+      if (out != null) {
+          try { out.close(); } catch (IOException e) { }
+      }
+  }
+
+DESPUÉS (Java 7+):
+
+  try (InputStream in = new FileInputStream("/tmp/origen.txt");
+       OutputStream out = new FileOutputStream("/tmp/destino.txt")) {
+      byte[] buf = new byte[8192];
+      int n;
+      while ((n = in.read(buf)) != -1) {
+          out.write(buf, 0, n);
+      }
+  } catch (IOException e) {
+      e.printStackTrace();
+  }
+
+7. TRY-WITH-RESOURCES SIN CATCH
+---------------------------------
+
+try-with-resources funciona incluso sin bloque catch. Los recursos se
+cierran igual, y las excepciones se propagan hacia arriba:
+
+  public void leerArchivo() throws IOException {
+      try (BufferedReader br = new BufferedReader(
+              new FileReader("/tmp/archivo.txt"))) {
+          String linea = br.readLine();
+          System.out.println(linea);
+      } // br.close() se llama automáticamente
+  } // Las excepciones se propagan
+
+8. TRY-WITH-RESOURCES CON FINALLY
+-----------------------------------
+
+Se puede combinar try-with-resources con finally adicional:
+
+  try (BufferedWriter bw = new BufferedWriter(
+          new FileWriter("/tmp/log.txt", true))) {
+      bw.write("Inicio de operación...");
+      bw.newLine();
+      // ... operación ...
+  } catch (IOException e) {
+      System.err.println("Error: " + e.getMessage());
+  } finally {
+      System.out.println("Bloque finally siempre se ejecuta.");
+  }
+
+El finally se ejecuta DESPUÉS de cerrar los recursos.
+
+9. RECURSOS QUE NO IMPLEMENTAN AUTOCLOSEABLE
+----------------------------------------------
+
+No todos los "recursos" implementan AutoCloseable. Por ejemplo,
+java.sql.Connection sí (Desde Java 7), pero algunos recursos legacy no.
+
+Para estos casos, podemos crear un wrapper:
+
+  public class RecursoLegacyWrapper implements AutoCloseable {
+      private final RecursoLegacy recurso;
+      public RecursoLegacyWrapper(RecursoLegacy r) { this.recurso = r; }
+      @Override
+      public void close() { recurso.liberar(); }
+      public RecursoLegacy get() { return recurso; }
+  }
+
+  // O usando un truco con el constructor
+  try (RecursoLegacy r = new RecursoLegacy()) {
+      // Error: no implementa AutoCloseable
+  }
+
+10. RECURSOS EFECTIVAMENTE FINALES (JAVA 9+)
+----------------------------------------------
+
+Desde Java 9, podemos usar variables declaradas fuera del try, siempre
+que sean efectivamente finales:
+
+  BufferedReader br = new BufferedReader(new FileReader("/tmp/a.txt"));
+  BufferedWriter bw = new BufferedWriter(new FileWriter("/tmp/b.txt"));
+  try (br; bw) { // Variable ya declarada
+      br.transferTo(bw);
+  } catch (IOException e) {
+      e.printStackTrace();
+  }
+
+Esto permite separar la declaración del recurso de su gestión de ciclo
+de vida.
+
+11. IMPLEMENTACIÓN DE CLOSE() CORRECTA
+----------------------------------------
+
+Al implementar AutoCloseable, close() debe:
+  • Ser idempotente (se puede llamar múltiples veces sin efecto).
+  • No lanzar InterruptedByExitException u otras excepciones raras.
+  • Suprimir excepciones correctamente si captura varias.
+
+  public class ConexionBaseDatos implements AutoCloseable {
+      private boolean cerrada = false;
+
+      @Override
+      public void close() {
+          if (cerrada) return; // Idempotente
+          cerrada = true;
+          try {
+              // Liberar recursos...
+          } catch (Exception e) {
+              // No propagar desde close() si es posible
+              Thread.currentThread().getUncaughtExceptionHandler()
+                      .uncaughtException(Thread.currentThread(), e);
+          }
+      }
+  }
+
+12. COMPARATIVA: TRY-WITH-RESOURCES VS TRY-FINALLY
+----------------------------------------------------
+
+  Aspecto               | Try-with-resources       | Try-catch-finally
+  -----------------------|--------------------------|----------------------
+  Cierre automático      | Sí                       | Manual
+  Código boilerplate     | Mínimo                   | Mucho
+  Excepciones suprimidas | Automático               | Se pierden fácilmente
+  Orden de cierre        | Automático (inverso)     | Manual (propenso a error)
+  Recursos múltiples     | Simple (separados por ;) | Anidado y verbose
+  Implementación         | AutoCloseable            | Cualquier recurso
+  Legibilidad            | Alta                     | Baja
+
+13. CASOS ESPECIALES Y TRAMPAS
+--------------------------------
+
+  a) Recurso nulo:
+     try (BufferedReader br = null) { } // No falla, no se cierra nada
+
+  b) Recurso creado en método auxiliar:
+     try (BufferedReader br = crearRecurso()) {
+         // br se cierra automáticamente
+     }
+
+  c) No asignar recurso a variable:
+     try (new BufferedReader(new FileReader("/tmp/a.txt"))) {
+         // Se cierra, pero no podemos usarlo
+     }
+
+  d) Cerrar recursivamente:
+     try (FileReader fr = new FileReader("/tmp/a.txt");
+          BufferedReader br = new BufferedReader(fr)) {
+         // fr se cierra después de br (orden inverso)
+     }
+
+================================================================================
+  CÓDIGO DE EJEMPLO COMPLETO
+================================================================================
+
+import java.io.*;
+import java.util.*;
+
+public class Capitulo57TryWithResources {
+
+    public static void main(String[] args) {
+        System.out.println("=== CAPÍTULO 57: TRY-WITH-RESOURCES ===\n");
+
+        // 1. Sintaxis básica
+        System.out.println("--- Sintaxis básica ---");
+        try (FileWriter fw = new FileWriter("/tmp/cap57_basico.txt")) {
+            fw.write("Hola desde try-with-resources!\n");
+            System.out.println("Archivo escrito y cerrado automáticamente.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 2. Múltiples recursos
+        System.out.println("\n--- Múltiples recursos ---");
+        try (FileInputStream fis = new FileInputStream("/tmp/cap57_basico.txt");
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            fis.transferTo(baos);
+            String contenido = baos.toString("UTF-8").trim();
+            System.out.println("Contenido leído: " + contenido);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 3. Sin bloque catch
+        System.out.println("\n--- Sin catch (propagación) ---");
+        try {
+            String contenido = leerArchivo("/tmp/cap57_basico.txt");
+            System.out.println("Leído con propagación: " + contenido.trim());
+        } catch (IOException e) {
+            System.err.println("Error propagado: " + e.getMessage());
+        }
+
+        // 4. Con finally adicional
+        System.out.println("\n--- Con finally adicional ---");
+        try (BufferedWriter bw = new BufferedWriter(
+                new FileWriter("/tmp/cap57_finally.txt"))) {
+            bw.write("Prueba con finally");
+            bw.newLine();
+            System.out.println("Escritura completada.");
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        } finally {
+            System.out.println("Finally: limpieza adicional realizada.");
+        }
+
+        // 5. Excepciones suprimidas
+        System.out.println("\n--- Excepciones suprimidas ---");
+        try (RecursoRiesgoso r1 = new RecursoRiesgoso("R1");
+             RecursoRiesgoso r2 = new RecursoRiesgoso("R2")) {
+            throw new IOException("Error principal en el bloque try");
+        } catch (IOException e) {
+            System.out.println("Excepción principal: " + e.getMessage());
+            Throwable[] suprimidas = e.getSuppressed();
+            System.out.println("Excepciones suprimidas: " + suprimidas.length);
+            for (Throwable s : suprimidas) {
+                System.out.println("  - " + s.getClass().getSimpleName()
+                        + ": " + s.getMessage());
+            }
+        }
+
+        // 6. Recurso personalizado AutoCloseable
+        System.out.println("\n--- Recurso personalizado ---");
+        try (MiRecurso recurso = new MiRecurso("DB-Connection")) {
+            recurso.ejecutar("SELECT * FROM usuarios");
+            recurso.ejecutar("INSERT INTO logs VALUES ('test')");
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 7. Efectivamente final (Java 9+)
+        System.out.println("\n--- Variables efectivamente finales (Java 9+) ---");
+        BufferedReader br = null;
+        BufferedWriter bw = null;
+        try {
+            br = new BufferedReader(new FileReader("/tmp/cap57_basico.txt"));
+            bw = new BufferedWriter(new FileWriter("/tmp/cap57_efectivo.txt"));
+            // A partir de Java 9 podemos usar br y bw en try-with-resources
+            try (br; bw) {
+                String linea;
+                while ((linea = br.readLine()) != null) {
+                    bw.write(linea);
+                    bw.newLine();
+                }
+                System.out.println("Copia con efectivamente final completada.");
+            }
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 8. Comparación rendimiento conceptual
+        System.out.println("\n--- Comparación de estilos ---");
+        System.out.println("Código legacy (finally manual): ~15 líneas");
+        System.out.println("Código try-with-resources:     ~5 líneas");
+        System.out.println("Reducción: ~66% del código boilerplate");
+
+        // 9. Recurso anidado (orden de cierre)
+        System.out.println("\n--- Orden de cierre ---");
+        try (RecursoOrdenado a = new RecursoOrdenado("A");
+             RecursoOrdenado b = new RecursoOrdenado("B");
+             RecursoOrdenado c = new RecursoOrdenado("C")) {
+            System.out.println("  Usando recursos A, B, C");
+        }
+        System.out.println("  (El orden de cierre es C -> B -> A)");
+
+        // 10. Sin catch
+        System.out.println("\n--- Solo try-with-resources ---");
+        try (FileWriter fw = new FileWriter("/tmp/cap57_solo_try.txt")) {
+            fw.write("Sin bloque catch.\n");
+        } catch (IOException e) {
+            // Obligatorio porque FileWriter.write() lanza IOException
+        }
+        System.out.println("Archivo escrito con try sin catch.");
+
+        // 11. Capturar excepción de close()
+        System.out.println("\n--- Excepción en close() ---");
+        try (RecursoQueFallaEnCerrar r = new RecursoQueFallaEnCerrar()) {
+            System.out.println("  Usando recurso que falla al cerrar...");
+            r.hacerAlgo();
+        } catch (Exception e) {
+            System.out.println("  Capturada: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage());
+            Throwable[] suprimidas = e.getSuppressed();
+            if (suprimidas.length > 0) {
+                System.out.println("  Suprimida de close(): "
+                        + suprimidas[0].getMessage());
+            }
+        }
+
+        // 12. AutoCloseable en Stream API
+        System.out.println("\n--- Stream con AutoCloseable ---");
+        // Files.lines() devuelve un Stream que debe cerrarse
+        try (java.util.stream.Stream<String> lineas =
+                java.nio.file.Files.lines(
+                    java.nio.file.Paths.get("/tmp/cap57_basico.txt"))) {
+            lineas.forEach(l -> System.out.println("  Línea: " + l));
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+
+        // 13. Verificar que el recurso se cerró
+        System.out.println("\n--- Verificación de cierre ---");
+        MiRecurso r = new MiRecurso("Verificable");
+        System.out.println("  Estado antes: " + r.estaCerrado());
+        try (r) {
+            r.ejecutar("test");
+        }
+        System.out.println("  Estado después: " + r.estaCerrado());
+
+        // Limpieza
+        System.out.println("\n--- Limpieza ---");
+        String[] archivos = {
+            "/tmp/cap57_basico.txt", "/tmp/cap57_finally.txt",
+            "/tmp/cap57_efectivo.txt", "/tmp/cap57_solo_try.txt"
+        };
+        for (String a : archivos) {
+            new File(a).delete();
+        }
+        System.out.println("Archivos temporales eliminados.");
+
+        System.out.println("\n=== FIN CAPÍTULO 57 ===");
+    }
+
+    public static String leerArchivo(String ruta) throws IOException {
+        try (BufferedReader br = new BufferedReader(
+                new FileReader(ruta))) {
+            return br.readLine();
+        } // br.close() se llama automáticamente
+    }
+}
+
+// --- Clases auxiliares ---
+
+class RecursoRiesgoso implements AutoCloseable {
+    private String nombre;
+    public RecursoRiesgoso(String nombre) { this.nombre = nombre; }
+
+    @Override
+    public void close() throws IOException {
+        throw new IOException("Error al cerrar " + nombre);
+    }
+}
+
+class MiRecurso implements AutoCloseable {
+    private String nombre;
+    private boolean cerrado = false;
+
+    public MiRecurso(String nombre) { this.nombre = nombre; }
+
+    public void ejecutar(String comando) {
+        if (cerrado) throw new IllegalStateException("Recurso ya cerrado");
+        System.out.println("  [MiRecurso " + nombre + "] Ejecutando: " + comando);
+    }
+
+    public boolean estaCerrado() { return cerrado; }
+
+    @Override
+    public void close() {
+        if (cerrado) return;
+        cerrado = true;
+        System.out.println("  [MiRecurso " + nombre + "] Cerrando...");
+    }
+}
+
+class RecursoOrdenado implements AutoCloseable {
+    private String id;
+    public RecursoOrdenado(String id) { this.id = id; }
+
+    @Override
+    public void close() {
+        System.out.println("  Cerrando recurso " + id);
+    }
+}
+
+class RecursoQueFallaEnCerrar implements AutoCloseable {
+    public void hacerAlgo() {
+        System.out.println("  Haciendo algo...");
+    }
+
+    @Override
+    public void close() throws IOException {
+        throw new IOException("Fallo catastrófico en close()");
+    }
+}
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+• try-with-resources (Java 7+) automatiza el cierre de recursos que
+  implementan AutoCloseable. El código es más limpio, seguro y legible.
+
+• AutoCloseable tiene close() que lanza Exception. Closeable (subinterfaz)
+  tiene close() que lanza IOException.
+
+• Múltiples recursos se declaran separados por ; y se cierran en orden
+  inverso al de declaración.
+
+• Si tanto el bloque try como close() lanzan excepciones, la del try es
+  la principal y las de close() se agregan como suprimidas. Se acceden
+  con getSuppressed().
+
+• Desde Java 9, se pueden usar variables efectivamente finales declaradas
+  fuera del try: try (recurso1; recurso2) { ... }.
+
+• try-with-resources puede combinarse con catch y/o finally.
+
+• Al implementar AutoCloseable, close() debe ser idempotente.
+
+• Es muy superior al patrón try-catch-finally manual: menos código,
+  menos errores, manejo automático de excepciones suprimidas.
+
+================================================================================
+  EJERCICIOS PROPUESTOS
+================================================================================
+
+1. Pool de conexiones simulado: Implementa una clase PoolConexiones que
+   gestione un pool de N conexiones. Cada Conexion implementa
+   AutoCloseable. Al cerrarse, la conexión vuelve al pool en lugar de
+   destruirse. Usa try-with-resources para adquirir y liberar conexiones.
+
+2. Logger con cierre automático: Implementa un Logger que escriba en
+   archivo y use try-with-resources. Cada línea de log se escribe con
+   timestamp. El logger debe hacer flush() automático al cerrar.
+
+3. Temporizador de recursos: Crea un decorador AutoCloseable que
+   envuelva otro recurso y mida el tiempo entre la apertura y el cierre.
+   Usa try-with-resources y muestra el tiempo al cerrar.
+
+4. Ejecutor de script seguro: Lee un script SQL desde un archivo y
+   ejecútalo en una base de datos (simulada). Usa try-with-resources
+   para Connection, Statement y ResultSet. Captura y maneja excepciones
+   suprimidas.
+
+5. Comparador de estilos: Toma un archivo Java existente con try-catch-
+   finally legacy y refactorízalo a try-with-resources. El programa debe
+   leer el archivo, identificar los patrones legacy y generar la versión
+   moderna.
+
+6. Recurso con timeout: Implementa un recurso que expire después de un
+   tiempo (timeout). Si se usa try-with-resources, el recurso se cierra
+   normalmente. Si el bloque tarda más del timeout, se cierra
+   automáticamente y lanza TimeoutException como suprimida.
+
+7. Multi-recursos: Crea una clase que gestione una lista de recursos
+   AutoCloseable y los cierre todos al finalizar. Debe manejar
+   correctamente las excepciones suprimidas de todos ellos.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Qué pasa si declaro el recurso fuera del try y lo uso dentro?
+R: Antes de Java 9, no se podía. Desde Java 9, si la variable es
+   efectivamente final, se puede usar: try (recurso) { ... }.
+
+P: ¿Puedo tener múltiples recursos del mismo tipo?
+R: Sí, no hay restricción. Simplemente sepáralos con ;:
+   try (FileReader fr1 = new FileReader("a.txt");
+        FileReader fr2 = new FileReader("b.txt")) { ... }
+
+P: ¿Qué ocurre si close() lanza una excepción?
+R: Se agrega como excepción suprimida a la excepción principal (la del
+   bloque try). Si el bloque try no lanza excepción, la de close() se
+   propaga hacia arriba.
+
+P: ¿Cómo manejo un recurso que no implementa AutoCloseable?
+R: Debes cerrarlo manualmente en finally, o crear una clase wrapper que
+   implemente AutoCloseable y delegue el cierre.
+
+P: ¿Puedo usar try-with-resources con recursos que crean excepciones en
+   el constructor?
+R: Sí. Si el constructor lanza una excepción, el recurso no se abre, y
+   no se intenta cerrar. Los recursos ya abiertos (declarados antes) se
+   cierran correctamente.
+
+P: ¿El orden de declaración de recursos importa?
+R: Sí, afecta el orden de cierre. Se cierran en orden inverso al de
+   declaración. Si un recurso depende de otro, decláralos en el orden
+   correcto (dependencia primero, dependiente después).
+
+P: ¿Puedo modificar el recurso dentro del bloque try?
+R: Sí, pero la referencia debe ser efectivamente final. Puedes modificar
+   el estado interno del objeto, pero no reasignar la variable.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+  "FRAMEWORK DE EJECUCIÓN TRANSACCIONAL CON TRY-WITH-RESOURCES"
+
+  Diseña un framework que ejecute operaciones con semántica transaccional
+  usando try-with-resources. La transacción se confirma al salir del
+  bloque si no hay excepciones, o se revierte si hay alguna.
+
+  Requisitos:
+
+  1. Transacción AutoCloseable: La clase Transaccion implementa
+     AutoCloseable. Al crearse, inicia la transacción. Al cerrarse
+     (close()), si no hubo excepción, hace commit(); si hubo, hace
+     rollback().
+
+  2. Operaciones: La transacción registra cada operación (ej: INSERT,
+     UPDATE, DELETE sobre una base de datos simulada con listas en
+     memoria). Las operaciones se almacenan en una lista de cambios.
+
+  3. Aislamiento: Hasta que la transacción no hace commit, los cambios
+     no se reflejan en el estado global. Al hacer rollback, los cambios
+     se descartan.
+
+  4. Puntos de salvación (savepoints): Dentro de la transacción, se
+     pueden crear sub-transacciones que permitan rollback parcial.
+     Usa try-with-resources anidado:
+
+     try (Transaccion tx = new Transaccion()) {
+         tx.insertar("tabla", "dato1");
+         try (Savepoint sp = tx.savepoint()) {
+             tx.insertar("tabla", "dato2");
+             // sp se revierte al salir si hay excepción
+         }
+         tx.insertar("tabla", "dato3");
+         // Commit automático al salir sin excepción
+     }
+
+  5. Log de transacciones: Cada commit/rollback se registra en un
+     archivo de log con timestamp, operaciones incluidas y estado final.
+
+  6. Excepciones suprimidas: Si una operación lanza excepción, la
+     transacción la captura y decide si reverte o continúa según una
+     política configurable.
+
+  7. Mínimo 4 clases: Transaccion, Savepoint, TransactionLog,
+     TransactionManager.
+
+  VALORACIÓN:
+  • 3 estrellas: Transacción básica con commit/rollback automático.
+  • 4 estrellas: Savepoints anidados + log de transacciones.
+  • 5 estrellas: Aislamiento real + políticas de excepción + tests.
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Has comprendido try-with-resources en profundidad. Ya no solo lo usas,
+sino que entiendes cómo funciona, cómo maneja las excepciones suprimidas,
+y cómo implementar tus propios recursos AutoCloseable. Este conocimiento
+te permitirá escribir código más limpio, seguro y robusto.
+
+En el próximo capítulo exploraremos NIO (New I/O), la API moderna para
+manejo de archivos que supera muchas limitaciones de java.io.File.
+
+¡Nos vemos en el Capítulo 58!
+
+================================================================================
+  CAPÍTULO 58: NIO (FILES, PATHS)
+================================================================================
+
+En el Capítulo 58 entraremos en el mundo de NIO.2 (java.nio.file),
+introducido en Java 7. Aprenderemos a usar Paths y Files para manejar
+archivos de forma más expresiva y eficiente. NIO ofrece operaciones
+atómicas, mejor manejo de enlaces simbólicos, atributos de archivos,
+walk de árboles de directorios, y watch services para monitoreo.
+
+Contenido previo:
+  • Path vs File: diferencias y ventajas.
+  • Files: readAllLines, write, copy, move, delete, walk.
+  • Paths: get(), resolve(), relativize(), normalize().
+  • Atributos de archivos con Files.readAttributes().
+  • Walk de árboles de directorios con Files.walk().
+  • FileVisitor para recorridos personalizados.
+  • WatchService para monitoreo de cambios.
+  • Operaciones atómicas y manejo de enlaces simbólicos.
+
+¡Nos vemos allí!
+================================================================================

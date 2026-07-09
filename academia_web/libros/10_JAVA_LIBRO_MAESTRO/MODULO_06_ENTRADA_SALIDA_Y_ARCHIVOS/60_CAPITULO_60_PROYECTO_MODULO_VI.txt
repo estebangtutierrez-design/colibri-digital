@@ -1,0 +1,1174 @@
+================================================================================
+  MODULO VI: ENTRADA, SALIDA Y ARCHIVOS
+  CAPITULO 60: PROYECTO MODULO VI — PERSISTENCIA DE DATOS
+  "Java Master Book" — El arte de dominar Java
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al Capitulo 60, el proyecto final del Modulo VI. Durante 9
+capitulos hemos recorrido todo el ecosistema de entrada, salida y archivos
+en Java: File, FileReader/Writer, BufferedReader/Writer, ObjectStream,
+serializacion, FileInputStream/OutputStream, try-with-resources, NIO, y
+Properties. Ahora es momento de integrar todo ese conocimiento en un
+proyecto completo y funcional: un Sistema de Gestion de Biblioteca con
+persistencia de datos.
+
+Este proyecto te enfrentara a problemas reales: elegir el formato de
+almacenamiento adecuado, manejar errores de E/S, disenar una arquitectura
+limpia, y garantizar la integridad de los datos.
+
+FRASE DEL DIA
+-------------
+"La teoria sin practica es solo conocimiento incompleto."
+— Anonimo
+
+OBJETIVOS DEL CAPITULO
+----------------------
+• Integrar todas las tecnologias de E/S vistas en el modulo.
+• Disenar una arquitectura en capas: modelo, DAO, servicio, presentacion.
+• Implementar persistencia en multiples formatos.
+• Manejar correctamente excepciones y recursos.
+• Aplicar try-with-resources en todo el codigo.
+• Usar NIO para operaciones modernas de archivos.
+• Serializar objetos para almacenamiento estructurado.
+• Usar Properties para configuracion externa.
+• Desarrollar una interfaz de usuario por consola completa.
+
+================================================================================
+  DESARROLLO DEL PROYECTO
+================================================================================
+
+1. DESCRIPCION DEL PROYECTO
+----------------------------
+
+Crearemos un Sistema de Gestion de Biblioteca que permita:
+
+  • Gestionar libros (CRUD: Crear, Leer, Actualizar, Eliminar).
+  • Gestionar usuarios (CRUD).
+  • Prestar y devolver libros.
+  • Buscar libros por titulo, autor o genero.
+  • Generar reportes de prestamos.
+  • Persistir los datos en archivos.
+  • Cargar/configurar la aplicacion via archivo properties.
+
+2. ARQUITECTURA EN CAPAS
+--------------------------
+
+  +------------------+
+  |  PRESENTACION    |  Consola interactiva (menu)
+  +------------------+
+  |  SERVICIO        |  Logica de negocio
+  +------------------+
+  |  DAO/DATOS       |  Persistencia (archivos)
+  +------------------+
+  |  MODELO          |  Clases de dominio
+  +------------------+
+
+  • Modelo: Libro, Usuario, Prestamo.
+  • DAO (Data Access Object): Acceso a datos en archivos.
+  • Servicio: Logica de negocio (prestar, devolver, buscar).
+  • Presentacion: Menu por consola interactivo.
+
+3. MODELO DE DATOS
+--------------------
+
+  Libro:
+    - id (int, autoincrement)
+    - titulo (String)
+    - autor (String)
+    - genero (String)
+    - anioPublicacion (int)
+    - isbn (String)
+    - disponible (boolean)
+
+  Usuario:
+    - id (int, autoincrement)
+    - nombre (String)
+    - email (String)
+    - telefono (String)
+
+  Prestamo:
+    - id (int, autoincrement)
+    - idLibro (int)
+    - idUsuario (int)
+    - fechaPrestamo (Date)
+    - fechaDevolucion (Date, null si no devuelto)
+    - devuelto (boolean)
+
+4. FORMATOS DE PERSISTENCIA
+----------------------------
+
+El sistema soportara tres formatos de almacenamiento seleccionables
+mediante configuracion:
+
+  1. Serializacion (binario .dat):
+     Usa ObjectOutputStream/ObjectInputStream.
+     Rapido, compacto, pero solo legible por Java.
+
+  2. Texto plano (.txt):
+     Usa BufferedReader/BufferedWriter.
+     Legible por humanos, facil de depurar.
+
+  3. NIO Properties (.properties):
+     Usa Files.write/readAllLines con formato clave=valor.
+     Version simplificada para demostracion.
+
+5. ARCHIVO DE CONFIGURACION
+-----------------------------
+
+  # config.properties
+  app.name = Biblioteca Java Master Book
+  app.version = 1.0.0
+  data.format = serializacion   # serializacion | texto | nio
+  data.dir = ./datos
+  data.backup.dir = ./backup
+  app.locale = es_ES
+  app.debug = false
+
+6. GESTION DE ARCHIVOS
+------------------------
+
+  • Los datos se almacenan en el directorio configurado (data.dir).
+  • Se crean los directorios necesarios al iniciar (Files.createDirectories).
+  • Backup automatico al iniciar (Files.copy con COPY_ATTRIBUTES).
+  • Log de operaciones en archivo de texto (BufferedWriter con append).
+
+================================================================================
+  CODIGO COMPLETO DEL PROYECTO
+================================================================================
+
+// ==================== MODELO ====================
+
+import java.io.*;
+import java.time.LocalDate;
+import java.util.*;
+
+class Libro implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private int id;
+    private String titulo;
+    private String autor;
+    private String genero;
+    private int anioPublicacion;
+    private String isbn;
+    private boolean disponible;
+
+    public Libro() {}
+
+    public Libro(int id, String titulo, String autor, String genero,
+                 int anio, String isbn) {
+        this.id = id;
+        this.titulo = titulo;
+        this.autor = autor;
+        this.genero = genero;
+        this.anioPublicacion = anio;
+        this.isbn = isbn;
+        this.disponible = true;
+    }
+
+    // Getters y setters
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    public String getTitulo() { return titulo; }
+    public void setTitulo(String titulo) { this.titulo = titulo; }
+    public String getAutor() { return autor; }
+    public void setAutor(String autor) { this.autor = autor; }
+    public String getGenero() { return genero; }
+    public void setGenero(String genero) { this.genero = genero; }
+    public int getAnioPublicacion() { return anioPublicacion; }
+    public void setAnioPublicacion(int anio) { this.anioPublicacion = anio; }
+    public String getIsbn() { return isbn; }
+    public void setIsbn(String isbn) { this.isbn = isbn; }
+    public boolean isDisponible() { return disponible; }
+    public void setDisponible(boolean d) { this.disponible = d; }
+
+    @Override
+    public String toString() {
+        return String.format("[%d] %s - %s (%d) | %s | %s",
+                id, titulo, autor, anioPublicacion,
+                disponible ? "DISPONIBLE" : "PRESTADO", isbn);
+    }
+
+    // Para formato texto
+    public String toLine() {
+        return id + "|" + titulo + "|" + autor + "|" + genero
+             + "|" + anioPublicacion + "|" + isbn + "|" + disponible;
+    }
+
+    public static Libro fromLine(String linea) {
+        String[] partes = linea.split("\\|");
+        Libro l = new Libro();
+        l.id = Integer.parseInt(partes[0]);
+        l.titulo = partes[1];
+        l.autor = partes[2];
+        l.genero = partes[3];
+        l.anioPublicacion = Integer.parseInt(partes[4]);
+        l.isbn = partes[5];
+        l.disponible = Boolean.parseBoolean(partes[6]);
+        return l;
+    }
+}
+
+class Usuario implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private int id;
+    private String nombre;
+    private String email;
+    private String telefono;
+
+    public Usuario() {}
+
+    public Usuario(int id, String nombre, String email, String telefono) {
+        this.id = id;
+        this.nombre = nombre;
+        this.email = email;
+        this.telefono = telefono;
+    }
+
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    public String getNombre() { return nombre; }
+    public void setNombre(String nombre) { this.nombre = nombre; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getTelefono() { return telefono; }
+    public void setTelefono(String t) { this.telefono = t; }
+
+    @Override
+    public String toString() {
+        return String.format("[%d] %s | %s | %s", id, nombre, email, telefono);
+    }
+
+    public String toLine() {
+        return id + "|" + nombre + "|" + email + "|" + telefono;
+    }
+
+    public static Usuario fromLine(String linea) {
+        String[] partes = linea.split("\\|");
+        return new Usuario(
+            Integer.parseInt(partes[0]),
+            partes[1], partes[2], partes[3]
+        );
+    }
+}
+
+class Prestamo implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private int id;
+    private int idLibro;
+    private int idUsuario;
+    private LocalDate fechaPrestamo;
+    private LocalDate fechaDevolucion;
+    private boolean devuelto;
+
+    public Prestamo() {}
+
+    public Prestamo(int id, int idLibro, int idUsuario, LocalDate fechaPrestamo) {
+        this.id = id;
+        this.idLibro = idLibro;
+        this.idUsuario = idUsuario;
+        this.fechaPrestamo = fechaPrestamo;
+        this.devuelto = false;
+    }
+
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    public int getIdLibro() { return idLibro; }
+    public void setIdLibro(int id) { this.idLibro = id; }
+    public int getIdUsuario() { return idUsuario; }
+    public void setIdUsuario(int id) { this.idUsuario = id; }
+    public LocalDate getFechaPrestamo() { return fechaPrestamo; }
+    public void setFechaPrestamo(LocalDate f) { this.fechaPrestamo = f; }
+    public LocalDate getFechaDevolucion() { return fechaDevolucion; }
+    public void setFechaDevolucion(LocalDate f) {
+        this.fechaDevolucion = f;
+        this.devuelto = (f != null);
+    }
+    public boolean isDevuelto() { return devuelto; }
+    public void setDevuelto(boolean d) { this.devuelto = d; }
+
+    @Override
+    public String toString() {
+        return String.format("[%d] Libro %d -> Usuario %d | %s -> %s",
+            id, idLibro, idUsuario, fechaPrestamo,
+            devuelto ? fechaDevolucion.toString() : "NO DEVUELTO");
+    }
+
+    public String toLine() {
+        return id + "|" + idLibro + "|" + idUsuario + "|"
+             + fechaPrestamo + "|"
+             + (fechaDevolucion != null ? fechaDevolucion : "") + "|"
+             + devuelto;
+    }
+
+    public static Prestamo fromLine(String linea) {
+        String[] p = linea.split("\\|");
+        Prestamo pr = new Prestamo();
+        pr.id = Integer.parseInt(p[0]);
+        pr.idLibro = Integer.parseInt(p[1]);
+        pr.idUsuario = Integer.parseInt(p[2]);
+        pr.fechaPrestamo = LocalDate.parse(p[3]);
+        if (!p[4].isEmpty()) pr.fechaDevolucion = LocalDate.parse(p[4]);
+        pr.devuelto = Boolean.parseBoolean(p[5]);
+        return pr;
+    }
+}
+
+// ==================== DAO ====================
+
+interface DAO<T> {
+    T insertar(T t) throws IOException;
+    T actualizar(T t) throws IOException;
+    boolean eliminar(int id) throws IOException;
+    T buscar(int id) throws IOException;
+    List<T> listar() throws IOException;
+    int siguienteId() throws IOException;
+}
+
+abstract class DAOArchivos<T> implements DAO<T> {
+    protected String directorio;
+    protected String nombreArchivo;
+
+    public DAOArchivos(String directorio, String nombreArchivo) {
+        this.directorio = directorio;
+        this.nombreArchivo = nombreArchivo;
+    }
+
+    protected Path getPath() {
+        return Paths.get(directorio, nombreArchivo);
+    }
+}
+
+class LibroDAOSerializacion extends DAOArchivos<Libro> {
+    public LibroDAOSerializacion(String directorio) {
+        super(directorio, "libros.dat");
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<Libro> listar() throws IOException {
+        Path path = getPath();
+        if (Files.notExists(path)) return new ArrayList<>();
+        try (ObjectInputStream ois = new ObjectInputStream(
+                new FileInputStream(path.toFile()))) {
+            return (List<Libro>) ois.readObject();
+        } catch (ClassNotFoundException e) {
+            throw new IOException("Error al deserializar libros", e);
+        }
+    }
+
+    @Override
+    public Libro insertar(Libro libro) throws IOException {
+        List<Libro> libros = listar();
+        libro.setId(siguienteId());
+        libros.add(libro);
+        guardar(libros);
+        return libro;
+    }
+
+    @Override
+    public Libro actualizar(Libro libro) throws IOException {
+        List<Libro> libros = listar();
+        for (int i = 0; i < libros.size(); i++) {
+            if (libros.get(i).getId() == libro.getId()) {
+                libros.set(i, libro);
+                guardar(libros);
+                return libro;
+            }
+        }
+        throw new IOException("Libro no encontrado: " + libro.getId());
+    }
+
+    @Override
+    public boolean eliminar(int id) throws IOException {
+        List<Libro> libros = listar();
+        boolean ok = libros.removeIf(l -> l.getId() == id);
+        if (ok) guardar(libros);
+        return ok;
+    }
+
+    @Override
+    public Libro buscar(int id) throws IOException {
+        return listar().stream()
+                .filter(l -> l.getId() == id)
+                .findFirst().orElse(null);
+    }
+
+    @Override
+    public int siguienteId() throws IOException {
+        return listar().stream()
+                .mapToInt(Libro::getId)
+                .max().orElse(0) + 1;
+    }
+
+    private void guardar(List<Libro> libros) throws IOException {
+        Path path = getPath();
+        try (ObjectOutputStream oos = new ObjectOutputStream(
+                new FileOutputStream(path.toFile()))) {
+            oos.writeObject(libros);
+        }
+    }
+}
+
+class LibroDAOTexto extends DAOArchivos<Libro> {
+    public LibroDAOTexto(String directorio) {
+        super(directorio, "libros.txt");
+    }
+
+    @Override
+    public List<Libro> listar() throws IOException {
+        Path path = getPath();
+        if (Files.notExists(path)) return new ArrayList<>();
+        List<Libro> libros = new ArrayList<>();
+        try (BufferedReader br = Files.newBufferedReader(path,
+                StandardCharsets.UTF_8)) {
+            String linea;
+            while ((linea = br.readLine()) != null) {
+                if (!linea.trim().isEmpty()) {
+                    libros.add(Libro.fromLine(linea));
+                }
+            }
+        }
+        return libros;
+    }
+
+    @Override
+    public Libro insertar(Libro libro) throws IOException {
+        libro.setId(siguienteId());
+        try (BufferedWriter bw = Files.newBufferedWriter(getPath(),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            bw.write(libro.toLine());
+            bw.newLine();
+        }
+        return libro;
+    }
+
+    @Override
+    public Libro actualizar(Libro libro) throws IOException {
+        List<Libro> libros = listar();
+        boolean encontrado = false;
+        for (int i = 0; i < libros.size(); i++) {
+            if (libros.get(i).getId() == libro.getId()) {
+                libros.set(i, libro);
+                encontrado = true;
+                break;
+            }
+        }
+        if (!encontrado) throw new IOException("Libro no encontrado");
+        guardarTodo(libros);
+        return libro;
+    }
+
+    @Override
+    public boolean eliminar(int id) throws IOException {
+        List<Libro> libros = listar();
+        boolean ok = libros.removeIf(l -> l.getId() == id);
+        if (ok) guardarTodo(libros);
+        return ok;
+    }
+
+    @Override
+    public Libro buscar(int id) throws IOException {
+        return listar().stream()
+                .filter(l -> l.getId() == id)
+                .findFirst().orElse(null);
+    }
+
+    @Override
+    public int siguienteId() throws IOException {
+        return listar().stream()
+                .mapToInt(Libro::getId)
+                .max().orElse(0) + 1;
+    }
+
+    private void guardarTodo(List<Libro> libros) throws IOException {
+        try (BufferedWriter bw = Files.newBufferedWriter(getPath(),
+                StandardCharsets.UTF_8)) {
+            for (Libro l : libros) {
+                bw.write(l.toLine());
+                bw.newLine();
+            }
+        }
+    }
+}
+
+class LibroDAONIO extends DAOArchivos<Libro> {
+    public LibroDAONIO(String directorio) {
+        super(directorio, "libros.properties");
+    }
+
+    @Override
+    public List<Libro> listar() throws IOException {
+        Path path = getPath();
+        if (Files.notExists(path)) return new ArrayList<>();
+        List<Libro> libros = new ArrayList<>();
+        List<String> lineas = Files.readAllLines(path, StandardCharsets.UTF_8);
+        for (String linea : lineas) {
+            if (linea.startsWith("libro.") && linea.contains("=id=")) {
+                String[] partes = linea.split("=", 2);
+                String data = partes[1];
+                // Formato: id=X|titulo=Y|autor=Z|...
+                libros.add(parsearLibro(data));
+            }
+        }
+        return libros;
+    }
+
+    private Libro parsearLibro(String data) {
+        Libro l = new Libro();
+        for (String par : data.split("\\|")) {
+            String[] kv = par.split("=", 2);
+            if (kv.length < 2) continue;
+            switch (kv[0]) {
+                case "id" -> l.setId(Integer.parseInt(kv[1]));
+                case "titulo" -> l.setTitulo(kv[1]);
+                case "autor" -> l.setAutor(kv[1]);
+                case "genero" -> l.setGenero(kv[1]);
+                case "anio" -> l.setAnioPublicacion(Integer.parseInt(kv[1]));
+                case "isbn" -> l.setIsbn(kv[1]);
+                case "disponible" -> l.setDisponible(Boolean.parseBoolean(kv[1]));
+            }
+        }
+        return l;
+    }
+
+    private String libroToProp(Libro l) {
+        return "id=" + l.getId() + "|titulo=" + l.getTitulo()
+             + "|autor=" + l.getAutor() + "|genero=" + l.getGenero()
+             + "|anio=" + l.getAnioPublicacion() + "|isbn=" + l.getIsbn()
+             + "|disponible=" + l.isDisponible();
+    }
+
+    @Override
+    public Libro insertar(Libro libro) throws IOException {
+        libro.setId(siguienteId());
+        List<String> lineas = Files.exists(getPath())
+                ? Files.readAllLines(getPath(), StandardCharsets.UTF_8)
+                : new ArrayList<>();
+        lineas.add("libro." + libro.getId() + "=" + libroToProp(libro));
+        Files.write(getPath(), lineas, StandardCharsets.UTF_8);
+        return libro;
+    }
+
+    @Override
+    public Libro actualizar(Libro libro) throws IOException {
+        eliminar(libro.getId());
+        List<String> lineas = Files.readAllLines(getPath(), StandardCharsets.UTF_8);
+        lineas.add("libro." + libro.getId() + "=" + libroToProp(libro));
+        Files.write(getPath(), lineas, StandardCharsets.UTF_8);
+        return libro;
+    }
+
+    @Override
+    public boolean eliminar(int id) throws IOException {
+        Path path = getPath();
+        if (Files.notExists(path)) return false;
+        List<String> lineas = Files.readAllLines(path, StandardCharsets.UTF_8);
+        boolean ok = lineas.removeIf(l -> l.startsWith("libro." + id + "="));
+        if (ok) Files.write(path, lineas, StandardCharsets.UTF_8);
+        return ok;
+    }
+
+    @Override
+    public Libro buscar(int id) throws IOException {
+        return listar().stream()
+                .filter(l -> l.getId() == id)
+                .findFirst().orElse(null);
+    }
+
+    @Override
+    public int siguienteId() throws IOException {
+        return listar().stream()
+                .mapToInt(Libro::getId)
+                .max().orElse(0) + 1;
+    }
+}
+
+// Factory para DAOs
+class DAOFactory {
+    public static DAO<Libro> crearLibroDAO(String formato, String directorio) {
+        return switch (formato) {
+            case "texto" -> new LibroDAOTexto(directorio);
+            case "nio" -> new LibroDAONIO(directorio);
+            default -> new LibroDAOSerializacion(directorio);
+        };
+    }
+}
+
+// ==================== SERVICIO ====================
+
+class BibliotecaService {
+    private final DAO<Libro> libroDAO;
+    private final Properties config;
+    private final Path logPath;
+
+    public BibliotecaService(Properties config) throws IOException {
+        this.config = config;
+        String formato = config.getProperty("data.format", "serializacion");
+        String dir = config.getProperty("data.dir", "./datos");
+        Path dirPath = Paths.get(dir);
+        Files.createDirectories(dirPath);
+        this.libroDAO = DAOFactory.crearLibroDAO(formato, dir);
+        this.logPath = dirPath.resolve("operaciones.log");
+        initLog();
+    }
+
+    private void initLog() throws IOException {
+        if (Files.notExists(logPath)) {
+            Files.createFile(logPath);
+        }
+        log("Sistema de Biblioteca iniciado - v"
+            + config.getProperty("app.version"));
+    }
+
+    public void log(String mensaje) {
+        try (BufferedWriter bw = Files.newBufferedWriter(logPath,
+                StandardCharsets.UTF_8, StandardOpenOption.APPEND)) {
+            bw.write(LocalDate.now() + " " + java.time.LocalTime.now()
+                    + " - " + mensaje);
+            bw.newLine();
+        } catch (IOException e) {
+            System.err.println("Error al escribir log: " + e.getMessage());
+        }
+    }
+
+    public List<Libro> listarLibros() throws IOException {
+        return libroDAO.listar();
+    }
+
+    public Libro agregarLibro(String titulo, String autor, String genero,
+                               int anio, String isbn) throws IOException {
+        Libro libro = new Libro(0, titulo, autor, genero, anio, isbn);
+        Libro creado = libroDAO.insertar(libro);
+        log("Libro agregado: " + creado.getTitulo() + " (ID: " + creado.getId() + ")");
+        return creado;
+    }
+
+    public Libro buscarLibro(int id) throws IOException {
+        return libroDAO.buscar(id);
+    }
+
+    public List<Libro> buscarLibros(String criterio) throws IOException {
+        String busq = criterio.toLowerCase();
+        return libroDAO.listar().stream()
+                .filter(l -> l.getTitulo().toLowerCase().contains(busq)
+                          || l.getAutor().toLowerCase().contains(busq)
+                          || l.getGenero().toLowerCase().contains(busq))
+                .toList();
+    }
+
+    public boolean eliminarLibro(int id) throws IOException {
+        boolean ok = libroDAO.eliminar(id);
+        if (ok) log("Libro eliminado ID: " + id);
+        return ok;
+    }
+
+    public Libro actualizarLibro(int id, String titulo, String autor,
+                                  String genero, int anio, String isbn,
+                                  boolean disponible) throws IOException {
+        Libro libro = libroDAO.buscar(id);
+        if (libro == null) throw new IOException("Libro no encontrado");
+        libro.setTitulo(titulo);
+        libro.setAutor(autor);
+        libro.setGenero(genero);
+        libro.setAnioPublicacion(anio);
+        libro.setIsbn(isbn);
+        libro.setDisponible(disponible);
+        Libro act = libroDAO.actualizar(libro);
+        log("Libro actualizado ID: " + id);
+        return act;
+    }
+
+    public void generarReporte(Path salida) throws IOException {
+        List<Libro> libros = libroDAO.listar();
+        long disponibles = libros.stream().filter(Libro::isDisponible).count();
+        long prestados = libros.size() - disponibles;
+
+        try (BufferedWriter bw = Files.newBufferedWriter(salida,
+                StandardCharsets.UTF_8)) {
+            bw.write("=== REPORTE DE BIBLIOTECA ===");
+            bw.newLine();
+            bw.write("Generado: " + LocalDate.now());
+            bw.newLine();
+            bw.write("Total libros: " + libros.size());
+            bw.newLine();
+            bw.write("Disponibles: " + disponibles);
+            bw.newLine();
+            bw.write("Prestados: " + prestados);
+            bw.newLine();
+            bw.newLine();
+            bw.write("--- LISTADO COMPLETO ---");
+            bw.newLine();
+            for (Libro l : libros) {
+                bw.write(l.toString());
+                bw.newLine();
+            }
+        }
+        log("Reporte generado: " + salida);
+    }
+}
+
+// ==================== PRESENTACION ====================
+
+public class ProyectoModuloVI {
+
+    private final BibliotecaService servicio;
+    private final Scanner scanner;
+
+    public ProyectoModuloVI(Properties config) throws IOException {
+        this.servicio = new BibliotecaService(config);
+        this.scanner = new Scanner(System.in);
+    }
+
+    public void iniciar() {
+        System.out.println("========================================");
+        System.out.println("  " + servicio.config.getProperty("app.name"));
+        System.out.println("  Version " + servicio.config.getProperty("app.version"));
+        System.out.println("========================================");
+
+        boolean salir = false;
+        while (!salir) {
+            try {
+                mostrarMenu();
+                int opcion = leerOpcion();
+                salir = procesarOpcion(opcion);
+            } catch (IOException e) {
+                System.err.println("Error de E/S: " + e.getMessage());
+            } catch (Exception e) {
+                System.err.println("Error inesperado: " + e.getMessage());
+            }
+        }
+        System.out.println("Gracias por usar la Biblioteca. Hasta luego!");
+    }
+
+    private void mostrarMenu() {
+        System.out.println("\n--- MENU PRINCIPAL ---");
+        System.out.println("1. Listar libros");
+        System.out.println("2. Agregar libro");
+        System.out.println("3. Buscar libro por ID");
+        System.out.println("4. Buscar libros (titulo/autor/genero)");
+        System.out.println("5. Actualizar libro");
+        System.out.println("6. Eliminar libro");
+        System.out.println("7. Generar reporte");
+        System.out.println("8. Cambiar formato de persistencia");
+        System.out.println("9. Ayuda");
+        System.out.println("0. Salir");
+        System.out.print("Seleccione opcion: ");
+    }
+
+    private int leerOpcion() {
+        try {
+            return Integer.parseInt(scanner.nextLine().trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private boolean procesarOpcion(int opcion) throws IOException {
+        switch (opcion) {
+            case 1 -> listarLibros();
+            case 2 -> agregarLibro();
+            case 3 -> buscarLibroPorId();
+            case 4 -> buscarLibros();
+            case 5 -> actualizarLibro();
+            case 6 -> eliminarLibro();
+            case 7 -> generarReporte();
+            case 8 -> cambiarFormato();
+            case 9 -> mostrarAyuda();
+            case 0 -> { return true; }
+            default -> System.out.println("Opcion invalida.");
+        }
+        return false;
+    }
+
+    private void listarLibros() throws IOException {
+        List<Libro> libros = servicio.listarLibros();
+        if (libros.isEmpty()) {
+            System.out.println("No hay libros registrados.");
+            return;
+        }
+        System.out.println("\n--- LIBROS (" + libros.size() + ") ---");
+        for (Libro l : libros) {
+            System.out.println(l);
+        }
+    }
+
+    private void agregarLibro() throws IOException {
+        System.out.println("\n--- AGREGAR LIBRO ---");
+        System.out.print("Titulo: ");
+        String titulo = scanner.nextLine();
+        System.out.print("Autor: ");
+        String autor = scanner.nextLine();
+        System.out.print("Genero: ");
+        String genero = scanner.nextLine();
+        System.out.print("Anio de publicacion: ");
+        int anio = Integer.parseInt(scanner.nextLine());
+        System.out.print("ISBN: ");
+        String isbn = scanner.nextLine();
+
+        Libro creado = servicio.agregarLibro(titulo, autor, genero, anio, isbn);
+        System.out.println("Libro agregado exitosamente! ID: " + creado.getId());
+    }
+
+    private void buscarLibroPorId() throws IOException {
+        System.out.print("Ingrese ID del libro: ");
+        int id = Integer.parseInt(scanner.nextLine());
+        Libro libro = servicio.buscarLibro(id);
+        if (libro == null) {
+            System.out.println("Libro no encontrado.");
+        } else {
+            System.out.println(libro);
+        }
+    }
+
+    private void buscarLibros() throws IOException {
+        System.out.print("Texto de busqueda: ");
+        String texto = scanner.nextLine();
+        List<Libro> resultados = servicio.buscarLibros(texto);
+        if (resultados.isEmpty()) {
+            System.out.println("No se encontraron libros.");
+        } else {
+            System.out.println("\n--- RESULTADOS (" + resultados.size() + ") ---");
+            for (Libro l : resultados) {
+                System.out.println(l);
+            }
+        }
+    }
+
+    private void actualizarLibro() throws IOException {
+        System.out.println("\n--- ACTUALIZAR LIBRO ---");
+        System.out.print("ID del libro: ");
+        int id = Integer.parseInt(scanner.nextLine());
+        Libro existente = servicio.buscarLibro(id);
+        if (existente == null) {
+            System.out.println("Libro no encontrado.");
+            return;
+        }
+        System.out.println("Datos actuales: " + existente);
+        System.out.print("Nuevo titulo (" + existente.getTitulo() + "): ");
+        String titulo = scanner.nextLine();
+        if (titulo.isEmpty()) titulo = existente.getTitulo();
+        System.out.print("Nuevo autor (" + existente.getAutor() + "): ");
+        String autor = scanner.nextLine();
+        if (autor.isEmpty()) autor = existente.getAutor();
+        System.out.print("Nuevo genero (" + existente.getGenero() + "): ");
+        String genero = scanner.nextLine();
+        if (genero.isEmpty()) genero = existente.getGenero();
+        System.out.print("Nuevo anio (" + existente.getAnioPublicacion() + "): ");
+        String anioStr = scanner.nextLine();
+        int anio = anioStr.isEmpty() ? existente.getAnioPublicacion() : Integer.parseInt(anioStr);
+        System.out.print("Nuevo ISBN (" + existente.getIsbn() + "): ");
+        String isbn = scanner.nextLine();
+        if (isbn.isEmpty()) isbn = existente.getIsbn();
+        System.out.print("Disponible (true/false) (" + existente.isDisponible() + "): ");
+        String dispStr = scanner.nextLine();
+        boolean disp = dispStr.isEmpty() ? existente.isDisponible() : Boolean.parseBoolean(dispStr);
+
+        servicio.actualizarLibro(id, titulo, autor, genero, anio, isbn, disp);
+        System.out.println("Libro actualizado exitosamente!");
+    }
+
+    private void eliminarLibro() throws IOException {
+        System.out.print("ID del libro a eliminar: ");
+        int id = Integer.parseInt(scanner.nextLine());
+        if (servicio.eliminarLibro(id)) {
+            System.out.println("Libro eliminado.");
+        } else {
+            System.out.println("Libro no encontrado.");
+        }
+    }
+
+    private void generarReporte() throws IOException {
+        Path reporte = Paths.get("./reporte_biblioteca_" + LocalDate.now() + ".txt");
+        servicio.generarReporte(reporte);
+        System.out.println("Reporte generado: " + reporte.toAbsolutePath());
+    }
+
+    private void cambiarFormato() throws IOException {
+        System.out.println("\nFormatos disponibles:");
+        System.out.println("1. Serializacion (binario .dat)");
+        System.out.println("2. Texto (.txt)");
+        System.out.println("3. NIO (.properties)");
+        System.out.print("Seleccione formato: ");
+        int opt = leerOpcion();
+        String formato = switch (opt) {
+            case 2 -> "texto";
+            case 3 -> "nio";
+            default -> "serializacion";
+        };
+        servicio.config.setProperty("data.format", formato);
+        System.out.println("Formato cambiado a: " + formato
+                + " (los datos se migraran al acceder)");
+        servicio.log("Formato cambiado a: " + formato);
+    }
+
+    private void mostrarAyuda() {
+        System.out.println("\n--- AYUDA ---");
+        System.out.println("Formatos de persistencia:");
+        System.out.println("  serializacion: archivo binario .dat (rapido, compacto)");
+        System.out.println("  texto: archivo .txt (legible por humanos)");
+        System.out.println("  nio: archivo .properties (formato clave=valor)");
+        System.out.println("\nLos datos se almacenan en ./datos/");
+        System.out.println("El log de operaciones esta en ./datos/operaciones.log");
+        System.out.println("Configure en config.properties el formato y directorio.");
+    }
+
+    // ---- MAIN ----
+    public static void main(String[] args) {
+        try {
+            Properties config = new Properties();
+
+            // Cargar configuracion por defecto
+            config.setProperty("app.name", "Biblioteca Java Master Book");
+            config.setProperty("app.version", "1.0.0");
+            config.setProperty("data.format", "serializacion");
+            config.setProperty("data.dir", "./datos");
+
+            // Intentar cargar config externa
+            Path configPath = Paths.get("./config.properties");
+            if (Files.exists(configPath)) {
+                try (BufferedReader br = Files.newBufferedReader(configPath,
+                        StandardCharsets.UTF_8)) {
+                    config.load(br);
+                }
+                System.out.println("Configuracion cargada de config.properties");
+            }
+
+            // Crear directorio de datos si no existe
+            Path datosDir = Paths.get(config.getProperty("data.dir", "./datos"));
+            Files.createDirectories(datosDir);
+            Path backupDir = Paths.get(config.getProperty("data.backup.dir", "./backup"));
+            Files.createDirectories(backupDir);
+
+            // Backup automatico de datos existentes
+            if (Files.exists(datosDir)) {
+                try (java.util.stream.Stream<Path> stream = Files.walk(datosDir, 1)) {
+                    stream.filter(f -> !f.equals(datosDir))
+                          .forEach(f -> {
+                              try {
+                                  Path dest = backupDir.resolve(f.getFileName()
+                                          + ".bak." + LocalDate.now());
+                                  Files.copy(f, dest,
+                                          StandardCopyOption.REPLACE_EXISTING);
+                              } catch (IOException e) {
+                                  System.err.println("Error backup: " + e.getMessage());
+                              }
+                          });
+                }
+            }
+
+            // Iniciar aplicacion
+            ProyectoModuloVI app = new ProyectoModuloVI(config);
+            app.iniciar();
+
+        } catch (IOException e) {
+            System.err.println("Error fatal: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+}
+
+================================================================================
+  RESUMEN DEL PROYECTO
+================================================================================
+
+El proyecto integra todos los conceptos del modulo:
+
+  • File: Creacion de directorios, verificacion de existencia de archivos.
+  • FileReader/Writer con BufferedReader/Writer: Formato texto para libros.txt.
+  • ObjectInputStream/ObjectOutputStream: Serializacion en libros.dat.
+  • Serializable: La interfaz en las clases del modelo.
+  • FileInputStream/OutputStream: Base para ObjectStream y copia de archivos.
+  • try-with-resources: En absolutamente todas las operaciones de E/S.
+  • NIO (Files, Paths): Creacion de directorios, walk para backup,
+    Files.write/readAllLines en DAO NIO, Files.newBufferedReader/Writer.
+  • Properties: Configuracion externa cargada al iniciar.
+
+Arquitectura:
+  • Modelo: Libro, Usuario, Prestamo (con Serializable y metodos toLine/fromLine).
+  • DAO: Interface generica DAO<T>, implementaciones en tres formatos.
+  • Servicio: BibliotecaService con logica de negocio y logging.
+  • Presentacion: Menu interactivo por consola.
+
+Funcionalidades:
+  • CRUD completo de libros.
+  • Busqueda por ID y por texto (titulo, autor, genero).
+  • Cambio dinamico de formato de persistencia.
+  • Generacion de reportes.
+  • Backup automatico al iniciar.
+  • Log de operaciones.
+
+================================================================================
+  EJERCICIOS DE EXTENSION
+================================================================================
+
+1. Completar CRUD de usuarios: Implementa UsuarioDAO y agrega las
+   opciones de gestion de usuarios al menu.
+
+2. Sistema de prestamos: Implementa PrestamoDAO y las operaciones de
+   prestar/devolver libros. Al prestar, marca el libro como no disponible.
+   Al devolver, registra la fecha de devolucion.
+
+3. Migracion entre formatos: Implementa una funcion que migre todos los
+   datos de un formato a otro (serializacion -> texto -> nio y viceversa).
+
+4. Busqueda avanzada: Agrega filtros combinados (buscar por autor Y genero,
+   rango de anios, libros disponibles/prestados).
+
+5. Interfaz grafica: Implementa una interfaz grafica simple con JavaFX
+   o Swing que consuma los mismos servicios.
+
+6. Exportacion multiple: Agrega exportacion a JSON y CSV ademas de los
+   formatos actuales. Usa el formato texto como base.
+
+7. Pruebas unitarias: Escribe pruebas unitarias para cada DAO usando
+   archivos temporales (Files.createTempFile/Directory).
+
+8. Cifrado de datos: Agrega una capa de cifrado simple (XOR o AES) a
+   los archivos de datos para proteger la informacion.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: Por que usar una interface DAO generica?
+R: El patron DAO separa la logica de persistencia de la logica de negocio.
+   La interface generica permite cambiar la implementacion (formato de
+   archivo) sin modificar el servicio ni la presentacion.
+
+P: Cual formato de persistencia es mejor?
+R: Depende: serializacion es rapida y compacta pero solo legible por Java;
+   texto es legible por humanos y facil de depurar; NIO/properties permite
+   acceso sencillo a valores individuales.
+
+P: Como manejar la concurrencia en los archivos?
+R: Este proyecto no maneja concurrencia. Para aplicaciones multi-hilo,
+   usa FileLock de NIO o sincroniza el acceso a los metodos del DAO.
+
+P: Por que usar try-with-resources en lugar de try-finally?
+R: Try-with-resources garantiza el cierre automatico incluso si ocurren
+   excepciones, reduce el codigo boilerplate y maneja correctamente las
+   excepciones suprimidas.
+
+P: Como cambio el directorio de datos?
+R: Modifica la propiedad data.dir en config.properties. El sistema crea
+   el directorio automaticamente al iniciar.
+
+================================================================================
+  DESAFIO DEL ARQUITECTO — PROYECTO FINAL DEL MODULO
+================================================================================
+
+  "SISTEMA DE GESTION DE INVENTARIO COMPLETO"
+
+  Expande el proyecto de biblioteca a un sistema completo de gestion
+  de inventario con las siguientes caracteristicas avanzadas:
+
+  REQUISITOS:
+
+  1. Entidades completas: Producto (codigo, nombre, descripcion,
+     categoria, precio, stock, stockMinimo, proveedor), Proveedor
+     (nombre, contacto, telefono, email), Movimiento (idProducto,
+     tipo: ENTRADA/SALIDA, cantidad, fecha, motivo).
+
+  2. Control de stock: Al registrar una venta o entrada, actualiza
+     el stock automaticamente. Genera alerta cuando el stock de un
+     producto baja del minimo.
+
+  3. Historial de movimientos: Cada cambio de stock se registra como
+     un movimiento con timestamp. Permite consultar el historial de
+     cualquier producto.
+
+  4. Busqueda avanzada con NIO:
+     • Indice invertido: Almacena un archivo .properties por cada
+       letra inicial para busquedas rapidas.
+     • Cache en memoria de busquedas recientes (archivo JSON con NIO).
+
+  5. Reportes avanzados:
+     • Productos con stock bajo (PDF usando iText o similar).
+     • Valor total del inventario.
+     • Top 10 productos mas vendidos.
+     • Reporte de movimientos por periodo.
+
+  6. Backup incremental: Usa WatchService para detectar cambios en
+     los archivos de datos y hacer backup automatico de solo los
+     archivos modificados.
+
+  7. Interfaz de consola con colores: Usa codigos ANSI para mejorar
+     la experiencia (verde para OK, rojo para errores, amarillo para
+     alertas).
+
+  8. Logs rotados: El archivo de log se rota cuando supera 1 MB.
+     Los logs viejos se comprimen con GZIPOutputStream.
+
+  Minimo 8 clases: Producto, Proveedor, Movimiento, InventarioService,
+    InventarioDAO, Reporteador, BackupManager, LogRotator.
+
+  VALORACION:
+  3*: CRUD productos + control stock basico + historial.
+  4*: Busqueda con indice + reportes + backup con WatchService.
+  5*: Logs rotados + interfaz con colores + pruebas automatizadas.
+
+  ENTREGABLES:
+  • Codigo fuente completo y funcional.
+  • Archivo config.properties documentado.
+  • Archivo README con instrucciones de compilacion y ejecucion.
+  • Javadoc basico de todas las clases publicas.
+
+================================================================================
+  CIERRE DEL MODULO
+================================================================================
+
+Felicidades! Has completado el Modulo VI: Entrada, Salida y Archivos.
+
+En este modulo has aprendido:
+  • Capitulo 51: File class — representacion de rutas y metadatos.
+  • Capitulo 52: FileReader/Writer — lectura y escritura de caracteres.
+  • Capitulo 53: BufferedReader/Writer — buffering y readLine().
+  • Capitulo 54: ObjectInput/OutputStream — serializacion de objetos.
+  • Capitulo 55: Serializacion — Serializable, SUID, transient.
+  • Capitulo 56: FileInput/OutputStream — datos binarios.
+  • Capitulo 57: Try-with-resources — manejo automatico de recursos.
+  • Capitulo 58: NIO — Path, Files, walk, WatchService.
+  • Capitulo 59: Properties — configuracion clave=valor.
+  • Capitulo 60: Proyecto — integracion de todas las tecnologias.
+
+Ahora tienes las herramientas para:
+  • Leer y escribir archivos en cualquier formato.
+  • Serializar objetos complejos de forma eficiente.
+  • Manejar recursos correctamente sin fugas.
+  • Usar la API moderna de NIO para operaciones avanzadas.
+  • Configurar aplicaciones con archivos de propiedades.
+  • Disenar sistemas con persistencia de datos.
+
+El conocimiento de E/S de archivos es fundamental para cualquier
+desarrollador Java. Lo usaras en cada proyecto, desde aplicaciones de
+consola hasta sistemas empresariales.
+
+Continua tu viaje en el MODULO VII: PROGRAMACION FUNCIONAL Y LAMBDAS,
+donde exploraremos expresiones lambda, Stream API, Optional, y
+programacion funcional en Java.
+
+Gracias por estudiar con JAVA MASTER BOOK!
+
+Nos vemos en el Capitulo 61!
+
+================================================================================
+  MODULO VII: PROGRAMACION FUNCIONAL Y LAMBDAS (PREVIEW)
+================================================================================
+
+En el Modulo VII exploraremos la programacion funcional en Java:
+  • Capitulo 61: Expresiones Lambda
+  • Capitulo 62: Interfaces Funcionales
+  • Capitulo 63: Stream API (Parte I)
+  • Capitulo 64: Stream API (Parte II)
+  • Capitulo 65: Optional
+  • Capitulo 66: Method References
+  • Capitulo 67: Collectors
+  • Capitulo 68: Programacion Funcional Avanzada
+  • Capitulo 69: Parallel Streams
+  • Capitulo 70: Proyecto — Analisis de datos con Streams
+
+Prepárate para escribir codigo Java mas expresivo, conciso y declarativo!
+================================================================================

@@ -1,0 +1,706 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 52: DELEGADOS MULTICAST
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+Bienvenido al capítulo 52 de C# MASTER BOOK. En el capítulo anterior viste
+que un delegado apunta a un solo método. Sin embargo, los delegados en C#
+tienen una capacidad especial: pueden apuntar a MÚLTIPLES métodos a la vez.
+
+Esto se llama delegados multicast (multidifusión). Cuando invocas un delegado
+multicast, todos los métodos en su lista de invocación se ejecutan en
+secuencia. Esta característica es la base sobre la que se construye el sistema
+de eventos de C#, como veremos en el capítulo 53.
+
+Hoy exploraremos:
+  • El operador += para agregar métodos a un delegado.
+  • El operador -= para eliminar métodos.
+  • La lista de invocación (InvocationList).
+  • GetInvocationList() para inspeccionar y controlar la ejecución.
+  • Cómo se manejan los valores de retorno y las excepciones.
+  • Patrones avanzados con delegados multicast.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"Un solo delegado puede orquestar una sinfonía de métodos.
+El multicast es el director de orquesta."
+— Autor desconocido
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Comprender qué es un delegado multicast y cómo funciona internamente.
+  • Usar los operadores += y -= para construir y modificar cadenas.
+  • Inspeccionar la InvocationList con GetInvocationList().
+  • Manejar valores de retorno en delegados multicast.
+  • Manejar excepciones en invocaciones múltiples.
+  • Implementar el patrón Observer manual con multicast.
+  • Combinar delegados multicast con expresiones lambda.
+  • Diferenciar entre delegados simples (unicast) y multicast.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+1. ¿Qué es un delegado multicast?
+
+Un delegado en C# es naturalmente multicast. Esto significa que un solo
+delegado puede contener referencias a múltiples métodos. Cuando se invoca,
+todos los métodos se ejecutan en el orden en que fueron agregados.
+
+Internamente, la clase MulticastDelegate (heredada de Delegate) mantiene una
+lista enlazada de delegados. Cada nodo apunta a un método y al siguiente
+delegado en la cadena.
+
+  ┌─────────────────────────────────────────────┐
+  │  Action d = null;                           │
+  │  d += Metodo1;  // d → [Metodo1]            │
+  │  d += Metodo2;  // d → [Metodo1]→[Metodo2]  │
+  │  d += Metodo3;  // d → [Metodo1]→[Metodo2]→[Metodo3] │
+  │  d();           // Ejecuta 1→2→3            │
+  └─────────────────────────────────────────────┘
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+2. Operador += (Agregar)
+
+Para agregar un método a la cadena multicast:
+
+  Action notificar = null;
+  notificar += EnviarEmail;
+  notificar += EnviarSMS;
+  notificar += EnviarPush;
+
+  notificar?.Invoke();  // Envia Email, luego SMS, luego Push
+
+También puedes combinar delegados existentes:
+
+  Action a = Metodo1;
+  Action b = Metodo2;
+  Action c = a + b;   // Combinación
+  Action d = a + b + Metodo3;
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+3. Operador -= (Quitar)
+
+Para eliminar un método de la cadena:
+
+  notificar -= EnviarSMS;  // Quita EnviarSMS de la cadena
+
+Si el método aparece varias veces, solo se quita la última ocurrencia.
+Si el delegado resultante queda vacío, será null.
+
+  Action d = null;
+  d += A; d += B; d += A;  // Cadena: A → B → A
+  d -= A;                  // Cadena: A → B  (quita el último A)
+  d -= A;                  // Cadena: B
+  d -= B;                  // d == null
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+4. InvocationList y GetInvocationList()
+
+Cada delegado multicast expone una propiedad InvocationList y un método
+GetInvocationList() que devuelve un array de Delegate, uno por cada método
+en la cadena.
+
+Esto es útil para:
+  • Inspeccionar cuántos métodos hay registrados.
+  • Invocar métodos individualmente (con control de flujo).
+  • Capturar el resultado de cada método por separado.
+
+Ejemplo:
+
+  Action d = Metodo1 + Metodo2 + Metodo3;
+
+  Delegate[] metodos = d.GetInvocationList();
+  Console.WriteLine($"Métodos registrados: {metodos.Length}");
+
+  foreach (Delegate delegado in metodos)
+  {
+      Console.WriteLine($"  → {delegado.Method.Name} en {delegado.Target}");
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+5. Valores de retorno en delegados multicast
+
+Cuando un delegado multicast tiene un valor de retorno (no es void), solo se
+devuelve el valor del ÚLTIMO método invocado. Los valores anteriores se
+pierden.
+
+  Func<int> d = () => 1;
+  d += () => 2;
+  d += () => 3;
+
+  int result = d();  // result = 3
+
+Para recuperar los valores individuales, debes usar GetInvocationList():
+
+  Func<int> d = () => 1;
+  d += () => 2;
+  d += () => 3;
+
+  foreach (Func<int> delegado in d.GetInvocationList())
+  {
+      int valor = delegado();
+      Console.WriteLine($"Resultado parcial: {valor}");
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+6. Manejo de excepciones
+
+Si un método en la cadena lanza una excepción, los métodos restantes NO se
+ejecutan. Para evitarlo, debes invocar manualmente con GetInvocationList().
+
+  Action d = () => Console.WriteLine("1");
+  d += () => throw new InvalidOperationException("Error!");
+  d += () => Console.WriteLine("3");
+
+  // d();  // 💥 Solo imprime "1", lanza excepción, "3" nunca se ejecuta
+
+  // Solución:
+  foreach (Action delegado in d.GetInvocationList())
+  {
+      try
+      {
+          delegado();
+      }
+      catch (Exception ex)
+      {
+          Console.WriteLine($"Error en {delegado.Method.Name}: {ex.Message}");
+      }
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+7. Combinación y comparación de delegados
+
+Puedes combinar delegados con + y +=, y restar con - y -=.
+
+  Action a = Metodo1;
+  Action b = Metodo2;
+  Action combined = a + b;
+  Action subtracted = combined - a;
+
+Para comparar dos delegados multicast:
+
+  Action d1 = A + B + C;
+  Action d2 = A + B + C;
+  Console.WriteLine(d1 == d2);  // True (misma cadena, mismo orden)
+
+  Action d3 = C + B + A;
+  Console.WriteLine(d1 == d3);  // False (orden diferente)
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+8. Patrón Observer con delegados multicast
+
+Antes de que existieran los eventos, los delegados multicast se usaban para
+implementar el patrón Observer. Una clase notifica a múltiples suscriptores.
+
+  public class Notificador
+  {
+      public Action Notificacion { get; set; }
+
+      public void Publicar()
+      {
+          Console.WriteLine("Notificando suscriptores...");
+          Notificacion?.Invoke();
+      }
+  }
+
+  // Uso:
+  var notificador = new Notificador();
+  notificador.Notificacion += () => Console.WriteLine("Suscriptor 1");
+  notificador.Notificacion += () => Console.WriteLine("Suscriptor 2");
+  notificador.Publicar();
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+9. Método GetInvocationList() avanzado
+
+Con GetInvocationList() puedes hacer cosas como:
+  • Invertir el orden de invocación.
+  • Ejecutar métodos en paralelo.
+  • Ejecutar métodos condicionalmente.
+  • Recopilar todos los valores de retorno.
+
+Ejemplo de ejecución en paralelo:
+
+  var acciones = new List<Action>();
+
+  Action cadena = () => Thread.Sleep(1000);
+  cadena += () => Thread.Sleep(2000);
+  cadena += () => Thread.Sleep(1500);
+
+  var tasks = cadena.GetInvocationList()
+      .Select(d => Task.Run(() => ((Action)d)()));
+
+  Task.WaitAll(tasks.ToArray());
+  Console.WriteLine("Todos los métodos completados en paralelo");
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+10. Delegados multicast genéricos
+
+Los delegados genéricos también soportan multicast:
+
+  Func<int, int> d = x => { Console.WriteLine($"Primero: {x}"); return x; };
+  d += x => { Console.WriteLine($"Segundo: {x * 2}"); return x * 2; };
+
+  foreach (Func<int, int> f in d.GetInvocationList())
+  {
+      Console.WriteLine($"  Resultado: {f(5)}");
+  }
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DE EJEMPLO
+══════════════════════════
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Capitulo52_DelegadosMulticast
+{
+    public class Program
+    {
+        static void Main()
+        {
+            Console.WriteLine("═══════ CAPÍTULO 52: DELEGADOS MULTICAST ═══════\n");
+
+            // ─── 1. Operador += ───
+            Console.WriteLine("─── 1. Operador += (Agregar métodos) ───");
+
+            Action notificar = null;
+            notificar += EnviarEmail;
+            notificar += EnviarSMS;
+            notificar += EnviarPush;
+
+            Console.WriteLine("Invocando notificar():");
+            notificar?.Invoke();
+
+            // ─── 2. Operador -= ───
+            Console.WriteLine("\n─── 2. Operador -= (Quitar métodos) ───");
+
+            notificar -= EnviarSMS;
+            Console.WriteLine("Después de quitar EnviarSMS:");
+            notificar?.Invoke();
+
+            notificar -= EnviarEmail;
+            notificar -= EnviarPush;
+            Console.WriteLine($"Después de quitar todo: d is null = {notificar == null}");
+
+            // ─── 3. Combined delegates ───
+            Console.WriteLine("\n─── 3. Combinación con + ───");
+
+            Action a = () => Console.WriteLine("  Método A");
+            Action b = () => Console.WriteLine("  Método B");
+            Action c = () => Console.WriteLine("  Método C");
+
+            Action combined = a + b + c;
+            combined();
+
+            // ─── 4. GetInvocationList ───
+            Console.WriteLine("\n─── 4. GetInvocationList() ───");
+
+            Action cadena = a + b + c;
+            Delegate[] metodos = cadena.GetInvocationList();
+
+            Console.WriteLine($"Métodos registrados: {metodos.Length}");
+
+            foreach (Delegate d in metodos)
+            {
+                Console.WriteLine($"  Método: {d.Method.Name}, " +
+                    $"Target: {d.Target?.ToString() ?? "null"}");
+            }
+
+            // ─── 5. Valores de retorno ───
+            Console.WriteLine("\n─── 5. Valores de Retorno ───");
+
+            Func<int> retornos = () =>
+            {
+                Console.WriteLine("  Primer método: retorna 1");
+                return 1;
+            };
+            retornos += () =>
+            {
+                Console.WriteLine("  Segundo método: retorna 2");
+                return 2;
+            };
+            retornos += () =>
+            {
+                Console.WriteLine("  Tercer método: retorna 3");
+                return 3;
+            };
+
+            // Solo se obtiene el último
+            Console.WriteLine($"Resultado directo (solo último): {retornos()}");
+
+            // Con GetInvocationList recuperamos todos
+            Console.WriteLine("\nRecuperando valores individuales:");
+            var resultados = new List<int>();
+            foreach (Func<int> f in retornos.GetInvocationList())
+            {
+                int valor = f();
+                resultados.Add(valor);
+                Console.WriteLine($"  Valor parcial: {valor}");
+            }
+            Console.WriteLine($"Todos los resultados: {string.Join(", ", resultados)}");
+
+            // ─── 6. Manejo de excepciones ───
+            Console.WriteLine("\n─── 6. Manejo de Excepciones ───");
+
+            Action conError = () => Console.WriteLine("  Paso 1: OK");
+            conError += () =>
+            {
+                Console.WriteLine("  Paso 2: OK");
+            };
+            conError += () =>
+            {
+                Console.WriteLine("  Paso 3: ANTES del error");
+                throw new InvalidOperationException("Error simulado en paso 3");
+            };
+            conError += () => Console.WriteLine("  Paso 4: Esto NO se ejecuta");
+
+            Console.WriteLine("Invocación directa (falla en paso 3):");
+            try
+            {
+                conError();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  💥 Excepción: {ex.Message}");
+            }
+
+            Console.WriteLine("\nInvocación segura con GetInvocationList:");
+            foreach (Action delegado in conError.GetInvocationList())
+            {
+                try
+                {
+                    delegado();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  💥 Error en {delegado.Method.Name}: {ex.Message}");
+                }
+            }
+
+            // ─── 7. Patrón Observer manual ───
+            Console.WriteLine("\n─── 7. Patrón Observer con Multicast ───");
+
+            var publicador = new Publicador();
+
+            publicador.Suscriptores += () => Console.WriteLine("  📧 Email enviado");
+            publicador.Suscriptores += () => Console.WriteLine("  📱 SMS enviado");
+            publicador.Suscriptores += () => Console.WriteLine("  🔔 Push enviado");
+
+            publicador.Publicar();
+
+            // ─── 8. Inversión de orden ───
+            Console.WriteLine("\n─── 8. Inversión de Orden ───");
+
+            Action ordenada = () => Console.WriteLine("  Primero");
+            ordenada += () => Console.WriteLine("  Segundo");
+            ordenada += () => Console.WriteLine("  Tercero");
+
+            Console.WriteLine("Orden original:");
+            ordenada();
+
+            Console.WriteLine("\nOrden inverso:");
+            var lista = ordenada.GetInvocationList().Reverse();
+            foreach (Action inv in lista)
+            {
+                inv();
+            }
+
+            // ─── 9. Ejecución en paralelo ───
+            Console.WriteLine("\n─── 9. Ejecución en Paralelo ───");
+
+            Action pesadas = () =>
+            {
+                Thread.Sleep(500);
+                Console.WriteLine("  Tarea 1 completada");
+            };
+            pesadas += () =>
+            {
+                Thread.Sleep(300);
+                Console.WriteLine("  Tarea 2 completada");
+            };
+            pesadas += () =>
+            {
+                Thread.Sleep(700);
+                Console.WriteLine("  Tarea 3 completada");
+            };
+
+            Console.WriteLine("Ejecutando en paralelo con GetInvocationList:");
+            var tareas = pesadas.GetInvocationList()
+                .Select(d => Task.Run(() => ((Action)d)()));
+            Task.WaitAll(tareas.ToArray());
+            Console.WriteLine("  Todas las tareas paralelas completadas");
+
+            // ─── 10. Delegado multicast genérico con parámetros ───
+            Console.WriteLine("\n─── 10. Delegado Multicast con Parámetros ───");
+
+            Action<string> procesadores = s => Console.WriteLine($"  Minúsculas: {s.ToLower()}");
+            procesadores += s => Console.WriteLine($"  Mayúsculas: {s.ToUpper()}");
+            procesadores += s => Console.WriteLine($"  Longitud: {s.Length}");
+            procesadores += s => Console.WriteLine($"  Invertido: {new string(s.Reverse().ToArray())}");
+
+            procesadores("C# Master Book");
+
+            // ─── 11. Predicate multicast ───
+            Console.WriteLine("\n─── 11. Predicate Multicast ───");
+
+            Predicate<int> validadores = n =>
+            {
+                Console.WriteLine($"  ¿Es positivo? {n > 0}");
+                return n > 0;
+            };
+            validadores += n =>
+            {
+                Console.WriteLine($"  ¿Es par? {n % 2 == 0}");
+                return n % 2 == 0;
+            };
+            validadores += n =>
+            {
+                Console.WriteLine($"  ¿Es mayor que 10? {n > 10}");
+                return n > 10;
+            };
+
+            Console.WriteLine("Validando número 15:");
+            foreach (Predicate<int> val in validadores.GetInvocationList())
+            {
+                bool res = val(15);
+                Console.WriteLine($"  Resultado: {res}");
+            }
+
+            // ─── 12. Evento simulado con multicast ───
+            Console.WriteLine("\n─── 12. Evento Simulado ───");
+
+            var boton = new Boton();
+            boton.OnClick += () => Console.WriteLine("  Handler 1: Abrir menú");
+            boton.OnClick += () => Console.WriteLine("  Handler 2: Reproducir sonido");
+            boton.OnClick += () => Console.WriteLine("  Handler 3: Enviar analytics");
+
+            boton.SimularClick();
+
+            // ─── 13. Filtros encadenados ───
+            Console.WriteLine("\n─── 13. Filtros Encadenados ───");
+
+            Func<int, bool> filtros = x =>
+            {
+                Console.WriteLine($"  Filtro positivo: {x > 0}");
+                return x > 0;
+            };
+            filtros += x =>
+            {
+                Console.WriteLine($"  Filtro par: {x % 2 == 0}");
+                return x % 2 == 0;
+            };
+            filtros += x =>
+            {
+                Console.WriteLine($"  Filtro rango 1-100: {x >= 1 && x <= 100}");
+                return x >= 1 && x <= 100;
+            };
+
+            int prueba = 50;
+            Console.WriteLine($"Probando con {prueba}:");
+            bool aceptado = true;
+            foreach (Func<int, bool> f in filtros.GetInvocationList())
+            {
+                if (!f(prueba))
+                {
+                    aceptado = false;
+                    Console.WriteLine($"  ❌ Filtro {f.Method.Name} rechazó el valor");
+                    break;
+                }
+            }
+            Console.WriteLine($"  Resultado final: {(aceptado ? "✅ Aceptado" : "❌ Rechazado")}");
+
+            Console.WriteLine("\n═══════ FIN CAPÍTULO 52 ═══════");
+        }
+
+        // ─── Métodos de soporte ───
+        static void EnviarEmail() => Console.WriteLine("  📧 Enviando email...");
+        static void EnviarSMS() => Console.WriteLine("  📱 Enviando SMS...");
+        static void EnviarPush() => Console.WriteLine("  🔔 Enviando notificación push...");
+    }
+
+    // ─── Clase Publicador (Observer pattern) ───
+    public class Publicador
+    {
+        public Action Suscriptores { get; set; }
+
+        public void Publicar()
+        {
+            Console.WriteLine("Publicando evento...");
+            Suscriptores?.Invoke();
+            Console.WriteLine("Publicación completada.");
+        }
+    }
+
+    // ─── Clase Botón (evento simulado) ───
+    public class Boton
+    {
+        public Action OnClick { get; set; }
+
+        public void SimularClick()
+        {
+            Console.WriteLine("Botón clickeado. Notificando handlers...");
+            OnClick?.Invoke();
+        }
+    }
+}
+```
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Los delegados en C# son inherentemente multicast.
+  • += agrega un método a la cadena; -= lo remueve.
+  • La cadena se ejecuta en el orden de registro.
+  • GetInvocationList() devuelve un array de Delegate para inspección.
+  • Con delegados que retornan valor, solo se obtiene el último resultado.
+  • Excepciones cortan la cadena; usar GetInvocationList() para evitarlo.
+  • El patrón Observer se implementa naturalmente con multicast.
+  • Se puede invertir, paralelizar o ejecutar condicionalmente la cadena.
+  • Los eventos (capítulo 53) son wrappers sobre delegados multicast.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Crea un delegado Action<string> y agrega 5 métodos que
+    procesen el string (mayúsculas, minúsculas, reverse, longitud, hash).
+    Ejecuta la cadena y observa el orden.
+
+  ✦ Ejercicio 2: Usando GetInvocationList, ejecuta los métodos en orden
+    inverso al que fueron registrados.
+
+  ✦ Ejercicio 3: Implementa un sistema de logging donde diferentes
+    "loggers" (consola, archivo, base de datos) se agregan a un delegado
+    multicast Action<string> y se invocan todos.
+
+  ✦ Ejercicio 4: Crea un delegado Func<int, int> multicast. Usa
+    GetInvocationList para recolectar todos los resultados parciales en
+    un array. Muestra la suma de todos.
+
+  ✦ Ejercicio 5: Implementa un validador de formularios donde cada
+    validación es un Predicate<string> agregado con +=. Si alguna falla,
+    detén el proceso y reporta el error.
+
+  ✦ Ejercicio 6: Escribe un sistema de notificación donde los suscriptores
+    se puedan agregar y quitar dinámicamente con += y -=.
+
+  ✦ Ejercicio 7: Demuestra que un delegado multicast con valores de retorno
+    solo conserva el último. Luego recupera todos con GetInvocationList.
+
+  ✦ Ejercicio 8: Crea un pipeline de transformación de datos donde cada
+    etapa es un Func<string, string> encadenado. Ejecuta todo el pipeline.
+
+  ✦ Ejercicio 9: Implementa un dispatcher de comandos. Cada comando se
+    registra como Action. Usa GetInvocationList para ejecutar comandos
+    con manejo individual de excepciones.
+
+  ✦ Ejercicio 10: Escribe un código que demuestre la ejecución en paralelo
+    de un delegado multicast usando Task.Run y GetInvocationList.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿Todos los delegados son multicast?
+  → Sí. Todos los delegados en C# heredan de MulticastDelegate, incluso
+    si solo apuntan a un método.
+
+  ❓ ¿Cuál es el límite de métodos en un delegado multicast?
+  → No hay límite teórico, pero la memoria y el rendimiento son factores.
+
+  ❓ ¿Qué pasa si uso -= en un delegado que no contiene ese método?
+  → No ocurre nada. La operación es silenciosamente ignorada.
+
+  ❓ ¿Puedo combinar delegados de distinto tipo?
+  → No. Solo se pueden combinar delegados del mismo tipo.
+
+  ❓ ¿El operador + en delegados crea un nuevo delegado o modifica el existente?
+  → Los delegados son inmutables. += crea un nuevo delegado que es la
+    combinación del original y el nuevo método.
+
+  ❓ ¿GetInvocationList() crea una copia o devuelve la referencia interna?
+  → Devuelve una copia del array de la lista de invocación.
+
+  ❓ ¿Puedo tener un delegado multicast que incluya el mismo método varias veces?
+  → Sí. Cada += agrega una nueva entrada, incluso si es el mismo método.
+
+  ❓ ¿Los métodos anónimos y lambdas se pueden usar con multicast?
+  → Sí, pero no podrás quitarlos con -= a menos que guardes la referencia.
+
+  ❓ ¿Cómo manejo excepciones en un delegado multicast?
+  → Usa GetInvocationList() e invoca cada método dentro de un try-catch.
+
+DESAFÍO DEL ARQUITECTO
+══════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Construye un sistema de tuberías (Pipeline) genérico donde cada   │
+  │  etapa es una transformación de datos, implementado exclusivamente │
+  │  con delegados multicast.                                          │
+  │                                                                     │
+  │  Requisitos:                                                        │
+  │    • Pipeline<T> donde T es el tipo de datos.                       │
+  │    • Las etapas se agregan con +=.                                  │
+  │    • Ejecutar(T input) procesa la data a través de todas las        │
+  │      etapas.                                                        │
+  │    • Debe usar GetInvocationList() para invocar etapa por etapa.    │
+  │    • Cada etapa recibe la salida de la anterior (pipe).            │
+  │    • Debe soportar: logging, validación, transformación.           │
+  │    • Manejo de errores por etapa sin detener el pipeline.          │
+  │    • Reporte final con resultados y errores de cada etapa.         │
+  │                                                                     │
+  │  Pistas:                                                            │
+  │    public class Pipeline<T>                                         │
+  │    {                                                                │
+  │        public Func<T, T> Etapas { get; set; }                       │
+  │        public T Ejecutar(T input) { ... }                           │
+  │    }                                                                │
+  │                                                                     │
+  │  Entrega: Pipeline.cs con la implementación y un ejemplo de uso     │
+  │  con un Pipeline<string> que procese texto (sanitize → uppercase    │
+  │  → reverse → add-timestamp).                                       │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL CAPÍTULO
+═══════════════════
+
+Los delegados multicast son una herramienta extremadamente versátil.
+Entender cómo funcionan es esencial para dominar los eventos (siguiente
+capítulo) y para comprender el modelo de suscripción/notificación de C#.
+
+El patrón que viste aquí (agregar handlers con +=, ejecutar todos) es
+exactamente como funcionan los eventos en Windows Forms, WPF, ASP.NET,
+Unity, etc.
+
+NEXT CHAPTER
+════════════
+
+  → CAPÍTULO 53: EVENTOS
+    Aprenderás cómo C# envuelve los delegados multicast en el patrón
+    event, proporcionando encapsulación y seguridad.
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 52 — © 2026 — All rights reserved
+══════════════════════════════════════════════════════════════════════════════════

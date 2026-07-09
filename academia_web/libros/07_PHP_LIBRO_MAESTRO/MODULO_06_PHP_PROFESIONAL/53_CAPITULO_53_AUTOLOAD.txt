@@ -1,0 +1,811 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##                     CAPÍTULO 53: AUTOLOAD
+##
+################################################################################
+
+"El verdadero poder no está en escribir código, sino en organizarlo
+para que la máquina lo encuentre sin que tú se lo digas."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+En el capítulo anterior aprendiste a instalar dependencias con
+Composer. Ahora vamos a descubrir la magia detrás de cómo PHP
+encuentra y carga las clases automáticamente.
+
+Sin autoload, cada archivo PHP requiere un require_once manual.
+En proyectos grandes, eso significa decenas o cientos de includes.
+El autoload elimina esta tediosa tarea: PHP carga las clases
+automáticamente cuando las necesitas.
+
+Además, con PSR-4 y Composer, tienes un estándar universal que
+todos los proyectos PHP siguen. Una vez que aprendes PSR-4,
+puedes leer la estructura de cualquier proyecto profesional.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Autoload no es solo comodidad: es la disciplina que convierte
+un montón de archivos en un sistema organizado."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender el problema que resuelve el autoloading.
+✓ Implementar un autoloader manual con spl_autoload_register.
+✓ Configurar PSR-4 en composer.json.
+✓ Mapear namespaces a directorios correctamente.
+✓ Generar el autoload optimizado de Composer.
+✓ Combinar PSR-4 con PSR-12 para código profesional.
+✓ Usar autoloading en un proyecto MVC real.
+
+===============================================================================
+1. EL PROBLEMA DEL REQUIRE MANUAL
+===============================================================================
+
+Imagina un proyecto MVC con esta estructura:
+
+```php
+<?php
+// index.php - Sin autoload
+require_once __DIR__ . '/core/Router.php';
+require_once __DIR__ . '/core/Controller.php';
+require_once __DIR__ . '/core/Model.php';
+require_once __DIR__ . '/core/Database.php';
+require_once __DIR__ . '/core/Request.php';
+require_once __DIR__ . '/core/Response.php';
+require_once __DIR__ . '/core/Session.php';
+require_once __DIR__ . '/core/Validator.php';
+require_once __DIR__ . '/controllers/HomeController.php';
+require_once __DIR__ . '/controllers/UsuarioController.php';
+require_once __DIR__ . '/controllers/ProductoController.php';
+require_once __DIR__ . '/models/Usuario.php';
+require_once __DIR__ . '/models/Producto.php';
+require_once __DIR__ . '/models/Categoria.php';
+// ¿Cada nuevo archivo? Otro require...
+```
+
+Esto es:
+- Tedioso de mantener.
+- Propenso a errores (olvidar un require).
+- Lento (carga archivos que quizá no se usan).
+- Poco profesional.
+
+Además, si reordenas archivos o cambias nombres, tienes que
+actualizar todos los requires.
+
+El autoload resuelve todo esto. Con cuatro líneas:
+
+```php
+<?php
+// index.php - Con autoload
+require_once __DIR__ . '/vendor/autoload.php';
+// ¡Eso es todo! Las clases se cargan automáticamente.
+```
+
+Cuando PHP encuentra new Router(), busca cómo cargar la clase
+Router automáticamente sin que tú hagas nada.
+
+===============================================================================
+2. SPL_AUTOLOAD_REGISTER: EL AUTOLOADER MANUAL
+===============================================================================
+
+PHP proporciona spl_autoload_register() para registrar funciones
+de autoload. Cuando PHP encuentra una clase no definida, ejecuta
+todas las funciones registradas hasta que una la cargue.
+
+```php
+<?php
+// mi_autoloader.php
+spl_autoload_register(function (string $clase) {
+    // Convertir la clase en una ruta de archivo
+    // Ejemplo: App\Controllers\HomeController → src/Controllers/HomeController.php
+    $prefijo = 'App\\';
+    $directorioBase = __DIR__ . '/src/';
+
+    // Verificar si la clase usa el prefijo esperado
+    if (strncmp($prefijo, $clase, strlen($prefijo)) !== 0) {
+        // Esta clase no nos corresponde
+        return;
+    }
+
+    // Remover el prefijo
+    $rutaRelativa = substr($clase, strlen($prefijo));
+
+    // Convertir separadores de namespace a DIRECTORY_SEPARATOR
+    $archivo = $directorioBase . str_replace('\\', DIRECTORY_SEPARATOR, $rutaRelativa) . '.php';
+
+    if (file_exists($archivo)) {
+        require $archivo;
+    }
+});
+```
+
+Uso:
+
+```php
+<?php
+require_once 'mi_autoloader.php';
+
+// PHP carga automáticamente src/Controllers/HomeController.php
+$controller = new App\Controllers\HomeController();
+
+// PHP carga automáticamente src/Models/Usuario.php
+$usuario = new App\Models\Usuario();
+```
+
+Ventajas:
+- Carga bajo demanda (solo las clases que usas).
+- Sin require manuales.
+- Un solo punto de configuración.
+
+Desventajas del autoload manual:
+- Debes mantener el mapeo.
+- No resuelve dependencias de terceros.
+- Puede tener conflictos con otros autoloaders.
+
+Por eso usamos Composer, que ya implementa PSR-4 correctamente
+y maneja las dependencias de terceros.
+
+===============================================================================
+3. PSR-4: EL ESTÁNDAR DE AUTOLOADING
+===============================================================================
+
+PSR-4 es un estándar de PHP-FIG (PHP Framework Interop Group) que
+define cómo los namespaces deben mapearse a directorios.
+
+Regla fundamental de PSR-4:
+  El namespace base se mapea a un directorio base.
+  El resto del namespace se convierte en subdirectorios.
+  El nombre de la clase se convierte en el archivo.
+
+Ejemplo de mapeo:
+
+```
+Namespace:          App\Controllers\HomeController
+Prefijo:            App\
+Directorio base:    src/
+Archivo:            src/Controllers/HomeController.php
+```
+
+Otros ejemplos:
+
+```
+App\Models\Usuario          → src/Models/Usuario.php
+App\Core\Router             → src/Core/Router.php
+App\Core\Exceptions\NotFound → src/Core/Exceptions/NotFound.php
+App\Http\Request            → src/Http/Request.php
+```
+
+PSR-4 es flexible: no requiere que el namespace coincida
+exactamente con la estructura de directorios desde la raíz,
+solo desde el prefijo que defines.
+
+===============================================================================
+4. CONFIGURANDO PSR-4 CON COMPOSER
+===============================================================================
+
+En composer.json, la sección autoload define el mapeo:
+
+```json
+{
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/",
+            "App\\Core\\": "core/",
+            "App\\Database\\": "database/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    }
+}
+```
+
+Después de modificar composer.json, regenera el autoload:
+
+```bash
+composer dump-autoload
+# o con optimización:
+composer dump-autoload --optimize
+```
+
+Ahora puedes usar las clases con su namespace completo:
+
+```php
+<?php
+require_once __DIR__ . '/vendor/autoload.php';
+
+use App\Controllers\HomeController;
+use App\Models\Usuario;
+use App\Core\Router;
+
+$router = new Router();
+$controller = new HomeController();
+```
+
+La directiva use importa el namespace para que puedas usar
+solo el nombre de la clase en lugar del FQCN (Fully Qualified
+Class Name).
+
+===============================================================================
+5. ESTRUCTURA DE PROYECTO CON PSR-4
+===============================================================================
+
+Proyecto profesional con PSR-4 y Composer:
+
+```
+mi-app/
+├── composer.json
+├── vendor/
+│   ├── autoload.php
+│   └── ... (dependencias de terceros)
+├── src/                     ← namespace App\
+│   ├── Controllers/
+│   │   ├── HomeController.php      ← App\Controllers\HomeController
+│   │   └── UsuarioController.php   ← App\Controllers\UsuarioController
+│   ├── Models/
+│   │   └── Usuario.php             ← App\Models\Usuario
+│   ├── Core/
+│   │   ├── Router.php              ← App\Core\Router
+│   │   ├── Controller.php          ← App\Core\Controller
+│   │   ├── Model.php               ← App\Core\Model
+│   │   ├── Request.php             ← App\Core\Request
+│   │   └── Response.php            ← App\Core\Response
+│   └── Helpers/
+│       └── Str.php                 ← App\Helpers\Str
+├── config/
+│   └── database.php
+├── public/
+│   └── index.php           ← Punto de entrada
+├── views/
+│   ├── layout/
+│   └── home/
+└── tests/                  ← namespace Tests\
+    ├── Unit/
+    └── Feature/
+```
+
+Cada clase tiene una ubicación predecible. Un desarrollador que
+llegue nuevo al proyecto sabe exactamente dónde encontrar cada
+archivo basándose en el namespace.
+
+El archivo public/index.php es el front controller:
+
+```php
+<?php
+// public/index.php
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use App\Core\Router;
+use App\Core\Request;
+
+$router = new Router();
+$request = new Request();
+
+// Cargar rutas
+require_once __DIR__ . '/../routes/web.php';
+
+// Ejecutar
+$router->dispatch($request);
+```
+
+Observa que require_once vendor/autoload.php es el ÚNICO require
+explícito en toda la aplicación. Composer se encarga del resto.
+
+===============================================================================
+6. NAMESPACES EN PHP
+===============================================================================
+
+Los namespaces son contenedores lógicos para clases, interfaces,
+funciones y constantes. Evitan colisiones de nombres.
+
+Declarar un namespace:
+
+```php
+<?php
+// src/Models/Usuario.php
+namespace App\Models;
+
+use App\Core\Model;
+
+class Usuario extends Model
+{
+    // ...
+}
+```
+
+```php
+<?php
+// src/Controllers/HomeController.php
+namespace App\Controllers;
+
+use App\Core\Controller;
+use App\Models\Usuario;
+
+class HomeController extends Controller
+{
+    public function index(): void
+    {
+        $usuarios = (new Usuario())->getAll();
+        $this->render('home/index', ['usuarios' => $usuarios]);
+    }
+}
+```
+
+```php
+<?php
+// src/Core/Controller.php
+namespace App\Core;
+
+class Controller
+{
+    protected function render(string $view, array $data = []): void
+    {
+        extract($data);
+        require __DIR__ . '/../../views/' . $view . '.php';
+    }
+}
+```
+
+Reglas de namespaces:
+
+  1. El namespace se declara al inicio del archivo (después de <?php).
+  2. La estructura de directorios debe coincidir con el namespace.
+  3. use importa clases de otros namespaces.
+  4. use no requiere archivos, solo crea un alias.
+  5. La clase dentro del namespace se llama por su nombre corto.
+
+Sin use, tendrías que usar el FQCN:
+
+```php
+$usuario = new \App\Models\Usuario();
+$router = new \App\Core\Router();
+```
+
+Con use, simplificas:
+
+```php
+use App\Models\Usuario;
+use App\Core\Router;
+
+$usuario = new Usuario();
+$router = new Router();
+```
+
+===============================================================================
+7. AUTOLOAD OPTIMIZADO PARA PRODUCCIÓN
+===============================================================================
+
+En desarrollo, el autoloader de Composer busca archivos en el
+sistema de archivos cada vez que se carga una clase. Esto es
+flexible pero más lento.
+
+En producción, puedes generar un autoload optimizado que compile
+un mapa de clases en un array, eliminando la búsqueda en disco.
+
+```bash
+# Autoload optimizado (producción)
+composer dump-autoload --optimize
+
+# O durante la instalación
+composer install --optimize-autoloader --no-dev
+```
+
+Esto genera vendor/composer/autoload_classmap.php con un array
+como este:
+
+```php
+return array(
+    'App\\Controllers\\HomeController' => __DIR__ . '/../../src/Controllers/HomeController.php',
+    'App\\Models\\Usuario' => __DIR__ . '/../../src/Models/Usuario.php',
+    'App\\Core\\Router' => __DIR__ . '/../../src/Core/Router.php',
+    // ... cientos de entradas
+);
+```
+
+Con el classmap, cuando PHP necesita App\Models\Usuario, el
+autoloader consulta el array en lugar de buscar en disco.
+Es significativamente más rápido.
+
+Para proyectos pequeños la diferencia es mínima, pero en
+proyectos con cientos de clases (Laravel, Symfony) la
+optimización marca una gran diferencia.
+
+===============================================================================
+8. CLASSMAP VS PSR-4 VS FILES
+===============================================================================
+
+Composer soporta tres modos de autoload:
+
+PSR-4 (recomendado):
+```json
+{
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    }
+}
+```
+- Dinámico: busca archivos según namespace.
+- Perfecto para desarrollo.
+- Se puede optimizar a classmap en producción.
+
+Classmap (legado):
+```json
+{
+    "autoload": {
+        "classmap": [
+            "src/",
+            "lib/"
+        ]
+    }
+}
+```
+- Escanea directorios y genera mapa de clases.
+- No requiere namespaces.
+- Útil para proyectos sin PSR-4 o librerías antiguas.
+
+Files (funciones globales):
+```json
+{
+    "autoload": {
+        "files": [
+            "src/helpers.php"
+        ]
+    }
+}
+```
+- Carga archivos siempre (no bajo demanda).
+- Para funciones helper y configuraciones.
+- Se usa para código que no son clases.
+
+Ejemplo completo:
+
+```json
+{
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        },
+        "classmap": [
+            "legacy/"
+        ],
+        "files": [
+            "src/helpers.php",
+            "config/constants.php"
+        ]
+    }
+}
+```
+
+===============================================================================
+9. AUTOLOAD MÚLTIPLE Y LIBRERÍAS DE TERCEROS
+===============================================================================
+
+Una de las grandes ventajas de Composer es que el autoload de las
+dependencias de terceros se integra automáticamente.
+
+Cuando ejecutas:
+
+```bash
+composer require monolog/monolog
+composer require guzzlehttp/guzzle
+```
+
+Composer descarga los paquetes en vendor/ y sus autoloaders se
+registran automáticamente en vendor/composer/autoload_real.php.
+
+Tú solo necesitas:
+
+```php
+<?php
+require_once __DIR__ . '/vendor/autoload.php';
+
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
+use GuzzleHttp\Client;
+
+$log = new Logger('app');
+$log->pushHandler(new StreamHandler(__DIR__ . '/app.log'));
+
+$client = new Client();
+$response = $client->get('https://api.github.com');
+```
+
+Cada librería define su propio autoload PSR-4 en su composer.json.
+Composer los fusiona todos en un solo autoloader.
+
+Ejemplo de cómo Monolog define su autoload:
+
+```json
+{
+    "autoload": {
+        "psr-4": {
+            "Monolog\\": "src/Monolog/"
+        }
+    }
+}
+```
+
+Así, Monolog\Logger se resuelve a vendor/monolog/monolog/src/Monolog/Logger.php.
+
+===============================================================================
+10. BUENAS PRÁCTICAS CON AUTOLOAD
+===============================================================================
+
+1. Un archivo = una clase:
+   - No definas múltiples clases en el mismo archivo.
+   - El nombre del archivo debe coincidir con el nombre de la clase.
+
+2. Namespace = ruta:
+   - El namespace refleja la estructura de directorios.
+   - App\Controllers\Auth\LoginController → src/Controllers/Auth/LoginController.php
+
+3. Case-sensitive en Linux:
+   - Los sistemas de archivos Linux distinguen mayúsculas.
+   - Usa siempre la capitalización correcta.
+   - Si la clase es UsuarioController, el archivo debe ser UsuarioController.php.
+
+4. Composer dump-autoload después de cambios:
+   - Siempre que agregues nuevas clases al autoload PSR-4.
+   - O cuando modifiques la estructura de directorios.
+
+5. No mezcles estilos:
+   - Elige PSR-4 para todo tu código.
+   - No mezcles con requires manuales.
+   - Sé consistente.
+
+6. Namespace de test:
+   - Mapea Tests\ a tests/ para pruebas unitarias.
+   - Configura autoload-dev en composer.json.
+
+7. Evita el classmap en desarrollo:
+   - El classmap requiere regenerarse cada vez.
+   - PSR-4 es automático, no necesita regeneración.
+   - Usa classmap solo para producción.
+
+===============================================================================
+11. DEBUGGING DEL AUTOLOAD
+===============================================================================
+
+Cuando una clase no se carga, aparece este error:
+
+```
+Fatal error: Class "App\Controllers\HomeController" not found
+```
+
+Pasos para depurar:
+
+1. Verificar que vendor/autoload.php está incluido:
+```php
+require_once __DIR__ . '/vendor/autoload.php';
+```
+
+2. Verificar que el namespace coincide con la ruta:
+```php
+// ¿La clase es App\Controllers\HomeController?
+// El archivo debe estar en: src/Controllers/HomeController.php
+// composer.json debe tener: "App\\": "src/"
+```
+
+3. Verificar mayúsculas/minúsculas:
+```bash
+# En Linux, UsuarioController.php ≠ usuariocontroller.php
+ls -la src/Controllers/
+```
+
+4. Regenerar autoload:
+```bash
+composer dump-autoload
+```
+
+5. Verificar el mapa de clases (producción):
+```bash
+composer dump-autoload --optimize
+cat vendor/composer/autoload_classmap.php | grep HomeController
+```
+
+6. Debug manual:
+```php
+// Temporal: mostrar qué clases busca el autoloader
+$autoloader = require __DIR__ . '/vendor/autoload.php';
+var_dump($autoloader->getClassMap());
+```
+
+Si todo falla, verifica que el archivo existe y es legible:
+
+```php
+var_dump(file_exists('src/Controllers/HomeController.php'));
+var_dump(is_readable('src/Controllers/HomeController.php'));
+```
+
+===============================================================================
+12. AUTOLOAD EN DIFERENTES ENTORNOS
+===============================================================================
+
+Desarrollo:
+```bash
+composer install
+# PSR-4 dinámico, búsqueda en disco
+```
+
+Producción:
+```bash
+composer install --no-dev --optimize-autoloader
+# Classmap estático, sin búsqueda en disco
+```
+
+CI/CD (Integración Continua):
+```bash
+composer install --no-interaction --prefer-dist
+composer dump-autoload --optimize
+```
+
+Docker:
+```dockerfile
+FROM php:8.2-cli
+
+WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+
+COPY . .
+RUN composer dump-autoload --optimize
+
+CMD ["php", "public/index.php"]
+```
+
+En Docker, es buena práctica copiar composer.json y composer.lock
+primero (antes del código) para cachear las dependencias en una
+capa separada de Docker.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El autoload elimina los require manuales cargando clases bajo
+  demanda cuando se usan por primera vez.
+- spl_autoload_register permite crear autoloaders personalizados.
+- PSR-4 es el estándar que mapea namespaces a directorios.
+- En composer.json, la sección "autoload" con "psr-4" configura
+  el mapeo de namespaces.
+- El namespace debe coincidir con la estructura de directorios.
+- La directiva use importa clases sin necesidad de require.
+- vendor/autoload.php es el único require necesario.
+- El autoload optimizado (classmap) es más rápido en producción.
+- Composer combina el autoload de todas las dependencias.
+- PSR-4, classmap y files son los tres modos de autoload.
+- Un archivo = una clase, con el mismo nombre.
+- En Linux, las mayúsculas importan en nombres de archivos.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un proyecto con composer init que tenga
+   el namespace App\ mapeado a src/. Crea tres clases en subcarpetas
+   y úsalas desde index.php sin ningún require explícito.
+
+🧩 **Ejercicio 2:** Implementa tu propio spl_autoload_register que
+   cargue clases con el prefijo MiFramework\. El directorio base
+   debe ser lib/. Prueba cargar MiFramework\Database\Conexion.
+
+🧩 **Ejercicio 3:** Agrega una dependencia externa (guzzlehttp/guzzle)
+   a tu proyecto. Crea un script que haga una petición GET a una
+   API pública y muestre el resultado. Verifica que el autoload
+   de Guzzle funciona sin requires adicionales.
+
+🧩 **Ejercicio 4:** Compara el rendimiento del autoload PSR-4
+   dinámico contra el optimizado. Crea un benchmark que cargue
+   100 clases y mida el tiempo con microtime() antes y después.
+
+🧩 **Ejercicio 5:** Configura autoload-dev para que Tests\ se
+   mapee a tests/. Crea una clase de prueba simple y verifica
+   que se carga correctamente desde un script de prueba.
+
+🧩 **Ejercicio 6:** Crea un archivo helpers.php en src/ con
+   funciones globales (como asset(), url(), etc.). Cárgalo con
+   la sección "files" de composer.json. Úsalo en cualquier parte
+   del proyecto.
+
+🧩 **Ejercicio 7:** Simula un error de clase no encontrada.
+   Depura paso a paso: verifica el namespace, la ruta del archivo,
+   y regenera el autoload hasta que funcione.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Puedo tener múltiples prefijos PSR-4 en un proyecto?**
+   Sí, puedes mapear múltiples namespaces a diferentes directorios.
+   Por ejemplo: App\ → src/, Database\ → database/, Tests\ → tests/.
+
+❓ **¿Qué pasa si dos autoloaders registran la misma clase?**
+   El primero que la encuentra la carga. Si un autoloader falla
+   (no encuentra el archivo), el siguiente intenta. Es seguro
+   tener múltiples autoloaders.
+
+❓ **¿PSR-4 funciona con PHP 8?**
+   Sí, PSR-4 funciona con PHP 7 y superiores. No hay cambios en
+   el autoload entre versiones de PHP.
+
+❓ **¿Por qué aparece "Class X not found" si el archivo existe?**
+   Generalmente es por: namespace incorrecto en el archivo, ruta
+   incorrecta en composer.json, o mayúsculas/minúsculas en Linux.
+
+❓ **¿Necesito regenerar el autoload cada vez que creo una clase?**
+   Con PSR-4 no es necesario mientras las clases sigan el patrón
+   de directorios. Con classmap sí es necesario.
+
+❓ **¿Puedo usar autoload sin Composer?**
+   Sí, usando spl_autoload_register. Pero entonces pierdes la
+   integración con librerías de terceros. Siempre es mejor
+   usar Composer.
+
+❓ **¿Cómo afecta el autoload al rendimiento?**
+   Mínimamente. Cargar un archivo con require es rápido. El
+   classmap optimizado elimina incluso la búsqueda en disco.
+   No es un cuello de botella en aplicaciones reales.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Autoloader Universal PSR-4 desde Cero**
+
+   Implementa un autoloader compatible con PSR-4 que pueda leer
+   la configuración de composer.json y cargar clases automáticamente
+   SIN usar el autoload de Composer.
+
+   Requisitos:
+   1. Leer el archivo composer.json del directorio raíz.
+   2. Extraer las entradas psr-4 de autoload y autoload-dev.
+   3. Registrar un autoloader con spl_autoload_register que
+      convierta namespaces en rutas según PSR-4.
+   4. Soporte para múltiples prefijos.
+   5. Soporte para el modo classmap (escaneo de directorios).
+   6. Soporte para la sección "files" (carga de archivos).
+   7. Optimización: generar un archivo classmap.php que pueda
+      cargarse en producción.
+   8. Integración con el autoload de dependencias de terceros
+      (leer vendor/*/composer.json y registrar sus autoloaders).
+
+   Llamada de ejemplo:
+   ```php
+   require_once 'mi-autoloader.php';
+   $loader = new MiAutoloader();
+   $loader->register();  // Lee composer.json y registra todo
+   ```
+
+   Este desafío te dará una comprensión profunda de cómo funciona
+   Composer internamente. Cuando termines, entenderás por qué
+   PSR-4 es el estándar y cómo Composer hace su magia.
+
+===============================================================================
+FIN DEL CAPÍTULO 53
+===============================================================================
+
+"El autoload no solo ahorra líneas de código: disciplina la
+arquitectura y hace que el código se encuentre a sí mismo."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+54_CAPITULO_54_MANEJO_DE_ERRORES.txt
+===============================================================================

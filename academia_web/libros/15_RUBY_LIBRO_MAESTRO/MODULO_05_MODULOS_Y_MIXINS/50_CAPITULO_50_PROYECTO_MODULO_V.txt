@@ -1,0 +1,766 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     RUBY MASTER BOOK
+##
+##                         MÓDULO V
+##
+##                        CAPÍTULO 50
+##
+##                 PROYECTO DEL MÓDULO V
+##
+################################################################################
+################################################################################
+
+"El conocimiento sin práctica es como un pájaro sin alas." — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Has llegado al final del Módulo V, joven aprendiz!
+
+En este módulo has explorado el fascinante mundo de los módulos, mixins, namespaces,
+y la metaprogramación básica en Ruby. Has aprendido cómo `include`, `extend` y
+`prepend` modifican la cadena de herencia, cómo los módulos sirven como
+namespaces, y cómo `method_missing` y `define_method` abren las puertas a la
+programación dinámica.
+
+Ahora llega el momento de la verdad: integrar todo este conocimiento en un
+proyecto sólido, profesional y funcional. Este proyecto no solo pondrá a prueba
+tu comprensión de los conceptos, sino que te retará a pensar como arquitecto
+de software.
+
+Construirás un **sistema de validación y formateo de datos** utilizando módulos,
+mixins, namespaces y metaprogramación. Este tipo de sistema es la base de
+frameworks como Active Record (validaciones) y Active Support (extensiones).
+
+¡Prepárate para codificar como un verdadero Rubyista!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un buen arquitecto no solo construye, sino que crea estructuras que otros
+pueden extender y mejorar." — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Integrar módulos, mixins y namespaces en un proyecto real.
+✓ Implementar validaciones dinámicas usando metaprogramación.
+✓ Diseñar una jerarquía de módulos reutilizables.
+✓ Aplicar `include`, `extend` y `prepend` estratégicamente.
+✓ Utilizar `method_missing` para delegación dinámica.
+✓ Construir un DSL de validación simple pero funcional.
+✓ Documentar y probar el sistema completo.
+
+===============================================================================
+1. VISIÓN GENERAL DEL PROYECTO
+===============================================================================
+
+Construiremos **Validatable**, un sistema de validación y formateo de datos
+inspirado en Active Record Validations. El sistema permitirá:
+
+- Definir validaciones en clases de forma declarativa.
+- Usar un DSL similar a `validates :campo, presence: true`.
+- Agregar métodos de formateo a través de mixins.
+- Utilizar namespaces para organizar el código.
+- Emplear metaprogramación para definir métodos dinámicamente.
+
+Estructura del proyecto:
+
+```
+validatable/
+├── lib/
+│   ├── validatable.rb
+│   ├── validatable/
+│   │   ├── version.rb
+│   │   ├── validators/
+│   │   │   ├── base.rb
+│   │   │   ├── presence.rb
+│   │   │   ├── format.rb
+│   │   │   ├── length.rb
+│   │   │   └── numericality.rb
+│   │   ├── formatters/
+│   │   │   ├── text_formatter.rb
+│   │   │   ├── json_formatter.rb
+│   │   │   └── html_formatter.rb
+│   │   └── core_extensions.rb
+│   └── validatable.rb
+├── test/
+│   ├── test_helper.rb
+│   └── validatable_test.rb
+└── validatable.gemspec
+```
+
+===============================================================================
+2. NAMESPACE PRINCIPAL
+===============================================================================
+
+Comenzamos definiendo el namespace principal y la versión.
+
+```ruby
+# lib/validatable/version.rb
+module Validatable
+  VERSION = "1.0.0"
+end
+```
+
+```ruby
+# lib/validatable.rb
+require_relative "validatable/version"
+require_relative "validatable/core_extensions"
+require_relative "validatable/validators/base"
+require_relative "validatable/validators/presence"
+require_relative "validatable/validators/format"
+require_relative "validatable/validators/length"
+require_relative "validatable/validators/numericality"
+require_relative "validatable/formatters/text_formatter"
+require_relative "validatable/formatters/json_formatter"
+require_relative "validatable/formatters/html_formatter"
+
+module Validatable
+  class ValidationError < StandardError
+    attr_reader :errors
+
+    def initialize(errors)
+      @errors = errors
+      super("Validation failed: #{errors.inspect}")
+    end
+  end
+end
+```
+
+Observa cómo `require_relative` organiza las dependencias y cómo `ValidationError`
+extiende `StandardError` con información estructurada de errores.
+
+===============================================================================
+3. MIXIN CORE EXTENSIONS
+===============================================================================
+
+Usaremos `extend` para agregar métodos de clase y `include` para métodos de
+instancia. Aquí usamos `extend` para que las clases que incluyan este módulo
+obtengan métodos de configuración.
+
+```ruby
+# lib/validatable/core_extensions.rb
+module Validatable
+  module CoreExtensions
+    def self.included(base)
+      base.extend(ClassMethods)
+    end
+
+    module ClassMethods
+      def validates(*args)
+        @validations ||= []
+        opts = args.last.is_a?(Hash) ? args.pop : {}
+        args.each do |field|
+          opts.each do |validator_name, validator_option|
+            @validations << { field: field, type: validator_name, option: validator_option }
+          end
+        end
+      end
+
+      def validations
+        @validations || []
+      end
+    end
+
+    def valid?
+      errors.clear
+      self.class.validations.each do |v|
+        validator = Validators::Base.validators[v[:type]]
+        if validator
+          validator.new.validate(self, v[:field], v[:option], errors)
+        end
+      end
+      errors.empty?
+    end
+
+    def errors
+      @errors ||= []
+    end
+
+    def validate!
+      raise ValidationError.new(errors) unless valid?
+    end
+  end
+end
+```
+
+Aquí vemos:
+
+- `self.included(base)` con `base.extend(ClassMethods)`: patrón clásico para
+  agregar métodos de clase al incluir un módulo.
+- `@validations`: variable de clase que almacena las reglas definidas con
+  `validates`.
+- `validates *args`: método de clase que acepta nombres de campos y opciones.
+- `valid?`: método de instancia que ejecuta todas las validaciones configuradas.
+- `validate!`: versión que lanza excepción si hay errores.
+
+===============================================================================
+4. VALIDADORES CON HERENCIA Y POLIMORFISMO
+===============================================================================
+
+Cada validador hereda de una clase base y debe implementar `validate`.
+
+```ruby
+# lib/validatable/validators/base.rb
+module Validatable
+  module Validators
+    class Base
+      def self.validators
+        @validators ||= {}
+      end
+
+      def self.inherited(subclass)
+        name = subclass.name.split("::").last.gsub(/([a-z])([A-Z])/) { "#{$1}_#{$2}" }.downcase
+        validators[name] = subclass
+      end
+
+      def validate(object, field, option, errors)
+        raise NotImplementedError, "#{self.class} must implement #validate"
+      end
+    end
+  end
+end
+```
+
+Usamos `inherited` para registrar automáticamente cada validador en el hash
+`validators`. Esto es metaprogramación: cuando una clase hereda de `Base`,
+se ejecuta `inherited` y la registra. El nombre se convierte de CamelCase a
+snake_case automáticamente (PresenceValidator → presence).
+
+```ruby
+# lib/validatable/validators/presence.rb
+module Validatable
+  module Validators
+    class Presence < Base
+      def validate(object, field, _option, errors)
+        value = object.send(field)
+        errors << "#{field} no puede estar vacío" if value.nil? || value.to_s.strip.empty?
+      end
+    end
+  end
+end
+```
+
+```ruby
+# lib/validatable/validators/format.rb
+module Validatable
+  module Validators
+    class Format < Base
+      def validate(object, field, option, errors)
+        value = object.send(field)
+        return if value.nil?
+        regex = option.is_a?(Hash) ? option[:with] : option
+        errors << "#{field} no tiene el formato correcto" unless value.to_s.match?(regex)
+      end
+    end
+  end
+end
+```
+
+```ruby
+# lib/validatable/validators/length.rb
+module Validatable
+  module Validators
+    class Length < Base
+      def validate(object, field, option, errors)
+        value = object.send(field)
+        return if value.nil?
+        val = value.to_s.length
+        if option[:minimum] && val < option[:minimum]
+          errors << "#{field} es demasiado corto (mínimo #{option[:minimum]} caracteres)"
+        end
+        if option[:maximum] && val > option[:maximum]
+          errors << "#{field} es demasiado largo (máximo #{option[:maximum]} caracteres)"
+        end
+        if option[:is] && val != option[:is]
+          errors << "#{field} debe tener exactamente #{option[:is]} caracteres"
+        end
+      end
+    end
+  end
+end
+```
+
+```ruby
+# lib/validatable/validators/numericality.rb
+module Validatable
+  module Validators
+    class Numericality < Base
+      def validate(object, field, option, errors)
+        value = object.send(field)
+        return if value.nil?
+        errors << "#{field} debe ser un número" unless value.is_a?(Numeric)
+        if option.is_a?(Hash)
+          errors << "#{field} debe ser mayor que #{option[:greater_than]}" if option[:greater_than] && value <= option[:greater_than]
+          errors << "#{field} debe ser menor que #{option[:less_than]}" if option[:less_than] && value >= option[:less_than]
+        end
+      end
+    end
+  end
+end
+```
+
+Cada validador es una clase independiente en su propio archivo, bien organizada
+dentro del namespace `Validatable::Validators`. Esto es diseño modular limpio.
+
+===============================================================================
+5. FORMATTERS CON MIXINS
+===============================================================================
+
+Los formateadores son módulos que se incluyen en las clases para agregar
+métodos de presentación. Usamos `include` para mezclar funcionalidades.
+
+```ruby
+# lib/validatable/formatters/text_formatter.rb
+module Validatable
+  module Formatters
+    module TextFormatter
+      def to_text
+        instance_variables.map do |iv|
+          "#{iv.to_s.delete('@')}: #{instance_variable_get(iv)}"
+        end.join("\n")
+      end
+    end
+  end
+end
+```
+
+```ruby
+# lib/validatable/formatters/json_formatter.rb
+require "json"
+
+module Validatable
+  module Formatters
+    module JSONFormatter
+      def to_json(*args)
+        hash = {}
+        instance_variables.each do |iv|
+          hash[iv.to_s.delete("@")] = instance_variable_get(iv)
+        end
+        JSON.generate(hash, *args)
+      end
+    end
+  end
+end
+```
+
+```ruby
+# lib/validatable/formatters/html_formatter.rb
+module Validatable
+  module Formatters
+    module HTMLFormatter
+      def to_html
+        html = "<table>\n"
+        instance_variables.each do |iv|
+          key = iv.to_s.delete("@")
+          value = instance_variable_get(iv)
+          html += "  <tr><td>#{key}</td><td>#{value}</td></tr>\n"
+        end
+        html += "</table>"
+        html
+      end
+    end
+  end
+end
+```
+
+Estos formateadores se incluirán en las clases modelo para darles capacidad
+de exportación en múltiples formatos. Cada uno itera sobre las variables de
+instancia usando `instance_variables` e `instance_variable_get` — metaprogramación
+pura.
+
+===============================================================================
+6. MODELO DE EJEMPLO CON VALIDACIONES
+===============================================================================
+
+Ahora creamos una clase concreta que usa todo el sistema:
+
+```ruby
+# ejemplo/usuarios.rb
+require_relative "../lib/validatable"
+
+class Usuario
+  include Validatable::CoreExtensions
+  include Validatable::Formatters::TextFormatter
+  include Validatable::Formatters::JSONFormatter
+  include Validatable::Formatters::HTMLFormatter
+
+  validates :nombre, presence: true, length: { minimum: 3, maximum: 50 }
+  validates :email, presence: true, format: { with: /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i }
+  validates :edad, numericality: { greater_than: 0, less_than: 150 }
+  validates :telefono, format: { with: /\A\+?\d{7,15}\z/ }
+
+  attr_accessor :nombre, :email, :edad, :telefono
+
+  def initialize(nombre: nil, email: nil, edad: nil, telefono: nil)
+    @nombre = nombre
+    @email = email
+    @edad = edad
+    @telefono = telefono
+  end
+end
+```
+
+Observa cómo `validates` se convierte en un DSL declarativo gracias al método
+de clase definido en `CoreExtensions::ClassMethods`.
+
+```ruby
+# ejemplo/main.rb
+require_relative "usuarios"
+
+user = Usuario.new(
+  nombre: "Ana",
+  email: "ana@example.com",
+  edad: 28,
+  telefono: "+521234567890"
+)
+
+puts "=== Validación ==="
+puts user.valid? ? "✅ Válido" : "❌ Inválido"
+
+puts "\n=== Error (inválido) ==="
+user2 = Usuario.new(nombre: "Al", email: "invalido", edad: -5, telefono: "abc")
+puts user2.valid? ? "Válido" : "Inválido"
+puts user2.errors.inspect
+
+puts "\n=== Formateo Texto ==="
+puts user.to_text
+
+puts "\n=== Formateo JSON ==="
+puts user.to_json
+
+puts "\n=== Formateo HTML ==="
+puts user.to_html
+```
+
+Salida esperada:
+
+```
+=== Validación ===
+✅ Válido
+
+=== Error (inválido) ===
+Inválido
+["nombre es demasiado corto (mínimo 3 caracteres)", "email no tiene el formato correcto", "edad debe ser mayor que 0", "telefono no tiene el formato correcto"]
+
+=== Formateo Texto ===
+nombre: Ana
+email: ana@example.com
+edad: 28
+telefono: +521234567890
+
+=== Formateo JSON ===
+{"nombre":"Ana","email":"ana@example.com","edad":28,"telefono":"+521234567890"}
+
+=== Formateo HTML ===
+<table>
+  <tr><td>nombre</td><td>Ana</td></tr>
+  <tr><td>email</td><td>ana@example.com</td></tr>
+  <tr><td>edad</td><td>28</td></tr>
+  <tr><td>telefono</td><td>+521234567890</td></tr>
+</table>
+```
+
+===============================================================================================
+7. PRUEBAS CON RSPEC
+===============================================================================================
+
+Para garantizar que nuestro sistema funciona correctamente, escribimos pruebas.
+
+```ruby
+# spec/validatable_spec.rb
+require "spec_helper"
+
+RSpec.describe Validatable do
+  before do
+    class TestUser
+      include Validatable::CoreExtensions
+      include Validatable::Formatters::TextFormatter
+
+      validates :name, presence: true
+      validates :age, numericality: { greater_than: 0 }
+      validates :email, format: { with: /\A[^@\s]+@[^@\s]+\z/ }
+
+      attr_accessor :name, :age, :email
+
+      def initialize(name: nil, age: nil, email: nil)
+        @name = name
+        @age = age
+        @email = email
+      end
+    end
+  end
+
+  let(:valid_user) { TestUser.new(name: "Carlos", age: 30, email: "carlos@test.com") }
+  let(:invalid_user) { TestUser.new(name: "", age: -1, email: "invalido") }
+
+  it "valida un objeto correcto" do
+    expect(valid_user.valid?).to be true
+  end
+
+  it "rechaza un objeto inválido" do
+    expect(invalid_user.valid?).to be false
+  end
+
+  it "reporta errores específicos" do
+    invalid_user.valid?
+    expect(invalid_user.errors).to include(a_string_matching(/name/))
+    expect(invalid_user.errors).to include(a_string_matching(/age/))
+    expect(invalid_user.errors).to include(a_string_matching(/email/))
+  end
+
+  it "lanza ValidationError en validate!" do
+    expect { invalid_user.validate! }.to raise_error(Validatable::ValidationError)
+  end
+
+  it "formatea a texto" do
+    text = valid_user.to_text
+    expect(text).to include("name: Carlos")
+    expect(text).to include("age: 30")
+  end
+end
+```
+
+```ruby
+# spec/spec_helper.rb
+require "validatable"
+require "json"
+
+RSpec.configure do |config|
+  config.expect_with :rspec do |expectations|
+    expectations.include_chain_clauses_in_custom_matcher_descriptions = true
+  end
+  config.mock_with :rspec
+end
+```
+
+===============================================================================
+8. GEMSPEC PARA DISTRIBUCIÓN
+===============================================================================
+
+Finalmente, preparamos nuestro proyecto como una gema publicable.
+
+```ruby
+# validatable.gemspec
+Gem::Specification.new do |spec|
+  spec.name          = "validatable"
+  spec.version       = Validatable::VERSION
+  spec.authors       = ["Lucas EGA Academy"]
+  spec.summary       = "Sistema de validación y formateo con metaprogramación"
+  spec.description   = "Validatable es un sistema de validación inspirado en " \
+                        "Active Record Validations, construido con módulos, " \
+                        "mixins y metaprogramación en Ruby."
+  spec.license       = "MIT"
+
+  spec.files         = Dir["lib/**/*.rb"]
+  spec.require_paths = ["lib"]
+
+  spec.required_ruby_version = ">= 3.0"
+
+  spec.add_development_dependency "rspec", "~> 3.12"
+  spec.add_development_dependency "rake", "~> 13.0"
+end
+```
+
+Con este gemspec, podemos ejecutar `gem build validatable.gemspec` para generar
+el archivo `.gem` y publicarlo en RubyGems.
+
+===============================================================================
+9. EXTENSIONES ADICIONALES CON PREPEND
+===============================================================================
+
+Una característica avanzada: usar `prepend` para agregar logging automático
+a las validaciones sin modificar el código original.
+
+```ruby
+# lib/validatable/extensions/logger.rb
+module Validatable
+  module Extensions
+    module Logger
+      def self.prepended(base)
+        puts "[#{base.name}] Prepended Logger extension"
+      end
+
+      def valid?
+        result = super
+        puts "[VALIDATION] #{self.class.name} ##valid? => #{result}"
+        unless result
+          errors.each { |e| puts "[ERROR] #{e}" }
+        end
+        result
+      end
+    end
+  end
+end
+
+# Uso:
+class UsuarioConLog
+  include Validatable::CoreExtensions
+  prepend Validatable::Extensions::Logger
+
+  validates :nombre, presence: true
+  attr_accessor :nombre
+
+  def initialize(nombre: nil)
+    @nombre = nombre
+  end
+end
+```
+
+`prepend` coloca el módulo antes que la clase en la cadena de herencia, de modo
+que `super` desde el módulo llama al método original de la clase. Es ideal para
+AOP (Programación Orientada a Aspectos).
+
+===============================================================================
+10. REFLEXIÓN DEL PROYECTO
+===============================================================================
+
+Este proyecto demuestra varios conceptos clave del Módulo V:
+
+- **Namespaces**: `Validatable`, `Validatable::Validators`, `Validatable::Formatters`
+  organizan el código sin colisiones.
+- **Mixins con `include`**: `CoreExtensions` agrega validaciones a las clases.
+- **Mixins con `extend`**: `ClassMethods` se convierte en métodos de clase.
+- **Mixins con `prepend`**: `Logger` intercepta llamadas a métodos.
+- **Metaprogramación**: `inherited` registra validadores automáticamente,
+  `instance_variable_get` itera sobre atributos, `define_method` podría usarse
+  para crear getters y setters dinámicos.
+- **DSL**: `validates :campo, presence: true` es un lenguaje específico de dominio.
+- **Polimorfismo**: Cada validador implementa `validate` a su manera.
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Construimos un sistema de validación completo usando módulos y mixins.
+- Implementamos un DSL declarativo con `validates`.
+- Usamos `inherited` para registrar validadores automáticamente.
+- Agregamos formateadores múltiples (texto, JSON, HTML) como mixins.
+- Aplicamos `prepend` para logging transversal.
+- Organizamos todo en namespaces para evitar colisiones.
+- Escribimos pruebas con RSpec para verificar el comportamiento.
+- Preparamos el proyecto como una gema distribuible.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Agrega un nuevo validador `UniquenessInMemory` que verifique
+que un campo tenga un valor único entre todas las instancias de la clase.
+
+🧩 **Ejercicio 2:** Crea un módulo `Versionable` que agregue un método de clase
+`has_version` y mantenga un historial de cambios en un array.
+
+🧩 **Ejercicio 3:** Implementa un formateador `YAMLFormatter` similar a
+`JSONFormatter` pero que exporte en formato YAML.
+
+🧩 **Ejercicio 4:** Usa `method_missing` para implementar un proxy que delegue
+llamadas a un objeto interno (patrón Delegación).
+
+🧩 **Ejercicio 5:** Crea un DSL de configuración usando `define_method` que
+genere métodos getter/setter automáticamente basados en una lista de atributos.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usamos `self.included(base)` en lugar de `extend` directamente?**
+`self.included` se ejecuta cuando el módulo se incluye en una clase, permitiendo
+extender la clase con `ClassMethods` automáticamente. Es el patrón estándar para
+agregar tanto métodos de instancia (include) como de clase (extend).
+
+❓ **¿Cuándo usar `prepend` vs `include`?**
+`include` inserta el módulo después de la clase en la cadena; si la clase define
+un método, sobreescribe al del módulo. `prepend` inserta el módulo antes, así
+el método del módulo puede llamar a `super` y ejecutar el de la clase. Útil para
+AOP y decoradores.
+
+❓ **¿Qué ventaja tiene el registro automático con `inherited`?**
+Permite agregar nuevos validadores sin modificar el código existente. Solo creas
+una nueva clase que hereda de `Base` y automáticamente se registra. Es el
+principio Abierto/Cerrado (OCP) de SOLID.
+
+❓ **¿Cómo manejar dependencias circulares entre módulos?**
+Ruby resuelve constantes perezosamente. Mientras no accedas a una constante
+antes de definirla, las dependencias circulares se resuelven solas. El orden
+de `require` en `validatable.rb` es importante.
+
+❓ **¿Es seguro usar `method_missing` en producción?**
+Sí, pero con cuidado. Siempre define `respond_to_missing?` para que el objeto
+responda correctamente a `respond_to?`. Además, `method_missing` es más lento
+que métodos regulares, así que úsalo solo cuando sea necesario.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Validatable Pro — Framework de persistencia ligero**
+
+Diseña y construye una extensión llamada `Persistable` que permita a cualquier
+clase que incluya `Validatable::CoreExtensions` también persistir y recuperar
+objetos desde archivos JSON.
+
+Requisitos:
+
+1. Usa `extend` para agregar métodos de clase como `find`, `all`, `where`.
+2. Usa `include` para agregar métodos de instancia como `save`, `update`, `destroy`.
+3. Implementa un `method_missing` para permitir búsquedas dinámicas como
+   `find_by_nombre("Ana")` y `where_edad(30)`.
+4. Usa `define_method` para generar los métodos de búsqueda en lugar de
+   `method_missing` (para mejor rendimiento).
+5. Los datos deben persistir en un archivo JSON por clase.
+
+Ejemplo de uso esperado:
+
+```ruby
+class Producto
+  include Validatable::CoreExtensions
+  include Validatable::Persistable
+
+  validates :nombre, presence: true
+  validates :precio, numericality: { greater_than: 0 }
+
+  attr_accessor :nombre, :precio, :id
+
+  def initialize(nombre: nil, precio: nil)
+    @nombre = nombre
+    @precio = precio
+    @id = nil
+  end
+end
+
+# Persistir
+p = Producto.new(nombre: "Laptop", precio: 999.99)
+p.save
+
+# Buscar
+Producto.find_by_nombre("Laptop") # => [#<Producto...>]
+Producto.where_precio(999.99)     # => [#<Producto...>]
+```
+
+Pista: El archivo de persistencia podría ser `productos.json`. Usa `Dir.mkdir`
+para crear un directorio `db/` si no existe. Usa `File.read` y `File.write` con
+JSON serialización.
+
+¡Este desafío integra módulos, metaprogramación, archivos y serialización en un
+solo proyecto profesional!
+
+===============================================================================
+FIN DEL CAPÍTULO 50
+===============================================================================
+
+"El código que escribes hoy es el legado que dejas mañana. Construye con
+sabiduría." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+51_CAPITULO_51_ARCHIVOS.txt
+===============================================================================

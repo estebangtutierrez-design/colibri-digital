@@ -1,0 +1,988 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 73: DEBUGGING CON GDB
+================================================================================
+
+  "El debugging no es un signo de fracaso; es el arte de entender
+   qué piensa realmente tu código."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido, Arquitecto!
+
+  Has diseñado arquitecturas y tejido patrones. Ahora enfrentarás
+  la realidad: tu código tendrá bugs. Todos los tenemos.
+
+  Este capítulo te enseñará a usar GDB (GNU Debugger) como un
+  cirujano usa su bisturí. No se trata de adivinar dónde está el
+  error, sino de diseccionar el programa hasta encontrar la causa
+  raíz con precisión milimétrica.
+
+  FRASE DEL DÍA
+  -------------
+  "El código nunca miente. Los comentarios a veces. Los bugs son
+   verdades incómodas esperando ser descubiertas."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Compilar con símbolos de depuración (-g) y optimización mínima.
+  2. Dominar breakpoints, watchpoints y catchpoints.
+  3. Navegar el stack de llamadas con backtrace.
+  4. Inspeccionar variables, memoria y registros.
+  5. Depurar hilos y condiciones de carrera.
+  6. Imprimir y modificar estructuras STL en GDB.
+  7. Analizar segfaults y core dumps.
+  8. Escribir scripts GDB para depuración automatizada.
+
+================================================================================
+
+  DEBUGGING CON GDB — CONTENIDO COMPLETO
+================================================================================
+
+► 1. COMPILACIÓN PARA DEBUGGING
+
+  Para depurar con GDB necesitas compilar con información de
+  símbolos. La bandera -g incluye nombres de variables, funciones
+  y líneas de código en el ejecutable.
+
+  // Compilación básica para debugging
+  // g++ -g -O0 -o programa programa.cpp
+
+  // Con múltiples archivos y warnings
+  // g++ -g -O0 -Wall -Wextra -o programa *.cpp
+
+  // Modo release (sin debug)
+  // g++ -O2 -DNDEBUG -o programa *.cpp
+
+  RECOMENDACIÓN: Siempre compila con -g incluso en release.
+  Puedes usar -g con -O2, aunque algunas variables optimizadas
+  no serán visibles.
+
+*/
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <thread>
+#include <mutex>
+#include <cstring>
+#include <cassert>
+#include <atomic>
+#include <algorithm>
+#include <sstream>
+#include <fstream>
+#include <memory>
+#include <chrono>
+#include <random>
+
+//==============================================================================
+// EJEMPLO 1: PROGRAMA CON BUGS PARA DEPURAR
+//==============================================================================
+
+/*
+  El siguiente programa tiene múltiples bugs que depuraremos
+  con GDB a lo largo del capítulo.
+*/
+
+int division_segura(int a, int b) {
+    // BUG: No verifica b == 0
+    return a / b;
+}
+
+void ejemplo_segfault_basico() {
+    int* ptr = nullptr;
+    // BUG: Desreferencia de puntero nulo
+    // *ptr = 42;
+
+    // Versión correcta:
+    if (ptr) {
+        *ptr = 42;
+    }
+}
+
+void buffer_overflow() {
+    char buffer[16];
+    // BUG: Copia sin verificar tamaño
+    // strcpy(buffer, "Este mensaje es demasiado largo para el buffer");
+
+    // Versión segura:
+    strncpy(buffer, "Corto", sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+}
+
+struct Nodo {
+    int dato;
+    Nodo* siguiente;
+};
+
+Nodo* crear_lista_enlazada() {
+    Nodo* cabeza = new Nodo{1, nullptr};
+    cabeza->siguiente = new Nodo{2, nullptr};
+    cabeza->siguiente->siguiente = new Nodo{3, nullptr};
+    // BUG: No hay nullptr al final
+    // cabeza->siguiente->siguiente->siguiente = cabeza; // Ciclo!
+
+    return cabeza;
+}
+
+//==============================================================================
+// EJEMPLO 2: USO BÁSICO DE GDB
+//==============================================================================
+
+/*
+  COMANDOS ESENCIALES DE GDB:
+
+  INICIO:
+  gdb ./programa          — Iniciar debugger
+  gdb ./programa core     — Depurar core dump
+  gdb --args ./programa arg1 arg2 — Pasar argumentos
+
+  EJECUCIÓN:
+  run (r)                 — Ejecutar programa
+  run arg1 arg2           — Ejecutar con argumentos
+  continue (c)            — Continuar ejecución
+  next (n)                — Siguiente línea (sin entrar en funciones)
+  step (s)                — Entrar en función
+  finish (fin)            — Salir de función actual
+  until (u)               — Avanzar hasta línea específica
+
+  BREAKPOINTS:
+  break main              — Break en función main
+  break archivo.cpp:42    — Break en línea específica
+  break funcion           — Break en función
+  break 42 if x == 5      — Break condicional
+  info breakpoints (i b)  — Listar breakpoints
+  delete 1 (d 1)          — Eliminar breakpoint 1
+  disable/enable 1        — Deshabilitar/habilitar
+
+  WATCHPOINTS:
+  watch variable          — Parar cuando cambie la variable
+  rwatch variable         — Parar cuando se lea la variable
+  awatch variable         — Parar en lectura o escritura
+
+  CATCHPOINTS:
+  catch throw             — Parar en excepciones lanzadas
+  catch catch             — Parar en excepciones capturadas
+
+  STACK:
+  backtrace (bt)          — Mostrar pila de llamadas
+  frame (f) N             — Cambiar a frame N
+  info locals             — Mostrar variables locales
+  info args               — Mostrar argumentos
+
+  INSPECCIÓN:
+  print (p) variable      — Imprimir variable
+  print &variable         — Dirección de variable
+  print *puntero          — Desreferenciar puntero
+  display variable        — Mostrar variable siempre
+  whatis variable         — Tipo de variable
+  ptype variable          — Tipo detallado
+
+  MEMORIA:
+  x/10x ptr               — Examinar 10 palabras hex en ptr
+  x/10d ptr               — Examinar 10 enteros
+  x/s ptr                 — Examinar como string
+  x/10i ptr               — Examinar como instrucciones
+
+  HILOS:
+  info threads            — Listar hilos
+  thread N                — Cambiar a hilo N
+  thread apply all bt     — Backtrace de todos los hilos
+
+  SALIR:
+  quit (q)                — Salir de GDB
+*/
+
+//==============================================================================
+// EJEMPLO 3: PROGRAMA DE EJEMPLO PARA GDB
+//==============================================================================
+
+class Calculadora {
+public:
+    Calculadora() : total_(0.0) {}
+
+    void sumar(double valor) {
+        total_ += valor;
+    }
+
+    void restar(double valor) {
+        total_ -= valor;
+    }
+
+    void multiplicar(double valor) {
+        total_ *= valor;
+    }
+
+    void dividir(double valor) {
+        if (valor == 0.0) {
+            throw std::runtime_error(
+                "División por cero detectada");
+        }
+        // NOTA: Usar 0.0 en lugar de 0 para comparación double
+        total_ /= valor;
+    }
+
+    double total() const { return total_; }
+    void reset() { total_ = 0.0; }
+
+private:
+    double total_;
+};
+
+void ejemplo_calculadora() {
+    Calculadora calc;
+    calc.sumar(10);
+    calc.multiplicar(5);
+    calc.restar(3);
+    // calc.dividir(0); // Esto lanzaría excepción
+    calc.dividir(2);
+
+    std::cout << "Resultado: " << calc.total() << "\n";
+    // Salida esperada: ((10 * 5) - 3) / 2 = 23.5
+}
+
+//==============================================================================
+// EJEMPLO 4: DEBUGGING DE SEGFAULTS
+//==============================================================================
+
+/*
+  Un SEGFAULT ocurre cuando el programa accede a memoria que no
+  le pertenece. Causas comunes:
+
+  1. Desreferencia de puntero nulo.
+  2. Desbordamiento de buffer (stack o heap).
+  3. Use-after-free (usar memoria ya liberada).
+  4. Double free (liberar dos veces).
+  5. Stack overflow (recursión infinita).
+  6. Acceso a memoria alineada incorrectamente.
+
+  FLUJO DE DEPURACIÓN DE SEGFAULT:
+
+  1. Ejecuta: gdb ./programa core
+  2. bt (backtrace) — Encuentra dónde ocurrió.
+  3. frame N — Ve al frame relevante.
+  4. info locals — Inspecciona variables.
+  5. print variable — Busca valores inválidos.
+  6. x/10x ptr — Examina memoria alrededor del puntero.
+*/
+
+class GestorMemoria {
+public:
+    GestorMemoria() {
+        datos_ = new int[100];
+        // BUG potencial: no inicializar datos_
+    }
+
+    ~GestorMemoria() {
+        delete[] datos_;
+    }
+
+    // BUG: Violación de la regla de los 3/5
+    // Copia superficial — doble delete!
+    GestorMemoria(const GestorMemoria&) = default;
+    GestorMemoria& operator=(const GestorMemoria&) = default;
+
+    int get(int idx) const { return datos_[idx]; }
+    void set(int idx, int valor) { datos_[idx] = valor; }
+
+private:
+    int* datos_;
+};
+
+// Corrección con RAII y smart pointers
+class GestorMemoriaModerno {
+public:
+    GestorMemoriaModerno()
+        : datos_(std::make_unique<int[]>(100)) {}
+
+    int get(int idx) const { return datos_[idx]; }
+    void set(int idx, int valor) { datos_[idx] = valor; }
+
+private:
+    std::unique_ptr<int[]> datos_;
+};
+
+//==============================================================================
+// EJEMPLO 5: DEBUGGING DE STL CON GDB
+//==============================================================================
+
+/*
+  GDB puede imprimir contenedores STL, pero los nombres son
+  crípticos. Usa pretty-printers para mejorar la legibilidad.
+
+  // En ~/.gdbinit:
+  source /usr/share/gdb/auto-load/usr/lib/libstdc++.so.6-gdb.py
+
+  // O instalar STL pretty-printers manualmente.
+
+  COMANDOS ÚTILES PARA STL:
+
+  print vector      → Muestra elementos (con pretty-printer)
+  print vector._M_impl._M_start  → Sin pretty-printer
+  p vector.size()   → Tamaño
+  p vector[0]       → Primer elemento
+  p *vector._M_impl._M_start@5  → Primeros 5 elementos
+*/
+
+void ejemplo_stl_debug() {
+    std::vector<int> numeros = {1, 2, 3, 4, 5};
+    numeros.push_back(6);
+
+    std::map<std::string, int> edades;
+    edades["Ana"] = 25;
+    edades["Bob"] = 30;
+    edades["Carlos"] = 35;
+
+    std::string texto = "Hola, mundo!";
+
+    for (size_t i = 0; i < numeros.size(); ++i) {
+        std::cout << numeros[i] << " ";
+    }
+    std::cout << "\n";
+
+    // BUG: Iterar más allá del tamaño
+    // for (size_t i = 0; i <= numeros.size(); ++i) {
+    //     std::cout << numeros[i] << " ";
+    // }
+
+    // Versión segura con iteradores
+    for (auto it = numeros.begin(); it != numeros.end(); ++it) {
+        std::cout << *it << " ";
+    }
+    std::cout << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 6: DEBUGGING DE HILOS Y CONDICIONES DE CARRERA
+//==============================================================================
+
+/*
+  GDB permite depurar programas multihilo para detectar:
+  • Condiciones de carrera (race conditions)
+  • Deadlocks (bloqueos mutuos)
+  • Data races (accesos concurrentes sin sincronización)
+
+  COMANDOS PARA HILOS:
+  info threads
+  thread N
+  thread apply all bt
+  set scheduler-locking on  → Mantener hilo actual al avanzar
+*/
+
+class ContadorCompartido {
+public:
+    void incrementar() {
+        // Sin mutex = data race!
+        contador_++;
+    }
+
+    void incrementar_seguro() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        contador_++;
+    }
+
+    int valor() const { return contador_; }
+
+private:
+    int contador_ = 0;
+    mutable std::mutex mutex_;
+};
+
+void ejemplo_race_condition() {
+    ContadorCompartido contador;
+    std::vector<std::thread> hilos;
+
+    // Lanzar 10 hilos que incrementan sin protección
+    for (int i = 0; i < 10; ++i) {
+        hilos.emplace_back([&contador]() {
+            for (int j = 0; j < 1000; ++j) {
+                contador.incrementar(); // BUG: data race
+            }
+        });
+    }
+
+    for (auto& hilo : hilos) {
+        hilo.join();
+    }
+
+    std::cout << "Valor final: " << contador.valor()
+              << " (esperado: 10000)\n";
+    // Generalmente será MENOS de 10000 por la race condition
+}
+
+void ejemplo_deadlock() {
+    std::mutex mutex_a, mutex_b;
+
+    std::thread t1([&]() {
+        std::lock_guard<std::mutex> lock1(mutex_a);
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(100));
+        std::lock_guard<std::mutex> lock2(mutex_b);
+        std::cout << "Hilo 1 completado\n";
+    });
+
+    std::thread t2([&]() {
+        std::lock_guard<std::mutex> lock1(mutex_b);
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(100));
+        std::lock_guard<std::mutex> lock2(mutex_a);
+        std::cout << "Hilo 2 completado\n";
+    });
+
+    t1.join();
+    t2.join();
+}
+
+// Solución: usar std::lock para adquirir múltiples mutex
+void ejemplo_sin_deadlock() {
+    std::mutex mutex_a, mutex_b;
+
+    std::thread t1([&]() {
+        std::scoped_lock lock(mutex_a, mutex_b);
+        std::cout << "Hilo 1 completado (seguro)\n";
+    });
+
+    std::thread t2([&]() {
+        std::scoped_lock lock(mutex_a, mutex_b);
+        std::cout << "Hilo 2 completado (seguro)\n";
+    });
+
+    t1.join();
+    t2.join();
+}
+
+//==============================================================================
+// EJEMPLO 7: DEBUGGING DE EXCEPCIONES
+//==============================================================================
+
+/*
+  GDB puede atrapar excepciones en el momento exacto en que se
+  lanzan, antes de que los catch handlers las procesen.
+
+  COMANDOS:
+  catch throw         → Parar en cualquier throw
+  catch catch         → Parar en cualquier catch
+  catch throw std::runtime_error  → Solo runtime_error
+*/
+
+void procesar_archivo(const std::string& ruta) {
+    std::ifstream archivo(ruta);
+    if (!archivo.is_open()) {
+        throw std::runtime_error(
+            "No se pudo abrir: " + ruta);
+    }
+
+    std::string linea;
+    while (std::getline(archivo, linea)) {
+        if (linea.empty()) {
+            throw std::invalid_argument(
+                "Línea vacía encontrada");
+        }
+    }
+}
+
+void ejemplo_excepciones() {
+    try {
+        procesar_archivo("archivo_inexistente.txt");
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 8: SCRIPTS GDB PERSONALIZADOS
+//==============================================================================
+
+/*
+  GDB soporta scripts para automatizar tareas repetitivas.
+
+  --- ~/.gdbinit ---
+  set pagination off
+  set print pretty on
+  set print elements 100
+  set confirm off
+
+  define log_breakpoint
+      break $arg0
+      commands
+          printf "Hit breakpoint %s at %s:%d\n", $arg0, __FILE__, __LINE__
+          bt 5
+          continue
+      end
+  end
+
+  --- Comandos útiles en scripting: ---
+  define debug_vector
+      if $argc == 1
+          p $arg0._M_impl._M_start@$arg0.size()
+      else
+          p $arg0._M_impl._M_start@$arg1
+      end
+  end
+*/
+
+//==============================================================================
+// EJEMPLO 9: DEPURACIÓN DE MEMORIA CON VALGRIND
+//==============================================================================
+
+/*
+  Valgrind complementa a GDB detectando:
+  • Pérdidas de memoria (memory leaks)
+  • Accesos a memoria no inicializada
+  • Use-after-free
+  • Double free
+
+  COMANDO:
+  valgrind --leak-check=full --show-leak-kinds=all ./programa
+
+  VALGRIND + GDB:
+  valgrind --vgdb=yes --vgdb-error=0 ./programa
+  gdb ./programa
+  target remote | vgdb
+*/
+
+void ejemplo_memory_leak() {
+    // BUG: Pérdida de memoria
+    int* leak = new int[1000];
+    // delete[] leak;  // Olvidamos liberar
+
+    // Con smart pointers no hay leak
+    auto ptr = std::make_unique<int[]>(1000);
+}
+
+//==============================================================================
+// EJEMPLO 10: DEPURACIÓN AVANZADA — REVERSE DEBUGGING
+//==============================================================================
+
+/*
+  GDB puede ejecutar el programa hacia atrás para encontrar el
+  origen exacto de un bug.
+
+  REQUISITO: Compilar con -g -O0
+
+  COMANDOS (requiere gdb 7.0+):
+  record                   → Empezar a grabar
+  run                      → Ejecutar (se graba)
+  reverse-continue (rc)    → Continuar hacia atrás
+  reverse-step (rs)        → Paso atrás
+  reverse-next (rn)        → Siguiente línea hacia atrás
+  reverse-finish           → Salir de función hacia atrás
+
+  No funciona con todas las instrucciones (especialmente I/O).
+*/
+
+//==============================================================================
+// EJEMPLO 11: DEBUGGING DE OPTIMIZACIONES
+//==============================================================================
+
+/*
+  Cuando compilas con -O2 o -O3, el compilador reordena y elimina
+  código. Esto puede hacer que el debugging sea confuso.
+
+  var = 42;      // Puede ser eliminado si no se usa
+  func();        // Puede ser inlineado
+  for(...) {...} // Puede ser desenrollado
+
+  Para depurar con optimizaciones:
+  • Compilar con -Og (optimizar para debug)
+  • Usar -fno-omit-frame-pointer (mantener frames)
+  • Variables etiquetadas como "optimized out"
+
+  REGLA: Depura con -O0, despliega con -O2.
+*/
+
+int búsqueda_binaria(const std::vector<int>& arr, int objetivo) {
+    int izquierda = 0;
+    int derecha = static_cast<int>(arr.size()) - 1;
+
+    while (izquierda <= derecha) {
+        int medio = izquierda + (derecha - izquierda) / 2;
+
+        if (arr[medio] == objetivo) return medio;
+        if (arr[medio] < objetivo) izquierda = medio + 1;
+        else derecha = medio - 1;
+    }
+
+    return -1;
+}
+
+void ejemplo_optimizacion() {
+    std::vector<int> datos = {1, 3, 5, 7, 9, 11, 13, 15};
+    int idx = búsqueda_binaria(datos, 7);
+    std::cout << "Índice del 7: " << idx << "\n";
+
+    idx = búsqueda_binaria(datos, 8);
+    std::cout << "Índice del 8: " << idx << " (debe ser -1)\n";
+}
+
+//==============================================================================
+// EJEMPLO 12: DEBUGGING DE UB (UNDEFINED BEHAVIOR)
+//==============================================================================
+
+/*
+  Undefined Behavior es el enemigo silencioso. El programa parece
+  funcionar... hasta que no. GDB + sanitizers lo detectan.
+
+  COMPILAR CON SANITIZERS:
+  g++ -g -O1 -fsanitize=address -fsanitize=undefined program.cpp
+
+  -fsanitize=address     → Detecta buffer overflows, use-after-free
+  -fsanitize=undefined   → Detecta overflow de enteros, shift inválido
+  -fsanitize=thread      → Detecta data races
+  -fsanitize=leak        → Detecta memory leaks
+*/
+
+int undefined_behavior_ejemplos() {
+    int resultados[5];
+    int total = 0;
+
+    // UB 1: Desbordamiento de buffer
+    // for (int i = 0; i <= 5; ++i) {
+    //     resultados[i] = i * 10;
+    // }
+
+    // UB 2: Overflow de enteros con signed
+    // int x = INT_MAX;
+    // x += 1;
+
+    // UB 3: Shift negativo
+    // int y = -1 >> 1;
+
+    // UB 4: División por cero
+    // int z = 42 / 0;
+
+    // Versión correcta
+    for (int i = 0; i < 5; ++i) {
+        resultados[i] = i * 10;
+        total += resultados[i];
+    }
+
+    return total;
+}
+
+//==============================================================================
+// EJEMPLO 13: LOGGING COMO HERRAMIENTA DE DEBUGGING
+//==============================================================================
+
+/*
+  A veces un buen log es más rápido que un debugger. Aquí una
+  macro de logging que preserva archivo y línea.
+*/
+
+#define LOG_DEBUG(msg) \
+    do { \
+        std::cout << "[DEBUG] " << __FILE__ << ":" \
+                  << __LINE__ << " " << __func__ << " — " \
+                  << msg << "\n"; \
+    } while (0)
+
+#define LOG_VAR(var) \
+    do { \
+        std::cout << "[DEBUG] " << #var << " = " \
+                  << var << " (" << __FILE__ << ":" \
+                  << __LINE__ << ")\n"; \
+    } while (0)
+
+//==============================================================================
+// EJEMPLO 14: CASO REAL — DEBUGGING DE UN CRASH
+//==============================================================================
+
+/*
+  Situación: El programa crashea al procesar un archivo grande.
+  Pasos para resolverlo:
+
+  1. Reproducir: ./procesador datos_grandes.csv → Segfault
+  2. Compilar con -g: g++ -g -O0 procesador.cpp -o procesador
+  3. Ejecutar en GDB: gdb --args ./procesador datos_grandes.csv
+  4. run → Programa crashea, GDB muestra la línea
+  5. bt → Backtrace completo
+  6. frame 3 → Marco donde ocurre el crash
+  7. info locals → Variables locales (una está corrupta)
+  8. print variable → Valor sospechoso
+  9. Analizar: ¿índice negativo? ¿puntero nulo?
+  10. Corregir: Agregar validación de bounds
+*/
+
+class ProcesadorCSV {
+public:
+    struct Fila {
+        std::vector<std::string> columnas;
+    };
+
+    void cargar(const std::string& ruta) {
+        std::ifstream archivo(ruta);
+        std::string linea;
+
+        while (std::getline(archivo, linea)) {
+            Fila fila;
+            std::stringstream ss(linea);
+            std::string celda;
+
+            while (std::getline(ss, celda, ',')) {
+                fila.columnas.push_back(celda);
+            }
+            datos_.push_back(std::move(fila));
+        }
+    }
+
+    // BUG: No verifica límites
+    std::string get_celda(int fila, int columna) const {
+        if (fila < 0 || fila >= static_cast<int>(datos_.size())) {
+            throw std::out_of_range(
+                "Fila " + std::to_string(fila) + " fuera de rango");
+        }
+        const auto& f = datos_[fila];
+        if (columna < 0 || columna >= static_cast<int>(f.columnas.size())) {
+            throw std::out_of_range(
+                "Columna " + std::to_string(columna) + " fuera de rango");
+        }
+        return f.columnas[columna];
+    }
+
+private:
+    std::vector<Fila> datos_;
+};
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 73:
+
+  1. Compilar con -g -O0 para debugging, -O2 para producción.
+
+  2. Comandos esenciales de GDB:
+     • break, run, continue, next, step, finish
+     • backtrace, frame, info locals, print
+     • watch, rwatch, awatch
+     • catch throw/catch
+
+  3. Para segfaults: bt → frame → info locals → print → x/
+
+  4. STL en GDB: usa pretty-printers o accede a los miembros
+     internos con _M_impl._M_start.
+
+  5. Hilos: info threads, thread N, thread apply all bt.
+     std::scoped_lock y std::lock para evitar deadlocks.
+
+  6. Excepciones: catch throw para detener en el lanzamiento.
+
+  7. Sanitizers: -fsanitize=address,=undefined,=thread
+     detectan UB automáticamente.
+
+  8. Valgrind: detecta memory leaks y accesos inválidos.
+
+  9. Reverse debugging: record → run → reverse-continue.
+
+  10. Logging estratégico con macros que preservan archivo
+      y línea.
+
+  FLUJO DE DEPURACIÓN RECOMENDADO:
+  1. Reproducir el bug
+  2. Compilar con -g -O0 -fsanitize=address,undefined
+  3. Ejecutar en GDB o analizar el mensaje del sanitizer
+  4. Identificar la causa raíz
+  5. Escribir el test que falla
+  6. Corregir
+  7. Verificar que el test pase
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Depurar una linked list
+  ------------------------------------
+  El siguiente código tiene un bug que causa un crash aleatorio.
+  Usa GDB para encontrar la causa raíz.
+
+  struct Node { int data; Node* next; };
+  void insert(Node*& head, int value) {
+      Node* n = new Node{value, nullptr};
+      if (!head) { head = n; return; }
+      Node* curr = head;
+      while (curr) curr = curr->next;
+      curr->next = n;  // ¿Dónde está el bug?
+  }
+
+  EJERCICIO 2: Debuggear condición de carrera
+  -------------------------------------------
+  Crea un programa con dos hilos que incrementan una variable
+  compartida sin mutex 100000 veces cada uno. Usa GDB para
+  observar la condición de carrera en acción.
+
+  EJERCICIO 3: Analizar un core dump
+  ----------------------------------
+  Compila un programa que crashea, ejecútalo para generar el
+  core dump, y luego usa GDB para analizarlo sin re-ejecutar.
+
+  // ulimit -c unlimited
+  // ./programa
+  // gdb ./programa core
+
+  EJERCICIO 4: Escribir un script GDB
+  ------------------------------------
+  Crea un script GDB que:
+  • Establezca un breakpoint en una función
+  • Imprima los argumentos
+  • Muestre el backtrace
+  • Continúe automáticamente
+
+  EJERCICIO 5: Depurar con sanitizers
+  -----------------------------------
+  Toma un programa con buffer overflow (intencional) y compílalo
+  con -fsanitize=address. Observa el mensaje de error detallado
+  que da el sanitizer comparado con el segfault normal.
+
+  EJERCICIO 6: Valgrind + GDB
+  ---------------------------
+  Crea un programa con memory leak. Corre valgrind para detectarlo,
+  luego usa valgrind --vgdb para enganchar GDB en el punto exacto
+  donde ocurre la fuga.
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿Por qué GDB dice "optimized out" para mis variables?
+  R: El compilador optimizó las variables a registros o las eliminó.
+     Compila con -O0 para debugging o usa -Og que preserva más
+     información.
+
+  P: ¿Cómo depuro un programa que solo crashea en producción?
+  R: Asegúrate de tener core dumps habilitados (ulimit -c unlimited).
+     Compila con -g -O2 (símbolos + optimización). Analiza el core
+     dump con gdb ./programa core.
+
+  P: ¿Cómo imprimo un std::vector completo en GDB?
+  R: Con pretty-printers: p vector.
+     Sin ellos: p *(vector._M_impl._M_start)@vector.size()
+
+  P: ¿GDB funciona con C++20 modules?
+  R: Soporte limitado. GDB 11+ tiene soporte básico para módulos
+     de C++20 pero aún es experimental.
+
+  P: ¿Cómo depuro un hilo específico?
+  R: info threads → thread N → bt. Usa thread apply all bt para
+     ver todos los stacks a la vez.
+
+  P: ¿Cuál es la diferencia entre next y step?
+  R: next ejecuta la siguiente línea sin entrar a funciones.
+     step entra a la función si la línea contiene una llamada.
+
+  P: ¿Cómo hago un breakpoint que solo se active después de N veces?
+  R: break funcion if $call_count > N
+     O: ignore N (ignorar N hits antes de parar)
+
+  P: ¿Puedo cambiar el valor de una variable mientras depuro?
+  R: Sí: set variable = nuevo_valor. Muy útil para probar
+     correcciones sin recompilar.
+
+  P: ¿Qué es un watchpoint y cuándo usarlo?
+  R: Un watchpoint pausa el programa cuando una variable cambia.
+     Útil para detectar modificaciones inesperadas.
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 73                ║
+  ║        "EL DETECTIVE DE BUGS"                              ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Eres el ingeniero de guardia en una startup. A las 3 AM, el
+  sistema de trading en tiempo real comienza a dar resultados
+  incorrectos. El equipo te ha pasado el siguiente código:
+
+  struct Trade {
+      double price;
+      int volume;
+      long long timestamp;
+  };
+
+  class TradingEngine {
+      std::vector<Trade> trades_;
+      std::mutex mutex_;
+      double running_sum_;
+  public:
+      void add_trade(const Trade& t) {
+          trades_.push_back(t);
+          running_sum_ += t.price * t.volume;
+          std::cout << "Trade added\n";
+      }
+
+      double average_price() const {
+          double sum = 0.0;
+          for (const auto& t : trades_)
+              sum += t.price;
+          return sum / trades_.size();
+      }
+
+      void reset() {
+          trades_.clear();
+          running_sum_ = 0.0;
+      }
+  };
+
+  El bug: A veces average_price() devuelve NaN, otras veces
+  el programa crashea con segfault.
+
+  Tu misión (si decides aceptarla):
+  1. Identifica TODOS los bugs en TradingEngine (hay al menos 4).
+  2. Usa GDB para reproducir y encontrar cada bug.
+  3. Corrige cada bug explicando la causa raíz.
+  4. Escribe un script GDB que automatice la detección.
+
+  Pistas:
+  • Mira la sincronización (o falta de ella).
+  • ¿Qué pasa si trades_ está vacío?
+  • ¿Y si add_trade es llamado desde múltiples hilos?
+  • running_sum_ podría desincronizarse.
+
+  Criterios:
+  • Bugs identificados correctamente (20 pts c/u)
+  • Correcciones correctas (20 pts)
+  • Script GDB funcional (20 pts)
+
+  ¡El mercado no espera! El bug está ahí afuera.
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 73: Debugging con GDB.
+
+  Ahora tienes las herramientas para enfrentar cualquier bug:
+  desde el humilde segfault hasta las condiciones de carrera más
+  escurridizas. Recuerda: un buen debugger no es el que encuentra
+  bugs más rápido, sino el que entiende mejor el código.
+
+  En el próximo capítulo exploraremos el análisis estático con
+  cppcheck y clang-tidy. Aprenderás a detectar bugs sin siquiera
+  ejecutar el programa.
+
+  "Depurar es como ser el detective en una película donde
+   también eres el asesino."
+
+  ¡Nos vemos en el Capítulo 74!
+
+================================================================================
+  FIN DEL CAPÍTULO 73 — DEBUGGING CON GDB
+  PRÓXIMO CAPÍTULO: CPPCHECK Y ANÁLISIS ESTÁTICO (Capítulo 74)
+================================================================================

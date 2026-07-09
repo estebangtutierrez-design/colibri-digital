@@ -1,0 +1,1057 @@
+================================================================================
+  C# MASTER BOOK — MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 78: PROYECTO FINAL
+================================================================================
+
+  BIENVENIDA
+  ----------
+  Bienvenido al Capítulo 78. Este es el momento culminante de tu formación:
+  el Proyecto Final. Construirás una aplicación completa desde cero,
+  integrando arquitectura en capas, Entity Framework Core, inyección de
+  dependencias, pruebas unitarias y seguridad.
+
+  FRASE DEL DÍA
+  -------------
+  "No es el conocimiento, sino la acción lo que transforma un estudiante
+   en un profesional." — Profesor Búho AI
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  • Construir una aplicación CRUD completa con ASP.NET Core + EF Core.
+  • Implementar arquitectura en capas con DI.
+  • Escribir pruebas unitarias con xUnit y Moq.
+  • Añadir autenticación y autorización JWT.
+  • Implementar logging y manejo de errores.
+  • Publicar la aplicación.
+
+================================================================================
+  [ESPECIFICACIONES DEL PROYECTO]
+================================================================================
+
+  SISTEMA DE GESTIÓN DE INVENTARIOS
+
+  El proyecto consiste en una API REST para gestionar el inventario de una
+  tienda. Funcionalidades:
+
+  1. CRUD de Productos (Nombre, Precio, Stock, Categoría).
+  2. CRUD de Categorías.
+  3. CRUD de Proveedores.
+  4. Asociar productos con proveedores (N:N).
+  5. Registrar entrada/salida de stock.
+  6. Reportes: productos con stock bajo, valor total del inventario.
+  7. Autenticación JWT para usuarios.
+  8. Roles: Admin (todo), User (solo lectura).
+  9. Logging de todas las operaciones.
+  10. Pruebas unitarias con cobertura > 70%.
+
+================================================================================
+  [ESTRUCTURA DEL PROYECTO]
+================================================================================
+
+  InventoryManager/
+  ├── InventoryManager.sln
+  ├── src/
+  │   ├── InventoryManager.Domain/
+  │   │   ├── Entities/
+  │   │   │   ├── Producto.cs
+  │   │   │   ├── Categoria.cs
+  │   │   │   ├── Proveedor.cs
+  │   │   │   └── MovimientoStock.cs
+  │   │   └── Interfaces/
+  │   │       ├── IProductoRepositorio.cs
+  │   │       ├── ICategoriaRepositorio.cs
+  │   │       └── IProveedorRepositorio.cs
+  │   ├── InventoryManager.Application/
+  │   │   ├── DTOs/
+  │   │   ├── Servicios/
+  │   │   └── Mappings/
+  │   ├── InventoryManager.Infrastructure/
+  │   │   ├── Data/
+  │   │   │   ├── InventoryDbContext.cs
+  │   │   │   └── Configurations/
+  │   │   └── Repositories/
+  │   └── InventoryManager.WebAPI/
+  │       ├── Controllers/
+  │       ├── Middleware/
+  │       └── Program.cs
+  └── tests/
+      └── InventoryManager.Tests/
+          ├── Services/
+          └── Repositories/
+
+================================================================================
+  [CÓDIGO — IMPLEMENTACIÓN COMPLETA]
+================================================================================
+
+  ------------------------------------------------------------------------------
+  PASO 1: Entidades del dominio
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.Domain/Entities/Producto.cs
+  // ============================
+
+  namespace InventoryManager.Domain.Entities
+  {
+      public class Producto
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; } = string.Empty;
+          public string? Descripcion { get; set; }
+          public decimal Precio { get; set; }
+          public int Stock { get; set; }
+          public int StockMinimo { get; set; } = 5;
+          public DateTime FechaCreacion { get; set; } = DateTime.UtcNow;
+          public bool Activo { get; set; } = true;
+
+          public int CategoriaId { get; set; }
+          public Categoria Categoria { get; set; } = null!;
+          public ICollection<Proveedor> Proveedores { get; set; } = new List<Proveedor>();
+          public ICollection<MovimientoStock> Movimientos { get; set; } = new List<MovimientoStock>();
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Entities/Categoria.cs
+  // ============================
+
+  namespace InventoryManager.Domain.Entities
+  {
+      public class Categoria
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; } = string.Empty;
+          public string? Descripcion { get; set; }
+          public ICollection<Producto> Productos { get; set; } = new List<Producto>();
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Entities/Proveedor.cs
+  // ============================
+
+  namespace InventoryManager.Domain.Entities
+  {
+      public class Proveedor
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; } = string.Empty;
+          public string? Contacto { get; set; }
+          public string? Telefono { get; set; }
+          public string? Email { get; set; }
+          public ICollection<Producto> Productos { get; set; } = new List<Producto>();
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Entities/MovimientoStock.cs
+  // ============================
+
+  namespace InventoryManager.Domain.Entities
+  {
+      public enum TipoMovimiento { Entrada, Salida }
+
+      public class MovimientoStock
+      {
+          public int Id { get; set; }
+          public int ProductoId { get; set; }
+          public Producto Producto { get; set; } = null!;
+          public TipoMovimiento Tipo { get; set; }
+          public int Cantidad { get; set; }
+          public string? Observacion { get; set; }
+          public DateTime Fecha { get; set; } = DateTime.UtcNow;
+          public string UsuarioId { get; set; } = string.Empty;
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 2: Interfaces del repositorio
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.Domain/Interfaces/IProductoRepositorio.cs
+  // ============================
+
+  using InventoryManager.Domain.Entities;
+
+  namespace InventoryManager.Domain.Interfaces
+  {
+      public interface IProductoRepositorio
+      {
+          Task<Producto?> GetByIdAsync(int id);
+          Task<IEnumerable<Producto>> GetAllAsync();
+          Task<IEnumerable<Producto>> GetByCategoriaAsync(int categoriaId);
+          Task<IEnumerable<Producto>> GetStockBajoAsync(int umbral);
+          Task<Producto> AddAsync(Producto producto);
+          Task UpdateAsync(Producto producto);
+          Task DeleteAsync(int id);
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Interfaces/ICategoriaRepositorio.cs
+  // ============================
+
+  using InventoryManager.Domain.Entities;
+
+  namespace InventoryManager.Domain.Interfaces
+  {
+      public interface ICategoriaRepositorio
+      {
+          Task<Categoria?> GetByIdAsync(int id);
+          Task<IEnumerable<Categoria>> GetAllAsync();
+          Task<Categoria> AddAsync(Categoria categoria);
+          Task UpdateAsync(Categoria categoria);
+          Task DeleteAsync(int id);
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Interfaces/IProveedorRepositorio.cs
+  // ============================
+
+  using InventoryManager.Domain.Entities;
+
+  namespace InventoryManager.Domain.Interfaces
+  {
+      public interface IProveedorRepositorio
+      {
+          Task<Proveedor?> GetByIdAsync(int id);
+          Task<IEnumerable<Proveedor>> GetAllAsync();
+          Task<Proveedor> AddAsync(Proveedor proveedor);
+          Task UpdateAsync(Proveedor proveedor);
+          Task DeleteAsync(int id);
+      }
+  }
+
+  // ============================
+  // InventoryManager.Domain/Interfaces/IMovimientoStockRepositorio.cs
+  // ============================
+
+  using InventoryManager.Domain.Entities;
+
+  namespace InventoryManager.Domain.Interfaces
+  {
+      public interface IMovimientoStockRepositorio
+      {
+          Task<IEnumerable<MovimientoStock>> GetByProductoAsync(int productoId);
+          Task<MovimientoStock> AddAsync(MovimientoStock movimiento);
+          Task<decimal> GetValorTotalInventarioAsync();
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 3: DbContext y configuraciones
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.Infrastructure/Data/InventoryDbContext.cs
+  // ============================
+
+  using Microsoft.EntityFrameworkCore;
+  using InventoryManager.Domain.Entities;
+
+  namespace InventoryManager.Infrastructure.Data
+  {
+      public class InventoryDbContext : DbContext
+      {
+          public InventoryDbContext(DbContextOptions<InventoryDbContext> options)
+              : base(options) { }
+
+          public DbSet<Producto> Productos => Set<Producto>();
+          public DbSet<Categoria> Categorias => Set<Categoria>();
+          public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+          public DbSet<MovimientoStock> MovimientosStock => Set<MovimientoStock>();
+
+          protected override void OnModelCreating(ModelBuilder modelBuilder)
+          {
+              modelBuilder.Entity<Producto>(entity =>
+              {
+                  entity.Property(p => p.Nombre).IsRequired().HasMaxLength(200);
+                  entity.Property(p => p.Precio).HasColumnType("decimal(18,2)");
+                  entity.HasOne(p => p.Categoria)
+                        .WithMany(c => c.Productos)
+                        .HasForeignKey(p => p.CategoriaId);
+                  entity.HasMany(p => p.Proveedores)
+                        .WithMany(pv => pv.Productos)
+                        .UsingEntity(j => j.ToTable("ProductoProveedores"));
+              });
+
+              modelBuilder.Entity<Categoria>(entity =>
+              {
+                  entity.Property(c => c.Nombre).IsRequired().HasMaxLength(100);
+              });
+
+              modelBuilder.Entity<Proveedor>(entity =>
+              {
+                  entity.Property(p => p.Nombre).IsRequired().HasMaxLength(200);
+              });
+
+              modelBuilder.Entity<MovimientoStock>(entity =>
+              {
+                  entity.Property(m => m.Cantidad).IsRequired();
+                  entity.Property(m => m.Tipo).HasConversion<string>().HasMaxLength(10);
+                  entity.HasOne(m => m.Producto)
+                        .WithMany(p => p.Movimientos)
+                        .HasForeignKey(m => m.ProductoId);
+              });
+          }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 4: Repositorios
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.Infrastructure/Repositories/ProductoRepositorio.cs
+  // ============================
+
+  using Microsoft.EntityFrameworkCore;
+  using InventoryManager.Domain.Entities;
+  using InventoryManager.Domain.Interfaces;
+  using InventoryManager.Infrastructure.Data;
+
+  namespace InventoryManager.Infrastructure.Repositories
+  {
+      public class ProductoRepositorio : IProductoRepositorio
+      {
+          private readonly InventoryDbContext _context;
+          public ProductoRepositorio(InventoryDbContext context) => _context = context;
+
+          public async Task<Producto?> GetByIdAsync(int id)
+              => await _context.Productos
+                  .Include(p => p.Categoria)
+                  .Include(p => p.Proveedores)
+                  .FirstOrDefaultAsync(p => p.Id == id);
+
+          public async Task<IEnumerable<Producto>> GetAllAsync()
+              => await _context.Productos
+                  .Include(p => p.Categoria)
+                  .Where(p => p.Activo)
+                  .ToListAsync();
+
+          public async Task<IEnumerable<Producto>> GetByCategoriaAsync(int categoriaId)
+              => await _context.Productos
+                  .Where(p => p.CategoriaId == categoriaId && p.Activo)
+                  .ToListAsync();
+
+          public async Task<IEnumerable<Producto>> GetStockBajoAsync(int umbral)
+              => await _context.Productos
+                  .Where(p => p.Stock <= umbral && p.Activo)
+                  .ToListAsync();
+
+          public async Task<Producto> AddAsync(Producto producto)
+          {
+              _context.Productos.Add(producto);
+              await _context.SaveChangesAsync();
+              return producto;
+          }
+
+          public async Task UpdateAsync(Producto producto)
+          {
+              _context.Entry(producto).State = EntityState.Modified;
+              await _context.SaveChangesAsync();
+          }
+
+          public async Task DeleteAsync(int id)
+          {
+              var producto = await _context.Productos.FindAsync(id);
+              if (producto != null)
+              {
+                  producto.Activo = false; // Soft delete
+                  await _context.SaveChangesAsync();
+              }
+          }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 5: Servicios de aplicación y DTOs
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.Application/DTOs/ProductoDTOs.cs
+  // ============================
+
+  namespace InventoryManager.Application.DTOs
+  {
+      public class ProductoDTO
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; } = string.Empty;
+          public string? Descripcion { get; set; }
+          public decimal Precio { get; set; }
+          public int Stock { get; set; }
+          public int StockMinimo { get; set; }
+          public string Categoria { get; set; } = string.Empty;
+          public List<string> Proveedores { get; set; } = new();
+      }
+
+      public class CrearProductoDTO
+      {
+          public string Nombre { get; set; } = string.Empty;
+          public string? Descripcion { get; set; }
+          public decimal Precio { get; set; }
+          public int Stock { get; set; }
+          public int StockMinimo { get; set; } = 5;
+          public int CategoriaId { get; set; }
+          public List<int> ProveedorIds { get; set; } = new();
+      }
+
+      public class ActualizarProductoDTO
+      {
+          public int Id { get; set; }
+          public string Nombre { get; set; } = string.Empty;
+          public string? Descripcion { get; set; }
+          public decimal Precio { get; set; }
+          public int Stock { get; set; }
+          public int StockMinimo { get; set; }
+          public int CategoriaId { get; set; }
+          public List<int> ProveedorIds { get; set; } = new();
+      }
+
+      public class MovimientoStockDTO
+      {
+          public int ProductoId { get; set; }
+          public string Tipo { get; set; } = string.Empty;
+          public int Cantidad { get; set; }
+          public string? Observacion { get; set; }
+      }
+
+      public class ReporteStockBajoDTO
+      {
+          public string Producto { get; set; } = string.Empty;
+          public int StockActual { get; set; }
+          public int StockMinimo { get; set; }
+          public string Categoria { get; set; } = string.Empty;
+      }
+
+      public class ValorInventarioDTO
+      {
+          public decimal ValorTotal { get; set; }
+          public int TotalProductos { get; set; }
+          public int ProductosStockBajo { get; set; }
+      }
+  }
+
+  // ============================
+  // InventoryManager.Application/Servicios/ProductoService.cs
+  // ============================
+
+  using InventoryManager.Application.DTOs;
+  using InventoryManager.Domain.Entities;
+  using InventoryManager.Domain.Interfaces;
+
+  namespace InventoryManager.Application.Servicios
+  {
+      public interface IProductoService
+      {
+          Task<ProductoDTO?> GetByIdAsync(int id);
+          Task<IEnumerable<ProductoDTO>> GetAllAsync();
+          Task<ProductoDTO> CreateAsync(CrearProductoDTO dto);
+          Task<ProductoDTO> UpdateAsync(ActualizarProductoDTO dto);
+          Task DeleteAsync(int id);
+          Task<IEnumerable<ReporteStockBajoDTO>> GetStockBajoAsync(int umbral = 5);
+          Task<ValorInventarioDTO> GetValorInventarioAsync();
+      }
+
+      public class ProductoService : IProductoService
+      {
+          private readonly IProductoRepositorio _productoRepo;
+          private readonly ICategoriaRepositorio _categoriaRepo;
+          private readonly IProveedorRepositorio _proveedorRepo;
+          private readonly IMovimientoStockRepositorio _movimientoRepo;
+
+          public ProductoService(
+              IProductoRepositorio productoRepo,
+              ICategoriaRepositorio categoriaRepo,
+              IProveedorRepositorio proveedorRepo,
+              IMovimientoStockRepositorio movimientoRepo)
+          {
+              _productoRepo = productoRepo;
+              _categoriaRepo = categoriaRepo;
+              _proveedorRepo = proveedorRepo;
+              _movimientoRepo = movimientoRepo;
+          }
+
+          public async Task<ProductoDTO?> GetByIdAsync(int id)
+          {
+              var producto = await _productoRepo.GetByIdAsync(id);
+              return producto == null ? null : MapToDTO(producto);
+          }
+
+          public async Task<IEnumerable<ProductoDTO>> GetAllAsync()
+          {
+              var productos = await _productoRepo.GetAllAsync();
+              return productos.Select(MapToDTO);
+          }
+
+          public async Task<ProductoDTO> CreateAsync(CrearProductoDTO dto)
+          {
+              var categoria = await _categoriaRepo.GetByIdAsync(dto.CategoriaId);
+              if (categoria == null)
+                  throw new KeyNotFoundException("Categoría no encontrada");
+
+              var producto = new Producto
+              {
+                  Nombre = dto.Nombre,
+                  Descripcion = dto.Descripcion,
+                  Precio = dto.Precio,
+                  Stock = dto.Stock,
+                  StockMinimo = dto.StockMinimo,
+                  CategoriaId = dto.CategoriaId
+              };
+
+              if (dto.ProveedorIds.Any())
+              {
+                  var proveedores = await _proveedorRepo.GetAllAsync();
+                  producto.Proveedores = proveedores
+                      .Where(p => dto.ProveedorIds.Contains(p.Id))
+                      .ToList();
+              }
+
+              var creado = await _productoRepo.AddAsync(producto);
+
+              if (dto.Stock > 0)
+              {
+                  await _movimientoRepo.AddAsync(new MovimientoStock
+                  {
+                      ProductoId = creado.Id,
+                      Tipo = TipoMovimiento.Entrada,
+                      Cantidad = dto.Stock,
+                      Observacion = "Stock inicial"
+                  });
+              }
+
+              return MapToDTO(creado);
+          }
+
+          public async Task<ProductoDTO> UpdateAsync(ActualizarProductoDTO dto)
+          {
+              var producto = await _productoRepo.GetByIdAsync(dto.Id);
+              if (producto == null)
+                  throw new KeyNotFoundException("Producto no encontrado");
+
+              var stockAnterior = producto.Stock;
+              producto.Nombre = dto.Nombre;
+              producto.Descripcion = dto.Descripcion;
+              producto.Precio = dto.Precio;
+              producto.Stock = dto.Stock;
+              producto.StockMinimo = dto.StockMinimo;
+              producto.CategoriaId = dto.CategoriaId;
+
+              if (dto.ProveedorIds.Any())
+              {
+                  var proveedores = await _proveedorRepo.GetAllAsync();
+                  producto.Proveedores = proveedores
+                      .Where(p => dto.ProveedorIds.Contains(p.Id))
+                      .ToList();
+              }
+
+              await _productoRepo.UpdateAsync(producto);
+
+              // Registrar movimiento si cambió el stock
+              var diferencia = dto.Stock - stockAnterior;
+              if (diferencia != 0)
+              {
+                  await _movimientoRepo.AddAsync(new MovimientoStock
+                  {
+                      ProductoId = producto.Id,
+                      Tipo = diferencia > 0 ? TipoMovimiento.Entrada : TipoMovimiento.Salida,
+                      Cantidad = Math.Abs(diferencia),
+                      Observacion = "Ajuste de stock"
+                  });
+              }
+
+              return MapToDTO(producto);
+          }
+
+          public async Task DeleteAsync(int id)
+              => await _productoRepo.DeleteAsync(id);
+
+          public async Task<IEnumerable<ReporteStockBajoDTO>> GetStockBajoAsync(int umbral)
+          {
+              var productos = await _productoRepo.GetStockBajoAsync(umbral);
+              return productos.Select(p => new ReporteStockBajoDTO
+              {
+                  Producto = p.Nombre,
+                  StockActual = p.Stock,
+                  StockMinimo = p.StockMinimo,
+                  Categoria = p.Categoria?.Nombre ?? ""
+              });
+          }
+
+          public async Task<ValorInventarioDTO> GetValorInventarioAsync()
+          {
+              var productos = await _productoRepo.GetAllAsync();
+              var lista = productos.ToList();
+              return new ValorInventarioDTO
+              {
+                  ValorTotal = lista.Sum(p => p.Precio * p.Stock),
+                  TotalProductos = lista.Count,
+                  ProductosStockBajo = lista.Count(p => p.Stock <= p.StockMinimo)
+              };
+          }
+
+          private static ProductoDTO MapToDTO(Producto p) => new()
+          {
+              Id = p.Id,
+              Nombre = p.Nombre,
+              Descripcion = p.Descripcion,
+              Precio = p.Precio,
+              Stock = p.Stock,
+              StockMinimo = p.StockMinimo,
+              Categoria = p.Categoria?.Nombre ?? "",
+              Proveedores = p.Proveedores?.Select(pv => pv.Nombre).ToList() ?? new()
+          };
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 6: Controladores Web API
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.WebAPI/Controllers/ProductosController.cs
+  // ============================
+
+  using Microsoft.AspNetCore.Authorization;
+  using Microsoft.AspNetCore.Mvc;
+  using InventoryManager.Application.DTOs;
+  using InventoryManager.Application.Servicios;
+
+  namespace InventoryManager.WebAPI.Controllers
+  {
+      [ApiController]
+      [Route("api/[controller]")]
+      [Authorize]
+      public class ProductosController : ControllerBase
+      {
+          private readonly IProductoService _productoService;
+          private readonly ILogger<ProductosController> _logger;
+
+          public ProductosController(
+              IProductoService productoService,
+              ILogger<ProductosController> logger)
+          {
+              _productoService = productoService;
+              _logger = logger;
+          }
+
+          [HttpGet]
+          [AllowAnonymous]
+          public async Task<ActionResult<IEnumerable<ProductoDTO>>> GetAll()
+          {
+              var productos = await _productoService.GetAllAsync();
+              return Ok(productos);
+          }
+
+          [HttpGet("{id}")]
+          public async Task<ActionResult<ProductoDTO>> GetById(int id)
+          {
+              try
+              {
+                  var producto = await _productoService.GetByIdAsync(id);
+                  if (producto == null)
+                      return NotFound();
+                  return Ok(producto);
+              }
+              catch (Exception ex)
+              {
+                  _logger.LogError(ex, "Error al obtener producto {Id}", id);
+                  return StatusCode(500, "Error interno del servidor");
+              }
+          }
+
+          [HttpPost]
+          [Authorize(Roles = "Admin")]
+          public async Task<ActionResult<ProductoDTO>> Create(
+              [FromBody] CrearProductoDTO dto)
+          {
+              if (!ModelState.IsValid)
+                  return BadRequest(ModelState);
+
+              try
+              {
+                  var producto = await _productoService.CreateAsync(dto);
+                  return CreatedAtAction(nameof(GetById), new { id = producto.Id }, producto);
+              }
+              catch (KeyNotFoundException ex)
+              {
+                  return BadRequest(ex.Message);
+              }
+          }
+
+          [HttpPut("{id}")]
+          [Authorize(Roles = "Admin")]
+          public async Task<ActionResult<ProductoDTO>> Update(
+              int id, [FromBody] ActualizarProductoDTO dto)
+          {
+              if (id != dto.Id)
+                  return BadRequest("El ID de la ruta no coincide");
+
+              try
+              {
+                  var producto = await _productoService.UpdateAsync(dto);
+                  return Ok(producto);
+              }
+              catch (KeyNotFoundException ex)
+              {
+                  return NotFound(ex.Message);
+              }
+          }
+
+          [HttpDelete("{id}")]
+          [Authorize(Roles = "Admin")]
+          public async Task<ActionResult> Delete(int id)
+          {
+              var producto = await _productoService.GetByIdAsync(id);
+              if (producto == null)
+                  return NotFound();
+
+              await _productoService.DeleteAsync(id);
+              return NoContent();
+          }
+
+          [HttpGet("stock-bajo")]
+          [AllowAnonymous]
+          public async Task<ActionResult<IEnumerable<ReporteStockBajoDTO>>> GetStockBajo(
+              [FromQuery] int umbral = 5)
+          {
+              var reporte = await _productoService.GetStockBajoAsync(umbral);
+              return Ok(reporte);
+          }
+
+          [HttpGet("valor-inventario")]
+          [Authorize(Roles = "Admin")]
+          public async Task<ActionResult<ValorInventarioDTO>> GetValorInventario()
+          {
+              var valor = await _productoService.GetValorInventarioAsync();
+              return Ok(valor);
+          }
+      }
+  }
+
+  ------------------------------------------------------------------------------
+  PASO 7: Program.cs — Configuración completa
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // InventoryManager.WebAPI/Program.cs
+  // ============================
+
+  using System.Text;
+  using Microsoft.AspNetCore.Authentication.JwtBearer;
+  using Microsoft.EntityFrameworkCore;
+  using Microsoft.IdentityModel.Tokens;
+  using InventoryManager.Application.Servicios;
+  using InventoryManager.Domain.Interfaces;
+  using InventoryManager.Infrastructure.Data;
+  using InventoryManager.Infrastructure.Repositories;
+
+  var builder = WebApplication.CreateBuilder(args);
+
+  // Database
+  builder.Services.AddDbContext<InventoryDbContext>(options =>
+      options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+  // DI - Repositories
+  builder.Services.AddScoped<IProductoRepositorio, ProductoRepositorio>();
+  builder.Services.AddScoped<ICategoriaRepositorio, CategoriaRepositorio>();
+  builder.Services.AddScoped<IProveedorRepositorio, ProveedorRepositorio>();
+  builder.Services.AddScoped<IMovimientoStockRepositorio, MovimientoStockRepositorio>();
+
+  // DI - Services
+  builder.Services.AddScoped<IProductoService, ProductoService>();
+
+  // JWT Authentication
+  builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+      .AddJwtBearer(options =>
+      {
+          options.TokenValidationParameters = new TokenValidationParameters
+          {
+              ValidateIssuer = true,
+              ValidateAudience = true,
+              ValidateLifetime = true,
+              ValidateIssuerSigningKey = true,
+              ValidIssuer = builder.Configuration["Jwt:Issuer"],
+              ValidAudience = builder.Configuration["Jwt:Audience"],
+              IssuerSigningKey = new SymmetricSecurityKey(
+                  Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+          };
+      });
+
+  builder.Services.AddAuthorization(options =>
+  {
+      options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+  });
+
+  builder.Services.AddControllers();
+  builder.Services.AddEndpointsApiExplorer();
+  builder.Services.AddSwaggerGen(c =>
+  {
+      c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+      {
+          Description = "JWT Authorization header usando Bearer",
+          Name = "Authorization",
+          In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+          Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey
+      });
+  });
+
+  builder.Services.AddCors(options =>
+  {
+      options.AddDefaultPolicy(policy =>
+      {
+          policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+      });
+  });
+
+  var app = builder.Build();
+
+  if (app.Environment.IsDevelopment())
+  {
+      app.UseSwagger();
+      app.UseSwaggerUI();
+  }
+
+  app.UseHttpsRedirection();
+  app.UseCors();
+  app.UseAuthentication();
+  app.UseAuthorization();
+  app.MapControllers();
+
+  // Auto-migrate
+  using (var scope = app.Services.CreateScope())
+  {
+      var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+      db.Database.Migrate();
+  }
+
+  app.Run();
+
+  ------------------------------------------------------------------------------
+  PASO 8: Pruebas unitarias
+  ------------------------------------------------------------------------------
+
+  // ============================
+  // tests/InventoryManager.Tests/Services/ProductoServiceTests.cs
+  // ============================
+
+  using Moq;
+  using Xunit;
+  using InventoryManager.Application.DTOs;
+  using InventoryManager.Application.Servicios;
+  using InventoryManager.Domain.Entities;
+  using InventoryManager.Domain.Interfaces;
+
+  namespace InventoryManager.Tests.Services
+  {
+      public class ProductoServiceTests
+      {
+          private readonly Mock<IProductoRepositorio> _productoRepoMock;
+          private readonly Mock<ICategoriaRepositorio> _categoriaRepoMock;
+          private readonly Mock<IProveedorRepositorio> _proveedorRepoMock;
+          private readonly Mock<IMovimientoStockRepositorio> _movimientoRepoMock;
+          private readonly ProductoService _service;
+
+          public ProductoServiceTests()
+          {
+              _productoRepoMock = new Mock<IProductoRepositorio>();
+              _categoriaRepoMock = new Mock<ICategoriaRepositorio>();
+              _proveedorRepoMock = new Mock<IProveedorRepositorio>();
+              _movimientoRepoMock = new Mock<IMovimientoStockRepositorio>();
+              _service = new ProductoService(
+                  _productoRepoMock.Object,
+                  _categoriaRepoMock.Object,
+                  _proveedorRepoMock.Object,
+                  _movimientoRepoMock.Object);
+          }
+
+          [Fact]
+          public async Task GetByIdAsync_ProductoExistente_RetornaDTO()
+          {
+              var producto = new Producto
+              {
+                  Id = 1,
+                  Nombre = "Test",
+                  Precio = 100,
+                  Stock = 10,
+                  Categoria = new Categoria { Nombre = "Electrónicos" }
+              };
+
+              _productoRepoMock.Setup(r => r.GetByIdAsync(1))
+                  .ReturnsAsync(producto);
+
+              var result = await _service.GetByIdAsync(1);
+
+              Assert.NotNull(result);
+              Assert.Equal("Test", result!.Nombre);
+              Assert.Equal("Electrónicos", result.Categoria);
+          }
+
+          [Fact]
+          public async Task GetByIdAsync_ProductoNoExistente_RetornaNull()
+          {
+              _productoRepoMock.Setup(r => r.GetByIdAsync(99))
+                  .ReturnsAsync((Producto?)null);
+
+              var result = await _service.GetByIdAsync(99);
+
+              Assert.Null(result);
+          }
+
+          [Fact]
+          public async Task CreateAsync_CategoriaNoExistente_LanzaExcepcion()
+          {
+              _categoriaRepoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>()))
+                  .ReturnsAsync((Categoria?)null);
+
+              var dto = new CrearProductoDTO
+              {
+                  Nombre = "Test",
+                  Precio = 100,
+                  CategoriaId = 999
+              };
+
+              await Assert.ThrowsAsync<KeyNotFoundException>(
+                  () => _service.CreateAsync(dto));
+          }
+
+          [Fact]
+          public async Task CreateAsync_ProductoValido_CreaYRetornaDTO()
+          {
+              var categoria = new Categoria { Id = 1, Nombre = "Test" };
+              _categoriaRepoMock.Setup(r => r.GetByIdAsync(1))
+                  .ReturnsAsync(categoria);
+              _productoRepoMock.Setup(r => r.AddAsync(It.IsAny<Producto>()))
+                  .ReturnsAsync((Producto p) =>
+                  {
+                      p.Id = 1;
+                      p.Categoria = categoria;
+                      return p;
+                  });
+
+              var dto = new CrearProductoDTO
+              {
+                  Nombre = "Nuevo Producto",
+                  Precio = 50,
+                  Stock = 20,
+                  CategoriaId = 1
+              };
+
+              var result = await _service.CreateAsync(dto);
+
+              Assert.NotNull(result);
+              Assert.Equal("Nuevo Producto", result.Nombre);
+              Assert.Equal(50, result.Precio);
+              _productoRepoMock.Verify(r => r.AddAsync(It.IsAny<Producto>()), Times.Once);
+              _movimientoRepoMock.Verify(r => r.AddAsync(It.IsAny<MovimientoStock>()), Times.Once);
+          }
+
+          [Fact]
+          public async Task GetStockBajoAsync_RetornaProductosConStockBajo()
+          {
+              var productos = new List<Producto>
+              {
+                  new() { Nombre = "P1", Stock = 2, StockMinimo = 5, Categoria = new Categoria { Nombre = "Cat1" } },
+                  new() { Nombre = "P2", Stock = 10, StockMinimo = 5, Categoria = new Categoria { Nombre = "Cat1" } }
+              };
+
+              _productoRepoMock.Setup(r => r.GetStockBajoAsync(5))
+                  .ReturnsAsync(productos.Where(p => p.Stock <= p.StockMinimo));
+
+              var result = await _service.GetStockBajoAsync(5);
+
+              Assert.Single(result);
+              Assert.Equal("P1", result.First().Producto);
+          }
+      }
+  }
+
+================================================================================
+  [RESUMEN DEL CAPÍTULO]
+================================================================================
+
+  En este capítulo has construido un proyecto profesional completo:
+  • Arquitectura en capas (Domain, Application, Infrastructure, WebAPI).
+  • Entity Framework Core con migraciones automáticas.
+  • Repositorios con operaciones CRUD y consultas específicas.
+  • Servicios con lógica de negocio (control de stock, movimientos).
+  • DTOs para transferencia de datos.
+  • Autenticación JWT con roles.
+  • Controladores RESTful con logging y manejo de errores.
+  • Pruebas unitarias con xUnit y Moq.
+  • Configuración de DI, CORS, Swagger.
+  • Soft delete y registro de movimientos de stock.
+
+  Este proyecto es tu carta de presentación como desarrollador .NET.
+
+================================================================================
+  [EJERCICIOS DE EXTENSIÓN]
+================================================================================
+
+  1. Agrega un endpoint de reportes que exporte a Excel (EPPlus o ClosedXML).
+  2. Implementa un sistema de caché con MemoryCache para productos.
+  3. Agrega paginación a la lista de productos.
+  4. Implementa búsqueda full-text por nombre y descripción.
+  5. Agrega un health check endpoint.
+  6. Implementa logging con Serilog a archivo y consola.
+  7. Agrega un endpoint para subir imágenes de productos.
+  8. Implementa notificaciones por email cuando un producto tiene stock bajo.
+  9. Agrega versionado a la API (ej. /api/v1/productos).
+  10. Publica la aplicación en Azure App Service o Docker.
+
+================================================================================
+  [PREGUNTAS FRECUENTES — FAQ]
+================================================================================
+
+  P: ¿Debo usar repositorios con EF Core?
+  R: En este proyecto sí, para mantener la arquitectura limpia y testeable.
+     En proyectos simples puedes usar EF Core directamente.
+
+  P: ¿Por qué usar DTOs y no las entidades directamente?
+  R: Los DTOs evitan exponer datos internos, rompen ciclos de referencia
+     y permiten controlar exactamente qué se envía al cliente.
+
+  P: ¿Cómo manejar la autenticación en producción?
+  R: Usa IdentityServer, Azure AD B2C o Auth0. Nunca implementes tu propio
+     sistema de login desde cero.
+
+  P: ¿Cómo desplegar la aplicación?
+  R: Publica con dotnet publish, usa Docker para containerización, o
+     despliega directamente en Azure App Service.
+
+================================================================================
+  [DESAFÍO DEL ARQUITECTO]
+================================================================================
+
+  Extiende el proyecto con:
+
+  1. SignalR para notificaciones en tiempo real de stock bajo.
+  2. Background Service que revise stock bajo cada hora.
+  3. API de terceros (ej.汇率 API para precios en otras monedas).
+  4. GraphQL con HotChocolate además de REST.
+  5. CI/CD con GitHub Actions (build, test, deploy).
+  6. Docker Compose con SQL Server, API y Redis.
+  7. Monitoreo con Application Insights.
+
+================================================================================
+  [CIERRE DEL CAPÍTULO]
+================================================================================
+
+  Has construido tu proyecto final. No es solo código: es la prueba de que
+  has integrado todos los conocimientos del curso en una aplicación
+  profesional. Este proyecto es tu portafolio, tu certificación práctica.
+
+  En el próximo capítulo aprenderás las buenas prácticas y convenciones
+  que todo desarrollador profesional debe conocer.
+
+  ¡Nos vemos en el Capítulo 79!
+
+  ------------------------------------------------------------------------------
+  © 2026 C# MASTER BOOK — Profesor Búho AI
+  "El conocimiento no pesa, ilumina."
+  ------------------------------------------------------------------------------
+  [FIN DEL CAPÍTULO 78]

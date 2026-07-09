@@ -1,0 +1,1157 @@
+================================================================================
+  C++ MASTER BOOK - MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 71: ARQUITECTURA EN C++
+================================================================================
+
+  "La arquitectura no es solo el esqueleto del software, es la respiración
+   que permite que el código viva y evolucione."
+                                     — Profesor Búho AI
+
+================================================================================
+
+  BIENVENIDA
+  ----------
+  ¡Bienvenido al Módulo VIII, Arquitecto!
+
+  Has recorrido un largo camino desde las variables y bucles hasta la
+  metaprogramación y los smart pointers. Ahora es momento de alzar la
+  mirada y pensar en grande: la arquitectura del software.
+
+  En este capítulo aprenderás a estructurar proyectos C++ profesionales
+  usando capas, módulos, inyección de dependencias y los principios
+  SOLID. Dejarás de escribir "código que funciona" para comenzar a
+  diseñar "sistemas que perduran".
+
+  FRASE DEL DÍA
+  -------------
+  "Un buen arquitecto construye puentes que resisten tormentas;
+   un gran arquitecto construye puentes que se adaptan al mar."
+
+================================================================================
+
+  OBJETIVOS DEL CAPÍTULO
+  ----------------------
+  1. Comprender la importancia de la arquitectura en proyectos C++.
+  2. Aprender a dividir un sistema en capas (UI, Lógica, Datos).
+  3. Implementar inyección de dependencias manual y con contenedores.
+  4. Aplicar los 5 principios SOLID en C++ moderno.
+  5. Diseñar módulos reutilizables con acoplamiento bajo y cohesión alta.
+  6. Diferenciar entre arquitectura por capas, hexagonal y limpia.
+  7. Escribir código que sea testeable, extensible y mantenible.
+
+================================================================================
+
+  ARQUITECTURA EN C++ — CONTENIDO COMPLETO
+================================================================================
+
+► 1. ¿POR QUÉ ARQUITECTURA?
+
+  La arquitectura de software es la disciplina que organiza los
+  componentes de un sistema, sus relaciones y su evolución. Sin
+  arquitectura, el código se convierte en un "gran bola de lodo"
+  (big ball of mud) donde任何 cambio requiere modificar todo.
+
+  Beneficios de una buena arquitectura:
+  • Mantenibilidad: 60% del costo del software está en mantenimiento.
+  • Testeabilidad: El código bien estructurado se prueba fácilmente.
+  • Escalabilidad: Añadir features sin romper lo existente.
+  • Reusabilidad: Componentes que sirven en múltiples contextos.
+  • Productividad: Equipos grandes trabajan en paralelo sin pisarse.
+
+► 2. ARQUITECTURA POR CAPAS (LAYERED ARCHITECTURE)
+
+  La arquitectura por capas organiza el código en niveles jerárquicos
+  donde cada capa solo conoce a la inmediatamente inferior.
+
+  CAPAS TÍPICAS EN C++:
+  ┌──────────────────────────────────┐
+  │   Capa de Presentación (UI)     │  → Interfaz de usuario (CLI, Qt, Web)
+  ├──────────────────────────────────┤
+  │   Capa de Aplicación (Servicios) │  → Casos de uso, orquestación
+  ├──────────────────────────────────┤
+  │   Capa de Dominio (Modelo)      │  → Reglas de negocio, entidades
+  ├──────────────────────────────────┤
+  │   Capa de Infraestructura       │  → BD, archivos, red, APIs externas
+  └──────────────────────────────────┘
+
+  REGLA DE ORO: Las dependencias apuntan hacia adentro. La capa de
+  dominio NO debe depender de infraestructura.
+
+► 3. IMPLEMENTACIÓN EN C++ DE ARQUITECTURA POR CAPAS
+
+  A continuación, implementaremos un sistema de gestión de pedidos
+  usando arquitectura por capas tradicional y luego la refinaremos
+  con principios SOLID e inyección de dependencias.
+
+*/
+
+//==============================================================================
+// EJEMPLO 1: CAPA DE DOMINIO (MODELO)
+//==============================================================================
+
+#include <string>
+#include <vector>
+#include <memory>
+#include <optional>
+#include <chrono>
+#include <stdexcept>
+
+namespace dominio {
+
+struct Direccion {
+    std::string calle;
+    std::string ciudad;
+    std::string codigo_postal;
+    std::string pais;
+};
+
+struct Cliente {
+    int id;
+    std::string nombre;
+    std::string email;
+    Direccion direccion;
+};
+
+enum class EstadoPedido {
+    Creado,
+    Confirmado,
+    EnPreparacion,
+    Enviado,
+    Entregado,
+    Cancelado
+};
+
+struct LineaPedido {
+    int producto_id;
+    std::string nombre_producto;
+    int cantidad;
+    double precio_unitario;
+
+    double subtotal() const {
+        return cantidad * precio_unitario;
+    }
+};
+
+class Pedido {
+public:
+    Pedido(int id, Cliente cliente)
+        : id_(id)
+        , cliente_(std::move(cliente))
+        , estado_(EstadoPedido::Creado)
+        , fecha_creacion_(std::chrono::system_clock::now())
+    {}
+
+    int id() const { return id_; }
+    const Cliente& cliente() const { return cliente_; }
+    EstadoPedido estado() const { return estado_; }
+    const std::vector<LineaPedido>& lineas() const { return lineas_; }
+
+    void agregar_linea(LineaPedido linea) {
+        if (estado_ != EstadoPedido::Creado) {
+            throw std::runtime_error(
+                "No se puede modificar un pedido en estado "
+                + std::to_string(static_cast<int>(estado_)));
+        }
+        lineas_.push_back(std::move(linea));
+    }
+
+    void confirmar() {
+        if (lineas_.empty()) {
+            throw std::runtime_error(
+                "No se puede confirmar un pedido sin líneas");
+        }
+        estado_ = EstadoPedido::Confirmado;
+    }
+
+    double total() const {
+        double suma = 0.0;
+        for (const auto& linea : lineas_) {
+            suma += linea.subtotal();
+        }
+        return suma;
+    }
+
+private:
+    int id_;
+    Cliente cliente_;
+    EstadoPedido estado_;
+    std::chrono::system_clock::time_point fecha_creacion_;
+    std::vector<LineaPedido> lineas_;
+};
+
+} // namespace dominio
+
+//==============================================================================
+// EJEMPLO 2: CAPA DE APLICACIÓN (SERVICIOS)
+//==============================================================================
+
+#include <functional>
+
+namespace aplicacion {
+
+// Interfaz para el repositorio de pedidos (puerto de salida)
+class RepositorioPedidos {
+public:
+    virtual ~RepositorioPedidos() = default;
+
+    virtual void guardar(const dominio::Pedido& pedido) = 0;
+    virtual std::optional<dominio::Pedido> obtener_por_id(int id) = 0;
+    virtual std::vector<dominio::Pedido> obtener_todos() = 0;
+    virtual void eliminar(int id) = 0;
+};
+
+// Interfaz para el servicio de notificaciones (puerto de salida)
+class ServicioNotificaciones {
+public:
+    virtual ~ServicioNotificaciones() = default;
+    virtual void enviar_confirmacion(const dominio::Pedido& pedido) = 0;
+    virtual void enviar_cancelacion(const dominio::Pedido& pedido) = 0;
+};
+
+// Servicio de aplicación - orquesta casos de uso
+class ServicioPedidos {
+public:
+    explicit ServicioPedidos(
+        std::shared_ptr<RepositorioPedidos> repositorio,
+        std::shared_ptr<ServicioNotificaciones> notificador)
+        : repositorio_(std::move(repositorio))
+        , notificador_(std::move(notificador))
+    {}
+
+    dominio::Pedido crear_pedido(dominio::Cliente cliente) {
+        static int contador = 0;
+        auto pedido = dominio::Pedido(++contador, std::move(cliente));
+        repositorio_->guardar(pedido);
+        return pedido;
+    }
+
+    void agregar_producto(int pedido_id, dominio::LineaPedido linea) {
+        auto pedido_opt = repositorio_->obtener_por_id(pedido_id);
+        if (!pedido_opt) {
+            throw std::runtime_error("Pedido no encontrado: "
+                                     + std::to_string(pedido_id));
+        }
+        auto pedido = std::move(*pedido_opt);
+        pedido.agregar_linea(std::move(linea));
+        repositorio_->guardar(pedido);
+    }
+
+    void confirmar_pedido(int pedido_id) {
+        auto pedido_opt = repositorio_->obtener_por_id(pedido_id);
+        if (!pedido_opt) {
+            throw std::runtime_error("Pedido no encontrado: "
+                                     + std::to_string(pedido_id));
+        }
+        auto pedido = std::move(*pedido_opt);
+        pedido.confirmar();
+        repositorio_->guardar(pedido);
+        notificador_->enviar_confirmacion(pedido);
+    }
+
+    double calcular_total(int pedido_id) {
+        auto pedido_opt = repositorio_->obtener_por_id(pedido_id);
+        if (!pedido_opt) {
+            throw std::runtime_error("Pedido no encontrado: "
+                                     + std::to_string(pedido_id));
+        }
+        return pedido_opt->total();
+    }
+
+private:
+    std::shared_ptr<RepositorioPedidos> repositorio_;
+    std::shared_ptr<ServicioNotificaciones> notificador_;
+};
+
+} // namespace aplicacion
+
+//==============================================================================
+// EJEMPLO 3: CAPA DE INFRAESTRUCTURA
+//==============================================================================
+
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <mutex>
+
+namespace infraestructura {
+
+class RepositorioPedidosMemoria
+    : public aplicacion::RepositorioPedidos {
+public:
+    void guardar(const dominio::Pedido& pedido) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pedidos_[pedido.id()] = pedido;
+    }
+
+    std::optional<dominio::Pedido> obtener_por_id(int id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = pedidos_.find(id);
+        if (it != pedidos_.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    std::vector<dominio::Pedido> obtener_todos() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<dominio::Pedido> resultado;
+        resultado.reserve(pedidos_.size());
+        for (const auto& [_, pedido] : pedidos_) {
+            resultado.push_back(pedido);
+        }
+        return resultado;
+    }
+
+    void eliminar(int id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pedidos_.erase(id);
+    }
+
+private:
+    std::map<int, dominio::Pedido> pedidos_;
+    std::mutex mutex_;
+};
+
+class ServicioNotificacionesConsola
+    : public aplicacion::ServicioNotificaciones {
+public:
+    void enviar_confirmacion(const dominio::Pedido& pedido) override {
+        std::cout << "[NOTIFICACIÓN] Pedido #" << pedido.id()
+                  << " confirmado. Total: $" << pedido.total()
+                  << "\n";
+    }
+
+    void enviar_cancelacion(const dominio::Pedido& pedido) override {
+        std::cout << "[NOTIFICACIÓN] Pedido #" << pedido.id()
+                  << " cancelado.\n";
+    }
+};
+
+} // namespace infraestructura
+
+//==============================================================================
+// EJEMPLO 4: INYECCIÓN DE DEPENDENCIAS MANUAL
+//==============================================================================
+
+/*
+  La inyección de dependencias (DI) es un patrón donde los objetos
+  reciben sus dependencias desde el exterior en lugar de crearlas
+  internamente. Esto permite:
+
+  1. Desacoplar la creación del uso.
+  2. Facilitar pruebas unitarias con mocks.
+  3. Cambiar implementaciones sin modificar el consumidor.
+
+  TIPOS DE INYECCIÓN:
+  • Constructor injection (recomendada): Las dependencias se pasan
+    en el constructor. Garantiza que el objeto siempre tenga estado
+    válido.
+  • Setter injection: Se asignan después de construir. Útil para
+    dependencias opcionales.
+  • Method injection: Se pasan como parámetros del método.
+
+  CONTENEDOR DE DI:
+  Un contenedor de DI gestiona el ciclo de vida de los objetos y
+  resuelve automáticamente el árbol de dependencias.
+*/
+
+#include <memory>
+#include <unordered_map>
+#include <typeindex>
+#include <typeinfo>
+
+namespace contenedor {
+
+// Contenedor de inyección de dependencias simple
+class ContenedorDI {
+public:
+    template<typename T, typename... Args>
+    void registrar(Args&&... args) {
+        auto clave = std::type_index(typeid(T));
+        fabricas_[clave] = [args = std::make_tuple(std::forward<Args>(args)...)]() {
+            return std::make_shared<T>(args...);
+        };
+    }
+
+    template<typename T, typename U>
+    void registrar_impl() {
+        auto clave = std::type_index(typeid(T));
+        fabricas_[clave] = []() {
+            return std::static_pointer_cast<T>(
+                std::make_shared<U>());
+        };
+    }
+
+    template<typename T>
+    std::shared_ptr<T> resolver() {
+        auto clave = std::type_index(typeid(T));
+        auto it = fabricas_.find(clave);
+        if (it != fabricas_.end()) {
+            return std::static_pointer_cast<T>(it->second());
+        }
+        throw std::runtime_error(
+            "Dependencia no registrada: "
+            + std::string(typeid(T).name()));
+    }
+
+private:
+    std::unordered_map<
+        std::type_index,
+        std::function<std::shared_ptr<void>()>> fabricas_;
+};
+
+} // namespace contenedor
+
+//==============================================================================
+// EJEMPLO 5: PRINCIPIOS SOLID EN C++
+//==============================================================================
+
+/*
+  SOLID son 5 principios de diseño orientado a objetos que guían
+  la creación de software mantenible y extensible.
+
+  S — Single Responsibility Principle (SRP)
+  O — Open/Closed Principle (OCP)
+  L — Liskov Substitution Principle (LSP)
+  I — Interface Segregation Principle (ISP)
+  D — Dependency Inversion Principle (DIP)
+*/
+
+//------------------------------------------------------------------------------
+// S: RESPONSABILIDAD ÚNICA
+//------------------------------------------------------------------------------
+
+/*
+  MAL: Una clase que hace de todo
+*/
+class GestorDocumentoMal {
+public:
+    void abrir(const std::string& ruta) { /* ... */ }
+    void guardar() { /* ... */ }
+    void imprimir() { /* ... */ }
+    void enviar_por_email(const std::string& destino) { /* ... */ }
+    void convertir_a_pdf() { /* ... */ }
+};
+
+/*
+  BIEN: Cada clase tiene una responsabilidad
+*/
+class Documento {
+public:
+    void abrir(const std::string& ruta) { /* ... */ }
+    void guardar(const std::string& ruta) { /* ... */ }
+    std::string contenido() const { return contenido_; }
+private:
+    std::string contenido_;
+};
+
+class Impresora {
+public:
+    void imprimir(const Documento& doc) { /* ... */ }
+};
+
+class ServicioEmail {
+public:
+    void enviar(const Documento& doc, const std::string& destino) {
+        // Lógica de envío
+    }
+};
+
+class ConvertidorPDF {
+public:
+    void convertir(const Documento& doc, const std::string& salida) {
+        // Lógica de conversión
+    }
+};
+
+//------------------------------------------------------------------------------
+// O: ABIERTO PARA EXTENSIÓN, CERRADO PARA MODIFICACIÓN
+//------------------------------------------------------------------------------
+
+#include <cmath>
+
+class Forma {
+public:
+    virtual ~Forma() = default;
+    virtual double area() const = 0;
+};
+
+class Rectangulo : public Forma {
+public:
+    Rectangulo(double ancho, double alto)
+        : ancho_(ancho), alto_(alto) {}
+    double area() const override {
+        return ancho_ * alto_;
+    }
+private:
+    double ancho_, alto_;
+};
+
+class Circulo : public Forma {
+public:
+    explicit Circulo(double radio) : radio_(radio) {}
+    double area() const override {
+        return M_PI * radio_ * radio_;
+    }
+private:
+    double radio_;
+};
+
+// Podemos añadir nuevas formas SIN modificar el código existente
+class Triangulo : public Forma {
+public:
+    Triangulo(double base, double altura)
+        : base_(base), altura_(altura) {}
+    double area() const override {
+        return 0.5 * base_ * altura_;
+    }
+private:
+    double base_, altura_;
+};
+
+double calcular_area_total(const std::vector<std::unique_ptr<Forma>>& formas) {
+    double total = 0.0;
+    for (const auto& forma : formas) {
+        total += forma->area();
+    }
+    return total;
+}
+
+//------------------------------------------------------------------------------
+// L: SUSTITUCIÓN DE LISKOV
+//------------------------------------------------------------------------------
+
+/*
+  Una clase derivada debe poder sustituir a su clase base sin alterar
+  el comportamiento correcto del programa.
+*/
+
+class RectanguloLSP {
+public:
+    RectanguloLSP(double ancho, double alto)
+        : ancho_(ancho), alto_(alto) {}
+    virtual void set_ancho(double w) { ancho_ = w; }
+    virtual void set_alto(double h) { alto_ = h; }
+    double area() const { return ancho_ * alto_; }
+    double ancho() const { return ancho_; }
+    double alto() const { return alto_; }
+private:
+    double ancho_, alto_;
+};
+
+// VIOLA LSP: Cambia comportamiento de la clase base
+class CuadradoMal : public RectanguloLSP {
+public:
+    explicit CuadradoMal(double lado)
+        : RectanguloLSP(lado, lado) {}
+
+    void set_ancho(double w) override {
+        RectanguloLSP::set_ancho(w);
+        RectanguloLSP::set_alto(w);  // ¡Efecto secundario!
+    }
+    void set_alto(double h) override {
+        RectanguloLSP::set_alto(h);
+        RectanguloLSP::set_ancho(h); // ¡Efecto secundario!
+    }
+};
+
+// CORRECTO: Usar una clase base común o composición
+class CuadradoCorrecto : public Forma {
+public:
+    explicit CuadradoCorrecto(double lado) : lado_(lado) {}
+    double area() const override {
+        return lado_ * lado_;
+    }
+    void set_lado(double l) { lado_ = l; }
+private:
+    double lado_;
+};
+
+//------------------------------------------------------------------------------
+// I: SEGREGACIÓN DE INTERFACES
+//------------------------------------------------------------------------------
+
+/*
+  Los clientes no deben ser forzados a depender de interfaces que
+  no utilizan.
+*/
+
+// MAL: Interfaz "gorda" que obliga a implementar todo
+class TrabajadorGordo {
+public:
+    virtual ~TrabajadorGordo() = default;
+    virtual void trabajar() = 0;
+    virtual void comer() = 0;
+    virtual void dormir() = 0;
+    virtual void programar() = 0;
+    virtual void disenar() = 0;
+};
+
+// BIEN: Interfaces pequeñas y específicas
+class Trabajador {
+public:
+    virtual ~Trabajador() = default;
+    virtual void trabajar() = 0;
+};
+
+class Comedor {
+public:
+    virtual ~Comedor() = default;
+    virtual void comer() = 0;
+};
+
+class Dormilon {
+public:
+    virtual ~Dormilon() = default;
+    virtual void dormir() = 0;
+};
+
+class Programador : public Trabajador, public Comedor, public Dormilon {
+public:
+    void trabajar() override { /* programar */ }
+    void comer() override { /* comer */ }
+    void dormir() override { /* dormir */ }
+};
+
+class Robot : public Trabajador {
+public:
+    void trabajar() override { /* trabajar sin pausa */ }
+    // Robot no necesita comer ni dormir
+};
+
+//------------------------------------------------------------------------------
+// D: INVERSIÓN DE DEPENDENCIAS
+//------------------------------------------------------------------------------
+
+/*
+  Los módulos de alto nivel no deben depender de módulos de bajo nivel.
+  Ambos deben depender de abstracciones.
+
+  Las abstracciones no deben depender de detalles. Los detalles deben
+  depender de las abstracciones.
+
+  Esto ya lo implementamos arriba con ServicioPedidos dependiendo de
+  RepositorioPedidos (interfaz), no de RepositorioPedidosMemoria.
+*/
+
+//==============================================================================
+// EJEMPLO 6: ARQUITECTURA HEXAGONAL (POR PUERTOS Y ADAPTADORES)
+//==============================================================================
+
+/*
+  La arquitectura hexagonal (Alistair Cockburn) es una evolución de
+  la arquitectura por capas donde:
+
+  • El DOMINIO está en el centro, completamente aislado.
+  • Los PUERTOS son interfaces que definen cómo entra/sale información.
+  • Los ADAPTADORES son implementaciones concretas (BD, API, UI).
+
+               ┌─────────────┐
+               │   UI (CLI)  │──┐
+               └─────────────┘  │
+                                ├──[PUERTO ENTRADA]──┐
+               ┌─────────────┐  │                    │
+               │  API HTTP   │──┘                    │
+               └─────────────┘                       │
+                                              ┌──────▼──────┐
+                                              │   DOMINIO   │
+                                              │  (NEGOCIO)  │
+                                              └──────┬──────┘
+               ┌─────────────┐                       │
+               │   BD SQL    │──┐                    │
+               └─────────────┘  │                    │
+                                ├──[PUERTO SALIDA]───┘
+               ┌─────────────┐  │
+               │  Servicio   │──┘
+               │  Email      │
+               └─────────────┘
+*/
+
+// PUERTO DE ENTRADA (driving port)
+class ServicioPedidosInterface {
+public:
+    virtual ~ServicioPedidosInterface() = default;
+    virtual dominio::Pedido crear_pedido(dominio::Cliente cliente) = 0;
+    virtual void confirmar_pedido(int id) = 0;
+};
+
+// PUERTO DE SALIDA (driven port)
+class RepositorioInterface {
+public:
+    virtual ~RepositorioInterface() = default;
+    virtual void guardar(const dominio::Pedido&) = 0;
+    virtual std::optional<dominio::Pedido> buscar(int id) = 0;
+};
+
+// ADAPTADOR DE ENTRADA (CLI)
+class AdaptadorCLI {
+public:
+    explicit AdaptadorCLI(ServicioPedidosInterface& servicio)
+        : servicio_(servicio) {}
+
+    void ejecutar() {
+        std::string comando;
+        while (comando != "salir") {
+            std::cout << "> ";
+            std::getline(std::cin, comando);
+            procesar_comando(comando);
+        }
+    }
+
+private:
+    void procesar_comando(const std::string& cmd) {
+        if (cmd.rfind("crear", 0) == 0) {
+            auto cliente = dominio::Cliente{1, "Juan", "juan@mail.com", {}};
+            servicio_.crear_pedido(std::move(cliente));
+        } else if (cmd.rfind("confirmar", 0) == 0) {
+            int id = std::stoi(cmd.substr(9));
+            servicio_.confirmar_pedido(id);
+        }
+    }
+
+    ServicioPedidosInterface& servicio_;
+};
+
+//==============================================================================
+// EJEMPLO 7: MÓDULOS Y COMPILACIÓN SEPARADA
+//==============================================================================
+
+/*
+  Un proyecto profesional se organiza en módulos con directorios
+  claramente separados:
+
+  proyecto/
+  ├── src/
+  │   ├── dominio/
+  │   │   ├── Pedido.h
+  │   │   ├── Pedido.cpp
+  │   │   ├── Cliente.h
+  │   │   └── LineaPedido.h
+  │   ├── aplicacion/
+  │   │   ├── ServicioPedidos.h
+  │   │   └── ServicioPedidos.cpp
+  │   ├── infraestructura/
+  │   │   ├── RepositorioMemoria.h
+  │   │   ├── RepositorioMemoria.cpp
+  │   │   ├── NotificadorConsola.h
+  │   │   └── NotificadorConsola.cpp
+  │   └── presentacion/
+  │       ├── Main.cpp
+  │       └── CLIHandler.cpp
+  ├── test/
+  │   ├── dominio/
+  │   ├── aplicacion/
+  │   └── infraestructura/
+  ├── include/
+  ├── CMakeLists.txt
+  └── README.md
+*/
+
+//==============================================================================
+// EJEMPLO 8: USO DE MÓDULOS C++20
+//==============================================================================
+
+/*
+  C++20 introduce módulos como alternativa a los headers tradicionales.
+  Ventajas: compilación más rápida, mejor encapsulación, sin macros.
+
+// dominio.cppm (module interface)
+export module dominio;
+
+export struct Cliente {
+    std::string nombre;
+    int edad;
+};
+
+export class Pedido {
+public:
+    void agregar_item(const std::string& item);
+    // ...
+};
+
+// main.cpp
+import dominio;
+
+int main() {
+    Cliente c{"Ana", 30};
+    Pedido p;
+    p.agregar_item("Laptop");
+    return 0;
+}
+*/
+
+//==============================================================================
+// EJEMPLO 9: FACTORY + DI PARA MÚLTIPLES BASES DE DATOS
+//==============================================================================
+
+// Interfaz de base de datos
+class BaseDeDatos {
+public:
+    virtual ~BaseDeDatos() = default;
+    virtual void ejecutar(const std::string& query) = 0;
+    virtual std::vector<std::string> consultar(
+        const std::string& query) = 0;
+};
+
+class BaseDeDatosSQLite : public BaseDeDatos {
+public:
+    void ejecutar(const std::string& query) override {
+        std::cout << "[SQLite] " << query << "\n";
+    }
+    std::vector<std::string> consultar(
+        const std::string& query) override {
+        std::cout << "[SQLite] Consultando: " << query << "\n";
+        return {};
+    }
+};
+
+class BaseDeDatosPostgreSQL : public BaseDeDatos {
+public:
+    void ejecutar(const std::string& query) override {
+        std::cout << "[PostgreSQL] " << query << "\n";
+    }
+    std::vector<std::string> consultar(
+        const std::string& query) override {
+        std::cout << "[PostgreSQL] Consultando: " << query << "\n";
+        return {};
+    }
+};
+
+enum class MotorBD { SQLite, PostgreSQL };
+
+class FabricaBaseDeDatos {
+public:
+    static std::unique_ptr<BaseDeDatos> crear(MotorBD motor) {
+        switch (motor) {
+            case MotorBD::SQLite:
+                return std::make_unique<BaseDeDatosSQLite>();
+            case MotorBD::PostgreSQL:
+                return std::make_unique<BaseDeDatosPostgreSQL>();
+            default:
+                throw std::invalid_argument("Motor no soportado");
+        }
+    }
+};
+
+//==============================================================================
+// EJEMPLO 10: PRUEBAS UNITARIAS CON MOCKS
+//==============================================================================
+
+/*
+  Gracias a la inyección de dependencias y las interfaces, podemos
+  probar el servicio sin necesidad de la base de datos real.
+*/
+
+#include <cassert>
+
+class MockRepositorioPedidos : public aplicacion::RepositorioPedidos {
+public:
+    void guardar(const dominio::Pedido& pedido) override {
+        ultimo_guardado_ = pedido;
+        guardado_llamado_ = true;
+    }
+
+    std::optional<dominio::Pedido> obtener_por_id(int id) override {
+        obtener_llamado_ = true;
+        if (pedido_mock_.has_value()
+            && pedido_mock_->id() == id) {
+            return pedido_mock_;
+        }
+        return std::nullopt;
+    }
+
+    std::vector<dominio::Pedido> obtener_todos() override {
+        return {};
+    }
+
+    void eliminar(int id) override {
+        eliminar_llamado_ = true;
+    }
+
+    void configurar_pedido_mock(dominio::Pedido pedido) {
+        pedido_mock_ = std::move(pedido);
+    }
+
+    bool guardado_llamado_ = false;
+    bool obtener_llamado_ = false;
+    bool eliminar_llamado_ = false;
+    std::optional<dominio::Pedido> ultimo_guardado_;
+    std::optional<dominio::Pedido> pedido_mock_;
+};
+
+void test_crear_pedido() {
+    auto mock_repo = std::make_shared<MockRepositorioPedidos>();
+    auto mock_notif = std::make_shared<
+        infraestructura::ServicioNotificacionesConsola>();
+    auto servicio = aplicacion::ServicioPedidos(
+        mock_repo, mock_notif);
+
+    dominio::Cliente cliente{1, "Test", "test@test.com", {}};
+    auto pedido = servicio.crear_pedido(cliente);
+
+    assert(mock_repo->guardado_llamado_);
+    assert(pedido.id() == 1);
+    std::cout << "✓ test_crear_pedido PASÓ\n";
+}
+
+int main_ejemplo() {
+    test_crear_pedido();
+
+    // Ejemplo de uso con DI
+    auto contenedor = contenedor::ContenedorDI();
+    contenedor.registrar_impl<
+        aplicacion::RepositorioPedidos,
+        infraestructura::RepositorioPedidosMemoria>();
+    contenedor.registrar_impl<
+        aplicacion::ServicioNotificaciones,
+        infraestructura::ServicioNotificacionesConsola>();
+
+    auto repo = contenedor.resolver<aplicacion::RepositorioPedidos>();
+    auto notif = contenedor.resolver<aplicacion::ServicioNotificaciones>();
+    auto servicio2 = aplicacion::ServicioPedidos(repo, notif);
+
+    auto cliente = dominio::Cliente{42, "Arquitecto", "arch@code.com", {}};
+    auto pedido = servicio2.crear_pedido(cliente);
+    servicio2.agregar_producto(pedido.id(),
+        dominio::LineaPedido{100, "Laptop Gamer", 1, 1500.0});
+    servicio2.agregar_producto(pedido.id(),
+        dominio::LineaPedido{101, "Mouse RGB", 2, 50.0});
+    servicio2.confirmar_pedido(pedido.id());
+
+    std::cout << "Total: $" << servicio2.calcular_total(pedido.id()) << "\n";
+
+    return 0;
+}
+
+//==============================================================================
+// EJEMPLO 11: EXPRESIONES DE ARQUITECTURA — DIAGRAMAS EN CÓDIGO
+//==============================================================================
+
+/*
+  Podemos documentar la arquitectura usando comment diagrams.
+
+  DIAGRAMA DE ARQUITECTURA DEL SISTEMA:
+
+  ┌───────────────────────────────────────────────────────────┐
+  │                     APLICACIÓN                            │
+  ├───────────────────────────────────────────────────────────┤
+  │  ┌───────────────────────────────────────────────────┐   │
+  │  │            PRESENTACIÓN                           │   │
+  │  │  Main.cpp  │  CLIHandler  │  API REST            │   │
+  │  └─────────────────────┬─────────────────────────────┘   │
+  │                        │                                  │
+  │  ┌─────────────────────▼─────────────────────────────┐   │
+  │  │            APLICACIÓN (SERVICIOS)                 │   │
+  │  │  ServicioPedidos  │  ServicioUsuarios             │   │
+  │  └─────────────────────┬─────────────────────────────┘   │
+  │                        │                                  │
+  │  ┌─────────────────────▼─────────────────────────────┐   │
+  │  │            DOMINIO (MODELO)                       │   │
+  │  │  Pedido  │  Cliente  │  Producto  │  Factura      │   │
+  │  └─────────────────────┬─────────────────────────────┘   │
+  │                        │                                  │
+  │  ┌─────────────────────▼─────────────────────────────┐   │
+  │  │         INFRAESTRUCTURA                           │   │
+  │  │  RepositorioBD  │  EnvioEmail  │  ServicioPago   │   │
+  │  └───────────────────────────────────────────────────┘   │
+  └───────────────────────────────────────────────────────────┘
+*/
+
+//==============================================================================
+// RESUMEN DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Lo aprendido en el Capítulo 71:
+
+  1.  Arquitectura no es opcional — es la diferencia entre un proyecto
+      que crece y uno que colapsa.
+
+  2.  Arquitectura por capas organiza el código en niveles jerárquicos:
+      Presentación → Aplicación → Dominio → Infraestructura.
+
+  3.  Inyección de dependencias desacopla creación de uso, permitiendo
+      cambiar implementaciones y probar en aislamiento.
+
+  4.  Principios SOLID:
+      • S: Una clase, una responsabilidad.
+      • O: Abierto a extensión, cerrado a modificación.
+      • L: Subtipos deben ser sustituibles por sus bases.
+      • I: Interfaces pequeñas y específicas.
+      • D: Depender de abstracciones, no de concretos.
+
+  5.  Arquitectura hexagonal aísla el dominio usando puertos y
+      adaptadores, logrando independencia tecnológica total.
+
+  6.  Módulos y carpetas bien definidos permiten trabajo en equipo
+      y evolución controlada.
+
+  7.  Pruebas unitarias con mocks validan la lógica sin depender
+      de infraestructura real.
+
+  8.  Un contenedor de DI simple puede gestionar dependencias pero
+      en producción se recomienda Boost.DI o frameworks similares.
+*/
+
+//==============================================================================
+// EJERCICIOS DEL CAPÍTULO
+//==============================================================================
+
+/*
+  EJERCICIO 1: Refactorizar código legacy
+  ---------------------------------------
+  Dado el siguiente código que viola SRP y DIP, refactorízalo:
+
+  class Reporte {
+  public:
+      void generar() { /* ... */ }
+      void guardar_en_archivo() { /* ... */ }
+      void enviar_por_red() { /* ... */ }
+  private:
+      std::string datos_;
+  };
+
+  Solución esperada: Separar en Reporte, Repositorio y Comunicador.
+
+  EJERCICIO 2: Implementar arquitectura hexagonal
+  ------------------------------------------------
+  Crea un sistema de autenticación con:
+  • Puerto de entrada: ServicioAutenticacion (login, logout)
+  • Puerto de salida: RepositorioUsuarios
+  • Adaptador concreto: RepositorioUsuariosArchivo
+  • Dominio: Usuario, Credenciales, Sesion
+
+  EJERCICIO 3: Agregar un cuadrado a SOLID OCP
+  ---------------------------------------------
+  Verifica que el ejemplo de Forma/area() permite añadir Pentagono
+  sin modificar código existente. Implementa Pentagono.
+
+  EJERCICIO 4: Contenedor DI
+  --------------------------
+  Extiende ContenedorDI para soportar:
+  • Singleton (misma instancia siempre)
+  • Transient (nueva instancia cada vez)
+  • Scope (instancia por ámbito)
+
+  EJERCICIO 5: Analizar acoplamiento
+  ----------------------------------
+  Dado un proyecto real (elige uno tuyo o el de un compañero),
+  identifica:
+  • 3 violaciones a SRP
+  • 2 dependencias circulares
+  • 1 lugar donde aplicar OCP
+*/
+
+//==============================================================================
+// PREGUNTAS FRECUENTES (FAQ)
+//==============================================================================
+
+/*
+  P: ¿Qué diferencia hay entre arquitectura por capas y hexagonal?
+  R: En capas, las dependencias fluyen de arriba a abajo. En hexagonal,
+     el dominio está en el centro y todo depende de él. Hexagonal es más
+     estricta en aislar el negocio.
+
+  P: ¿Debo usar siempre inyección de dependencias?
+  R: No. En objetos pequeños, de valor o que no necesitan cambio, crear
+     dependencias internamente está bien. La DI se usa cuando necesitas
+     flexibilidad, testeabilidad o intercambiabilidad.
+
+  P: ¿C++20 modules reemplazan completamente los headers?
+  R: Eventualmente sí, pero la adopción es gradual. Por ahora coexisten.
+     Los módulos ofrecen mejor encapsulación y velocidad de compilación.
+
+  P: ¿Cómo manejo dependencias circulares?
+  R: Usando interfaces (DIP), moviendo la dependencia a un tercer módulo
+     o usando punteros hacia adelante (forward declarations).
+
+  P: ¿Qué es el "acoplamiento" y la "cohesión"?
+  R: Acoplamiento: qué tan conectados están los módulos (queremos BAJO).
+     Cohesión: qué tan relacionadas están las responsabilidades dentro
+     de un módulo (queremos ALTA).
+
+  P: ¿Arquitectura limpia (Clean Architecture) es lo mismo que hexagonal?
+  R: Muy similar. Clean Architecture de Robert Martin formaliza las
+     reglas de dependencia con círculos concéntricos. Hexagonal es más
+     antigua y se enfoca en puertos y adaptadores.
+
+  P: ¿Cómo pruebo la arquitectura?
+  R: Con ArchUnit (Java) o mediante pruebas que verifican dependencias
+     entre módulos. En C++, se pueden escribir tests que comprueben
+     #include directives y relaciones entre namespaces.
+
+  P: ¿Y si mi proyecto es pequeño? ¿Necesito toda esta arquitectura?
+  R: La arquitectura debe ser proporcional a la complejidad. Un proyecto
+     pequeño puede empezar simple, pero aplicando SOLID desde el inicio
+     evitará que se convierta en un monstruo inmantenible.
+*/
+
+//==============================================================================
+// DESAFÍO DEL ARQUITECTO
+//==============================================================================
+
+/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║        DESAFÍO DEL ARQUITECTO — CAPÍTULO 71                ║
+  ║        "EL DISEÑADOR DE SISTEMAS"                          ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Contexto:
+  Eres el arquitecto principal de una startup que construye una
+  plataforma de comercio electrónico. Debes diseñar la arquitectura
+  completa del sistema considerando:
+
+  • Productos, categorías, carrito de compras, pedidos, pagos
+  • Múltiples pasarelas de pago (Stripe, PayPal, MercadoPago)
+  • Notificaciones (email, SMS, push)
+  • Múltiples bases de datos (catálogo en PostgreSQL, carrito en Redis)
+  • APIs REST y GraphQL
+  • Autenticación y autorización (OAuth2, JWT)
+  • Escalabilidad horizontal
+
+  Requisitos del desafío:
+  1. Dibuja el diagrama de arquitectura (puedes usar notación ASCII).
+  2. Define las interfaces (puertos) para cada módulo.
+  3. Implementa la fábrica de pasarelas de pago.
+  4. Muestra cómo el dominio NO depende de infraestructura.
+  5. Escribe un test unitario para el caso de uso "RealizarCompra".
+  6. Documenta las decisiones arquitectónicas (ADR).
+
+  Criterios de evaluación:
+  • ¿Sigue SOLID? (20 pts)
+  • ¿Inyección de dependencias correcta? (20 pts)
+  • ¿Pruebas sin infraestructura real? (20 pts)
+  • ¿Dominio puro sin efectos secundarios? (20 pts)
+  • ¿Documentación clara? (20 pts)
+
+  Puntuación máxima: 100 pts — ¿Eres digno del título de Arquitecto?
+
+  ¡Comparte tu solución en el foro para recibir retroalimentación!
+*/
+
+//==============================================================================
+// CIERRE DEL CAPÍTULO
+//==============================================================================
+
+/*
+  Has completado el Capítulo 71: Arquitectura en C++.
+
+  Ahora entiendes que el código no es solo instrucciones para la
+  máquina, sino también una forma de comunicación entre humanos.
+  La arquitectura es el lenguaje que usamos para que nuestro software
+  sea comprensible, modificable y confiable.
+
+  En el próximo capítulo exploraremos los Patrones de Diseño — las
+  soluciones probadas para problemas recurrentes de diseño. Veremos
+  cómo Singleton, Factory, Observer y Strategy se implementan en
+  C++ moderno usando templates, std::function y CRTP.
+
+  "La arquitectura no se descubre, se diseña. Y cada diseño
+   es una oportunidad para mejorar el mundo."
+
+  ¡Nos vemos en el Capítulo 72!
+
+================================================================================
+  FIN DEL CAPÍTULO 71 — ARQUITECTURA EN C++
+  PRÓXIMO CAPÍTULO: PATRONES DE DISEÑO (Capítulo 72)
+================================================================================

@@ -1,0 +1,655 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 79
+##
+##               BUENAS PRÁCTICAS FINALES
+##
+################################################################################
+################################################################################
+
+"El código limpio no es un lujo, es una necesidad profesional. Tu yo del
+futuro te lo agradecerá."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido artesano del código, estás a punto de graduarte. Pero antes de
+recibir tu certificado, debemos asegurarnos de que llevas contigo las
+herramientas más importantes: las buenas prácticas que te distinguirán
+como un verdadero profesional.
+
+Un programador principiante escribe código que funciona. Un programador
+senior escribe código que funciona, es mantenible, es seguro, es eficiente
+y es comprensible para otros. La diferencia no está en el conocimiento
+técnico, sino en la disciplina y el hábito de aplicar buenas prácticas.
+
+En este capítulo recopilaremos las mejores prácticas que debes llevar a
+tu carrera profesional. Son el resultado de décadas de experiencia
+colectiva de la comunidad PHP. No son reglas arbitrarias; son lecciones
+aprendidas con sangre, sudor y debugging a las 3 de la mañana.
+
+Además, incluiré el **Deployment Checklist** definitivo: una lista de
+verificación que debes revisar antes de lanzar cualquier aplicación a
+producción. No la ignoremos; tu estabilidad laboral depende de ella.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Escribe código como si la persona que lo mantendrá fuera un psicópata que
+sabe dónde vives. Pero también escribe código como si ese psicópata fueras
+tú dentro de seis meses."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Aplicar estándares de codificación PSR-12 en todos tus proyectos.
+✓ Implementar un flujo de trabajo Git profesional con conventional commits.
+✓ Configurar integración continua (CI) y despliegue continuo (CD).
+✓ Escribir código autodocumentado y comentarios significativos.
+✓ Utilizar el checklist de despliegue para lanzamientos seguros.
+✓ Realizar code reviews efectivos y constructivos.
+✓ Mantener un registro de cambios (CHANGELOG) profesional.
+
+===============================================================================
+1. ESTÁNDARES DE CODIFICACIÓN PHP (PSR)
+===============================================================================
+
+PHP-FIG (PHP Framework Interoperability Group) define estándares que
+garantizan que tu código sea consistente y compatible con el ecosistema.
+
+```php
+<?php
+// PSR-12: Guía de estilo extendido
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Database;
+use App\Helpers\Validator;
+use PDO;
+
+/**
+ * Servicio de gestión de usuarios
+ *
+ * Encapsula la lógica de negocio relacionada con usuarios,
+ * incluyendo registro, actualización y eliminación.
+ */
+class UsuarioService
+{
+    private PDO $db;
+    private Validator $validator;
+
+    public function __construct()
+    {
+        $this->db = Database::getInstance()->getConnection();
+        $this->validator = new Validator();
+    }
+
+    public function crearUsuario(array $data): array
+    {
+        $rules = [
+            'nombre' => 'required|max:100',
+            'email' => 'required|email|max:255',
+            'password' => 'required|min:8',
+        ];
+
+        $errors = $this->validator->validate($data, $rules);
+        if (!empty($errors)) {
+            throw new \InvalidArgumentException(
+                json_encode($errors)
+            );
+        }
+
+        $data['password_hash'] = password_hash(
+            $data['password'],
+            PASSWORD_BCRYPT,
+            ['cost' => 12]
+        );
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO usuarios (nombre, email, password_hash, rol)
+             VALUES (:nombre, :email, :password_hash, :rol)'
+        );
+
+        $stmt->execute([
+            'nombre' => $data['nombre'],
+            'email' => $data['email'],
+            'password_hash' => $data['password_hash'],
+            'rol' => $data['rol'] ?? 'estudiante',
+        ]);
+
+        $id = (int)$this->db->lastInsertId();
+
+        return $this->obtenerPorId($id);
+    }
+
+    public function obtenerPorId(int $id): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT id, nombre, email, rol, activo, created_at
+             FROM usuarios WHERE id = :id'
+        );
+        $stmt->execute(['id' => $id]);
+
+        $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $usuario ?: null;
+    }
+
+    // ... resto de métodos
+}
+?>
+```
+
+**Reglas PSR-12 esenciales:**
+1. **Indentación**: 4 espacios, no tabs
+2. **Línea máxima**: 120 caracteres (80 recomendado)
+3. **Braces**: En la misma línea para clases y métodos
+4. **Visibilidad**: Siempre declarar (public, protected, private)
+5. **Namespace**: Un namespace por archivo, sin llaves
+6. **Use statements**: Un `use` por línea, ordenados alfabéticamente
+7. **Métodos**: camelCase, máximo 20 líneas idealmente
+8. **Clases**: PascalCase, una clase por archivo
+9. **Constantes**: UPPER_SNAKE_CASE
+10. **Palabras clave**: `true`, `false`, `null` en minúsculas
+
+===============================================================================
+2. GIT FLOW PROFESIONAL
+===============================================================================
+
+```bash
+# Conventional Commits: Estructura del mensaje
+# tipo(alcance): descripción
+#
+# Tipos: feat, fix, refactor, test, docs, style, chore, perf, security
+
+# Ejemplos:
+feat(cursos): añadir endpoint de inscripción masiva
+fix(auth): corregir validación de token expirado
+refactor(usuarios): extraer lógica de validación a servicio separado
+test(examenes): añadir pruebas para calificación automática
+docs(readme): actualizar instrucciones de instalación
+security(api): prevenir SQL injection en parámetros de búsqueda
+perf(queries): optimizar consulta de listado de cursos
+chore(deps): actualizar php-jwt a versión 6.10
+
+# Flujo de trabajo Git Flow
+# main:     Código en producción (protegido)
+# develop:  Rama de integración
+# feature/*: Nuevas funcionalidades
+# hotfix/*:  Correcciones urgentes a producción
+# release/*: Preparación de lanzamiento
+
+# Comandos útiles
+git flow feature start autenticacion-2fa
+git flow feature finish autenticacion-2fa
+git flow release start v1.0.0
+git flow release finish v1.0.0
+git flow hotfix start parche-seguridad-critico
+git flow hotfix finish parche-seguridad-critico
+
+# Tags semánticos (SemVer)
+git tag -a v1.0.0 -m "Primer lanzamiento estable"
+git tag -a v1.1.0 -m "Nueva funcionalidad: exámenes"
+git tag -a v1.1.1 -m "Parche de seguridad crítico"
+git push --tags
+```
+
+```markdown
+<!-- CHANGELOG.md - Registro de cambios profesional -->
+# Changelog
+
+## [1.1.0] - 2024-06-15
+
+### Añadido
+- Sistema de exámenes con calificación automática (#42)
+- Dashboard de instructor con estadísticas (#38)
+- Exportación de calificaciones a CSV (#35)
+
+### Cambiado
+- Optimizada consulta de listado de cursos (70% más rápida)
+- Actualizado PHP-JWT a v6.10 por seguridad
+
+### Corregido
+- Error al inscribir usuarios sin confirmar email (#41)
+- Paginación incorrecta en búsqueda de cursos (#39)
+
+### Seguridad
+- Implementado rate limiting en endpoint de login
+- Añadida validación CSRF en formularios de administración
+
+## [1.0.0] - 2024-05-01
+
+### Añadido
+- Lanzamiento inicial del LMS
+- Autenticación con JWT y roles
+- CRUD completo de cursos y lecciones
+- Sistema de inscripciones y progreso
+- Perfiles de usuario con avatar
+```
+
+===============================================================================
+3. CI/CD INTEGRACIÓN Y DESPLIEGUE CONTINUO
+===============================================================================
+
+```yaml
+# .github/workflows/quality.yml - Pipeline de calidad
+name: Quality Assurance
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer, phpstan, phpcs, phpunit
+
+      - name: Validate composer
+        run: composer validate --strict
+        working-directory: backend
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+        working-directory: backend
+
+      - name: PHP CS Fixer (PSR-12)
+        run: php-cs-fixer fix src/ --rules=@PSR12 --dry-run --diff
+        working-directory: backend
+
+      - name: PHPStan (Static Analysis)
+        run: phpstan analyse src/ --level=max --no-progress
+        working-directory: backend
+
+      - name: Run tests
+        run: phpunit --testdox --coverage-clover=coverage.xml
+        working-directory: backend
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: backend/coverage.xml
+```
+
+```yaml
+# .github/workflows/deploy.yml - Pipeline de despliegue
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push Docker images
+        run: |
+          docker build -t lms-backend:${{ github.ref_name }} ./backend
+          docker tag lms-backend:${{ github.ref_name }} \
+            ${{ secrets.DOCKER_REGISTRY }}/lms-backend:latest
+          docker push ${{ secrets.DOCKER_REGISTRY }}/lms-backend:latest
+
+      - name: Deploy to production
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            cd /opt/lms &&
+            docker-compose pull &&
+            docker-compose up -d --no-deps backend &&
+            docker system prune -af
+          "
+```
+
+===============================================================================
+4. CODE REVIEW: GUÍA PARA REVISIONES EFECTIVAS
+===============================================================================
+
+```markdown
+# Guía de Code Review
+
+## Antes de enviar un PR
+- [ ] ¿El código compila y pasa las pruebas?
+- [ ] ¿Sigue los estándares PSR-12?
+- [ ] ¿Tiene pruebas unitarias para nueva funcionalidad?
+- [ ] ¿Se ha actualizado la documentación?
+- [ ] ¿No hay código comentado o debug statements?
+
+## Durante la revisión
+
+### Qué buscar (Checklist)
+
+**Arquitectura y diseño**
+- ¿Sigue los patrones acordados (MVC, Repository)?
+- ¿Respeta los principios SOLID?
+- ¿Las capas están correctamente separadas?
+
+**Funcionalidad**
+- ¿Resuelve el problema descrito en el ticket?
+- ¿Maneja los casos edge correctamente?
+- ¿Las validaciones son suficientes?
+
+**Seguridad**
+- ¿Usa prepared statements para SQL?
+- ¿Escapa la salida HTML?
+- ¿Valida y sanitiza todas las entradas?
+- ¿Maneja correctamente la autenticación/autorización?
+
+**Rendimiento**
+- ¿Las consultas SQL tienen índices apropiados?
+- ¿Evita N+1 queries?
+- ¿Usa caché donde es apropiado?
+
+**Mantenibilidad**
+- ¿Los nombres de variables/funciones son descriptivos?
+- ¿Los métodos son pequeños y hacen una sola cosa?
+- ¿El código es legible sin comentarios excesivos?
+
+### Cómo dar feedback
+- Sé específico: "En la línea 42, la variable $x debería llamarse $totalItems"
+- Sé constructivo: "Esta función podría beneficiarse del patrón Strategy"
+- Haz preguntas: "¿Por qué elegiste PDO sobre MySQLi aquí?"
+- Reconoce lo bueno: "Me gusta cómo manejaste la excepción aquí"
+
+### Cómo recibir feedback
+- No lo tomes personal; es sobre el código, no sobre ti
+- Agradece las sugerencias
+- Pregunta si no entiendes el comentario
+- Implementa los cambios o explica por qué no son necesarios
+```
+
+===============================================================================
+5. DEPLOYMENT CHECKLIST DEFINITIVO
+===============================================================================
+
+```markdown
+# 🚀 Deployment Checklist - PHP Master Book
+
+## □ PRE-DEPLOYMENT (24 horas antes)
+
+### Configuración del servidor
+- [ ] PHP 8.1+ instalado con extensiones: pdo, pdo_mysql, gd, mbstring, zip, openssl
+- [ ] OPcache configurado y habilitado
+- [ ] PHP-FPM configurado con pm = dynamic
+- [ ] Límites de memoria y ejecución adecuados (memory_limit=256M, max_execution_time=30)
+- [ ] SSL/TLS configurado con Let's Encrypt
+- [ ] Servidor web (Nginx/Apache) optimizado para producción
+
+### Variables de entorno
+- [ ] APP_ENV=production (¡no development!)
+- [ ] APP_DEBUG=false
+- [ ] APP_URL configurada con HTTPS
+- [ ] JWT_SECRET generado (mínimo 64 caracteres aleatorios)
+- [ ] DB_HOST, DB_NAME, DB_USER, DB_PASS configurados
+- [ ] MAIL_HOST, MAIL_USER, MAIL_PASS configurados
+- [ ] REDIS_HOST configurado (si aplica)
+
+### Base de datos
+- [ ] Migraciones ejecutadas y verificadas
+- [ ] Índices creados para consultas frecuentes
+- [ ] Backup automático configurado (diario)
+- [ ] Slow query log activado
+
+### Seguridad
+- [ ] .env NO está en el repositorio git
+- [ ] Directorio storage/ tiene permisos 775, no 777
+- [ ] Directory listing deshabilitado en Apache/Nginx
+- [ ] Headers de seguridad configurados (CSP, HSTS, X-Frame-Options)
+- [ ] Rate limiting configurado en endpoints críticos
+- [ ] Firewall configurado (solo puertos 80, 443, 22)
+
+## □ DEPLOYMENT (Día del lanzamiento)
+
+### Proceso
+- [ ] Git tag creado (v1.0.0, v1.1.0, etc.)
+- [ ] CI/CD pipeline pasa todas las pruebas
+- [ ] Backup de base de datos actual creado
+- [ ] Modo mantenimiento activado (si aplica)
+- [ ] Despliegue realizado
+- [ ] Migraciones ejecutadas
+- [ ] Modo mantenimiento desactivado
+
+### Verificación post-despliegue
+- [ ] Página de inicio carga correctamente (200 OK)
+- [ ] Login funciona
+- [ ] Endpoints críticos devuelven 200
+- [ ] No hay errores 500
+- [ ] Logs de error están limpios
+- [ ] Caché se ha limpiado
+- [ ] CDN purgado (si aplica)
+
+## □ POST-DEPLOYMENT (Monitorización continua)
+
+### Primeras 24 horas
+- [ ] Monitorear logs de error cada hora
+- [ ] Verificar tiempos de respuesta
+- [ ] Comprobar consumo de memoria
+- [ ] Verificar que no haya peticiones fallidas
+- [ ] Revisar slow queries
+
+### Primeros 7 días
+- [ ] Revisar analíticas (Google Analytics, etc.)
+- [ ] Verificar tasa de conversión (si aplica)
+- [ ] Comprobar que los formularios envían datos correctamente
+- [ ] Verificar que los emails se están enviando
+- [ ] Revisar logs de seguridad
+
+### Checklist de emergencia (si algo sale mal)
+1. No entrar en pánico
+2. Identificar el problema (logs, monitoreo)
+3. Decidir: ¿rollback o hotfix?
+4. Si rollback: git checkout tag_anterior && docker-compose up -d
+5. Si hotfix: rama desde main, fix, PR, merge, deploy
+6. Comunicar el incidente al equipo
+7. Post-mortem: ¿qué pasó? ¿cómo prevenirlo?
+```
+
+===============================================================================
+6. DOCUMENTACIÓN PROFESIONAL
+===============================================================================
+
+```markdown
+<!-- README.md - Plantilla profesional -->
+# LMS PHP Master
+
+Sistema de Gestión de Aprendizaje construido con PHP 8 y React.
+
+## 🚀 Inicio Rápido
+
+```bash
+# Requisitos: Docker y Docker Compose
+git clone https://github.com/tu-usuario/lms-php-master.git
+cd lms-php-master
+
+# Copiar variables de entorno
+cp .env.example .env
+
+# Iniciar servicios
+docker-compose up -d
+
+# Acceder
+# Frontend: http://localhost:3000
+# Backend:  http://localhost:8000/api
+```
+
+## 📋 Requisitos
+
+- PHP 8.1+
+- MySQL 8.0+
+- Node.js 18+
+- Composer 2.x
+- Redis 7+ (opcional)
+
+## 🏗️ Arquitectura
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   React     │────▶│  PHP API    │────▶│   MySQL     │
+│   Frontend  │     │  REST       │     │   Database  │
+└─────────────┘     └─────────────┘     └─────────────┘
+       │                   │                    │
+       │                   │                    │
+       ▼                   ▼                    ▼
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   JWT       │     │   Redis     │     │   Storage   │
+│   Auth      │     │   Cache     │     │   Files     │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+## 📚 Documentación API
+
+| Método | Endpoint | Descripción | Auth |
+|--------|----------|-------------|------|
+| POST | /api/auth/login | Iniciar sesión | No |
+| POST | /api/auth/register | Registrarse | No |
+| GET | /api/cursos | Listar cursos | No |
+| GET | /api/cursos/{id} | Ver curso | No |
+| POST | /api/cursos | Crear curso | JWT |
+| POST | /api/cursos/{id}/inscribir | Inscribirse | JWT |
+
+## 🧪 Pruebas
+
+```bash
+# Backend
+cd backend && vendor/bin/phpunit
+
+# Frontend
+cd frontend && npm test
+```
+
+## 🤝 Contribuir
+
+1. Fork el proyecto
+2. Crea tu rama: `git checkout -b feature/nueva-funcionalidad`
+3. Commit: `git commit -m "feat: añadir nueva funcionalidad"`
+4. Push: `git push origin feature/nueva-funcionalidad`
+5. Abre un Pull Request
+
+## 📄 Licencia
+
+MIT License - ver [LICENSE](LICENSE)
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Los estándares PSR-12 garantizan código consistente y legible en todo
+  el ecosistema PHP. Usa PHP CS Fixer para automatizar su aplicación.
+- Conventional Commits (feat, fix, refactor, etc.) estructuran el historial
+  de git y permiten generar changelogs automáticamente.
+- Git Flow organiza el desarrollo con ramas main, develop, feature, hotfix
+  y release, cada una con un propósito específico.
+- El CI/CD pipeline automatiza pruebas de calidad (PHPStan, PHP CS Fixer)
+  y despliegue a producción con Docker.
+- El Code Review es una herramienta de aprendizaje colectivo. Da y recibe
+  feedback constructivo, específico y respetuoso.
+- El Deployment Checklist es tu red de seguridad. Revísalo antes de cada
+  lanzamiento para evitar incidentes en producción.
+- La documentación profesional (README, API docs, CHANGELOG) es tan
+  importante como el código. Facilita la incorporación de nuevos
+  desarrolladores y el mantenimiento a largo plazo.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Configura PHP CS Fixer en tu proyecto y ejecútalo
+sobre todo tu código fuente. Corrige todas las violaciones de PSR-12.
+
+🧩 **Ejercicio 2:** Implementa Conventional Commits en tu proyecto desde
+ahora. Instala commitlint como hook de git para validar mensajes.
+
+🧩 **Ejercicio 3:** Crea el archivo DEPLOYMENT_CHECKLIST.md específico
+para tu proyecto. Adáptalo a tu stack tecnológico real.
+
+🧩 **Ejercicio 4:** Realiza un code review de un proyecto open source en
+GitHub. Usa la guía de este capítulo y publica tu review como comentario
+en un PR existente.
+
+🧩 **Ejercicio 5:** Configura un pipeline CI/CD completo en GitHub Actions
+que ejecute: linter, análisis estático, pruebas unitarias y despliegue
+automático a un servidor de prueba (staging).
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Es obligatorio seguir PSR-12?**
+En proyectos profesionales, sí. La mayoría de empresas y frameworks lo
+exigen. Si no lo sigues, tu código será rechazado en code reviews y tus
+PRs no serán aceptados en proyectos open source.
+
+❓ **¿Qué hago si el proyecto ya tiene un estilo diferente?**
+Respeta el estilo existente del proyecto. La consistencia es más importante
+que cualquier estándar. Si empiezas un proyecto nuevo, usa PSR-12.
+
+❓ **¿Cada cuánto debo hacer deploy?**
+Idealmente, cada vez que una funcionalidad completa esté lista y probada.
+Los depliegues frecuentes y pequeños son menos riesgosos que los grandes
+lanzamientos mensuales.
+
+❓ **¿Qué hago si un deploy sale mal?**
+Ten preparado un plan de rollback. En Docker, es tan simple como desplegar
+la imagen anterior. Siempre mantén las últimas 3 versiones funcionales.
+
+❓ **¿Debo documentar todo el código?**
+Documenta el "por qué", no el "qué". El código debe ser autoexplicativo.
+Añade comentarios solo cuando la lógica no sea obvia o cuando haya una
+decisión técnica importante que justificar.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto de Procesos** — Diseña un flujo de desarrollo completo
+para un equipo de 15 desarrolladores trabajando en una aplicación SaaS con
+3 microservicios (catálogo, pagos, usuarios). Debes definir: estrategia de
+ramificación (Trunk-based vs Git Flow), política de code reviews (¿cuántos
+aprobadores?, ¿quién revisa qué?), pipeline CI/CD multi-entorno
+(dev → staging → producción), estrategia de feature flags para lanzamientos
+graduales, plan de disaster recovery con RTO < 1 hora y RPO < 15 minutos,
+y métricas de calidad que el equipo debe monitorear (deployment frequency,
+lead time, change failure rate, mean time to recovery). ¿Cómo equilibras
+la velocidad de desarrollo con la estabilidad del sistema?
+
+===============================================================================
+FIN DEL CAPÍTULO 79
+===============================================================================
+
+"Las buenas prácticas no son reglas que te atan, sino herramientas que te
+liberan. Te liberan de debugging a las 3 AM, de clientes enojados y de la
+vergüenza de tu código del año pasado."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+80_CAPITULO_80_GRADUACION.txt
+===============================================================================

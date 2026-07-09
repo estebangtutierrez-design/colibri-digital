@@ -1,0 +1,918 @@
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VI
+##
+##               CAPÍTULO 57: SUBIDA DE ARCHIVOS
+##
+################################################################################
+
+"Subir un archivo no es copiar datos, es abrir una puerta.
+Un buen desarrollador sabe cuándo abrirla y cómo cerrarla."
+                          — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+La subida de archivos es una de las funcionalidades más comunes
+(y peligrosas) en aplicaciones web. Ya sea para fotos de perfil,
+documentos PDF, imágenes de productos o archivos CSV, toda
+aplicación profesional necesita manejar archivos subidos por
+usuarios.
+
+El peligro: un archivo malicioso (PHP, shell, script) puede dar
+a un atacante control total sobre tu servidor. Por eso, la subida
+de archivos requiere validaciones múltiples:
+
+  - Validar el tipo real del archivo (no solo la extensión).
+  - Validar el tamaño máximo.
+  - Sanitizar el nombre del archivo.
+  - Almacenar fuera del document root cuando sea posible.
+  - Escanear en busca de malware.
+
+En este capítulo aprenderás a implementar subida de archivos
+segura y profesional, tal como lo hacen los sistemas de producción.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Cada archivo subido es un caballo de Troya potencial.
+No confíes en su nombre, no confíes en su extensión,
+confía solo en lo que tu código valida."
+                          — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Configurar PHP para aceptar subidas de archivos.
+✓ Procesar el array $_FILES correctamente.
+✓ Validar tipo MIME real con finfo.
+✓ Validar extensión y tamaño del archivo.
+✓ Sanitizar nombres de archivo para prevenir path traversal.
+✓ Mover archivos con move_uploaded_file().
+✓ Implementar subidas múltiples y por partes.
+✓ Almacenar archivos fuera del document root.
+✓ Proteger contra ejecución de scripts en uploads.
+✓ Implementar descarga segura de archivos.
+
+===============================================================================
+1. CONFIGURACIÓN DE PHP PARA SUBIDAS
+===============================================================================
+
+Antes de procesar archivos, PHP debe estar configurado
+correctamente:
+
+```ini
+; php.ini - Configuración de subida de archivos
+file_uploads = On
+upload_max_filesize = 20M
+post_max_size = 25M
+max_file_uploads = 20
+upload_tmp_dir = /tmp/php-uploads
+```
+
+En código PHP, puedes verificar y modificar algunas:
+
+```php
+<?php
+// Verificar configuración
+$maxUpload = ini_get('upload_max_filesize');
+$maxPost   = ini_get('post_max_size');
+$maxFiles  = ini_get('max_file_uploads');
+
+echo "Tamaño máximo: $maxUpload\n";
+echo "Post máximo: $maxPost\n";
+echo "Archivos máximos: $maxFiles\n";
+```
+
+Si necesitas aumentar los límites en tiempo de ejecución (con
+permisos):
+
+```php
+<?php
+ini_set('upload_max_filesize', '50M');
+ini_set('post_max_size', '60M');
+ini_set('max_execution_time', '300'); // 5 minutos para subidas grandes
+```
+
+Esto solo funciona si el hosting lo permite. En muchos servidores
+compartidos, estas directivas están bloqueadas en php.ini.
+
+===============================================================================
+2. EL ARRAY $_FILES
+===============================================================================
+
+Cuando un formulario incluye un campo de tipo file con
+enctype="multipart/form-data", PHP llena el array $_FILES:
+
+```php
+<!-- formulario.html -->
+<form action="/upload" method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="MAX_FILE_SIZE" value="2097152">
+    <input type="file" name="archivo" accept="image/*">
+    <button type="submit">Subir</button>
+</form>
+```
+
+```php
+<?php
+// El contenido de $_FILES['archivo']
+var_dump($_FILES['archivo']);
+
+// Array con:
+// 'name'     => 'foto.jpg',
+// 'type'     => 'image/jpeg',
+// 'tmp_name' => '/tmp/phpXXXXXX',
+// 'error'    => UPLOAD_ERR_OK,
+// 'size'     => 123456
+```
+
+Códigos de error en $_FILES['archivo']['error']:
+
+```
+UPLOAD_ERR_OK         = 0  → Todo bien
+UPLOAD_ERR_INI_SIZE   = 1  → Excede upload_max_filesize
+UPLOAD_ERR_FORM_SIZE  = 2  → Excede MAX_FILE_SIZE del formulario
+UPLOAD_ERR_PARTIAL    = 3  → Solo se subió parcialmente
+UPLOAD_ERR_NO_FILE    = 4  → No se subió ningún archivo
+UPLOAD_ERR_NO_TMP_DIR = 6  → Falta carpeta temporal
+UPLOAD_ERR_CANT_WRITE = 7  → Error al escribir en disco
+UPLOAD_ERR_EXTENSION  = 8  → Extensión PHP detuvo la subida
+```
+
+Procesamiento básico:
+
+```php
+<?php
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    exit('Método no permitido');
+}
+
+$archivo = $_FILES['archivo'] ?? null;
+
+if (!$archivo || $archivo['error'] !== UPLOAD_ERR_OK) {
+    $errores = [
+        UPLOAD_ERR_INI_SIZE   => 'El archivo excede el tamaño máximo del servidor',
+        UPLOAD_ERR_FORM_SIZE  => 'El archivo excede el tamaño máximo del formulario',
+        UPLOAD_ERR_PARTIAL    => 'El archivo se subió parcialmente',
+        UPLOAD_ERR_NO_FILE    => 'No se seleccionó ningún archivo',
+        UPLOAD_ERR_NO_TMP_DIR => 'Falta la carpeta temporal',
+        UPLOAD_ERR_CANT_WRITE => 'Error al escribir en disco',
+        UPLOAD_ERR_EXTENSION  => 'Extensión bloqueó la subida',
+    ];
+
+    $codigo = $archivo['error'] ?? UPLOAD_ERR_NO_FILE;
+    $mensaje = $errores[$codigo] ?? 'Error desconocido';
+    exit($mensaje);
+}
+
+// Procesar archivo...
+```
+
+===============================================================================
+3. VALIDACIÓN DE TIPO MIME
+===============================================================================
+
+Nunca confíes en $_FILES['archivo']['type']. Este valor lo envía
+el navegador y puede ser falsificado fácilmente.
+
+Para validar el tipo real, usa finfo (File Info):
+
+```php
+<?php
+// Extensiones permitidas
+$allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+// MIME types permitidos
+$allowedMimes = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+];
+
+$archivo = $_FILES['archivo'];
+
+// Validar extensión
+$extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+if (!in_array($extension, $allowedExtensions)) {
+    exit("Extensión .$extension no permitida");
+}
+
+// Validar MIME type REAL (no confiar en $_FILES['type'])
+$finfo = new finfo(FILEINFO_MIME_TYPE);
+$mimeType = $finfo->file($archivo['tmp_name']);
+
+if (!in_array($mimeType, $allowedMimes)) {
+    exit("Tipo de archivo $mimeType no permitido");
+}
+
+// Validar que realmente es una imagen (getimagesize)
+$imageInfo = @getimagesize($archivo['tmp_name']);
+if ($imageInfo === false) {
+    exit('El archivo no es una imagen válida');
+}
+
+echo "Archivo válido: $mimeType, {$imageInfo[0]}x{$imageInfo[1]}px";
+```
+
+La triple validación (extensión + MIME + getimagesize) es la
+defensa más robusta para imágenes.
+
+Para PDFs y documentos:
+
+```php
+<?php
+$allowedMimes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
+$finfo = new finfo(FILEINFO_MIME_TYPE);
+$mimeType = $finfo->file($archivo['tmp_name']);
+
+if (!in_array($mimeType, $allowedMimes)) {
+    exit('Tipo de documento no permitido');
+}
+```
+
+===============================================================================
+4. VALIDACIÓN DE TAMAÑO
+===============================================================================
+
+```php
+<?php
+$maxSize = 5 * 1024 * 1024; // 5 MB en bytes
+
+if ($archivo['size'] > $maxSize) {
+    $maxSizeMB = $maxSize / 1024 / 1024;
+    exit("El archivo excede el tamaño máximo de {$maxSizeMB}MB");
+}
+
+// Para imágenes, validar dimensiones
+$maxWidth  = 4000;
+$maxHeight = 4000;
+
+$imageInfo = @getimagesize($archivo['tmp_name']);
+if ($imageInfo) {
+    [$width, $height] = $imageInfo;
+    if ($width > $maxWidth || $height > $maxHeight) {
+        exit("La imagen excede las dimensiones máximas de {$maxWidth}x{$maxHeight}");
+    }
+}
+```
+
+===============================================================================
+5. SANITIZACIÓN DE NOMBRES DE ARCHIVO
+===============================================================================
+
+El nombre original puede contener caracteres maliciosos:
+  - ../../../etc/passwd (path traversal)
+  - index.php (ejecución de scripts)
+  - foto.jpg;.php (doble extensión)
+  - archivo%00.php (null byte injection)
+
+```php
+<?php
+function sanitizeFilename(string $filename): string
+{
+    // Eliminar caracteres no seguros
+    // Conservar solo letras, números, guiones, puntos y guiones bajos
+    $filename = preg_replace('/[^\w\-\.]/', '_', $filename);
+
+    // Eliminar múltiples puntos y guiones seguidos
+    $filename = preg_replace('/[\.]+/', '.', $filename);
+    $filename = preg_replace('/[\-]+/', '-', $filename);
+
+    // Prevenir doble extensión maliciosa
+    $parts = explode('.', $filename);
+    if (count($parts) > 2) {
+        // Si hay múltiples extensiones, solo mantener la última
+        $extension = array_pop($parts);
+        $filename = implode('_', $parts) . '.' . $extension;
+    }
+
+    // Eliminar cualquier punto al inicio (archivos ocultos)
+    $filename = ltrim($filename, '.');
+
+    // Limitar longitud
+    $filename = substr($filename, 0, 100);
+
+    // Si queda vacío, generar nombre aleatorio
+    if (empty($filename)) {
+        $filename = 'file_' . bin2hex(random_bytes(8));
+    }
+
+    return $filename;
+}
+
+// Uso
+$nombreOriginal = $_FILES['archivo']['name'];
+$nombreSeguro   = sanitizeFilename($nombreOriginal);
+
+echo "Original: $nombreOriginal\n";
+echo "Seguro: $nombreSeguro\n";
+```
+
+Mejor práctica: generar nombres únicos con UUID o bin2hex:
+
+```php
+<?php
+function generateUniqueFilename(string $extension): string
+{
+    return bin2hex(random_bytes(16)) . '.' . $extension;
+}
+
+// O usar UUID
+function uuidFilename(string $extension): string
+{
+    return Ramsey\Uuid\Uuid::uuid4()->toString() . '.' . $extension;
+}
+
+// Uso
+$extension = strtolower(pathinfo($_FILES['archivo']['name'], PATHINFO_EXTENSION));
+$filename  = generateUniqueFilename($extension);
+```
+
+Generar nombres únicos elimina:
+  - Colisiones de nombres (dos usuarios suben "foto.jpg").
+  - Caracteres maliciosos en el nombre original.
+  - Información sensible en el nombre (como "curriculum-juan-perez.pdf").
+  - Conflictos de encoding (acentos, ñ, caracteres especiales).
+
+===============================================================================
+6. MOVE_UPLOADED_FILE
+===============================================================================
+
+move_uploaded_file() es la única función segura para mover archivos
+subidos. A diferencia de copy() o rename(), verifica que el archivo
+realmente fue subido mediante HTTP POST (no es un archivo local).
+
+```php
+<?php
+$uploadDir = __DIR__ . '/../storage/uploads/';
+
+// Asegurar que el directorio existe
+if (!is_dir($uploadDir)) {
+    mkdir($uploadDir, 0755, true);
+}
+
+$extension = strtolower(pathinfo($_FILES['archivo']['name'], PATHINFO_EXTENSION));
+$filename  = bin2hex(random_bytes(16)) . '.' . $extension;
+$filepath  = $uploadDir . $filename;
+
+// Mover el archivo
+if (!move_uploaded_file($_FILES['archivo']['tmp_name'], $filepath)) {
+    exit('Error al guardar el archivo');
+}
+
+// Cambiar permisos
+chmod($filepath, 0644);
+
+echo "Archivo guardado en: $filename";
+```
+
+El segundo parámetro debe ser la ruta absoluta o relativa donde
+se guardará el archivo. La función devuelve true en éxito.
+
+Nunca muevas archivos a un directorio accesible desde la web si
+pueden ser scripts. La mejor práctica es almacenar fuera del
+document root y servir mediante un script controlado.
+
+Estructura de directorios segura:
+
+```
+mi-app/
+├── public/
+│   └── index.php
+├── storage/
+│   ├── uploads/       ← Archivos subidos (fuera del document root)
+│   └── cache/
+├── vendor/
+└── src/
+```
+
+===============================================================================
+7. SUBIDA DE MÚLTIPLES ARCHIVOS
+===============================================================================
+
+Múltiples archivos con el mismo nombre (HTML):
+
+```php
+<form action="/upload-multiple" method="POST" enctype="multipart/form-data">
+    <input type="file" name="archivos[]" multiple accept="image/*">
+    <button type="submit">Subir archivos</button>
+</form>
+```
+
+```php
+<?php
+$archivos = $_FILES['archivos'] ?? [];
+
+if (!$archivos || !is_array($archivos['name'])) {
+    exit('No se seleccionaron archivos');
+}
+
+$total = count($archivos['name']);
+$subidos = 0;
+
+for ($i = 0; $i < $total; $i++) {
+    if ($archivos['error'][$i] !== UPLOAD_ERR_OK) {
+        continue; // Saltar archivos con error
+    }
+
+    $nombre  = $archivos['name'][$i];
+    $tmpName = $archivos['tmp_name'][$i];
+    $tipo    = $archivos['type'][$i];
+    $tamano  = $archivos['size'][$i];
+
+    $extension = strtolower(pathinfo($nombre, PATHINFO_EXTENSION));
+    $filename  = bin2hex(random_bytes(16)) . '.' . $extension;
+
+    if (move_uploaded_file($tmpName, 'storage/uploads/' . $filename)) {
+        chmod('storage/uploads/' . $filename, 0644);
+        $subidos++;
+        echo "Subido: $filename ($tamano bytes)<br>";
+    }
+}
+
+echo "Se subieron $subidos de $total archivos.";
+```
+
+Múltiples archivos con nombres diferentes:
+
+```php
+<form action="/upload-multiple" method="POST" enctype="multipart/form-data">
+    <input type="file" name="foto_principal">
+    <input type="file" name="foto_secundaria">
+    <input type="file" name="documento">
+    <button type="submit">Subir</button>
+</form>
+```
+
+```php
+<?php
+$campos = ['foto_principal', 'foto_secundaria', 'documento'];
+
+foreach ($campos as $campo) {
+    $archivo = $_FILES[$campo] ?? null;
+
+    if (!$archivo || $archivo['error'] !== UPLOAD_ERR_OK) {
+        continue;
+    }
+
+    // Validar y mover...
+}
+```
+
+===============================================================================
+8. ALMACENAMIENTO SEGURO
+===============================================================================
+
+Fuera del document root:
+
+```php
+<?php
+// Público:  /var/www/mi-app/public/
+// Privado:  /var/www/mi-app/storage/uploads/
+
+// Servir archivos a través de un script controlado
+// public/download.php
+
+$fileId = $_GET['id'];
+
+$stmt = $db->prepare('SELECT * FROM archivos WHERE id = :id AND deleted_at IS NULL');
+$stmt->execute([':id' => $fileId]);
+$file = $stmt->fetch();
+
+if (!$file) {
+    http_response_code(404);
+    exit('Archivo no encontrado');
+}
+
+// Verificar permisos del usuario
+if (!Auth::check() || Auth::user()['id'] !== $file['user_id']) {
+    http_response_code(403);
+    exit('No tienes permiso para descargar este archivo');
+}
+
+$filepath = __DIR__ . '/../storage/uploads/' . $file['filename'];
+
+if (!file_exists($filepath)) {
+    http_response_code(404);
+    exit('Archivo no encontrado en el servidor');
+}
+
+// Enviar el archivo
+header('Content-Type: ' . $file['mime_type']);
+header('Content-Disposition: attachment; filename="' . $file['original_name'] . '"');
+header('Content-Length: ' . filesize($filepath));
+header('Cache-Control: private, max-age=0');
+
+readfile($filepath);
+exit;
+```
+
+Ventajas de servir archivos por script:
+  - Control de acceso (solo usuarios autorizados).
+  - Registro de descargas (auditoría).
+  - Agregar watermarks o procesar antes de servir.
+  - Ocultar la ubicación real del archivo.
+  - Prevenir hotlinking.
+
+Enlace en la vista:
+
+```php
+<a href="/download?id=<?= $archivo['id'] ?>">
+    Descargar <?= htmlspecialchars($archivo['original_name']) ?>
+</a>
+```
+
+===============================================================================
+9. PROTECCIÓN CONTRA EJECUCIÓN DE SCRIPTS
+===============================================================================
+
+Si los archivos subidos están dentro del document root, un atacante
+podría subir un script PHP y ejecutarlo.
+
+Protecciones:
+
+1. Almacenar fuera del document root (recomendado).
+
+2. Si es inevitable, deshabilitar la ejecución de PHP en la carpeta:
+
+```apache
+# .htaccess dentro de /public/uploads
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|phar|pl|cgi|py|rb|sh)$">
+    Require all denied
+</FilesMatch>
+
+# O deshabilitar el handler
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phar
+RemoveType .php .phtml .php3 .php4 .php5 .php7 .phar
+```
+
+En Nginx:
+
+```nginx
+location /uploads {
+    location ~ \.php$ {
+        deny all;
+    }
+}
+```
+
+3. Cambiar el nombre del archivo y no conservar la extensión original:
+
+```php
+<?php
+// Guardar sin extensión (solo hash)
+$storedName = bin2hex(random_bytes(16)); // Sin .php
+move_uploaded_file($tmp, 'uploads/' . $storedName);
+
+// Guardar la extensión y MIME type en BD para saber cómo servirlo
+$stmt = $db->prepare('INSERT INTO archivos (stored_name, original_name, extension, mime_type, size) VALUES (?, ?, ?, ?, ?)');
+```
+
+4. Verificar que el archivo no contiene código malicioso:
+
+```php
+<?php
+function containsPhpCode(string $filepath): bool
+{
+    $content = file_get_contents($filepath);
+    return preg_match('/<\?(php|=)?/i', $content) === 1;
+}
+
+// Para imágenes
+function isImageClean(string $filepath): bool
+{
+    $imageInfo = @getimagesize($filepath);
+    if ($imageInfo === false) {
+        return false;
+    }
+
+    // Re-codificar la imagen para eliminar metadatos maliciosos
+    $img = imagecreatefromstring(file_get_contents($filepath));
+    if ($img === false) {
+        return false;
+    }
+
+    // Guardar sin metadatos EXIF
+    ob_start();
+    imagepng($img);
+    $cleanData = ob_get_clean();
+    imagedestroy($img);
+
+    file_put_contents($filepath, $cleanData);
+    return true;
+}
+```
+
+===============================================================================
+10. SUBIDA POR PARTES (CHUNKED UPLOAD)
+===============================================================================
+
+Para archivos muy grandes (videos, ISOs), la subida por partes
+permite reanudar y no agotar la memoria.
+
+```php
+<?php
+// Handle de subida por partes (API)
+// Cliente envía: POST /api/upload/chunk con headers:
+// X-Upload-Id: uuid del archivo
+// X-Chunk-Index: número del fragmento (0-based)
+// X-Total-Chunks: total de fragmentos
+
+$uploadId    = $_SERVER['HTTP_X_UPLOAD_ID'];
+$chunkIndex  = (int) ($_SERVER['HTTP_X_CHUNK_INDEX'] ?? 0);
+$totalChunks = (int) ($_SERVER['HTTP_X_TOTAL_CHUNKS'] ?? 1);
+
+$tmpDir = __DIR__ . '/../storage/chunks/';
+
+if (!is_dir($tmpDir)) {
+    mkdir($tmpDir, 0755, true);
+}
+
+// Guardar el fragmento
+$chunkFile = $tmpDir . $uploadId . '_' . $chunkIndex;
+move_uploaded_file($_FILES['chunk']['tmp_name'], $chunkFile);
+
+// Verificar si todos los fragmentos están completos
+$receivedChunks = glob($tmpDir . $uploadId . '_*');
+
+if (count($receivedChunks) === $totalChunks) {
+    // Combinar fragmentos
+    $finalFile = __DIR__ . '/../storage/uploads/' . $uploadId . '.mp4';
+    $output = fopen($finalFile, 'wb');
+
+    for ($i = 0; $i < $totalChunks; $i++) {
+        $chunk = $tmpDir . $uploadId . '_' . $i;
+        $input = fopen($chunk, 'rb');
+        stream_copy_to_stream($input, $output);
+        fclose($input);
+        unlink($chunk); // Eliminar fragmento
+    }
+
+    fclose($output);
+
+    echo json_encode(['status' => 'complete', 'file' => $uploadId . '.mp4']);
+} else {
+    echo json_encode([
+        'status'  => 'receiving',
+        'received' => count($receivedChunks),
+        'total'    => $totalChunks,
+    ]);
+}
+```
+
+Cliente JavaScript básico:
+
+```javascript
+function uploadFile(file) {
+    const uploadId = crypto.randomUUID();
+    const chunkSize = 1 * 1024 * 1024; // 1 MB
+    const totalChunks = Math.ceil(file.size / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, file.size);
+        const chunk = file.slice(start, end);
+
+        const formData = new FormData();
+        formData.append('chunk', chunk);
+
+        fetch('/api/upload/chunk', {
+            method: 'POST',
+            headers: {
+                'X-Upload-Id': uploadId,
+                'X-Chunk-Index': i,
+                'X-Total-Chunks': totalChunks,
+            },
+            body: formData,
+        });
+    }
+}
+```
+
+===============================================================================
+11. SUBIDA DE IMÁGENES CON REDIMENSIONADO
+===============================================================================
+
+```php
+<?php
+function processImage(string $tmpPath, string $destPath, int $maxWidth = 1200, int $maxHeight = 1200): bool
+{
+    $imageInfo = @getimagesize($tmpPath);
+    if ($imageInfo === false) {
+        return false;
+    }
+
+    [$width, $height, $type] = $imageInfo;
+
+    // Crear imagen desde origen
+    $srcImage = match ($type) {
+        IMAGETYPE_JPEG => @imagecreatefromjpeg($tmpPath),
+        IMAGETYPE_PNG  => @imagecreatefrompng($tmpPath),
+        IMAGETYPE_GIF  => @imagecreatefromgif($tmpPath),
+        IMAGETYPE_WEBP => @imagecreatefromwebp($tmpPath),
+        default        => false,
+    };
+
+    if ($srcImage === false) {
+        return false;
+    }
+
+    // Calcular nuevas dimensiones manteniendo proporción
+    $ratio = min($maxWidth / $width, $maxHeight / $height, 1);
+    $newWidth  = (int) ($width * $ratio);
+    $newHeight = (int) ($height * $ratio);
+
+    // Crear lienzo y redimensionar
+    $dstImage = imagecreatetruecolor($newWidth, $newHeight);
+
+    // Preservar transparencia PNG
+    imagealphablending($dstImage, false);
+    imagesavealpha($dstImage, true);
+
+    imagecopyresampled($dstImage, $srcImage, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+
+    // Guardar
+    $extension = strtolower(pathinfo($destPath, PATHINFO_EXTENSION));
+    $result = match ($extension) {
+        'jpg', 'jpeg' => imagejpeg($dstImage, $destPath, 85),
+        'png'         => imagepng($dstImage, $destPath, 8),
+        'webp'        => imagewebp($destPath, $destPath, 85),
+        default       => false,
+    };
+
+    imagedestroy($srcImage);
+    imagedestroy($dstImage);
+
+    return $result;
+}
+
+// Uso
+$destPath = 'storage/uploads/' . bin2hex(random_bytes(16)) . '.webp';
+if (processImage($_FILES['archivo']['tmp_name'], $destPath, 800, 800)) {
+    echo "Imagen redimensionada y convertida a WebP: $destPath";
+}
+```
+
+===============================================================================
+12. LISTA DE VERIFICACIÓN DE SUBIDA DE ARCHIVOS
+===============================================================================
+
+✓ ¿Validaste el código de error de $_FILES?
+✓ ¿Validaste el MIME type real con finfo (no $_FILES['type'])?
+✓ ¿Validaste la extensión contra una whitelist?
+✓ ¿Validaste el tamaño máximo?
+✓ ¿Validaste las dimensiones (imágenes)?
+✓ ¿Sanitizaste o reemplazaste el nombre del archivo?
+✓ ¿Usaste move_uploaded_file() (no copy() ni rename())?
+✓ ¿Almacenas fuera del document root?
+✓ ¿El directorio de uploads no ejecuta scripts?
+✓ ¿Tienes un sistema de permisos para descargar?
+✓ ¿Registraste la subida en la base de datos?
+✓ ¿Las imágenes se redimensionaron y optimizaron?
+✓ ¿Implementaste límite de almacenamiento por usuario?
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Configura upload_max_filesize y post_max_size en php.ini.
+- Usa enctype="multipart/form-data" en formularios con archivos.
+- Valida siempre $archivo['error'] antes de procesar.
+- No confíes en $_FILES['type'] (lo envía el navegador).
+- Usa finfo para validar el MIME type real del archivo.
+- Usa getimagesize() para validar imágenes reales.
+- Sanitiza los nombres de archivo o mejor: genera nombres únicos.
+- move_uploaded_file() es la única función segura para mover.
+- Almacenar fuera del document root y servir con script controlado.
+- Si almacenas en public/, deshabilita la ejecución de PHP.
+- Las subidas por partes (chunked) manejan archivos grandes.
+- Las imágenes deben redimensionarse y optimizarse al subir.
+- Registra cada subida en BD para trazabilidad.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Crea un formulario de subida de fotos de perfil.
+   Valida que sea imagen (JPG, PNG, WebP), máximo 2MB, 1000x1000px.
+   Redimensiona a 200x200 y guarda en WebP.
+
+🧩 **Ejercicio 2:** Implementa la subida segura de PDFs. Valida
+   MIME type real con finfo, tamaño máximo 10MB. Sirve el PDF
+   solo a usuarios autenticados mediante un script download.php.
+
+🧩 **Ejercicio 3:** Crea un sistema de galería que permita subir
+   múltiples imágenes a la vez con input type="file" multiple.
+   Muestra miniaturas y permite eliminar imágenes.
+
+🧩 **Ejercicio 4:** Implementa subida por partes para videos de
+   hasta 1GB. El servidor recibe fragmentos de 1MB y los combina
+   al completarse. Prueba con un archivo de prueba.
+
+🧩 **Ejercicio 5:** Crea una clase UploadedFile que encapsule toda
+   la lógica: validar MIME, extensión, tamaño, mover, generar nombre.
+   Debe ser fluida: $file->validate()->move('uploads/');
+
+🧩 **Ejercicio 6:** Implementa un sistema de cuotas de almacenamiento
+   por usuario. Cada usuario tiene un límite (ej: 100MB). Verifica
+   antes de cada subida que no exceda el límite.
+
+🧩 **Ejercicio 7:** Crea un script de escaneo de malware que revise
+   todos los archivos subidos en busca de patrones sospechosos
+   (base64_decode, eval, exec, system, shell_exec) y marque los
+   infectados.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué move_uploaded_file falla?**
+   Generalmente por: permisos del directorio destino, ruta incorrecta,
+   o el archivo no fue subido por HTTP POST (usa rename() en lugar de
+   move_uploaded_file()).
+
+❓ **¿Cómo manejo archivos mayores a upload_max_filesize?**
+   No puedes desde PHP. Debes configurarlo en php.ini o .htaccess
+   (php_value upload_max_filesize 100M). Para archivos >2GB, usa
+   subida por partes (chunked).
+
+❓ **¿Es seguro guardar archivos en la base de datos?**
+   Generalmente no. Las BD no están optimizadas para archivos grandes.
+   Guarda los archivos en disco y almacena la ruta en BD. Para
+   archivos pequeños (<1MB), BLOB es aceptable.
+
+❓ **¿Qué hago si el usuario sube un archivo con virus?**
+   Implementa un escáner. Puedes usar ClamAV (clamscan) llamándolo
+   desde PHP: exec('clamscan ' . escapeshellarg($filepath), $output).
+
+❓ **¿Cómo evito que se suban archivos duplicados?**
+   Calcula el hash SHA256 del contenido y verifica si ya existe
+   en la BD: $hash = hash_file('sha256', $filepath).
+
+❓ **¿Debo borrar los archivos cuando se elimina el registro?**
+   Sí, y también los archivos huérfanos (subidos pero no asociados
+   a ningún registro). Crea un script cron que limpie periódicamente.
+
+❓ **¿Cómo manejo la concurrencia en subidas?**
+   Usa nombres únicos (bin2hex(random_bytes()) y transacciones en
+   BD. No hay riesgo de colisión con 32 bytes aleatorios.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Almacenamiento de Archivos Profesional**
+
+   Construye un sistema completo de gestión de archivos con:
+
+   1. Uploader con validación múltiple (MIME, extensión, tamaño,
+      contenidos).
+   2. Procesamiento de imágenes: redimensionado, thumbnails,
+      conversión a WebP.
+   3. Sistema de carpetas virtuales (el usuario organiza sus
+      archivos).
+   4. Búsqueda de archivos por nombre y tipo.
+   5. Servicio de descarga con control de acceso y tracking.
+   6. Compartición de archivos con links temporales (expiración
+      y límite de descargas).
+   7. Vista previa de imágenes, PDFs y videos.
+   8. Compresión en ZIP para descarga múltiple.
+   9. Estadísticas de almacenamiento por usuario.
+   10. API REST completa:
+       POST /api/files/upload
+       GET  /api/files
+       DELETE /api/files/{id}
+       GET  /api/files/{id}/download
+       POST /api/files/{id}/share
+
+   Este sistema integra todos los conceptos del capítulo en una
+   solución profesional comparable a servicios como Dropbox o
+   Google Drive, pero a escala controlada.
+
+===============================================================================
+FIN DEL CAPÍTULO 57
+===============================================================================
+
+"Subir archivos es fácil. Subirlos con seguridad es una
+responsabilidad que distingue a los profesionales."
+                          — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+58_CAPITULO_58_APIS_CON_PHP.txt
+===============================================================================

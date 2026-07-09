@@ -1,0 +1,1242 @@
+╔══════════════════════════════════════════════════════════════╗
+║           GO MASTER BOOK — MÓDULO VIII: PROYECTO            ║
+║       CAPÍTULO 76: SEGURIDAD                               ║
+╚══════════════════════════════════════════════════════════════╝
+
+BIENVENIDA
+──────────
+Bienvenido, guardián del sistema. La seguridad no es una feature;
+es una responsabilidad. En este capítulo aprenderás a proteger tus
+aplicaciones Go contra SQL injection, XSS, CSRF, y otras amenazas
+del OWASP Top 10. También dominarás criptografía aplicada con
+bcrypt, AES, y validación de entrada.
+
+FRASE MOTIVACIONAL
+──────────────────
+"La seguridad no es un destino, es un viaje constante. Cada línea
+de código es una posible puerta de entrada. Tu mente es el mejor
+firewall." — Profesor Búho AI
+
+OBJETIVOS DEL CAPÍTULO
+──────────────────────
+1. Prevenir SQL injection en aplicaciones Go.
+2. Proteger contra XSS y CSRF en aplicaciones web.
+3. Implementar hashing seguro con bcrypt.
+4. Cifrar datos sensibles con AES.
+5. Validar y sanitizar toda entrada de usuario.
+6. Conocer y mitigar el OWASP Top 10 en Go.
+7. Implementar autenticación y autorización seguras.
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+1. SQL INJECTION
+────────────────
+
+La regla de oro: NUNCA concatenes SQL con entrada del usuario.
+
+```go
+package repository
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+)
+
+// MAL — SQL Injection
+func getUserByIDUnsafe(db *sql.DB, id string) (*User, error) {
+    query := fmt.Sprintf("SELECT * FROM users WHERE id = '%s'", id)
+    row := db.QueryRow(query)
+    var u User
+    err := row.Scan(&u.ID, &u.Name, &u.Email)
+    return &u, err
+}
+
+// BIEN — Parameterized queries
+func getUserByID(db *sql.DB, id int) (*User, error) {
+    query := "SELECT id, name, email FROM users WHERE id = $1"
+    row := db.QueryRow(query, id)
+    var u User
+    err := row.Scan(&u.ID, &u.Name, &u.Email)
+    if err != nil {
+        return nil, err
+    }
+    return &u, nil
+}
+
+// BIEN — Múltiples parámetros
+func getUsersByRole(db *sql.DB, role string, limit int) ([]User, error) {
+    query := `SELECT id, name, email FROM users
+              WHERE role = $1 ORDER BY name LIMIT $2`
+    rows, err := db.Query(query, role, limit)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var users []User
+    for rows.Next() {
+        var u User
+        if err := rows.Scan(&u.ID, &u.Name, &u.Email); err != nil {
+            return nil, err
+        }
+        users = append(users, u)
+    }
+    return users, rows.Err()
+}
+
+// BIEN — para IN clauses con sqlx
+func getUsersByIDs(db *sql.DB, ids []int) ([]User, error) {
+    query := "SELECT id, name, email FROM users WHERE id = ANY($1)"
+    // PostgreSQL acepta arrays como parámetro
+    rows, err := db.Query(query, pq.Array(ids))
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+    // scan...
+    return nil, nil
+}
+```
+
+2. INPUT VALIDATION
+──────────────────
+
+```go
+package validator
+
+import (
+    "regexp"
+    "strings"
+    "unicode/utf8"
+)
+
+var (
+    emailRegex    = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+    usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_]{3,30}$`)
+    phoneRegex    = regexp.MustCompile(`^\+?[0-9]{7,15}$`)
+)
+
+type ValidationErrors map[string]string
+
+type InputValidator struct {
+    errors ValidationErrors
+}
+
+func New() *InputValidator {
+    return &InputValidator{errors: make(ValidationErrors)}
+}
+
+func (v *InputValidator) Required(field, value string) *InputValidator {
+    if strings.TrimSpace(value) == "" {
+        v.errors[field] = "Este campo es requerido"
+    }
+    return v
+}
+
+func (v *InputValidator) MinLength(field, value string, min int) *InputValidator {
+    if utf8.RuneCountInString(value) < min {
+        v.errors[field] = fmt.Sprintf("Mínimo %d caracteres", min)
+    }
+    return v
+}
+
+func (v *InputValidator) MaxLength(field, value string, max int) *InputValidator {
+    if utf8.RuneCountInString(value) > max {
+        v.errors[field] = fmt.Sprintf("Máximo %d caracteres", max)
+    }
+    return v
+}
+
+func (v *InputValidator) Email(field, value string) *InputValidator {
+    if !emailRegex.MatchString(value) {
+        v.errors[field] = "Formato de email inválido"
+    }
+    return v
+}
+
+func (v *InputValidator) Username(field, value string) *InputValidator {
+    if !usernameRegex.MatchString(value) {
+        v.errors[field] = "Usuario: 3-30 caracteres, solo letras, números y _"
+    }
+    return v
+}
+
+func (v *InputValidator) Phone(field, value string) *InputValidator {
+    if !phoneRegex.MatchString(value) {
+        v.errors[field] = "Formato de teléfono inválido"
+    }
+    return v
+}
+
+func (v *InputValidator) RangeInt(field string, value, min, max int) *InputValidator {
+    if value < min || value > max {
+        v.errors[field] = fmt.Sprintf("Debe estar entre %d y %d", min, max)
+    }
+    return v
+}
+
+func (v *InputValidator) OneOf(field, value string, options ...string) *InputValidator {
+    for _, opt := range options {
+        if value == opt {
+            return v
+        }
+    }
+    v.errors[field] = fmt.Sprintf("Debe ser uno de: %s", strings.Join(options, ", "))
+    return v
+}
+
+func (v *InputValidator) Valid() bool {
+    return len(v.errors) == 0
+}
+
+func (v *InputValidator) Errors() ValidationErrors {
+    return v.errors
+}
+
+func (v *InputValidator) Sanitize(s string) string {
+    // Eliminar caracteres de control
+    s = strings.Map(func(r rune) rune {
+        if r < 32 && r != '\n' && r != '\t' {
+            return -1
+        }
+        return r
+    }, s)
+    return strings.TrimSpace(s)
+}
+```
+
+3. XSS (CROSS-SITE SCRIPTING)
+──────────────────────────────
+
+```go
+package main
+
+import (
+    "html"
+    "html/template"
+    "net/http"
+)
+
+// Escapar output en respuestas HTML
+func renderResponse(w http.ResponseWriter, userInput string) {
+    // MAL: output sin escapar
+    fmt.Fprintf(w, "<div>%s</div>", userInput) // XSS!
+
+    // BIEN: escapar HTML
+    safe := html.EscapeString(userInput)
+    fmt.Fprintf(w, "<div>%s</div>", safe)
+}
+
+// Usar html/template (auto-escapado)
+func renderTemplate(w http.ResponseWriter, name string) {
+    tmpl := template.Must(template.New("page").Parse(
+        `<!DOCTYPE html>
+<html>
+<head><title>{{.Title}}</title></head>
+<body>
+    <h1>{{.Heading}}</h1>
+    <p>{{.Content}}</p>
+</body>
+</html>`))
+
+    data := struct {
+        Title   string
+        Heading string
+        Content string
+    }{
+        Title:   "Perfil de " + name,
+        Heading: "Bienvenido, " + name,
+        Content: name,
+    }
+
+    // html/template escapa automáticamente
+    tmpl.Execute(w, data)
+}
+
+// Headers de seguridad
+func securityHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("X-Frame-Options", "DENY")
+        w.Header().Set("X-XSS-Protection", "1; mode=block")
+        w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+        w.Header().Set("Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'")
+        w.Header().Set("Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains")
+        next.ServeHTTP(w, r)
+    })
+}
+
+// Content-Type adecuado
+func jsonResponse(w http.ResponseWriter, data interface{}) {
+    w.Header().Set("Content-Type", "application/json; charset=utf-8")
+    json.NewEncoder(w).Encode(data)
+}
+
+func htmlResponse(w http.ResponseWriter, html string) {
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    w.Write([]byte(html))
+}
+```
+
+4. CSRF (CROSS-SITE REQUEST FORGERY)
+─────────────────────────────────────
+
+```go
+package csrf
+
+import (
+    "crypto/hmac"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/base64"
+    "fmt"
+    "net/http"
+    "time"
+)
+
+type CSRFProtector struct {
+    secret []byte
+}
+
+func NewCSRFProtector(secret string) *CSRFProtector {
+    return &CSRFProtector{secret: []byte(secret)}
+}
+
+func (p *CSRFProtector) GenerateToken() (string, error) {
+    nonce := make([]byte, 32)
+    if _, err := rand.Read(nonce); err != nil {
+        return "", err
+    }
+    timestamp := fmt.Sprintf("%d", time.Now().Unix())
+    data := append(nonce, []byte(timestamp)...)
+    mac := hmac.New(sha256.New, p.secret)
+    mac.Write(data)
+    sig := mac.Sum(nil)
+    token := base64.URLEncoding.EncodeToString(append(data, sig...))
+    return token, nil
+}
+
+func (p *CSRFProtector) ValidateToken(token string) bool {
+    data, err := base64.URLEncoding.DecodeString(token)
+    if err != nil || len(data) < 64 {
+        return false
+    }
+    nonce := data[:32]
+    timestamp := data[32:40]
+    sig := data[40:]
+
+    mac := hmac.New(sha256.New, p.secret)
+    mac.Write(append(nonce, timestamp...))
+    expected := mac.Sum(nil)
+
+    if !hmac.Equal(sig, expected) {
+        return false
+    }
+    // Verificar expiración (1 hora)
+    t, err := parseTimestamp(string(timestamp))
+    if err != nil {
+        return false
+    }
+    return time.Since(t) < time.Hour
+}
+
+func parseTimestamp(s string) (time.Time, error) {
+    sec, err := fmt.Sscanf(s, "%d", new(int64))
+    if err != nil || sec != 1 {
+        return time.Time{}, fmt.Errorf("invalid timestamp")
+    }
+    return time.Unix(int64(sec), 0), nil
+}
+
+// Middleware CSRF
+func (p *CSRFProtector) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Method == http.MethodGet ||
+            r.Method == http.MethodHead ||
+            r.Method == http.MethodOptions {
+            next.ServeHTTP(w, r)
+            return
+        }
+        token := r.Header.Get("X-CSRF-Token")
+        if token == "" {
+            token = r.FormValue("csrf_token")
+        }
+        if !p.ValidateToken(token) {
+            http.Error(w, "CSRF token inválido", http.StatusForbidden)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+5. BCRYPT — HASHING DE CONTRASEÑAS
+────────────────────────────────────
+
+```go
+package auth
+
+import (
+    "errors"
+    "golang.org/x/crypto/bcrypt"
+)
+
+const bcryptCost = 12 // 2^12 iteraciones (~250ms)
+
+type PasswordHasher struct {
+    cost int
+}
+
+func NewPasswordHasher() *PasswordHasher {
+    return &PasswordHasher{cost: bcryptCost}
+}
+
+func (h *PasswordHasher) Hash(password string) (string, error) {
+    if len(password) < 8 {
+        return "", errors.New("password must be at least 8 characters")
+    }
+    if len(password) > 72 {
+        return "", errors.New("password too long (max 72 bytes for bcrypt)")
+    }
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), h.cost)
+    if err != nil {
+        return "", err
+    }
+    return string(bytes), nil
+}
+
+func (h *PasswordHasher) Verify(password, hash string) bool {
+    err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+    return err == nil
+}
+
+// Para migración gradual de hashes viejos
+type PasswordMigrator struct {
+    oldHasher func(password, hash string) bool
+    newHasher *PasswordHasher
+}
+
+func (m *PasswordMigrator) VerifyAndUpgrade(password, hash string) (string, bool) {
+    // Intentar con nuevo hash primero
+    if m.newHasher.Verify(password, hash) {
+        return hash, true
+    }
+    // Intentar con hash antiguo
+    if m.oldHasher != nil && m.oldHasher(password, hash) {
+        // Re-hash con nuevo algoritmo
+        newHash, err := m.newHasher.Hash(password)
+        if err != nil {
+            return hash, true
+        }
+        return newHash, true
+    }
+    return hash, false
+}
+```
+
+6. AES — CIFRADO SIMÉTRICO
+──────────────────────────
+
+```go
+package crypto
+
+import (
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "encoding/base64"
+    "errors"
+    "io"
+)
+
+type Encryptor struct {
+    key []byte
+}
+
+func NewEncryptor(key string) *Encryptor {
+    // AES-256 requiere clave de 32 bytes
+    k := []byte(key)
+    if len(k) < 32 {
+        padded := make([]byte, 32)
+        copy(padded, k)
+        k = padded
+    }
+    return &Encryptor{key: k[:32]}
+}
+
+func (e *Encryptor) Encrypt(plaintext []byte) (string, error) {
+    block, err := aes.NewCipher(e.key)
+    if err != nil {
+        return "", err
+    }
+
+    ciphertext := make([]byte, aes.BlockSize+len(plaintext))
+    iv := ciphertext[:aes.BlockSize]
+    if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+        return "", err
+    }
+
+    stream := cipher.NewCFBEncrypter(block, iv)
+    stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
+
+    return base64.URLEncoding.EncodeToString(ciphertext), nil
+}
+
+func (e *Encryptor) Decrypt(cryptoText string) ([]byte, error) {
+    ciphertext, err := base64.URLEncoding.DecodeString(cryptoText)
+    if err != nil {
+        return nil, err
+    }
+
+    block, err := aes.NewCipher(e.key)
+    if err != nil {
+        return nil, err
+    }
+
+    if len(ciphertext) < aes.BlockSize {
+        return nil, errors.New("ciphertext too short")
+    }
+
+    iv := ciphertext[:aes.BlockSize]
+    ciphertext = ciphertext[aes.BlockSize:]
+
+    stream := cipher.NewCFBDecrypter(block, iv)
+    stream.XORKeyStream(ciphertext, ciphertext)
+
+    return ciphertext, nil
+}
+```
+
+7. JWT — AUTENTICACIÓN CON TOKENS
+──────────────────────────────────
+
+```go
+package auth
+
+import (
+    "errors"
+    "time"
+
+    "github.com/golang-jwt/jwt/v5"
+)
+
+type Claims struct {
+    UserID int    `json:"user_id"`
+    Role   string `json:"role"`
+    jwt.RegisteredClaims
+}
+
+type JWTManager struct {
+    secret     []byte
+    expiration time.Duration
+}
+
+func NewJWTManager(secret string, expiration time.Duration) *JWTManager {
+    return &JWTManager{
+        secret:     []byte(secret),
+        expiration: expiration,
+    }
+}
+
+func (m *JWTManager) GenerateToken(userID int, role string) (string, error) {
+    claims := &Claims{
+        UserID: userID,
+        Role:   role,
+        RegisteredClaims: jwt.RegisteredClaims{
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.expiration)),
+            IssuedAt:  jwt.NewNumericDate(time.Now()),
+            Issuer:    "go-master-book",
+        },
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(m.secret)
+}
+
+func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{},
+        func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+                return nil, errors.New("unexpected signing method")
+            }
+            return m.secret, nil
+        })
+    if err != nil {
+        return nil, err
+    }
+    claims, ok := token.Claims.(*Claims)
+    if !ok || !token.Valid {
+        return nil, errors.New("invalid token")
+    }
+    return claims, nil
+}
+```
+
+8. MIDDLEWARE DE AUTENTICACIÓN
+──────────────────────────────
+
+```go
+package middleware
+
+import (
+    "context"
+    "net/http"
+    "strings"
+)
+
+type contextKey string
+
+const UserClaimsKey contextKey = "user_claims"
+
+func AuthMiddleware(jwtManager *auth.JWTManager) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            header := r.Header.Get("Authorization")
+            if header == "" {
+                http.Error(w, "missing authorization header",
+                    http.StatusUnauthorized)
+                return
+            }
+            parts := strings.Split(header, " ")
+            if len(parts) != 2 || parts[0] != "Bearer" {
+                http.Error(w, "invalid authorization format",
+                    http.StatusUnauthorized)
+                return
+            }
+            claims, err := jwtManager.ValidateToken(parts[1])
+            if err != nil {
+                http.Error(w, "invalid or expired token",
+                    http.StatusUnauthorized)
+                return
+            }
+            ctx := context.WithValue(r.Context(), UserClaimsKey, claims)
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+
+func RequireRole(role string) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            claims, ok := r.Context().Value(UserClaimsKey).(*auth.Claims)
+            if !ok {
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+            if claims.Role != role && claims.Role != "admin" {
+                http.Error(w, "forbidden", http.StatusForbidden)
+                return
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+9. OWASP TOP 10 EN GO
+─────────────────────
+
+1. Broken Access Control:
+   - Verificar permisos en cada endpoint.
+   - Nunca confiar en datos del cliente para autorización.
+
+2. Cryptographic Failures:
+   - Usar bcrypt para passwords.
+   - TLS/HTTPS obligatorio.
+   - No inventar algoritmos criptográficos.
+
+3. Injection:
+   - Parameterized queries.
+   - Validar todo input.
+
+4. Insecure Design:
+   - Rate limiting en APIs.
+   - Límites de tamaño en requests.
+
+5. Security Misconfiguration:
+   - Deshabilitar debugging en producción.
+   - Headers de seguridad.
+
+6. Vulnerable Components:
+   - go mod audit para vulnerabilidades.
+   - Mantener dependencias actualizadas.
+
+7. Auth Failures:
+   - MFA donde sea posible.
+   - Sesiones con tiempo límite.
+
+8. Data Integrity Failures:
+   - Firmar tokens JWT.
+   - Validar CSRF.
+
+9. Logging Failures:
+   - No loguear passwords ni datos sensibles.
+   - Monitoreo de intentos de acceso.
+
+10. SSRF:
+    - Validar URLs que consume el servidor.
+    - Lista blanca de destinos.
+
+10. RATE LIMITING
+─────────────────
+
+```go
+package middleware
+
+import (
+    "net/http"
+    "sync"
+    "time"
+)
+
+type RateLimiter struct {
+    mu       sync.Mutex
+    visitors map[string]*visitor
+    rate     int
+    burst    int
+}
+
+type visitor struct {
+    tokens    int
+    lastSeen  time.Time
+}
+
+func NewRateLimiter(rate, burst int) *RateLimiter {
+    rl := &RateLimiter{
+        visitors: make(map[string]*visitor),
+        rate:     rate,
+        burst:    burst,
+    }
+    go rl.cleanup()
+    return rl
+}
+
+func (rl *RateLimiter) cleanup() {
+    for {
+        time.Sleep(time.Minute)
+        rl.mu.Lock()
+        for ip, v := range rl.visitors {
+            if time.Since(v.lastSeen) > 3*time.Minute {
+                delete(rl.visitors, ip)
+            }
+        }
+        rl.mu.Unlock()
+    }
+}
+
+func (rl *RateLimiter) Allow(ip string) bool {
+    rl.mu.Lock()
+    defer rl.mu.Unlock()
+
+    v, exists := rl.visitors[ip]
+    if !exists {
+        rl.visitors[ip] = &visitor{tokens: rl.burst - 1, lastSeen: time.Now()}
+        return true
+    }
+
+    // Refill tokens
+    elapsed := time.Since(v.lastSeen)
+    v.tokens += int(elapsed.Seconds() * float64(rl.rate))
+    if v.tokens > rl.burst {
+        v.tokens = rl.burst
+    }
+    v.lastSeen = time.Now()
+
+    if v.tokens > 0 {
+        v.tokens--
+        return true
+    }
+    return false
+}
+
+func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            ip := r.RemoteAddr
+            if !rl.Allow(ip) {
+                w.Header().Set("Retry-After", "1")
+                http.Error(w, "too many requests", http.StatusTooManyRequests)
+                return
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+```
+
+11. SANITIZACIÓN DE ARCHIVOS
+────────────────────────────
+
+```go
+package upload
+
+import (
+    "crypto/sha256"
+    "fmt"
+    "io"
+    "mime/multipart"
+    "net/http"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+var allowedExtensions = map[string]bool{
+    ".jpg":  true,
+    ".jpeg": true,
+    ".png":  true,
+    ".gif":  true,
+    ".pdf":  true,
+    ".doc":  true,
+    ".docx": true,
+}
+
+var maxFileSize int64 = 10 << 20 // 10 MB
+
+type FileValidator struct {
+    MaxSize    int64
+    Extensions map[string]bool
+}
+
+func SanitizeUpload(file multipart.File, header *multipart.FileHeader) (string, error) {
+    // 1. Validar tamaño
+    if header.Size > maxFileSize {
+        return "", fmt.Errorf("file too large: %d bytes (max %d)",
+            header.Size, maxFileSize)
+    }
+
+    // 2. Validar extensión
+    ext := strings.ToLower(filepath.Ext(header.Filename))
+    if !allowedExtensions[ext] {
+        return "", fmt.Errorf("extension not allowed: %s", ext)
+    }
+
+    // 3. Validar MIME type real
+    buffer := make([]byte, 512)
+    file.Read(buffer)
+    file.Seek(0, io.SeekStart)
+    mimeType := http.DetectContentType(buffer)
+    allowedMIMEs := map[string]bool{
+        "image/jpeg":      true,
+        "image/png":       true,
+        "image/gif":       true,
+        "application/pdf": true,
+    }
+    if !allowedMIMEs[mimeType] {
+        return "", fmt.Errorf("invalid MIME type: %s", mimeType)
+    }
+
+    // 4. Generar nombre seguro
+    hash := sha256.New()
+    io.Copy(hash, file)
+    checksum := fmt.Sprintf("%x", hash.Sum(nil))
+    safeName := checksum + ext
+
+    // 5. Guardar en directorio seguro (fuera de web root)
+    uploadDir := "/var/uploads"
+    destPath := filepath.Join(uploadDir, safeName)
+
+    // Prevenir path traversal
+    if !strings.HasPrefix(destPath, uploadDir) {
+        return "", fmt.Errorf("path traversal detected")
+    }
+
+    return safeName, nil
+}
+```
+
+12. PREVENCIÓN DE PATH TRAVERSAL
+─────────────────────────────────
+
+```go
+package main
+
+import (
+    "net/http"
+    "path/filepath"
+    "strings"
+)
+
+var baseDir = "/var/data/"
+
+func serveFile(w http.ResponseWriter, r *http.Request) {
+    filename := r.URL.Query().Get("file")
+
+    // MAL: path traversal vulnerable
+    // content, _ := os.ReadFile(baseDir + filename)
+
+    // BIEN: sanitizar path
+    clean := filepath.Clean(filename)
+    if strings.Contains(clean, "..") {
+        http.Error(w, "invalid path", http.StatusBadRequest)
+        return
+    }
+    fullPath := filepath.Join(baseDir, clean)
+
+    // Verificar que el path final está dentro de baseDir
+    if !strings.HasPrefix(fullPath, filepath.Clean(baseDir)) {
+        http.Error(w, "access denied", http.StatusForbidden)
+        return
+    }
+
+    http.ServeFile(w, r, fullPath)
+}
+```
+
+13. SEGURIDAD EN CABECERAS HTTP
+───────────────────────────────
+
+```go
+package main
+
+import "net/http"
+
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Security-Policy",
+            "default-src 'self'; "+
+                "script-src 'self'; "+
+                "style-src 'self' 'unsafe-inline'; "+
+                "img-src 'self' data:; "+
+                "font-src 'self'; "+
+                "frame-ancestors 'none'; "+
+                "form-action 'self'")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("X-Frame-Options", "DENY")
+        w.Header().Set("X-XSS-Protection", "1; mode=block")
+        w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+        w.Header().Set("Permissions-Policy",
+            "geolocation=(), microphone=(), camera=()")
+        w.Header().Set("Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains; preload")
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+14. SECRET MANAGEMENT
+─────────────────────
+
+```go
+package config
+
+import (
+    "os"
+    "strings"
+)
+
+// MAL: secretos hardcodeados
+const dbPassword = "supersecret123" // ¡NUNCA!
+
+// BIEN: variables de entorno
+func getEnvOrFail(key string) string {
+    value := os.Getenv(key)
+    if value == "" {
+        panic(key + " environment variable is required")
+    }
+    return value
+}
+
+// BIEN: archivo .env (solo desarrollo)
+type Secrets struct {
+    DBPassword    string
+    JWTSecret     string
+    APIKeys       map[string]string
+}
+
+func LoadSecrets() (*Secrets, error) {
+    // En producción: usar Vault, AWS Secrets Manager, etc.
+    s := &Secrets{
+        DBPassword: getEnvOrFail("DB_PASSWORD"),
+        JWTSecret:  getEnvOrFail("JWT_SECRET"),
+        APIKeys:    make(map[string]string),
+    }
+
+    // API keys desde variable con formato key1=val1,key2=val2
+    keysStr := os.Getenv("API_KEYS")
+    if keysStr != "" {
+        for _, pair := range strings.Split(keysStr, ",") {
+            parts := strings.SplitN(pair, "=", 2)
+            if len(parts) == 2 {
+                s.APIKeys[parts[0]] = parts[1]
+            }
+        }
+    }
+
+    return s, nil
+}
+```
+
+15. LOGGING SEGURO
+──────────────────
+
+```go
+package logger
+
+import (
+    "strings"
+)
+
+// Lista de campos sensibles que nunca deben loguearse
+var sensitiveFields = []string{
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "api_key",
+    "authorization",
+    "credit_card",
+    "ssn",
+    "cvv",
+}
+
+func SanitizeLogField(key, value string) (string, string) {
+    lower := strings.ToLower(key)
+    for _, field := range sensitiveFields {
+        if strings.Contains(lower, field) {
+            return key, "[REDACTED]"
+        }
+    }
+    return key, value
+}
+
+type SecureLogger struct {
+    logger *slog.Logger
+}
+
+func (l *SecureLogger) Info(msg string, args ...interface{}) {
+    args = l.sanitizeArgs(args...)
+    l.logger.Info(msg, args...)
+}
+
+func (l *SecureLogger) sanitizeArgs(args ...interface{}) []interface{} {
+    result := make([]interface{}, len(args))
+    for i := 0; i < len(args); i += 2 {
+        if i+1 < len(args) {
+            key, ok := args[i].(string)
+            if ok {
+                key, result[i+1] = SanitizeLogField(key, fmt.Sprintf("%v", args[i+1]))
+            }
+            result[i] = key
+        } else {
+            result[i] = args[i]
+        }
+    }
+    return result
+}
+```
+
+16. TLS/HTTPS
+─────────────
+
+```go
+package main
+
+import (
+    "crypto/tls"
+    "net/http"
+)
+
+func main() {
+    mux := http.NewServeMux()
+    // ... rutas ...
+
+    cfg := &tls.Config{
+        MinVersion:               tls.VersionTLS12,
+        CurvePreferences:         []tls.CurveID{tls.X25519, tls.CurveP256},
+        PreferServerCipherSuites: true,
+        CipherSuites: []uint16{
+            tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+            tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+            tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+            tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+        },
+    }
+
+    srv := &http.Server{
+        Addr:         ":443",
+        Handler:      mux,
+        TLSConfig:    cfg,
+        TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler), 0),
+    }
+
+    // Autocert de Let's Encrypt
+    // srv.TLSConfig.GetCertificate = autocertManager.GetCertificate
+
+    log.Fatal(srv.ListenAndServeTLS("cert.pem", "key.pem"))
+}
+```
+
+17. SANITIZACIÓN DE ENTRADA PARA BASE DE DATOS
+──────────────────────────────────────────────
+
+```go
+package repository
+
+import (
+    "regexp"
+    "strings"
+)
+
+var safePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\s]+$`)
+
+// Sanitizar input para ORDER BY (no parametrizable)
+func sanitizeOrderBy(input string) string {
+    allowed := map[string]bool{
+        "name":      true,
+        "email":     true,
+        "created_at": true,
+        "updated_at": true,
+    }
+    if allowed[input] {
+        return input
+    }
+    return "name" // default seguro
+}
+
+func sanitizeDirection(input string) string {
+    if strings.ToUpper(input) == "DESC" {
+        return "DESC"
+    }
+    return "ASC"
+}
+
+// Para LIKE queries
+func escapeLike(input string) string {
+    input = strings.ReplaceAll(input, "%", "\\%")
+    input = strings.ReplaceAll(input, "_", "\\_")
+    return input
+}
+```
+
+18. COMPROBACIÓN DE DEPENDENCIAS
+─────────────────────────────────
+
+```bash
+# Verificar vulnerabilidades conocidas
+go mod tidy
+go mod verify
+govulncheck ./...
+
+# O con herramientas externas
+# nancy (Sonatype)
+# snyk
+# trivy (aquasecurity)
+```
+
+19. LISTA DE VERIFICACIÓN DE SEGURIDAD
+──────────────────────────────────────
+
+[ ] ¿SQL parameterized queries en lugar de concatenación?
+[ ] ¿Validación de entrada en todos los endpoints?
+[ ] ¿bcrypt para contraseñas (costo >= 12)?
+[ ] ¿JWT con expiration y HMAC?
+[ ] ¿CSRF tokens en formularios?
+[ ] ¿CSP y otros headers de seguridad?
+[ ] ¿Rate limiting en endpoints públicos?
+[ ] ¿Logs sin datos sensibles?
+[ ] ¿TLS 1.2+ con cifrados fuertes?
+[ ] ¿Validación de MIME en uploads?
+[ ] ¿Protección contra path traversal?
+[ ] ¿Secretos en entorno/gestores, no en código?
+[ ] ¿CORS configurado con lista blanca?
+[ ] ¿Dependencias auditadas?
+[ ] ¿Pruebas de seguridad automatizadas?
+
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+RESUMEN DEL CAPÍTULO
+────────────────────
+• SQL injection: siempre parameterized queries ($1, $2, etc.)
+• XSS: html/template auto-escapado + headers CSP
+• CSRF: tokens con HMAC en mutaciones
+• bcrypt: costo >= 12 para hashing de passwords
+• AES-GCM para cifrado simétrico de datos sensibles
+• JWT para autenticación stateless
+• Rate limiting para prevenir abuso
+• Validación de entrada en cada endpoint
+• Headers de seguridad (CSP, HSTS, X-Frame-Options)
+• Secrets management: variables de entorno / Vault
+• govulncheck para auditoría de dependencias
+
+EJERCICIOS
+──────────
+
+1. Implementa un endpoint de registro de usuarios con:
+   validación de entrada, bcrypt, y protección CSRF.
+
+2. Crea un middleware de rate limiting configurable que use
+   token bucket. Pruébalo con un test HTTP.
+
+3. Implementa validación de upload de imágenes: solo jpg/png,
+   máximo 5MB, verificar MIME type real.
+
+4. Configura un servidor HTTPS con TLS 1.3 y headers de seguridad.
+
+5. Escribe tests que verifiquen que los endpoints rechazan
+   SQL injection en los parámetros.
+
+6. Implementa un sistema de roles (admin, user, viewer) con
+   middleware de autorización.
+
+7. Usa govulncheck en un proyecto existente y documenta las
+   vulnerabilidades encontradas.
+
+PREGUNTAS FRECUENTES (FAQ)
+──────────────────────────
+
+P: ¿Debo usar bcrypt o scrypt?
+R: bcrypt es suficiente para la mayoría de casos. scrypt es más
+   resistente a ataques con ASIC. Argon2id es la opción más moderna.
+
+P: ¿Cómo manejo secretos en producción?
+R: Variable de entorno para startups. HashiCorp Vault o AWS/GCP
+   Secrets Manager para empresas.
+
+P: ¿Cada cuánto rotar JWT?
+R: Access tokens: 15-60 minutos. Refresh tokens: 7-30 días.
+   Siempre usar expiration.
+
+P: ¿Cómo protejo APIs públicas?
+R: Rate limiting + API keys + WAF + monitoreo de patrones anómalos.
+
+P: ¿Qué hago si detecto una vulnerabilidad?
+R: 1) Parchear inmediatamente. 2) Rotar secretos comprometidos.
+   3) Notificar a usuarios afectados. 4) Documentar para prevenir.
+
+DESAFÍO DEL ARQUITECTO
+──────────────────────
+
+Diseña un sistema de autenticación y autorización seguro para una
+API REST de e-commerce:
+
+Requisitos:
+• Registro con email + password (bcrypt, validación estricta).
+• Login con JWT (access + refresh tokens).
+• Roles: admin, seller, customer.
+• CSRF protection en endpoints de mutación.
+• Rate limiting por IP y por usuario.
+• Logging seguro (sin passwords ni tokens en texto plano).
+• Headers de seguridad en todas las respuestas.
+• Cifrado de datos sensibles en BD (tarjetas, direcciones).
+• Validación de entrada en todos los endpoints.
+• Tests de seguridad automatizados.
+
+Tu entrega debe incluir:
+a) Código completo del sistema de auth.
+b) Middleware de seguridad.
+c) Tests de penetración básicos.
+d) Documentación de decisiones de seguridad.
+
+CIERRE
+──────
+La seguridad es una mentalidad, no una herramienta. Cada decisión
+de diseño tiene implicaciones de seguridad. En el próximo capítulo
+pondremos a prueba todo tu conocimiento con el examen profesional.
+
+PRÓXIMO CAPÍTULO
+────────────────
+Capítulo 77: Examen Profesional

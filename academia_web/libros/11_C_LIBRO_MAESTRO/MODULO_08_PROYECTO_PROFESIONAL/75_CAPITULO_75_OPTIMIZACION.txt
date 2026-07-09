@@ -1,0 +1,1039 @@
+================================================================================
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 75: OPTIMIZACIÓN
+================================================================================
+
+________________________________________________________________________________
+  BIENVENIDA
+________________________________________________________________________________
+
+Bienvenido al Capítulo 75. Hasta ahora hemos aprendido a escribir
+código correcto, modular, depurado y sin fugas de memoria. Pero
+hay otra dimensión de la calidad del software: el rendimiento.
+
+La optimización en C es un arma de doble filo. Mal aplicada, produce
+código ilegible, difícil de mantener y, a veces, incluso más lento.
+Bien aplicada, puede hacer que tu programa vuele.
+
+En este capítulo aprenderás a medir el rendimiento, identificar
+cuellos de botella, usar las banderas de optimización del compilador
+y aplicar técnicas de optimización que realmente funcionan.
+
+Recuerda la primera regla de la optimización: no optimices. La
+segunda regla: todavía no optimices. La tercera regla: mide antes
+de optimizar.
+
+________________________________________________________________________________
+  FRASE DEL CAPÍTULO
+________________________________________________________________________________
+
+"La optimización prematura es la raíz de todos los males. Pero la
+optimización informada, medida y justificada es el arte del
+programador experto." — Lucas Ega (parafraseando a Knuth)
+
+________________________________________________________________________________
+  OBJETIVOS DEL CAPÍTULO
+________________________________________________________________________________
+
+  ✅ Comprender las banderas de optimización del compilador GCC.
+  ✅ Aprender a medir el rendimiento con profilers.
+  ✅ Identificar cuellos de botella en el código.
+  ✅ Aplicar optimizaciones de bajo y alto nivel.
+  ✅ Balancear rendimiento, legibilidad y mantenibilidad.
+
+________________________________________________________________________________
+  CONTENIDO
+________________________________________________________________________________
+
+=== 1. INTRODUCCIÓN A LA OPTIMIZACIÓN ===
+
+La optimización de código es el proceso de modificar un programa
+para que use menos recursos (tiempo, memoria, energía) mientras
+mantiene su comportamiento correcto.
+
+Niveles de optimización:
+
+  1. ALGORÍTMICA: Elegir el algoritmo correcto (O(n log n) vs O(n^2)).
+  2. ESTRUCTURAL: Mejorar la organización de datos y código.
+  3. DEL COMPILADOR: Usar banderas de optimización (-O2, -O3).
+  4. MICROOPTIMIZACIÓN: Ajustes a nivel de instrucciones.
+
+Reglas de oro:
+
+  - PRIMERO CORRECTO, LUEGO RÁPIDO: Un programa rápido que da
+    resultados incorrectos no sirve para nada.
+  - MIDE SIEMPRE: Sin mediciones, no sabes qué optimizar ni si
+    tu optimización funcionó.
+  - OPTIMIZA DONDE IMPORTA: El 90% del tiempo de ejecución suele
+    estar en el 10% del código.
+  - CONOCE TU HARDWARE: La arquitectura de la CPU, la jerarquía
+    de memoria y el compilador afectan el rendimiento.
+
+=== 2. BANDERAS DE OPTIMIZACIÓN DEL COMPILADOR ===
+
+GCC y Clang ofrecen múltiples niveles de optimización:
+
+```bash
+# Sin optimización (por defecto) - mejor para depuración
+gcc -O0 -o programa programa.c
+
+# Optimización básica - compilación rápida, mejora moderada
+gcc -O1 -o programa programa.c
+
+# Optimización media (recomendado para producción)
+gcc -O2 -o programa programa.c
+
+# Optimización agresiva - puede aumentar el tamaño del código
+gcc -O3 -o programa programa.c
+
+# Optimización para tamaño (cuando el espacio importa)
+gcc -Os -o programa programa.c
+
+# Optimización amigable para depuración
+gcc -Og -o programa programa.c
+```
+
+Qué hace cada nivel:
+
+-O1: Optimizaciones básicas sin aumentar mucho el tiempo de compilación.
+  - Reordena instrucciones para mejor pipelining.
+  - Elimina código muerto.
+  - Simplifica expresiones constantes.
+
+-O2: Optimizaciones más agresivas (recomendado para producción).
+  - Incluye todo -O1.
+  - Loop unrolling (desenrollado de bucles).
+  - Inline de funciones cuando es beneficioso.
+  - Reordenamiento de bucles.
+
+-O3: Optimizaciones aún más agresivas.
+  - Incluye todo -O2.
+  - Vectorización automática (usa SIMD).
+  - Inline de funciones más agresivo.
+  - Puede aumentar el tamaño del binario.
+
+-Os: Optimiza para tamaño.
+  - Similar a -O2 pero evita optimizaciones que aumentan el tamaño.
+
+Flags adicionales útiles:
+
+```bash
+# Perfilado guiado (PGO)
+gcc -fprofile-generate -o programa programa.c
+./programa  # Ejecutar con datos representativos
+gcc -fprofile-use -o programa programa.c
+
+# Optimización específica para la CPU
+gcc -march=native -O2 -o programa programa.c
+
+# Link Time Optimization (LTO)
+gcc -flto -O2 -o programa programa.c
+
+# Información de optimización
+gcc -O2 -fopt-info -o programa programa.c
+```
+
+=== 3. MIDIENDO EL RENDIMIENTO ===
+
+Antes de optimizar, debemos medir. Herramientas de medición:
+
+1. TIME: Mide tiempo de ejecución (real, user, sys).
+
+```bash
+$ time ./programa
+real    0m2.345s
+user    0m2.123s
+sys     0m0.123s
+```
+
+2. PERF: El profiler de Linux.
+
+```bash
+# Registrar eventos del sistema
+perf stat ./programa
+
+# Samplear el programa mientras se ejecuta
+perf record ./programa
+perf report
+
+# Anotar funciones específicas
+perf annotate
+```
+
+3. GCC PROFILING CON -pg:
+
+```bash
+# Compilar con profiling
+gcc -pg -O2 -o programa programa.c
+
+# Ejecutar (genera gmon.out)
+./programa
+
+# Analizar con gprof
+gprof programa gmon.out > profile.txt
+```
+
+Ejemplo de código para profiling:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+void proceso_pesado(int n) {
+    double resultado = 0.0;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            resultado += (double)i * (double)j / (i + j + 1);
+        }
+    }
+    printf("Resultado: %f\n", resultado);
+}
+
+void proceso_liviano(int n) {
+    double resultado = 0.0;
+    for (int i = 0; i < n; i++) {
+        resultado += (double)i * 3.14159;
+    }
+    printf("Resultado: %f\n", resultado);
+}
+
+int main(void) {
+    proceso_pesado(10000);
+    proceso_liviano(1000000);
+    return 0;
+}
+```
+
+```bash
+$ gcc -g -pg -O2 -o profile_test profile_test.c
+$ ./profile_test
+$ gprof profile_test gmon.out
+```
+
+Salida de gprof:
+
+```
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total
+ time   seconds   seconds    calls   s/call   s/call  name
+ 95.2      0.60     0.60        1     0.60     0.60  proceso_pesado
+  4.8      0.03     0.03        1     0.03     0.03  proceso_liviano
+  0.0      0.03     0.00        1     0.00     0.03  main
+
+Call graph:
+
+granularity: each sample hit covers 2 byte(s) for 0.06% of 0.63 seconds
+
+index % time    self  children    called     name
+                0.60    0.00       1/1         main [2]
+[1]     95.2    0.60    0.00       1         proceso_pesado [1]
+-----------------------------------------------
+                0.00    0.60       1/1         <spontaneous>
+[2]     95.2    0.00    0.60                 main [2]
+                0.60    0.00       1/1         proceso_pesado [1]
+                0.03    0.00       1/1         proceso_liviano [3]
+-----------------------------------------------
+                0.03    0.00       1/1         main [2]
+[3]      4.8    0.03    0.00       1         proceso_liviano [3]
+```
+
+=== 4. OPTIMIZACIÓN ALGORÍTMICA ===
+
+La optimización más importante que puedes hacer es elegir el
+algoritmo correcto.
+
+```c
+// Comparación de algoritmos: búsqueda en arreglo vs hash table
+
+// Versión O(n^2) - Búsqueda lineal para cada elemento
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+int busqueda_lineal(int* arr, int n, int valor) {
+    for (int i = 0; i < n; i++) {
+        if (arr[i] == valor) return i;
+    }
+    return -1;
+}
+
+int busqueda_binaria(int* arr, int low, int high, int valor) {
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+        if (arr[mid] == valor) return mid;
+        if (arr[mid] < valor) low = mid + 1;
+        else high = mid - 1;
+    }
+    return -1;
+}
+
+int main(void) {
+    int n = 100000;
+    int* datos = malloc(n * sizeof(int));
+
+    // Inicializar con datos ordenados
+    for (int i = 0; i < n; i++) {
+        datos[i] = i;
+    }
+
+    clock_t inicio, fin;
+
+    // Búsqueda lineal
+    inicio = clock();
+    for (int i = 0; i < 10000; i++) {
+        int valor = rand() % n;
+        busqueda_lineal(datos, n, valor);
+    }
+    fin = clock();
+    printf("Búsqueda lineal: %f segundos\n",
+           (double)(fin - inicio) / CLOCKS_PER_SEC);
+
+    // Búsqueda binaria (datos ordenados)
+    inicio = clock();
+    for (int i = 0; i < 10000; i++) {
+        int valor = rand() % n;
+        busqueda_binaria(datos, 0, n - 1, valor);
+    }
+    fin = clock();
+    printf("Búsqueda binaria: %f segundos\n",
+           (double)(fin - inicio) / CLOCKS_PER_SEC);
+
+    free(datos);
+    return 0;
+}
+```
+
+La diferencia es dramática: O(n) vs O(log n) se nota cuando n
+es grande.
+
+=== 5. OPTIMIZACIÓN ESTRUCTURAL: LOCALIDAD DE REFERENCIA ===
+
+La jerarquía de memoria (caché L1, L2, L3, RAM, disco) tiene
+un impacto enorme en el rendimiento. Acceder a memoria de forma
+secuencial (localidad espacial) es mucho más rápido que acceder
+de forma aleatoria.
+
+```c
+// comparacion_cache.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define N 10000
+
+int main(void) {
+    int matriz[N][N];
+    long long suma = 0;
+
+    // Inicializar
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < N; j++)
+            matriz[i][j] = i + j;
+
+    clock_t inicio, fin;
+
+    // Acceso por filas (buena localidad - rápido)
+    inicio = clock();
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < N; j++)
+            suma += matriz[i][j];
+    fin = clock();
+    printf("Acceso por filas: %f segundos (suma = %lld)\n",
+           (double)(fin - inicio) / CLOCKS_PER_SEC, suma);
+
+    suma = 0;
+
+    // Acceso por columnas (mala localidad - lento)
+    inicio = clock();
+    for (int j = 0; j < N; j++)
+        for (int i = 0; i < N; i++)
+            suma += matriz[i][j];
+    fin = clock();
+    printf("Acceso por columnas: %f segundos (suma = %lld)\n",
+           (double)(fin - inicio) / CLOCKS_PER_SEC, suma);
+
+    return 0;
+}
+```
+
+La diferencia puede ser de 10x o más debido a cómo funciona la
+caché de la CPU.
+
+=== 6. OPTIMIZACIÓN DEL COMPILADOR: LOOP UNROLLING ===
+
+El compilador puede desenrollar bucles para reducir overhead:
+
+```c
+// loop_unrolling.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define N 10000000
+
+// Suma simple con bucle
+float suma_simple(float* arr, int n) {
+    float suma = 0.0f;
+    for (int i = 0; i < n; i++) {
+        suma += arr[i];
+    }
+    return suma;
+}
+
+// Suma con desenrollado manual
+float suma_unrolled(float* arr, int n) {
+    float suma = 0.0f;
+    int i = 0;
+
+    // Procesar de 4 en 4
+    for (; i + 3 < n; i += 4) {
+        suma += arr[i] + arr[i + 1] + arr[i + 2] + arr[i + 3];
+    }
+
+    // Procesar elementos restantes
+    for (; i < n; i++) {
+        suma += arr[i];
+    }
+
+    return suma;
+}
+
+int main(void) {
+    float* datos = malloc(N * sizeof(float));
+    for (int i = 0; i < N; i++) datos[i] = 1.0f;
+
+    clock_t inicio, fin;
+
+    inicio = clock();
+    float r1 = suma_simple(datos, N);
+    fin = clock();
+    printf("Suma simple: %f (%f seg)\n", r1,
+           (double)(fin - inicio) / CLOCKS_PER_SEC);
+
+    inicio = clock();
+    float r2 = suma_unrolled(datos, N);
+    fin = clock();
+    printf("Suma unrolled: %f (%f seg)\n", r2,
+           (double)(fin - inicio) / CLOCKS_PER_SEC);
+
+    free(datos);
+    return 0;
+}
+```
+
+Con -O2, el compilador hace esto automáticamente cuando es
+beneficioso.
+
+=== 7. OPTIMIZACIÓN DE MEMORIA: ALIGNMENT Y PADDING ===
+
+La alineación de datos afecta el rendimiento de acceso a memoria.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Estructura desalineada (puede causar acceso lento)
+typedef struct __attribute__((packed)) {
+    char  a;
+    int   b;
+    char  c;
+    short d;
+} DatosDesalineados;
+
+// Estructura alineada (óptima)
+typedef struct {
+    int   b;
+    short d;
+    char  a;
+    char  c;
+} DatosAlineados;
+
+int main(void) {
+    printf("Tamaño desalineado: %zu bytes\n", sizeof(DatosDesalineados));
+    printf("Tamaño alineado: %zu bytes\n", sizeof(DatosAlineados));
+    return 0;
+}
+```
+
+Reglas para minimizar padding:
+  - Ordenar campos de mayor a menor tamaño.
+  - Agrupar campos del mismo tipo.
+  - Usar tipos de tamaño natural para la plataforma.
+
+=== 8. OPTIMIZACIÓN DE STRINGS ===
+
+Las operaciones con strings pueden ser costosas. Aquí hay técnicas
+para mejorarlas:
+
+```c
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <stdlib.h>
+
+// Versión ingenua de strlen
+size_t strlen_naive(const char* s) {
+    size_t len = 0;
+    while (*s++) len++;
+    return len;
+}
+
+// Versión optimizada (procesa de a 8 bytes)
+size_t strlen_fast(const char* s) {
+    const char* p = s;
+    while (*p) p++;
+    return (size_t)(p - s);
+}
+
+// Concatenación múltiple: usar stpcpy
+char* multi_concat(char* buffer, size_t tam,
+                   const char* s1, const char* s2,
+                   const char* s3) {
+    char* p = buffer;
+    size_t remaining = tam;
+
+    size_t len1 = strlen(s1);
+    if (len1 >= remaining) return NULL;
+    memcpy(p, s1, len1);
+    p += len1;
+    remaining -= len1;
+
+    size_t len2 = strlen(s2);
+    if (len2 >= remaining) return NULL;
+    memcpy(p, s2, len2);
+    p += len2;
+    remaining -= len2;
+
+    size_t len3 = strlen(s3);
+    if (len3 >= remaining) return NULL;
+    memcpy(p, s3, len3);
+    p += len3;
+    *p = '\0';
+
+    return buffer;
+}
+
+int main(void) {
+    char buffer[256];
+    multi_concat(buffer, sizeof(buffer),
+                 "Hola, ", "esto es ", "optimizado.");
+    printf("%s\n", buffer);
+    return 0;
+}
+```
+
+=== 9. RESTRICT KEYWORD ===
+
+La palabra clave `restrict` le dice al compilador que dos punteros
+no se superponen, permitiendo mejores optimizaciones.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Sin restrict - el compilador debe asumir que los punteros
+// pueden solaparse
+void copiar_sin_restrict(int* a, int* b, int n) {
+    for (int i = 0; i < n; i++) {
+        a[i] = b[i];
+    }
+}
+
+// Con restrict - el compilador sabe que no hay solapamiento
+void copiar_con_restrict(int* restrict a, int* restrict b, int n) {
+    for (int i = 0; i < n; i++) {
+        a[i] = b[i];
+    }
+}
+
+int main(void) {
+    int n = 10000000;
+    int* a = malloc(n * sizeof(int));
+    int* b = malloc(n * sizeof(int));
+
+    for (int i = 0; i < n; i++) b[i] = i;
+
+    clock_t t;
+
+    t = clock();
+    copiar_sin_restrict(a, b, n);
+    t = clock() - t;
+    printf("Sin restrict: %f seg\n", (double)t / CLOCKS_PER_SEC);
+
+    t = clock();
+    copiar_con_restrict(a, b, n);
+    t = clock() - t;
+    printf("Con restrict: %f seg\n", (double)t / CLOCKS_PER_SEC);
+
+    free(a); free(b);
+    return 0;
+}
+```
+
+=== 10. OPTIMIZACIÓN CON SIMD (INTRÍNSICOS) ===
+
+Las instrucciones SIMD (Single Instruction, Multiple Data) permiten
+procesar múltiples datos con una sola instrucción.
+
+```c
+// simd_example.c - Suma de floats con SSE
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <xmmintrin.h>  // SSE intrinsics
+
+float suma_scalar(const float* arr, int n) {
+    float suma = 0.0f;
+    for (int i = 0; i < n; i++) {
+        suma += arr[i];
+    }
+    return suma;
+}
+
+float suma_sse(const float* arr, int n) {
+    __m128 suma = _mm_setzero_ps();
+    int i = 0;
+
+    // Procesar de 4 en 4 con SSE
+    for (; i + 3 < n; i += 4) {
+        __m128 datos = _mm_loadu_ps(&arr[i]);
+        suma = _mm_add_ps(suma, datos);
+    }
+
+    // Sumar los 4 valores del registro SSE
+    float resultado[4];
+    _mm_storeu_ps(resultado, suma);
+    float total = resultado[0] + resultado[1] +
+                  resultado[2] + resultado[3];
+
+    // Elementos restantes
+    for (; i < n; i++) {
+        total += arr[i];
+    }
+
+    return total;
+}
+
+int main(void) {
+    int n = 100000000;
+    float* datos = malloc(n * sizeof(float));
+    for (int i = 0; i < n; i++) datos[i] = 1.0f;
+
+    clock_t t;
+
+    t = clock();
+    float r1 = suma_scalar(datos, n);
+    t = clock() - t;
+    printf("Scalar: %f (%f seg)\n", r1, (double)t / CLOCKS_PER_SEC);
+
+    t = clock();
+    float r2 = suma_sse(datos, n);
+    t = clock() - t;
+    printf("SSE: %f (%f seg)\n", r2, (double)t / CLOCKS_PER_SEC);
+
+    free(datos);
+    return 0;
+}
+```
+
+Con -O3 y -march=native, el compilador vectoriza automáticamente
+muchos bucles.
+
+=== 11. LINK TIME OPTIMIZATION (LTO) ===
+
+LTO permite optimizaciones entre archivos fuente:
+
+```bash
+# Compilar con LTO
+gcc -flto -O2 -c modulo1.c -o modulo1.o
+gcc -flto -O2 -c modulo2.c -o modulo2.o
+gcc -flto -O2 modulo1.o modulo2.o -o programa
+
+# O directamente
+gcc -flto -O2 modulo1.c modulo2.c -o programa
+```
+
+LTO permite:
+  - Inline de funciones entre archivos.
+  - Eliminación de código muerto global.
+  - Propagación de constantes entre unidades de traducción.
+
+=== 12. OPTIMIZACIÓN GUIADA POR PERFIL (PGO) ===
+
+PGO usa datos de ejecución real para guiar las optimizaciones:
+
+```bash
+# Paso 1: Compilar con generación de perfiles
+gcc -O2 -fprofile-generate -o programa programa.c
+
+# Paso 2: Ejecutar con datos representativos
+./programa < datos_entrada.txt
+
+# Paso 3: Recompilar usando el perfil
+gcc -O2 -fprofile-use -o programa programa.c
+```
+
+Esto permite al compilador:
+  - Predecir mejor los saltos condicionales.
+  - Optimizar caminos de código más usados.
+  - Decidir qué funciones inlinear.
+
+=== 13. EVITANDO OPTIMIZACIONES CONTRA-PRODUCENTES ===
+
+Algunas optimizaciones empeoran el rendimiento:
+
+```c
+// MAL: Inline manual de funciones grandes
+void funcion_grande_inline() {
+    // 500 líneas de código copiadas aquí...
+}
+
+// BIEN: Dejar que el compilador decida
+void funcion_grande() {
+    // 500 líneas de código
+}
+
+// MAL: Desenrollado excesivo
+for (int i = 0; i < 1000000; i += 16) {
+    procesar(datos[i]); procesar(datos[i+1]); // ... 16 veces
+    // Esto aumenta el tamaño del binario sin beneficio
+}
+
+// BIEN: Desenrollado moderado o confiar en el compilador
+for (int i = 0; i < 1000000; i++) {
+    procesar(datos[i]);
+}
+```
+
+=== 14. OPTIMIZACIÓN DE CONDICIONALES ===
+
+Las bifurcaciones mal predichas pueden ser costosas:
+
+```c
+// LENTO: Bifurcación impredecible
+for (int i = 0; i < n; i++) {
+    if (datos[i] > 0) {
+        resultado[i] = datos[i] * 2;
+    } else {
+        resultado[i] = datos[i] / 2;
+    }
+}
+
+// RÁPIDO: Eliminación de bifurcación con operador ternario
+// (el compilador puede usar instrucciones CMOV)
+for (int i = 0; i < n; i++) {
+    resultado[i] = (datos[i] > 0) ? (datos[i] * 2) : (datos[i] / 2);
+}
+
+// MÁS RÁPIDO: Eliminación completa de bifurcación
+for (int i = 0; i < n; i++) {
+    int mask = (datos[i] > 0) ? -1 : 0;
+    resultado[i] = datos[i] * 2 * (mask) + datos[i] / 2 * (~mask);
+    // Esto evita completamente la bifurcación
+}
+```
+
+=== 15. OPTIMIZACIÓN DE ACCESO A ESTRUCTURAS ===
+
+```c
+// LENTO: Muchos punteros indirectos
+typedef struct {
+    int* datos;
+    size_t n;
+} Arreglo;
+
+// RÁPIDO: Datos en el mismo struct (mejor localidad)
+typedef struct {
+    int datos[100];
+    size_t n;
+} ArregloFijo;
+
+// Para datos dinámicos, usar arreglo flexible (C99)
+typedef struct {
+    size_t n;
+    int datos[];  // Flexible array member
+} ArregloFlexible;
+
+ArregloFlexible* crear_arreglo(size_t n) {
+    ArregloFlexible* a = malloc(sizeof(ArregloFlexible) + n * sizeof(int));
+    if (!a) return NULL;
+    a->n = n;
+    return a;
+}
+
+void destruir_arreglo(ArregloFlexible* a) {
+    free(a);
+}
+```
+
+Los flexible array member reducen el número de allocaciones y
+mejoran la localidad de referencia.
+
+=== 16. PROFILING CON PERF (AVANZADO) ===
+
+Perf es el profiler de Linux de nivel de sistema:
+
+```bash
+# Listar eventos disponibles
+perf list
+
+# Contar eventos de hardware
+perf stat -e cycles,instructions,cache-misses,branches \
+          ./programa
+
+# Sampleo de llamadas
+perf record -F 99 -g ./programa
+perf report -g graph
+
+# Anotar código caliente
+perf annotate
+
+# Flame graph
+perf script | stackcollapse-perf.pl | flamegraph.pl > flame.svg
+```
+
+Ejemplo de análisis con perf:
+
+```bash
+$ perf stat ./programa
+
+Performance counter stats for './programa':
+   1,234,567,890      cycles
+     987,654,321      instructions
+       12,345,678      cache-misses
+      123,456,789      branches
+        12,345,678      branch-misses
+
+       0.54321 seconds time elapsed
+```
+
+Interpretación:
+  - CPI (cycles per instruction): ciclos/instrucciones. Ideal < 1.
+  - Cache miss rate: cache-misses * 100 / cache-references.
+  - Branch miss rate: branch-misses * 100 / branches.
+
+=== 17. CASO PRÁCTICO: OPTIMIZACIÓN COMPLETA ===
+
+```c
+// optimizacion_completa.c - Caso práctico
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define N 1000000
+
+// VERSIÓN ORIGINAL (lenta)
+void procesar_original(int* datos, int* resultado, int n) {
+    for (int i = 0; i < n; i++) {
+        // Hacer algo costoso
+        if (datos[i] % 2 == 0) {
+            resultado[i] = datos[i] * datos[i];
+            resultado[i] = resultado[i] / 2;
+            resultado[i] = resultado[i] + 100;
+        } else {
+            int temp = datos[i] * 3;
+            resultado[i] = temp / 2;
+            resultado[i] = resultado[i] * resultado[i];
+        }
+    }
+}
+
+// VERSIÓN OPTIMIZADA (rápida)
+void procesar_optimizado(const int* restrict datos,
+                         int* restrict resultado, int n) {
+    for (int i = 0; i < n; i++) {
+        int d = datos[i];
+        int r;
+
+        if (d % 2 == 0) {
+            r = d * d;
+            r = r / 2 + 100;
+        } else {
+            r = d * 3 / 2;
+            r = r * r;
+        }
+
+        resultado[i] = r;
+    }
+}
+
+int main(void) {
+    int* datos = malloc(N * sizeof(int));
+    int* res1 = malloc(N * sizeof(int));
+    int* res2 = malloc(N * sizeof(int));
+
+    for (int i = 0; i < N; i++) datos[i] = rand();
+
+    clock_t t;
+
+    t = clock();
+    procesar_original(datos, res1, N);
+    t = clock() - t;
+    printf("Original: %f seg\n", (double)t / CLOCKS_PER_SEC);
+
+    t = clock();
+    procesar_optimizado(datos, res2, N);
+    t = clock() - t;
+    printf("Optimizado: %f seg\n", (double)t / CLOCKS_PER_SEC);
+
+    free(datos); free(res1); free(res2);
+    return 0;
+}
+```
+
+Compilar y probar:
+
+```bash
+gcc -O2 -o opt completaxa.c
+./opt
+```
+
+________________________________________________________________________________
+  RESUMEN
+________________________________________________________________________________
+
+En este capítulo hemos aprendido:
+
+  ✅ Las banderas de optimización (-O1, -O2, -O3, -Os, -Og).
+  ✅ Cómo medir el rendimiento con time, gprof y perf.
+  ✅ La optimización algorítmica es la más importante.
+  ✅ La localidad de referencia afecta drásticamente el rendimiento.
+  ✅ Las palabras clave restrict y inline ayudan al compilador.
+  ✅ SIMD permite procesar múltiples datos en paralelo.
+  ✅ LTO y PGO son técnicas avanzadas de optimización.
+  ✅ Siempre medir antes y después de optimizar.
+
+La optimización es un arte que combina conocimiento del hardware,
+del compilador y del dominio del problema. Un buen optimizador sabe
+cuándo optimizar y, más importante, cuándo no hacerlo.
+
+________________________________________________________________________________
+  EJERCICIOS
+________________________________________________________________________________
+
+1. EJERCICIO BÁSICO: Compara el rendimiento de un programa compilado
+   con -O0, -O1, -O2, -O3 y -Os. Documenta las diferencias en
+   velocidad y tamaño del binario.
+
+2. EJERCICIO PRÁCTICO: Implementa un multiplicación de matrices
+   (NxN) y optimízala usando: (a) localidad de referencia, (b)
+   desenrollado de bucles, (c) restrict. Compara cada versión.
+
+3. EJERCICIO AVANZADO: Usa perf para analizar un programa real.
+   Identifica el cuello de botella principal y propón una
+   optimización. Implementa la optimización y verifica la mejora.
+
+4. EJERCICIO DE ANÁLISIS: Dado el siguiente código, identifica
+   todos los problemas de rendimiento y propon optimizaciones:
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+typedef struct { char n[64]; int e; float s; } Emp;
+
+int main() {
+    Emp emps[1000];
+    for (int i = 0; i < 1000; i++) {
+        sprintf(emps[i].n, "Empleado_%d", i);
+        emps[i].e = 20 + i % 40;
+        emps[i].s = 30000.0f + i * 500.0f;
+    }
+
+    float total = 0;
+    for (int j = 0; j < 1000; j++) {
+        for (int i = 0; i < 1000; i++) {
+            if (emps[j].e > 30)
+                total += emps[i].s;
+        }
+    }
+
+    printf("Total: %f\n", total);
+    return 0;
+}
+```
+
+5. EJERCICIO CREATIVO: Implementa una función de ordenamiento
+   (quicksort o mergesort) y optimízala usando al menos 5 técnicas
+   diferentes: elección de pivote, switch a insertion sort para
+   subarreglos pequeños, inline de funciones pequeñas, uso de
+   restrict, y optimización de la recursión.
+
+________________________________________________________________________________
+  PREGUNTAS FRECUENTES
+________________________________________________________________________________
+
+P: ¿Debo usar siempre -O3 en producción?
+R: No necesariamente. -O2 es generalmente la mejor opción. -O3
+puede aumentar el tamaño del binario y, en algunos casos, empeorar
+el rendimiento debido a mayor presión en la caché de instrucciones.
+
+P: ¿Cómo sé si debo optimizar este código?
+R: Mide primero. Si el código es suficientemente rápido, no lo
+toques. Si es lento, identifica el cuello de botella con un profiler.
+Solo entonces optimiza.
+
+P: ¿Las optimizaciones del compilador son suficientes?
+R: Para la mayoría del código, sí. Pero para algoritmos y estructuras
+de datos, la elección del programador es mucho más importante que
+cualquier optimización del compilador.
+
+P: ¿Debo escribir código ensamblador para optimizar?
+R: Casi nunca. El compilador genera mejor ensamblador que la mayoría
+de los programadores. Solo considera ensamblador manual si estás
+seguro de que el compilador no está generando código óptimo y has
+medido que esa sección es crítica.
+
+P: ¿Qué es más importante, la velocidad o la memoria?
+R: Depende del contexto. En sistemas embebidos, la memoria suele
+ser más crítica. En servidores, el tiempo de respuesta es prioritario.
+Conoce tu dominio y optimiza en consecuencia.
+
+________________________________________________________________________________
+  DESAFÍO DEL ARQUITECTO
+________________________________________________________________________________
+
+Implementa un procesador de imágenes simple (escala de grises,
+invertir colores, brillo/contraste) y optimízalo al máximo:
+
+  - Empieza con una implementación ingenua.
+  - Usa profiling para identificar cuellos de botella.
+  - Aplica optimizaciones algorítmicas y estructurales.
+  - Usa SIMD (SSE/AVX) si el hardware lo soporta.
+  - Implementa PGO para mejorar aún más.
+  - Paraleliza con OpenMP o pthreads.
+
+Documenta cada paso: cuánto mejoró cada optimización y por qué.
+El objetivo es lograr al menos 10x de mejora respecto a la versión
+original. Este desafío integra todas las técnicas de optimización
+aprendidas en el capítulo.
+
+________________________________________________________________________________
+  CIERRE DEL CAPÍTULO
+________________________________________________________________________________
+
+La optimización es una habilidad que diferencia a los programadores
+competentes de los expertos. Pero nunca olvides que el código claro,
+correcto y mantenible es más valioso que el código rápido pero
+incomprensible.
+
+Como dijo Knuth: "La optimización prematura es la raíz de todos
+los males". Sé disciplinado: primero hazlo funcionar, luego mide,
+luego optimiza donde sea necesario.
+
+En el próximo capítulo, exploraremos la seguridad en C. Aprenderemos
+cómo escribir código que no solo sea rápido y correcto, sino también
+seguro contra ataques y vulnerabilidades.
+
+¡Nos vemos en el Capítulo 76, donde blindaremos nuestro código
+contra los peligros del mundo real!
+
+================================================================================
+  FIN DEL CAPÍTULO 75
+================================================================================

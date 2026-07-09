@@ -1,0 +1,1245 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 57: RAII (RESOURCE ACQUISITION IS INITIALIZATION)
+================================================================================
+
+  "RAII no es solo una técnica; es la piedra angular sobre la que se
+   sostiene la seguridad de recursos en C++."
+                                                   — Bjarne Stroustrup
+
+================================================================================
+
+BIENVENIDA
+----------
+
+Bienvenido al capítulo sobre RAII, posiblemente el concepto más importante
+de C++ después de los templates. RAII (Resource Acquisition Is Initialization)
+es un idiom que liga el ciclo de vida de un recurso al de un objeto: el
+recurso se adquiere en el constructor y se libera en el destructor.
+
+Este patrón es la razón por la que C++ no necesita try/finally (como Java
+o C#): los destructores se ejecutan automáticamente cuando los objetos
+salen de ámbito, incluso si se lanza una excepción.
+
+En este capítulo exploraremos RAII en profundidad: desde ejemplos clásicos
+(archivos, memoria, mutex) hasta aplicaciones avanzadas con RAII wrappers
+personalizados.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "RAII convierte la gestión de recursos en un problema de ámbito:
+   adquieres cuando entras, liberas cuando sales. Siempre."
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+
+  1. Comprender el principio RAII y su relación con constructores/
+     destructores.
+  2. Implementar wrappers RAII para diferentes tipos de recursos.
+  3. Usar std::scoped_lock para mutex RAII.
+  4. Usar std::ofstream/ifstream como ejemplo de RAII en la STL.
+  5. Entender cómo RAII proporciona seguridad frente a excepciones.
+  6. Conocer la regla de tres/cinco en el contexto de RAII.
+  7. Implementar RAII para recursos del sistema (archivos, sockets).
+  8. Diferenciar entre RAII y garbage collection.
+  9. Aplicar RAII en contextos de concurrencia.
+  10. Diseñar clases RAII correctas y eficientes.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+1. EL PRINCIPIO RAII
+---------------------
+
+RAII (Resource Acquisition Is Initialization) establece que:
+
+  - La adquisición de un recurso ocurre en el CONSTRUCTOR del objeto.
+  - La liberación del recurso ocurre en el DESTRUCTOR del objeto.
+  - El objeto se crea en el ámbito donde se necesita el recurso.
+  - Cuando el objeto sale de ámbito (normal o por excepción), el
+    destructor libera el recurso automáticamente.
+
+Recursos típicos gestionados con RAII:
+  - Memoria dinámica (new/delete) → smart pointers
+  - Archivos (fopen/fclose) → fstream
+  - Mutex (lock/unlock) → scoped_lock, lock_guard
+  - Sockets (connect/close)
+  - Conexiones de base de datos
+  - Transacciones (begin/commit/rollback)
+
+2. RAII Y EXCEPCIONES
+---------------------
+
+La magia de RAII es que los destructores se ejecutan durante el stack
+unwinding. Esto garantiza que los recursos se liberen incluso cuando
+se lanzan excepciones.
+
+  void func() {
+      ArchivoRAII archivo("datos.txt");  // Adquiere recurso
+      // ... operaciones que pueden lanzar ...
+      // Si algo lanza, archivo se destruye y cierra automáticamente
+  }  // archivo se destruye y libera el recurso
+
+Sin RAII (gestión manual), una excepción entre la adquisición y la
+liberación causa una fuga de recurso.
+
+3. REGLA DE TRES/CINCO EN RAII
+-------------------------------
+
+Si una clase gestiona un recurso directamente, debe implementar:
+
+  - Destructor: libera el recurso.
+  - Copy constructor: copia el recurso.
+  - Copy assignment: copia el recurso.
+  - Move constructor (C++11): transfiere la propiedad.
+  - Move assignment (C++11): transfiere la propiedad.
+
+O, alternativamente, usar el "Rule of Zero": si tu clase no gestiona
+recursos directamente, no necesitas implementar ninguno de estos métodos
+especiales.
+
+4. std::scoped_lock Y lock_guard
+---------------------------------
+
+  std::mutex mtx;
+
+  // lock_guard (RAII para mutex)
+  {
+      std::lock_guard<std::mutex> lock(mtx);
+      // Sección crítica
+  }  // lock se destruye, mutex se libera
+
+  // scoped_lock (C++17) - puede lockear múltiples mutex
+  {
+      std::scoped_lock lock(mtx1, mtx2);
+      // Sección crítica con ambos mutex
+  }  // ambos mutex se liberan en orden inverso
+
+5. ARCHIVOS COMO EJEMPLO RAII
+-------------------------------
+
+std::ifstream y std::ofstream son clases RAII:
+
+  void leerArchivo(const std::string& nombre) {
+      std::ifstream archivo(nombre);  // Abre archivo
+      if (!archivo) {
+          throw std::runtime_error("No se pudo abrir");
+      }
+      std::string linea;
+      while (std::getline(archivo, linea)) {
+          // procesar
+      }
+      // archivo se cierra automáticamente aquí
+  }
+
+6. IMPLEMENTACIÓN DE RAII PERSONALIZADO
+-----------------------------------------
+
+  template <typename Recurso, typename Deleter>
+  class RAIIWrapper {
+      Recurso recurso;
+      Deleter deleter;
+      bool activo;
+  public:
+      RAIIWrapper(Recurso r, Deleter d)
+          : recurso(r), deleter(d), activo(true) {}
+      ~RAIIWrapper() {
+          if (activo) deleter(recurso);
+      }
+      // Prohibir copia, permitir movimiento
+      Recurso get() const { return recurso; }
+      void release() { activo = false; }
+  };
+
+7. RAII EN CONCURRENCIA
+------------------------
+
+Además de mutex, RAII se aplica a:
+
+  - std::jthread (C++20): join automático en destructor.
+  - std::unique_lock: lock ownership con más flexibilidad.
+  - shared_lock: lock compartido (readers-writer).
+  - Semáforos, barriers, latches.
+
+8. RAII VS GARBAGE COLLECTION
+------------------------------
+
+  RAII (C++):           Garbage Collector (Java, C#):
+  - Determinista        - No determinista
+  - Predecible          - Impredecible
+  - Liberación inmediata - Liberación diferida
+  - No pause            - Stop-the-world
+  - Sin overhead extra  - Overhead en runtime
+  - Manual (pero local) - Automático (global)
+
+RAII es superior para recursos que NO son memoria (archivos, sockets,
+mutex) porque la liberación debe ser inmediata y predecible.
+
+9. RAII CON RECURSOS DEL SISTEMA
+---------------------------------
+
+  class SocketRAII {
+      int sockfd;
+  public:
+      SocketRAII(const std::string& host, int port) {
+          sockfd = ::socket(AF_INET, SOCK_STREAM, 0);
+          // connect...
+      }
+      ~SocketRAII() {
+          ::close(sockfd);
+      }
+      void enviar(const std::string& datos) { /* ... */ }
+      std::string recibir() { /* ... */ }
+  };
+
+10. PATRONES AVANZADOS RAII
+-----------------------------
+
+  - ScopeGuard: ejecuta código al salir del ámbito.
+  - Shared Resource: varios objetos comparten un recurso con ref-count.
+  - Transaction RAII: commit en éxito, rollback en error.
+  - TimeoutGuard: ejecuta acción si pasa el tiempo.
+
+================================================================================
+  CÓDIGO DE EJEMPLO
+================================================================================
+
+```cpp
+//==============================================================================
+// EJEMPLO 1: RAII básico - Gestor de buffer de memoria
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+
+class BufferRAII {
+    int* datos;
+    size_t tam;
+
+public:
+    explicit BufferRAII(size_t n) : datos(new int[n]()), tam(n) {
+        std::cout << "BufferRAII: Adquiridos " << tam << " enteros\n";
+    }
+
+    ~BufferRAII() noexcept {
+        delete[] datos;
+        std::cout << "BufferRAII: Liberados " << tam << " enteros\n";
+    }
+
+    int& operator[](size_t i) { return datos[i]; }
+    const int& operator[](size_t i) const { return datos[i]; }
+    size_t size() const { return tam; }
+
+    // Prohibir copia (recurso no compartible)
+    BufferRAII(const BufferRAII&) = delete;
+    BufferRAII& operator=(const BufferRAII&) = delete;
+
+    // Permitir movimiento (transferencia de propiedad)
+    BufferRAII(BufferRAII&& otro) noexcept
+        : datos(otro.datos), tam(otro.tam) {
+        otro.datos = nullptr;
+        otro.tam = 0;
+    }
+};
+
+void usarBuffer() {
+    BufferRAII buf(10);
+    for (size_t i = 0; i < buf.size(); ++i) {
+        buf[i] = static_cast<int>(i * 10);
+    }
+    // buf se libera al salir
+}
+
+void bufferConExcepcion() {
+    BufferRAII buf(5);
+    throw std::runtime_error("Error en bufferConExcepcion");
+    // buf se libera durante stack unwinding
+}
+
+int main() {
+    usarBuffer();
+    std::cout << "---\n";
+
+    try {
+        bufferConExcepcion();
+    }
+    catch (const std::exception& e) {
+        std::cout << "Capturado: " << e.what() << "\n";
+    }
+
+    std::cout << "No hay fugas de memoria\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 2: Archivos RAII - ofstream/ifstream
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+
+void escribirArchivoSeguro(const std::string& nombre) {
+    std::ofstream archivo(nombre);
+    if (!archivo) {
+        throw std::runtime_error("No se pudo abrir " + nombre);
+    }
+
+    archivo << "Linea 1\n";
+    archivo << "Linea 2\n";
+    archivo << "Linea 3\n";
+
+    // No necesitamos close() explícito
+    // El destructor cierra automáticamente
+}
+
+void leerArchivoSeguro(const std::string& nombre) {
+    std::ifstream archivo(nombre);
+    if (!archivo) {
+        throw std::runtime_error("No se pudo abrir " + nombre);
+    }
+
+    std::string linea;
+    while (std::getline(archivo, linea)) {
+        std::cout << "  Leido: " << linea << "\n";
+    }
+    // archivo se cierra automáticamente
+}
+
+int main() {
+    try {
+        escribirArchivoSeguro("test_raii.txt");
+        std::cout << "Archivo escrito correctamente\n";
+
+        leerArchivoSeguro("test_raii.txt");
+        std::cout << "Archivo leido correctamente\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    // Limpiar
+    std::remove("test_raii.txt");
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 3: std::lock_guard y std::scoped_lock
+//==============================================================================
+#include <iostream>
+#include <mutex>
+#include <thread>
+#include <vector>
+#include <chrono>
+
+class ContadorSeguro {
+    int valor = 0;
+    std::mutex mtx;
+
+public:
+    void incrementar() {
+        // lock_guard: RAII para mutex
+        std::lock_guard<std::mutex> lock(mtx);
+        ++valor;
+    }
+
+    void decrementar() {
+        std::lock_guard<std::mutex> lock(mtx);
+        --valor;
+    }
+
+    int obtener() {
+        std::lock_guard<std::mutex> lock(mtx);
+        return valor;
+    }
+};
+
+// Ejemplo con scoped_lock (C++17) para múltiples mutex
+class CuentaBancaria {
+    int balance = 1000;
+    mutable std::mutex mtx;
+
+public:
+    void transferir(CuentaBancaria& destino, int cantidad) {
+        // scoped_lock lockea ambos mutex sin deadlock
+        std::scoped_lock lock(mtx, destino.mtx);
+        balance -= cantidad;
+        destino.balance += cantidad;
+    }
+
+    int getBalance() const {
+        std::lock_guard<std::mutex> lock(mtx);
+        return balance;
+    }
+};
+
+void trabajo(ContadorSeguro& contador, int veces) {
+    for (int i = 0; i < veces; ++i) {
+        contador.incrementar();
+    }
+}
+
+int main() {
+    ContadorSeguro contador;
+    std::vector<std::thread> hilos;
+
+    for (int i = 0; i < 10; ++i) {
+        hilos.emplace_back(trabajo, std::ref(contador), 10000);
+    }
+
+    for (auto& h : hilos) {
+        h.join();
+    }
+
+    std::cout << "Valor final: " << contador.obtener()
+              << " (esperado: 100000)\n";
+
+    // Demostración de transferencia segura
+    CuentaBancaria c1, c2;
+    std::thread t1([&]() { c1.transferir(c2, 100); });
+    std::thread t2([&]() { c2.transferir(c1, 50); });
+    t1.join();
+    t2.join();
+
+    std::cout << "c1: " << c1.getBalance()
+              << ", c2: " << c2.getBalance() << "\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 4: RAII para transacciones (commit/rollback automático)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+class TransaccionRAII {
+    bool completada = false;
+    std::string nombre;
+
+public:
+    TransaccionRAII(const std::string& n) : nombre(n) {
+        std::cout << "  Transaccion iniciada: " << nombre << "\n";
+    }
+
+    ~TransaccionRAII() noexcept {
+        if (!completada) {
+            rollback();
+        }
+    }
+
+    void commit() {
+        std::cout << "  Transaccion completada: " << nombre << "\n";
+        completada = true;
+    }
+
+    void rollback() {
+        std::cout << "  Transaccion revertida: " << nombre << "\n";
+    }
+
+    TransaccionRAII(const TransaccionRAII&) = delete;
+    TransaccionRAII& operator=(const TransaccionRAII&) = delete;
+};
+
+void operacionExitosa() {
+    TransaccionRAII tx("operacion1");
+    // ... hacer cosas ...
+    tx.commit();
+}
+
+void operacionFallida() {
+    TransaccionRAII tx("operacion2");
+    // ... hacer cosas ...
+    throw std::runtime_error("Error durante la operacion");
+    // tx se revierte automáticamente en el destructor
+    // (no se llamó a commit)
+}
+
+int main() {
+    std::cout << "Caso 1: operacion exitosa\n";
+    operacionExitosa();
+
+    std::cout << "\nCaso 2: operacion fallida con excepcion\n";
+    try {
+        operacionFallida();
+    }
+    catch (const std::exception& e) {
+        std::cout << "  Capturado: " << e.what() << "\n";
+    }
+
+    std::cout << "\nCaso 3: operacion con return temprano\n";
+    {
+        TransaccionRAII tx("operacion3");
+        if (true) {
+            // return temprano también causa rollback automático
+            std::cout << "  Retorno temprano\n";
+            return 0;
+        }
+        tx.commit();
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 5: ScopeGuard - ejecución diferida al salir del ámbito
+//==============================================================================
+#include <iostream>
+#include <functional>
+
+template <typename F>
+class ScopeGuard {
+    F func;
+    bool activo;
+
+public:
+    ScopeGuard(F f) : func(std::move(f)), activo(true) {}
+
+    ~ScopeGuard() noexcept {
+        if (activo) {
+            try {
+                func();
+            }
+            catch (...) {
+                // No lanzar desde destructor
+            }
+        }
+    }
+
+    void dismiss() { activo = false; }
+
+    ScopeGuard(const ScopeGuard&) = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+
+    ScopeGuard(ScopeGuard&& otro) noexcept
+        : func(std::move(otro.func)), activo(otro.activo) {
+        otro.activo = false;
+    }
+};
+
+// Macro para crear ScopeGuard con nombre descriptivo
+#define SCOPE_GUARD auto CONCAT(guard, __LINE__) = ScopeGuard([&]()
+
+// Helper para concatenación
+#define CONCAT_(a, b) a##b
+#define CONCAT(a, b) CONCAT_(a, b)
+
+void procesarArchivo(const std::string& nombre) {
+    std::cout << "Abriendo archivo: " << nombre << "\n";
+
+    // Garantizar que se cierre incluso si hay return o excepción
+    SCOPE_GUARD {
+        std::cout << "  ScopeGuard: cerrando archivo " << nombre << "\n";
+    };
+
+    // También podemos usar más de un guard
+    std::cout << "Procesando...\n";
+
+    // Simular condición que causa retorno temprano
+    if (nombre.empty()) {
+        std::cout << "  Nombre vacio, retornando\n";
+        return;  // ScopeGuard se ejecuta aquí
+    }
+
+    std::cout << "Procesamiento completado\n";
+    // ScopeGuard también se ejecuta aquí
+}
+
+void medirTiempo() {
+    auto inicio = std::chrono::high_resolution_clock::now();
+
+    ScopeGuard guard([&inicio]() {
+        auto fin = std::chrono::high_resolution_clock::now();
+        auto duracion = std::chrono::duration_cast<
+            std::chrono::microseconds>(fin - inicio).count();
+        std::cout << "  ScopeGuard: duracion " << duracion << " us\n";
+    });
+
+    // Simular trabajo
+    volatile int x = 0;
+    for (int i = 0; i < 1000000; ++i) {
+        x += i;
+    }
+
+    guard.dismiss();  // No queremos medir tiempo aquí
+    std::cout << "Trabajo completado: " << x << "\n";
+}
+
+int main() {
+    std::cout << "=== ScopeGuard con exito ===\n";
+    procesarArchivo("datos.txt");
+
+    std::cout << "\n=== ScopeGuard con retorno temprano ===\n";
+    procesarArchivo("");
+
+    std::cout << "\n=== ScopeGuard dismiss ===\n";
+    medirTiempo();
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 6: RAII para sockets (simulado)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <unistd.h>
+
+class SocketRAII {
+    int fd;
+    bool conectado;
+
+public:
+    SocketRAII(const std::string& host, int puerto)
+        : conectado(false) {
+        std::cout << "Socket: Creando socket para "
+                  << host << ":" << puerto << "\n";
+
+        fd = 4;  // Simulado: socket() real
+        if (fd < 0) {
+            throw std::runtime_error(
+                "No se pudo crear socket");
+        }
+
+        // Simular connect()
+        std::cout << "Socket: Conectando a "
+                  << host << ":" << puerto << "\n";
+        conectado = true;
+    }
+
+    ~SocketRAII() noexcept {
+        if (conectado) {
+            std::cout << "Socket: Cerrando conexion\n";
+            ::close(fd);
+        }
+    }
+
+    void enviar(const std::string& datos) {
+        if (!conectado) {
+            throw std::runtime_error("Socket no conectado");
+        }
+        std::cout << "Socket: Enviando: " << datos << "\n";
+    }
+
+    std::string recibir() {
+        if (!conectado) {
+            throw std::runtime_error("Socket no conectado");
+        }
+        return "OK: datos recibidos";
+    }
+
+    void desconectar() noexcept {
+        if (conectado) {
+            ::close(fd);
+            conectado = false;
+        }
+    }
+
+    // Prohibir copia
+    SocketRAII(const SocketRAII&) = delete;
+    SocketRAII& operator=(const SocketRAII&) = delete;
+
+    // Permitir movimiento
+    SocketRAII(SocketRAII&& otro) noexcept
+        : fd(otro.fd), conectado(otro.conectado) {
+        otro.fd = -1;
+        otro.conectado = false;
+    }
+};
+
+void clienteSeguro() {
+    SocketRAII socket("ejemplo.com", 80);
+    socket.enviar("GET / HTTP/1.1");
+    auto respuesta = socket.recibir();
+    std::cout << "Respuesta: " << respuesta << "\n";
+    // Socket se cierra automáticamente
+}
+
+int main() {
+    try {
+        clienteSeguro();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::cout << "Socket cerrado correctamente\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 7: RAII con regla de cinco - Gestor de recursos completo
+//==============================================================================
+#include <iostream>
+#include <cstring>
+#include <algorithm>
+
+class GestorRecursos {
+    char* buffer;
+    size_t tam;
+
+public:
+    // Constructor: adquiere recurso
+    explicit GestorRecursos(size_t n)
+        : buffer(new char[n]()), tam(n) {
+        std::cout << "  Gestor: adquiridos " << tam << " bytes\n";
+    }
+
+    // Destructor: libera recurso
+    ~GestorRecursos() noexcept {
+        liberar();
+    }
+
+    // Copy constructor
+    GestorRecursos(const GestorRecursos& otro)
+        : buffer(new char[otro.tam]), tam(otro.tam) {
+        std::copy(otro.buffer, otro.buffer + tam, buffer);
+        std::cout << "  Gestor: copia (" << tam << " bytes)\n";
+    }
+
+    // Copy assignment
+    GestorRecursos& operator=(const GestorRecursos& otro) {
+        if (this != &otro) {
+            liberar();
+            tam = otro.tam;
+            buffer = new char[tam];
+            std::copy(otro.buffer, otro.buffer + tam, buffer);
+            std::cout << "  Gestor: asignacion copia\n";
+        }
+        return *this;
+    }
+
+    // Move constructor
+    GestorRecursos(GestorRecursos&& otro) noexcept
+        : buffer(otro.buffer), tam(otro.tam) {
+        otro.buffer = nullptr;
+        otro.tam = 0;
+        std::cout << "  Gestor: movimiento\n";
+    }
+
+    // Move assignment
+    GestorRecursos& operator=(GestorRecursos&& otro) noexcept {
+        if (this != &otro) {
+            liberar();
+            buffer = otro.buffer;
+            tam = otro.tam;
+            otro.buffer = nullptr;
+            otro.tam = 0;
+            std::cout << "  Gestor: asignacion movimiento\n";
+        }
+        return *this;
+    }
+
+    void escribir(const char* datos, size_t len) {
+        if (len > tam) len = tam;
+        std::memcpy(buffer, datos, len);
+    }
+
+    void imprimir() const {
+        for (size_t i = 0; i < tam; ++i) {
+            std::cout << (buffer[i] ? buffer[i] : '.');
+        }
+        std::cout << "\n";
+    }
+
+private:
+    void liberar() noexcept {
+        delete[] buffer;
+        buffer = nullptr;
+        tam = 0;
+    }
+};
+
+void demoReglaDeCinco() {
+    GestorRecursos g1(10);
+    g1.escribir("HOLA", 4);
+
+    GestorRecursos g2 = g1;      // Copy
+    GestorRecursos g3(5);
+    g3 = g1;                     // Copy assignment
+
+    GestorRecursos g4 = std::move(g1);  // Move
+    GestorRecursos g5(3);
+    g5 = std::move(g2);                 // Move assignment
+}
+
+int main() {
+    demoReglaDeCinco();
+    std::cout << "Todos los recursos liberados\n";
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 8: RAII para archivos con FILE* de C
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <cstdio>
+#include <string>
+
+class ArchivoCRAII {
+    FILE* archivo;
+
+public:
+    ArchivoCRAII(const std::string& nombre, const std::string& modo)
+        : archivo(std::fopen(nombre.c_str(), modo.c_str())) {
+        if (!archivo) {
+            throw std::runtime_error(
+                "No se pudo abrir: " + nombre);
+        }
+        std::cout << "Archivo C abierto: " << nombre << "\n";
+    }
+
+    ~ArchivoCRAII() noexcept {
+        if (archivo) {
+            std::fclose(archivo);
+            std::cout << "Archivo C cerrado\n";
+        }
+    }
+
+    void escribir(const std::string& texto) {
+        if (std::fputs(texto.c_str(), archivo) == EOF) {
+            throw std::runtime_error("Error al escribir");
+        }
+    }
+
+    std::string leerLinea() {
+        char buf[1024];
+        if (std::fgets(buf, sizeof(buf), archivo)) {
+            return std::string(buf);
+        }
+        return "";
+    }
+
+    // Prohibir copia
+    ArchivoCRAII(const ArchivoCRAII&) = delete;
+    ArchivoCRAII& operator=(const ArchivoCRAII&) = delete;
+
+    // Permitir movimiento
+    ArchivoCRAII(ArchivoCRAII&& otro) noexcept
+        : archivo(otro.archivo) {
+        otro.archivo = nullptr;
+    }
+
+    ArchivoCRAII& operator=(ArchivoCRAII&& otro) noexcept {
+        if (this != &otro) {
+            if (archivo) std::fclose(archivo);
+            archivo = otro.archivo;
+            otro.archivo = nullptr;
+        }
+        return *this;
+    }
+};
+
+int main() {
+    try {
+        {
+            ArchivoCRAII arch("test_c.txt", "w");
+            arch.escribir("Hola desde RAII con FILE*\n");
+            arch.escribir("Segunda linea\n");
+            // Se cierra automáticamente
+        }
+
+        {
+            ArchivoCRAII arch("test_c.txt", "r");
+            std::string linea;
+            while (!(linea = arch.leerLinea()).empty()) {
+                std::cout << "  Leido: " << linea;
+            }
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::remove("test_c.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 9: RAII con punteros inteligentes (preview)
+//==============================================================================
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+
+class Recurso {
+    std::string id;
+public:
+    Recurso(const std::string& i) : id(i) {
+        std::cout << "  Recurso creado: " << id << "\n";
+    }
+    ~Recurso() noexcept {
+        std::cout << "  Recurso destruido: " << id << "\n";
+    }
+    void usar() const {
+        std::cout << "  Usando recurso: " << id << "\n";
+    }
+};
+
+void demoUniquePtr() {
+    // unique_ptr: RAII para propiedad exclusiva
+    std::unique_ptr<Recurso> ptr1 =
+        std::make_unique<Recurso>("unique-1");
+
+    ptr1->usar();
+
+    // std::unique_ptr<Recurso> ptr2 = ptr1;  // Error: no copia
+    std::unique_ptr<Recurso> ptr2 = std::move(ptr1);  // Movimiento
+
+    if (!ptr1) {
+        std::cout << "  ptr1 ya no posee el recurso\n";
+    }
+
+    ptr2->usar();
+    // Se libera automáticamente al salir del ámbito
+}
+
+void demoSheredPtr() {
+    // shared_ptr: RAII con conteo de referencias
+    std::shared_ptr<Recurso> ptr1 =
+        std::make_shared<Recurso>("shared-1");
+
+    {
+        std::shared_ptr<Recurso> ptr2 = ptr1;  // Copia: ref count++
+        std::shared_ptr<Recurso> ptr3 = ptr1;  // ref count++
+        ptr2->usar();
+        std::cout << "  Use count: " << ptr1.use_count() << "\n";
+    }  // ptr2, ptr3 destruidos: ref count disminuye
+
+    std::cout << "  Use count despues: " << ptr1.use_count() << "\n";
+    ptr1->usar();
+}
+
+int main() {
+    std::cout << "=== unique_ptr ===\n";
+    demoUniquePtr();
+
+    std::cout << "\n=== shared_ptr ===\n";
+    demoSheredPtr();
+
+    std::cout << "\nRecursos liberados automaticamente (RAII)\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 10: RAII para temporizadores / timeouts
+//==============================================================================
+#include <iostream>
+#include <chrono>
+#include <functional>
+#include <thread>
+
+class TimeoutGuard {
+    std::chrono::steady_clock::time_point inicio;
+    std::chrono::milliseconds maxDuracion;
+    std::function<void()> accionTimeout;
+    bool completado;
+
+public:
+    TimeoutGuard(std::chrono::milliseconds max,
+                 std::function<void()> accion)
+        : inicio(std::chrono::steady_clock::now()),
+          maxDuracion(max),
+          accionTimeout(std::move(accion)),
+          completado(false) {}
+
+    ~TimeoutGuard() noexcept {
+        if (!completado) {
+            auto fin = std::chrono::steady_clock::now();
+            auto duracion = std::chrono::duration_cast<
+                std::chrono::milliseconds>(fin - inicio);
+            if (duracion > maxDuracion) {
+                try {
+                    accionTimeout();
+                }
+                catch (...) {
+                    // No lanzar desde destructor
+                }
+            }
+        }
+    }
+
+    void completar() { completado = true; }
+};
+
+void operacionConTimeout(const std::string& nombre,
+                         std::chrono::milliseconds duracion) {
+    TimeoutGuard guard(
+        std::chrono::milliseconds(100),
+        [&nombre]() {
+            std::cout << "  TIMEOUT: " << nombre
+                      << " excedio el tiempo limite\n";
+        }
+    );
+
+    std::cout << "  Ejecutando: " << nombre << " ("
+              << duracion.count() << "ms)...\n";
+
+    // Simular trabajo
+    std::this_thread::sleep_for(duracion);
+
+    guard.completar();
+    std::cout << "  Completado: " << nombre << "\n";
+}
+
+int main() {
+    std::cout << "Operacion rapida (50ms):\n";
+    operacionConTimeout("rapida", std::chrono::milliseconds(50));
+
+    std::cout << "\nOperacion lenta (200ms):\n";
+    operacionConTimeout("lenta", std::chrono::milliseconds(200));
+
+    std::cout << "\nRAII garantiza que el timeout se verifica\n";
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 11: RAII anidado y orden de destrucción
+//==============================================================================
+#include <iostream>
+#include <string>
+
+struct ObjetoRAII {
+    std::string nombre;
+    ObjetoRAII(const std::string& n) : nombre(n) {
+        std::cout << "  Adquirido: " << nombre << "\n";
+    }
+    ~ObjetoRAII() noexcept {
+        std::cout << "  Liberado: " << nombre << "\n";
+    }
+};
+
+void demoOrdenDestruccion(int nivel, int maxNivel) {
+    ObjetoRAII obj("nivel" + std::to_string(nivel));
+
+    if (nivel < maxNivel) {
+        demoOrdenDestruccion(nivel + 1, maxNivel);
+    }
+
+    // Al retornar, los objetos se destruyen en orden inverso
+}
+
+void demoSaltos() {
+    ObjetoRAII a("a");
+    {
+        ObjetoRAII b("b");
+        {
+            ObjetoRAII c("c");
+            std::cout << "  Dentro del bloque mas interno\n";
+        }  // c destruido aquí
+        std::cout << "  Entre bloques\n";
+    }  // b destruido aquí
+    std::cout << "  Fuera de bloques\n";
+}  // a destruido aquí
+
+int main() {
+    std::cout << "=== Orden de destruccion (LIFO) ===\n";
+    demoOrdenDestruccion(1, 3);
+    std::cout << "\n";
+
+    std::cout << "=== Bloques anidados ===\n";
+    demoSaltos();
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 12: Rule of Zero - delegar RAII a miembros
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <mutex>
+
+// Esta clase NO necesita destructor, copy/move explícitos
+// porque todos sus miembros ya son RAII (Rule of Zero)
+class LoggerSeguro {
+    std::ofstream archivo;
+    std::mutex mtx;
+    std::vector<std::string> buffer;
+
+public:
+    explicit LoggerSeguro(const std::string& nombre)
+        : archivo(nombre) {
+        if (!archivo) {
+            throw std::runtime_error(
+                "No se pudo abrir log: " + nombre);
+        }
+    }
+
+    void log(const std::string& mensaje) {
+        std::lock_guard<std::mutex> lock(mtx);
+        archivo << mensaje << "\n";
+        buffer.push_back(mensaje);
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> lock(mtx);
+        archivo.flush();
+    }
+
+    // No necesitamos destructor:
+    //   - archivo se cierra solo
+    //   - mtx no necesita limpieza
+    //   - buffer se libera solo
+    // No necesitamos copy/move:
+    //   - ofstream no es copiable (bueno)
+    //   - mutex no es copiable (bueno)
+    //   - vector es movable (suficiente)
+};
+
+int main() {
+    LoggerSeguro logger("test_rule_of_zero.txt");
+    logger.log("Inicio del programa");
+    logger.log("Procesando datos...");
+    logger.log("Fin del programa");
+
+    std::cout << "Logger creado y usado (Rule of Zero)\n";
+    std::cout << "Todos los recursos se liberan automaticamente\n";
+
+    std::remove("test_rule_of_zero.txt");
+
+    return 0;
+}
+```
+
+RESUMEN DEL CAPÍTULO
+--------------------
+
+En este capítulo hemos aprendido:
+
+  1. RAII: adquisición de recursos en constructor, liberación en
+     destructor.
+  2. Los destructores se ejecutan en stack unwinding, garantizando
+     liberación incluso con excepciones.
+  3. std::lock_guard y std::scoped_lock para mutex RAII.
+  4. std::ofstream/ifstream como ejemplos de RAII en la STL.
+  5. Regla de tres/cinco para clases que gestionan recursos.
+  6. Implementación de RAII wrappers para recursos del sistema.
+  7. ScopeGuard para ejecución diferida al salir de ámbito.
+  8. RAII para transacciones con commit/rollback automático.
+  9. RAII en concurrencia con mutex y temporizadores.
+  10. Rule of Zero: delegar RAII a miembros de la clase.
+
+EJERCICIOS PROPUESTOS
+---------------------
+
+  EJERCICIO 1: Implementa una clase RAII TempFile que cree un archivo
+  temporal y lo elimine al destruirse.
+
+  EJERCICIO 2: Crea un RAII wrapper para el recurso de base de datos
+  SQLite (abrir/cerrar conexión).
+
+  EJERCICIO 3: Implementa un RAII para "modo" de consola: cambia el
+  color/atributos al inicio y los restaura al salir del ámbito.
+
+  EJERCICIO 4: Crea un RAII SignalHandler que instale un manejador de
+  señal y lo restaure al salir del ámbito.
+
+  EJERCICIO 5: Implementa un RAII Timer que mida tiempo de ejecución
+  y lo registre automáticamente al destruirse.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿RAII es solo para memoria?
+  R: No. RAII es para CUALQUIER recurso: archivos, sockets, mutex,
+  conexiones BD, transacciones, texturas, etc.
+
+  P: ¿Qué pasa si el destructor RAII lanza una excepción?
+  R: Los destructores deben ser noexcept. Si lanzas desde un destructor
+  durante stack unwinding, se llama a std::terminate().
+
+  P: ¿RAII reemplaza al garbage collector?
+  R: Para memoria, los smart pointers (unique_ptr, shared_ptr) son el
+  equivalente RAII. RAII es superior para recursos no-memoria.
+
+  P: ¿Qué es la Rule of Zero?
+  R: Si tu clase no gestiona recursos directamente (todos sus miembros
+  son RAII), no necesitas implementar destructor, copy/move explícitos.
+
+  P: ¿Cuál es la diferencia entre lock_guard y scoped_lock?
+  R: lock_guard lockea un mutex. scoped_lock (C++17) puede lockear
+  múltiples mutex de forma segura (evita deadlocks).
+
+  P: ¿ScopeGuard es parte de la STL?
+  R: No, pero es un patrón común. Puedes implementarlo fácilmente o
+  usar bibliotecas como Boost.ScopeExit o folly::ScopeGuard.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Implementa un sistema de "gestión de recursos heterogéneos" usando
+  RAII y templates.
+
+  Requisitos:
+    - Clase ResourceManager<T> que gestione recursos de tipo T.
+    - Soporte para diferentes tipos de recursos: Archivo, Socket, DB.
+    - Cada recurso debe tener acquire() y release().
+    - El manager debe garantizar que todos los recursos se liberan
+      incluso si hay excepciones.
+    - Debe soportar recursos con diferentes deleters.
+    - Debe llevar estadísticas de uso.
+    - Debe proporcionar acceso seguro a los recursos.
+
+  Pistas:
+    - Usa std::unique_ptr con custom deleter para cada tipo.
+    - Almacena los recursos en un contenedor de variantes o
+      type-erased pointers.
+    - Template ResourceHandle<T> que envuelva el acceso.
+    - throw si se intenta acceder a un recurso liberado.
+
+CIERRE DEL CAPÍTULO
+-------------------
+
+RAII es el patrón más distintivo de C++. Es la razón por la que C++ no
+necesita try/finally, la razón por la que los smart pointers funcionan,
+y la razón por la que el código C++ moderno tiene menos fugas de recursos
+que cualquier otro lenguaje de sistemas.
+
+Hemos visto RAII aplicado a memoria, archivos, mutex, sockets,
+transacciones, y temporizadores. Donde hay un recurso que adquirir y
+liberar, RAII es la respuesta.
+
+En el próximo capítulo, exploraremos los smart pointers (unique_ptr,
+shared_ptr, weak_ptr), que son la aplicación más conocida de RAII en C++.
+
+  "RAII no es una característica del lenguaje; es una forma de pensar.
+   Una vez que lo entiendes, no querrás volver a gestionar recursos
+   manualmente."
+
+================================================================================
+  FIN DEL CAPÍTULO 57
+================================================================================

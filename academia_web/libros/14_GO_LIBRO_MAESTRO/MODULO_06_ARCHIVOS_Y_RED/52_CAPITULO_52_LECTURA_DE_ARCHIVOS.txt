@@ -1,0 +1,922 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 52: LECTURA DE ARCHIVOS (bufio, io, ioutil)
+================================================================================
+
+  "Leer es interpretar. Y en programación, interpretar correctamente
+   los datos es la mitad de la batalla."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  Bienvenido al Capítulo 52 de GO MASTER BOOK. En el capítulo anterior
+  aprendiste a abrir, crear y gestionar archivos con os.File. Ahora
+  profundizaremos en las técnicas de lectura, que van desde la lectura
+  completa de archivos pequeños hasta el procesamiento eficiente de
+  archivos enormes línea por línea. Dominarás bufio.Scanner, bufio.Reader,
+  io.ReadAll y sabrás cuándo usar cada uno.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Leer sin entender es como navegar sin mapa. Elige la herramienta
+   de lectura correcta para cada tipo de dato."
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Leer archivos completos con os.ReadFile e io.ReadAll.
+  ✓ Procesar archivos línea por línea con bufio.Scanner.
+  ✓ Usar bufio.Reader para lectura con buffer.
+  ✓ Entender los métodos Scan, Text, Err de Scanner.
+  ✓ Diferenciar entre lectura buffered y unbuffered.
+  ✓ Manejar archivos grandes sin agotar la memoria.
+  ✓ Implementar patrones de lectura eficientes.
+  ✓ Usar delimitadores personalizados en Scanner.
+  ✓ Leer archivos binarios con bufio.Reader.
+  ✓ Combinar múltiples lectores con io.MultiReader y io.TeeReader.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. INTRODUCCIÓN A LA LECTURA DE ARCHIVOS EN GO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Go ofrece múltiples niveles de abstracción para leer archivos. La
+  elección depende del tamaño del archivo, el formato de los datos
+  y los requisitos de rendimiento:
+
+  - os.ReadFile: lectura completa, ideal para archivos pequeños (< 100 MB).
+  - io.ReadAll: similar, pero desde cualquier io.Reader.
+  - bufio.Scanner: lectura línea por línea o por tokens.
+  - bufio.Reader: lectura con buffer para control fino.
+  - io.Copy: copia eficiente entre streams.
+
+  Cada herramienta tiene su lugar. Un programador experto sabe
+  cuál usar en cada situación.
+
+  2. LECTURA COMPLETA CON os.ReadFile
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Como vimos en el capítulo anterior, os.ReadFile lee un archivo
+  completo en memoria. Es simple y directo.
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      datos, err := os.ReadFile("config.json")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Printf("Leídos %d bytes\n", len(datos))
+      fmt.Println(string(datos))
+  }
+  ```
+
+  Limitaciones:
+  - Carga todo en memoria: peligroso para archivos grandes.
+  - No permite procesamiento incremental.
+  - Útil para archivos de configuración, templates pequeños, etc.
+
+  3. LECTURA DESDE CUALQUIER io.Reader CON io.ReadAll
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  io.ReadAll (disponible desde Go 1.16) lee todo el contenido de
+  un io.Reader hasta EOF. Es la versión genérica de os.ReadFile.
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "os"
+      "strings"
+  )
+
+  func main() {
+      // Desde un archivo
+      f, _ := os.Open("ejemplo.txt")
+      defer f.Close()
+      datos, _ := io.ReadAll(f)
+      fmt.Println("Desde archivo:", string(datos))
+
+      // Desde un string
+      r := strings.NewReader("Hola, Go Master Book!")
+      datos2, _ := io.ReadAll(r)
+      fmt.Println("Desde string:", string(datos2))
+
+      // Desde una respuesta HTTP
+      // resp, _ := http.Get("https://ejemplo.com")
+      // defer resp.Body.Close()
+      // body, _ := io.ReadAll(resp.Body)
+  }
+  ```
+
+  4. bufio.Scanner — LECTURA LÍNEA POR LÍNEA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  bufio.Scanner es la herramienta ideal para procesar archivos de
+  texto línea por línea. Es eficiente en memoria porque solo mantiene
+  la línea actual en memoria.
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      archivo, err := os.Open("grande.txt")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer archivo.Close()
+
+      scanner := bufio.NewScanner(archivo)
+      for scanner.Scan() {
+          linea := scanner.Text()
+          fmt.Println(linea)
+      }
+
+      if err := scanner.Err(); err != nil {
+          fmt.Println("Error durante la lectura:", err)
+      }
+  }
+  ```
+
+  El ciclo es siempre el mismo:
+  1. Crear el scanner con NewScanner(reader).
+  2. Iterar con scanner.Scan() que devuelve true mientras haya datos.
+  3. Leer la línea actual con scanner.Text().
+  4. Verificar errores con scanner.Err() después del ciclo.
+
+  5. MÉTODOS PRINCIPALES DE bufio.Scanner
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  type Scanner struct { /* ... */ }
+
+  func NewScanner(r io.Reader) *Scanner
+  func (s *Scanner) Scan() bool
+  func (s *Scanner) Text() string
+  func (s *Scanner) Bytes() []byte
+  func (s *Scanner) Err() error
+  func (s *Scanner) Split(split SplitFunc)
+  func (s *Scanner) Buffer(buf []byte, max int)
+  ```
+
+  Ejemplo completo con manejo de errores:
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      archivo, err := os.Open("log.txt")
+      if err != nil {
+          fmt.Fprintf(os.Stderr, "Error al abrir: %v\n", err)
+          os.Exit(1)
+      }
+      defer archivo.Close()
+
+      scanner := bufio.NewScanner(archivo)
+      lineaNum := 0
+      for scanner.Scan() {
+          lineaNum++
+          linea := scanner.Text()
+          if len(linea) > 0 {
+              fmt.Printf("%4d: %s\n", lineaNum, linea)
+          }
+      }
+
+      if err := scanner.Err(); err != nil {
+          fmt.Fprintf(os.Stderr, "Error de lectura: %v\n", err)
+          os.Exit(1)
+      }
+  }
+  ```
+
+  6. DELIMITADORES PERSONALIZADOS CON Split
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  bufio.Scanner permite cambiar la función de división (split) para
+  leer por palabras, por bytes, o con delimitadores personalizados.
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "strings"
+  )
+
+  func main() {
+      datos := "uno,dos,tres,cuatro,cinco"
+      scanner := bufio.NewScanner(strings.NewReader(datos))
+
+      // Split por comas en lugar de por líneas
+      scanner.Split(bufio.ScanRunes)
+
+      // Split personalizado por comas
+      scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+          for i := 0; i < len(data); i++ {
+              if data[i] == ',' {
+                  return i + 1, data[:i], nil
+              }
+          }
+          if atEOF {
+              return len(data), data, nil
+          }
+          return 0, nil, nil
+      })
+
+      for scanner.Scan() {
+          fmt.Println(scanner.Text())
+      }
+  }
+  ```
+
+  Funciones de split predefinidas:
+
+  ```go
+  bufio.ScanLines    // Por líneas (por defecto)
+  bufio.ScanWords    // Por palabras
+  bufio.ScanRunes    // Por runas (caracteres Unicode)
+  bufio.ScanBytes    // Por bytes
+  ```
+
+  7. LÍMITE DE TAMAÑO DE TOKEN
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Por defecto, ScanLines limita las líneas a 64 KB. Si una línea
+  excede este tamaño, Scanner devuelve un error. Podemos cambiarlo:
+
+  ```go
+  scanner := bufio.NewScanner(archivo)
+  buf := make([]byte, 0, 64*1024)
+  scanner.Buffer(buf, 1024*1024) // buffer inicial 64 KB, máximo 1 MB
+  ```
+
+  8. bufio.Reader — LECTURA CON CONTROL FINO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  bufio.Reader proporciona métodos para leer cantidades específicas
+  de bytes, leer hasta un delimitador, o hacer peek (ver sin consumir).
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Open("archivo.bin")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      r := bufio.NewReader(f)
+
+      // Leer un byte
+      b, _ := r.ReadByte()
+      fmt.Printf("Primer byte: %c\n", b)
+
+      // Leer hasta un delimitador
+      linea, _ := r.ReadString('\n')
+      fmt.Printf("Primera línea: %s", linea)
+
+      // Peek: ver bytes sin consumirlos
+      peek, _ := r.Peek(5)
+      fmt.Printf("Siguientes 5 bytes (sin consumir): %v\n", peek)
+
+      // Leer N bytes exactos
+      buf := make([]byte, 10)
+      n, _ := io.ReadFull(r, buf)
+      fmt.Printf("Leídos %d bytes: %v\n", n, buf)
+  }
+  ```
+
+  Métodos principales de bufio.Reader:
+
+  ```go
+  func NewReader(rd io.Reader) *Reader
+  func NewReaderSize(rd io.Reader, size int) *Reader
+  func (b *Reader) Read(p []byte) (n int, err error)
+  func (b *Reader) ReadByte() (byte, error)
+  func (b *Reader) ReadBytes(delim byte) ([]byte, error)
+  func (b *Reader) ReadString(delim byte) (string, error)
+  func (b *Reader) ReadLine() (line []byte, isPrefix bool, err error)
+  func (b *Reader) Peek(n int) ([]byte, error)
+  func (b *Reader) Discard(n int) (discarded int, err error)
+  func (b *Reader) Buffered() int
+  func (b *Reader) Size() int
+  ```
+
+  9. io.Copy — COPIA EFICIENTE ENTRE STREAMS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  io.Copy copia datos de un Reader a un Writer usando un buffer
+  interno de 32 KB.
+
+  ```go
+  package main
+
+  import (
+      "io"
+      "os"
+  )
+
+  func main() {
+      src, _ := os.Open("origen.txt")
+      defer src.Close()
+      dst, _ := os.Create("destino.txt")
+      defer dst.Close()
+
+      n, err := io.Copy(dst, src)
+      if err != nil {
+          panic(err)
+      }
+      fmt.Printf("Copiados %d bytes\n", n)
+  }
+  ```
+
+  io.CopyN copia exactamente N bytes:
+
+  ```go
+  io.CopyN(dst, src, 1024) // copia 1 KB
+  ```
+
+  io.CopyBuffer permite usar un buffer personalizado:
+
+  ```go
+  buf := make([]byte, 64*1024) // 64 KB
+  io.CopyBuffer(dst, src, buf)
+  ```
+
+  10. LECTURA POR PARTES (CHUNKED READING)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para archivos muy grandes, leer en fragmentos es esencial:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Open("archivo_grande.dat")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      chunk := make([]byte, 4096) // 4 KB por fragmento
+      total := 0
+
+      for {
+          n, err := f.Read(chunk)
+          if n > 0 {
+              total += n
+              // Procesar chunk[:n] ...
+              fmt.Printf("Leídos %d bytes (total: %d)\n", n, total)
+          }
+          if err != nil {
+              break
+          }
+      }
+      fmt.Printf("Total leído: %d bytes\n", total)
+  }
+  ```
+
+  11. LECTURA CON SEEK (REPOSICIONAMIENTO)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  *os.File implementa io.Seeker, permitiendo moverse a cualquier
+  posición del archivo:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, _ := os.Open("archivo.txt")
+      defer f.Close()
+
+      // Ir al byte 100
+      f.Seek(100, 0)
+
+      // Leer desde ahí
+      buf := make([]byte, 50)
+      f.Read(buf)
+      fmt.Println(string(buf))
+
+      // Volver al inicio
+      f.Seek(0, 0)
+
+      // Ir al final
+      final, _ := f.Seek(0, 2)
+      fmt.Printf("Tamaño del archivo: %d bytes\n", final)
+  }
+  ```
+
+  Modos de seek:
+  - 0 = io.SeekStart: desde el inicio del archivo.
+  - 1 = io.SeekCurrent: desde la posición actual.
+  - 2 = io.SeekEnd: desde el final del archivo.
+
+  12. LECTURA DE ARCHIVOS COMPRIMIDOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Go soporta lectura de archivos comprimidos con paquetes adicionales:
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "compress/gzip"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      f, err := os.Open("datos.txt.gz")
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      defer f.Close()
+
+      gr, err := gzip.NewReader(f)
+      if err != nil {
+          fmt.Println("Error al crear lector gzip:", err)
+          return
+      }
+      defer gr.Close()
+
+      scanner := bufio.NewScanner(gr)
+      for scanner.Scan() {
+          fmt.Println(scanner.Text())
+      }
+  }
+  ```
+
+  13. LECTURA CON MULTIPLES FUENTES (io.MultiReader)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  io.MultiReader combina múltiples lectores en uno solo:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "os"
+      "strings"
+  )
+
+  func main() {
+      r1 := strings.NewReader("Primera parte\n")
+      r2 := strings.NewReader("Segunda parte\n")
+      f, _ := os.Open("tercera.txt")
+      defer f.Close()
+
+      combinado := io.MultiReader(r1, r2, f)
+      io.Copy(os.Stdout, combinado)
+  }
+  ```
+
+  14. TEE READER — DUPLICAR LECTURA (io.TeeReader)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  io.TeeReader permite leer y escribir simultáneamente (como el
+  comando tee de Unix):
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "os"
+      "strings"
+  )
+
+  func main() {
+      origen := strings.NewReader("Datos importantes\n")
+      archivoLog, _ := os.Create("bitacora.txt")
+      defer archivoLog.Close()
+
+      // Todo lo que se lea de origen se escribe también en archivoLog
+      teReader := io.TeeReader(origen, archivoLog)
+
+      // Leer desde el TeeReader
+      datos, _ := io.ReadAll(teReader)
+      fmt.Println("Leído:", string(datos))
+      // El archivo bitacora.txt ahora contiene los mismos datos
+  }
+  ```
+
+  15. PROGRAMA COMPLETO — PROCESADOR DE LOGS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+      "strings"
+      "time"
+  )
+
+  type EntradaLog struct {
+      Timestamp time.Time
+      Nivel     string
+      Mensaje   string
+  }
+
+  func main() {
+      if len(os.Args) < 2 {
+          fmt.Println("Uso: go run main.go <archivo_log>")
+          os.Exit(1)
+      }
+
+      archivo, err := os.Open(os.Args[1])
+      if err != nil {
+          fmt.Fprintf(os.Stderr, "Error al abrir: %v\n", err)
+          os.Exit(1)
+      }
+      defer archivo.Close()
+
+      var logs []EntradaLog
+      totalLineas := 0
+      errores := 0
+
+      scanner := bufio.NewScanner(archivo)
+      for scanner.Scan() {
+          totalLineas++
+          linea := scanner.Text()
+
+          entrada, err := parsearLinea(linea)
+          if err != nil {
+              errores++
+              continue
+          }
+          logs = append(logs, entrada)
+      }
+
+      if err := scanner.Err(); err != nil {
+          fmt.Fprintf(os.Stderr, "Error de lectura: %v\n", err)
+          os.Exit(1)
+      }
+
+      fmt.Println("=== REPORTE DE LOGS ===")
+      fmt.Printf("Total líneas: %d\n", totalLineas)
+      fmt.Printf("Logs parseados: %d\n", len(logs))
+      fmt.Printf("Errores de parseo: %d\n", errores)
+
+      // Contar por nivel
+      niveles := make(map[string]int)
+      for _, l := range logs {
+          niveles[l.Nivel]++
+      }
+      fmt.Println("\n=== POR NIVEL ===")
+      for nivel, count := range niveles {
+          fmt.Printf("%s: %d\n", nivel, count)
+      }
+
+      // Últimos 10 errores
+      fmt.Println("\n=== ÚLTIMOS 10 ERRORES ===")
+      count := 0
+      for i := len(logs) - 1; i >= 0 && count < 10; i-- {
+          if logs[i].Nivel == "ERROR" {
+              fmt.Printf("[%s] %s\n",
+                  logs[i].Timestamp.Format(time.RFC3339),
+                  logs[i].Mensaje)
+              count++
+          }
+      }
+  }
+
+  func parsearLinea(linea string) (EntradaLog, error) {
+      partes := strings.SplitN(linea, " ", 3)
+      if len(partes) < 3 {
+          return EntradaLog{}, fmt.Errorf("formato inválido: %s", linea)
+      }
+
+      ts, err := time.Parse(time.RFC3339, partes[0])
+      if err != nil {
+          return EntradaLog{}, fmt.Errorf("timestamp inválido: %s", partes[0])
+      }
+
+      return EntradaLog{
+          Timestamp: ts,
+          Nivel:     partes[1],
+          Mensaje:   partes[2],
+      }, nil
+  }
+  ```
+
+  Ejemplo de archivo de log:
+  ```
+  2026-07-02T10:00:00Z INFO Servicio iniciado
+  2026-07-02T10:01:00Z ERROR Conexión fallida a la BD
+  2026-07-02T10:02:00Z WARN Memoria baja: 512 MB disponibles
+  2026-07-02T10:03:00Z INFO Petición recibida: GET /api/users
+  ```
+
+  Salida esperada:
+  ```
+  === REPORTE DE LOGS ===
+  Total líneas: 4
+  Logs parseados: 4
+  Errores de parseo: 0
+
+  === POR NIVEL ===
+  INFO: 2
+  WARN: 1
+  ERROR: 1
+
+  === ÚLTIMOS 10 ERRORES ===
+  [2026-07-02T10:01:00Z] Conexión fallida a la BD
+  ```
+
+  16. COMPARATIVA DE RENDIMIENTO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Resultados típicos (benchmarks) para leer un archivo de 1 GB:
+
+  | Método              | Tiempo    | Memoria     |
+  |---------------------|-----------|-------------|
+  | os.ReadFile         | 1.2 s     | 1.05 GB     |
+  | io.ReadAll          | 1.2 s     | 1.05 GB     |
+  | bufio.Scanner       | 1.8 s     | 4 KB        |
+  | bufio.Reader + Read | 1.3 s     | 4 KB + buf  |
+  | f.Read (chunks)     | 1.4 s     | 4 KB        |
+
+  El Scanner es ligeramente más lento pero mucho más eficiente
+  en memoria. Para archivos enormes, es la mejor opción.
+
+  17. LECTURA DE ARCHIVOS CON CODIFICACIÓN ESPECÍFICA
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para archivos con codificación distinta a UTF-8, podemos usar
+  el paquete golang.org/x/text/encoding:
+
+  ```go
+  import "golang.org/x/text/encoding/charmap"
+
+  func leerWindows1252(nombre string) (string, error) {
+      datos, err := os.ReadFile(nombre)
+      if err != nil {
+          return "", err
+      }
+      dec := charmap.Windows1252.NewDecoder()
+      utf8, err := dec.Bytes(datos)
+      if err != nil {
+          return "", err
+      }
+      return string(utf8), nil
+  }
+  ```
+
+  18. LECTURA SEGURA EN ENTORNOS CONCURRENTES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para leer archivos desde múltiples goroutines, debemos sincronizar:
+
+  ```go
+  type LectorSeguro struct {
+      mu      sync.Mutex
+      archivo *os.File
+      reader  *bufio.Reader
+  }
+
+  func (ls *LectorSeguro) ReadLine() (string, error) {
+      ls.mu.Lock()
+      defer ls.mu.Unlock()
+      return ls.reader.ReadString('\n')
+  }
+  ```
+
+  19. READING FROM STANDARD INPUT (STDIN)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  bufio.Scanner también funciona con la entrada estándar:
+
+  ```go
+  package main
+
+  import (
+      "bufio"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      fmt.Println("Escribe líneas (Ctrl+D para terminar):")
+      scanner := bufio.NewScanner(os.Stdin)
+      for scanner.Scan() {
+          texto := scanner.Text()
+          if texto == "salir" {
+              break
+          }
+          fmt.Println("Escribiste:", texto)
+      }
+      if err := scanner.Err(); err != nil {
+          fmt.Println("Error:", err)
+      }
+  }
+  ```
+
+  20. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Usa bufio.Scanner para archivos de texto línea por línea.
+  2. Usa os.ReadFile solo para archivos pequeños (< 100 MB).
+  3. Siempre verifica scanner.Err() después del bucle.
+  4. Aumenta el buffer del Scanner si esperas líneas largas.
+  5. Usa bufio.Reader para control fino sobre la lectura.
+  6. Prefiere io.Copy para copiar entre streams.
+  7. Usa io.ReadAll con readers genéricos, no con archivos.
+  8. Cierra los archivos con defer inmediatamente después de abrir.
+  9. Para archivos binarios, usa encoding/binary con bufio.Reader.
+  10. No asumas que una línea cabe en 64 KB - configura Buffer().
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  • os.ReadFile e io.ReadAll leen archivos completos (para archivos pequeños).
+  • bufio.Scanner es ideal para leer línea por línea con bajo consumo de RAM.
+  • bufio.Reader ofrece métodos como ReadByte, Peek, ReadString.
+  • Las funciones de split permiten personalizar cómo se dividen los tokens.
+  • io.Copy, MultiReader, TeeReader y Seek complementan el ecosistema.
+  • La elección de la herramienta depende del tamaño y formato del archivo.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un programa que lea un archivo de texto y muestre las 10
+    líneas más largas, ordenadas por longitud descendente.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Usando bufio.Scanner, cuenta la frecuencia de cada palabra en
+    un archivo de texto. Ignora mayúsculas/minúsculas y signos de
+    puntuación.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Implementa un programa que lea un archivo CSV grande (sin usar
+    encoding/csv) usando bufio.Scanner con split personalizado por
+    comas. Maneja campos con comillas.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Crea un "visor hexadecimal" que lea un archivo binario en
+    fragmentos de 16 bytes y muestre tanto el valor hexadecimal
+    como la representación ASCII de cada fragmento.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Implementa un reemplazo de texto en un archivo grande sin
+    cargarlo completo en memoria. Usa archivos temporales para
+    escribir el resultado.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Escribe un programa que busque una cadena en múltiples archivos
+    de un directorio (como grep) usando concurrencia. Cada archivo
+    debe procesarse en una goroutine separada.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Implementa un "tail -f" en Go que lea un archivo en crecimiento
+    y muestre las nuevas líneas en tiempo real usando bufio.Scanner
+    con polling.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Crea un parser de archivos de configuración INI usando bufio.Scanner.
+    Soporta secciones [seccion], claves=valor, comentarios ; y #.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Cuál es la diferencia entre Scanner y Reader?
+  R: Scanner trabaja con tokens (líneas, palabras), Reader trabaja
+  con bytes. Scanner es más cómodo para texto; Reader da más control.
+
+  ❓ ¿Qué tamaño de buffer usa bufio.Scanner?
+  R: Por defecto, 64 KB para el buffer interno y 64 KB para el
+  token máximo. Se puede cambiar con Buffer().
+
+  ❓ ¿Cuándo debo usar os.ReadFile vs bufio.Scanner?
+  R: Usa os.ReadFile para archivos < 100 MB que necesitas completos
+  en memoria. Usa Scanner para archivos grandes o cuando procesas
+  línea por línea.
+
+  ❓ ¿Cómo leo un archivo que no termina en nueva línea?
+  R: Scanner maneja correctamente archivos sin newline final.
+  Scan() devuelve true para la última línea aunque no tenga \n.
+
+  ❓ ¿Qué hago si scanner.Scan() devuelve false prematuramente?
+  R: Verifica scanner.Err(). Puede ser un error de I/O o una línea
+  que excede el tamaño máximo del buffer.
+
+  ❓ ¿Puedo usar scanner para archivos binarios?
+  R: Técnicamente sí, pero no es lo recomendado. Usa bufio.Reader
+  o encoding/binary para datos binarios.
+
+  ❓ ¿Cómo leo exactamente N bytes de un archivo?
+  R: Usa io.ReadFull(reader, buf) o f.Read(buf) con verificación.
+
+  ❓ ¿Qué es el EOF en Go?
+  R: Es un error especial (io.EOF) que indica fin de archivo. No
+  es un carácter, es una condición. Los métodos Read devuelven
+  io.EOF cuando no hay más datos.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 MOTOR DE PROCESAMIENTO DE LOGS EN TIEMPO REAL
+
+  Diseña e implementa un sistema de procesamiento de logs que:
+
+  1. Lea múltiples archivos de log concurrentemente (uno por goroutine).
+  2. Detecte patrones en tiempo real usando expresiones regulares.
+  3. Acumule estadísticas (errores por minuto, top errores, etc.).
+  4. Emita alertas cuando se superen umbrales configurables.
+  5. Escriba los resultados en un archivo de reporte cada 10 segundos.
+  6. Maneje rotación de logs (cuando el archivo se trunca o renombra).
+  7. Implemente un mecanismo de backpressure si el procesamiento
+     no da abasto.
+
+  Requisitos técnicos:
+  - Usa bufio.Scanner con ReadLine desde la última posición conocida.
+  - Implementa un pipeline de canales para el flujo de datos.
+  - Usa sync.WaitGroup para coordinar las goroutines.
+  - Configuración vía archivo YAML o JSON.
+  - Señal de terminación graceful con os.Signal.
+
+  Este desafío integra:
+  - Lectura eficiente de archivos
+  - Concurrencia y canales
+  - Procesamiento de streams
+  - Patrones de productor-consumidor
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 52. Ahora dominas las diferentes
+  estrategias de lectura de archivos en Go. Sabes cuándo usar
+  os.ReadFile, bufio.Scanner, bufio.Reader, y cómo combinarlos
+  con io.Copy, MultiReader y TeeReader para resolver problemas
+  complejos de procesamiento de datos.
+
+  La lectura eficiente es una habilidad fundamental. Los archivos
+  grandes ya no son un problema: sabes cómo procesarlos línea por
+  línea, fragmento por fragmento, sin agotar la memoria.
+
+  En el próximo capítulo, aprenderás a escribir archivos con
+  la misma maestría, usando bufio.Writer, os.WriteFile y
+  técnicas de escritura atómica.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 53: ESCRITURA DE ARCHIVOS
+    Aprenderás a escribir archivos de forma eficiente y segura,
+    incluyendo escritura con buffer, formato, append, y técnicas
+    de escritura atómica para garantizar la integridad de los datos.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 52 — FIN DEL CAPÍTULO
+================================================================================

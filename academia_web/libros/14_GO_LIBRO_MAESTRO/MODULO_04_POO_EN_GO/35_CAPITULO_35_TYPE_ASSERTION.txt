@@ -1,0 +1,1029 @@
+===============================================================================
+  GO MASTER BOOK — MODULO IV: POO EN GO
+  CAPITULO 35: TYPE ASSERTION
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capitulo 35. En los dos capitulos anteriores trabajaste
+con interfaces y con la interfaz vacia any. Ahora necesitas la
+herramienta que permite extraer el tipo concreto que hay detras de
+una variable de tipo interfaz: el TYPE ASSERTION.
+
+La type assertion en Go tiene dos caras:
+  - La forma simple (x.(T)) que paniquea si falla.
+  - La forma segura (x.(T), ok) que informa si funciono.
+
+Ademas, veremos como el type switch (que ya usaste en el capitulo
+anterior) es en realidad una serie de type assertions organizadas
+por el compilador.
+
+Dominar la type assertion es esencial para trabajar con interfaces,
+any, serializacion, y para construir APIs que devuelvan tipos
+concretos desde interfaces abstractas.
+
+Vamos a extraer tipos con precision!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"La type assertion no es un casting: es una pregunta. 'Eres
+realmente este tipo?' Y la respuesta puede ser si, no o panic."
+
+  - E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Entender que es una type assertion y su sintaxis x.(T).
+  * Diferenciar entre la forma simple (panic) y la forma segura (comma ok).
+  * Usar type switch como cascada de type assertions.
+  * Extraer tipos concretos desde interfaces.
+  * Aplicar el comma ok idiom en todos los casos practicos.
+  * Evitar panics innecesarios con type assertions no seguras.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPITULO
+--------------------------------------------------------------------------------
+
+--- 1. QUE ES UNA TYPE ASSERTION ---------------------------------------------
+
+Una type assertion es una operacion que extrae el valor concreto
+almacenado dentro de una variable de tipo interfaz.
+
+Sintaxis:
+
+    valorConcreto := variableInterfaz.(TipoConcreto)
+
+Si la interfaz contiene un valor de tipo TipoConcreto, valorConcreto
+tendra ese valor y ese tipo. Si NO, el programa PANIQUEA.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    var v any = "Hola mundo"
+
+    // Type assertion exitosa
+    texto := v.(string)
+    fmt.Println(texto)
+
+    // Type assertion FALLIDA - PANIC
+    // numero := v.(int) // panic
+    // fmt.Println(numero)
+}
+--------------------------------------------------------------------------------
+
+--- 2. LA FORMA SEGURA: COMMA OK IDIOM ---------------------------------------
+
+Para evitar el panic, usamos la forma de dos valores:
+
+    valor, ok := variableInterfaz.(TipoConcreto)
+
+Si ok es true, la assertion funciono. Si ok es false, no funciono
+y valor es el valor cero de TipoConcreto.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    var v any = "Hola mundo"
+
+    texto, ok := v.(string)
+    if ok {
+        fmt.Println("Es string:", texto)
+    } else {
+        fmt.Println("No es string")
+    }
+
+    numero, ok := v.(int)
+    if ok {
+        fmt.Println("Es int:", numero)
+    } else {
+        fmt.Println("No es int, valor por defecto:", numero)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 3. TYPE ASSERTION SOBRE INTERFACES CON METODOS ---------------------------
+
+La type assertion funciona con cualquier tipo de interfaz:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Animal interface {
+    Sonido() string
+}
+
+type Perro struct{ Nombre string }
+
+func (p Perro) Sonido() string { return "Guau" }
+
+type Gato struct{ Nombre string }
+
+func (g Gato) Sonido() string { return "Miau" }
+
+func main() {
+    var a Animal = Perro{Nombre: "Rex"}
+
+    perro, ok := a.(Perro)
+    if ok {
+        fmt.Println("Es un perro llamado:", perro.Nombre)
+    }
+
+    gato, ok := a.(Gato)
+    if !ok {
+        fmt.Println("No es un gato")
+    }
+    _ = gato
+}
+--------------------------------------------------------------------------------
+
+--- 4. TYPE ASSERTION CON PUNTEROS -------------------------------------------
+
+Cuando la interfaz contiene un puntero, la assertion debe ser al
+tipo puntero:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Animal interface {
+    Sonido() string
+}
+
+type Perro struct{ Nombre string }
+
+func (p *Perro) Sonido() string { return "Guau" }
+
+func main() {
+    var a Animal = &Perro{Nombre: "Rex"}
+
+    perro, ok := a.(*Perro)
+    if ok {
+        fmt.Println("Es un perro llamado:", perro.Nombre)
+    }
+
+    _, ok = a.(Perro)
+    fmt.Println("Es Perro valor?", ok)
+}
+--------------------------------------------------------------------------------
+
+--- 5. TYPE SWITCH: CASCADA DE TYPE ASSERTIONS -------------------------------
+
+El type switch es equivalente a una serie de type assertions:
+
+    switch v := x.(type) {
+    case string:
+        // v es string
+    case int:
+        // v es int
+    default:
+        // v es any
+    }
+
+Cada case ejecuta una type assertion y, si funciona, vincula la
+variable al tipo concreto dentro del ambito del case.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func Clasificar(v any) string {
+    switch val := v.(type) {
+    case string:
+        return fmt.Sprintf("string (%q, len=%d)", val, len(val))
+    case int:
+        return fmt.Sprintf("int (%d)", val)
+    case bool:
+        return fmt.Sprintf("bool (%v)", val)
+    case []any:
+        return fmt.Sprintf("slice (len=%d)", len(val))
+    case nil:
+        return "nil"
+    default:
+        return fmt.Sprintf("desconocido (%T)", val)
+    }
+}
+
+func main() {
+    valores := []any{"Hola", 42, true, []any{1, 2, 3}, nil, 3.14}
+    for _, v := range valores {
+        fmt.Println(Clasificar(v))
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 6. TYPE SWITCH CON INTERFAZ PERSONALIZADA --------------------------------
+
+Puedes usar type switch para distinguir implementaciones concretas:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Forma interface {
+    Area() float64
+}
+
+type Circulo struct{ Radio float64 }
+
+func (c Circulo) Area() float64 { return 3.1416 * c.Radio * c.Radio }
+
+type Rectangulo struct{ Ancho, Alto float64 }
+
+func (r Rectangulo) Area() float64 { return r.Ancho * r.Alto }
+
+type Triangulo struct{ Base, Altura float64 }
+
+func (t Triangulo) Area() float64 { return t.Base * t.Altura / 2 }
+
+func Describir(f Forma) string {
+    switch v := f.(type) {
+    case Circulo:
+        return fmt.Sprintf("Circulo de radio %.2f", v.Radio)
+    case Rectangulo:
+        return fmt.Sprintf("Rectangulo %.2fx%.2f", v.Ancho, v.Alto)
+    case Triangulo:
+        return fmt.Sprintf("Triangulo base %.2f altura %.2f", v.Base, v.Altura)
+    default:
+        return fmt.Sprintf("Forma desconocida con area %.2f", f.Area())
+    }
+}
+
+func main() {
+    formas := []Forma{
+        Circulo{Radio: 5},
+        Rectangulo{Ancho: 3, Alto: 4},
+        Triangulo{Base: 6, Altura: 8},
+    }
+    for _, f := range formas {
+        fmt.Println(Describir(f))
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 7. TYPE ASSERTION CON INTERFACES ANIDADAS --------------------------------
+
+Una interfaz puede contener otra interfaz. La type assertion permite
+extraer la interfaz interna:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "io"
+    "strings"
+)
+
+func main() {
+    var v any = strings.NewReader("Hola mundo")
+
+    // Assertion a interfaz
+    reader, ok := v.(io.Reader)
+    if ok {
+        datos := make([]byte, 10)
+        n, _ := reader.Read(datos)
+        fmt.Printf("Leido: %s\n", string(datos[:n]))
+    }
+
+    // Assertion multiple
+    if r, ok := v.(io.Reader); ok {
+        if w, ok := v.(io.Writer); ok {
+            fmt.Println("Implementa Reader y Writer")
+            _ = w
+        } else {
+            fmt.Println("Solo implementa Reader")
+        }
+        _ = r
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 8. TYPE ASSERTION A INTERFACES DE METODO ---------------------------------
+
+Puedes hacer type assertion a interfaces con metodos para verificar
+capacidades adicionales:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Stringer interface {
+    String() string
+}
+
+type Formateador interface {
+    Formatear() string
+}
+
+type Dato struct{ Valor string }
+
+func (d Dato) String() string    { return d.Valor }
+func (d Dato) Formatear() string { return ">>> " + d.Valor + " <<<" }
+
+func Procesar(v any) {
+    fmt.Printf("Valor: %v\n", v)
+
+    if f, ok := v.(Formateador); ok {
+        fmt.Println("Formateado:", f.Formatear())
+    }
+
+    if s, ok := v.(Stringer); ok {
+        fmt.Println("Como string:", s.String())
+    }
+}
+
+func main() {
+    Procesar(Dato{Valor: "Ejemplo"})
+    Procesar(42)
+}
+--------------------------------------------------------------------------------
+
+--- 9. PATRON: MAPA DE TIPOS CON TYPE ASSERTION ------------------------------
+
+Un patron comun: almacenar diferentes tipos en un mapa y recuperarlos:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Registry struct {
+    items map[string]any
+}
+
+func NewRegistry() *Registry {
+    return &Registry{items: make(map[string]any)}
+}
+
+func (r *Registry) Set(clave string, valor any) {
+    r.items[clave] = valor
+}
+
+func (r *Registry) Get(clave string) any {
+    return r.items[clave]
+}
+
+func (r *Registry) GetString(clave string) (string, bool) {
+    v, ok := r.items[clave]
+    if !ok {
+        return "", false
+    }
+    s, ok := v.(string)
+    return s, ok
+}
+
+func (r *Registry) GetInt(clave string) (int, bool) {
+    v, ok := r.items[clave]
+    if !ok {
+        return 0, false
+    }
+    i, ok := v.(int)
+    return i, ok
+}
+
+func (r *Registry) GetFloat(clave string) (float64, bool) {
+    v, ok := r.items[clave]
+    if !ok {
+        return 0, false
+    }
+    f, ok := v.(float64)
+    return f, ok
+}
+
+func main() {
+    reg := NewRegistry()
+    reg.Set("nombre", "Lucas")
+    reg.Set("edad", 30)
+    reg.Set("altura", 1.75)
+
+    if nombre, ok := reg.GetString("nombre"); ok {
+        fmt.Println("Nombre:", nombre)
+    }
+
+    if edad, ok := reg.GetInt("edad"); ok {
+        fmt.Println("Edad:", edad)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 10. TYPE ASSERTION CON TIPOS COMPUESTOS ----------------------------------
+
+Puedes hacer assertion a tipos compuestos como slices, mapas, etc:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Usuario struct {
+    Nombre string
+    Edad   int
+}
+
+func ExtraerUsuarios(v any) []Usuario {
+    switch val := v.(type) {
+    case []Usuario:
+        return val
+    case []any:
+        usuarios := make([]Usuario, 0, len(val))
+        for _, item := range val {
+            if u, ok := item.(Usuario); ok {
+                usuarios = append(usuarios, u)
+            }
+        }
+        return usuarios
+    default:
+        return nil
+    }
+}
+
+func main() {
+    datos := []any{
+        Usuario{"Ana", 25},
+        "no soy usuario",
+        Usuario{"Luis", 30},
+    }
+
+    usuarios := ExtraerUsuarios(datos)
+    for _, u := range usuarios {
+        fmt.Printf("%s: %d anios\n", u.Nombre, u.Edad)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 11. TYPE ASSERTION Y NIL -------------------------------------------------
+
+Si la interfaz es nil, la type assertion falla (ok = false):
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    var v any
+
+    texto, ok := v.(string)
+    fmt.Printf("ok=%v, valor=%q\n", ok, texto)
+
+    // Type assertion simple sobre nil paniquea
+    // _ = v.(string) // panic
+}
+--------------------------------------------------------------------------------
+
+--- 12. TYPE SWITCH CON FALLTHROUGH -------------------------------------------
+
+En un type switch NO puedes usar fallthrough. Cada case es
+independiente y exclusivo.
+
+--- 13. TYPE ASSERTION Y METODOS DE INTERFAZ ----------------------------------
+
+Puedes hacer type assertion incluso cuando el tipo concreto implementa
+la interfaz de forma diferente:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "io"
+    "os"
+)
+
+type MiLector struct {
+    datos []byte
+    pos   int
+}
+
+func (m *MiLector) Read(p []byte) (int, error) {
+    if m.pos >= len(m.datos) {
+        return 0, io.EOF
+    }
+    n := copy(p, m.datos[m.pos:])
+    m.pos += n
+    return n, nil
+}
+
+func main() {
+    var r io.Reader = &MiLector{datos: []byte("Hola mundo")}
+
+    if mr, ok := r.(*MiLector); ok {
+        fmt.Printf("Es MiLector con %d bytes\n", len(mr.datos))
+    }
+
+    if f, ok := r.(*os.File); ok {
+        fmt.Println("Es archivo:", f.Name())
+    } else {
+        fmt.Println("No es un archivo")
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 14. REFLEXION CON TYPE ASSERTION -----------------------------------------
+
+El paquete reflect tambien permite hacer type assertions:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "reflect"
+)
+
+func main() {
+    var v any = "Hola"
+
+    // Con reflect
+    t := reflect.TypeOf(v)
+    fmt.Println("Tipo:", t)
+
+    // Convertir con reflection
+    rv := reflect.ValueOf(v)
+    if rv.Kind() == reflect.String {
+        s := rv.String()
+        fmt.Println("String:", s)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 15. ERRORES COMUNES CON TYPE ASSERTION -----------------------------------
+
+1. No usar comma ok cuando hay incertidumbre del tipo.
+
+    Mal: texto := v.(string)  // panic si v no es string
+    Bien: texto, ok := v.(string)
+
+2. Asumir que el tipo concreto coincide exactamente.
+
+    var a Animal = &Perro{}
+    p := a.(Perro) // panic! es *Perro, no Perro
+
+3. Olvidar que type assertion sobre nil da ok=false.
+
+4. Usar type switch cuando un simple type assertion basta.
+
+5. No considerar que los valores any pueden ser nil.
+
+--- 16. VENTAJAS DEL COMMA OK IDIOM ------------------------------------------
+
+El comma ok idiom es preferido en Go por varias razones:
+
+  1. No paniquea: controlas el flujo con if.
+  2. Documenta intencion: el ok indica si la assertion funciono.
+  3. Permite valores por defecto: si falla, obtienes el zero value.
+  4. Es expresivo: se lee como "intenta y dime si funciono".
+
+--- 17. TYPE ASSERTION DENTRO DE FUNCIONES GENERICAS -------------------------
+
+Incluso con genericos, a veces necesitas type assertion:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func Procesar[T any](valor T) string {
+    // Type assertion dentro de generico
+    switch v := any(valor).(type) {
+    case string:
+        return "Texto: " + v
+    case int:
+        return fmt.Sprintf("Entero: %d", v)
+    default:
+        return fmt.Sprintf("Tipo: %T", v)
+    }
+}
+
+func main() {
+    fmt.Println(Procesar("Hola"))
+    fmt.Println(Procesar(42))
+    fmt.Println(Procesar(3.14))
+}
+--------------------------------------------------------------------------------
+
+--- 18. EJEMPLO COMPLETO: PROCESADOR DE COMANDOS -----------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "strings"
+)
+
+type Comando struct {
+    Tipo  string
+    Args  []string
+    Datos any
+}
+
+type Resultado struct {
+    Exitoso bool
+    Mensaje string
+    Datos   any
+}
+
+type Ejecutor func(Comando) Resultado
+
+type Shell struct {
+    comandos map[string]Ejecutor
+}
+
+func NewShell() *Shell {
+    return &Shell{comandos: make(map[string]Ejecutor)}
+}
+
+func (s *Shell) Registrar(nombre string, fn Ejecutor) {
+    s.comandos[nombre] = fn
+}
+
+func (s *Shell) Ejecutar(entrada string) Resultado {
+    partes := strings.Fields(entrada)
+    if len(partes) == 0 {
+        return Resultado{false, "Comando vacio", nil}
+    }
+
+    fn, ok := s.comandos[partes[0]]
+    if !ok {
+        return Resultado{false, "Comando no encontrado: " + partes[0], nil}
+    }
+
+    cmd := Comando{
+        Tipo: partes[0],
+        Args: partes[1:],
+    }
+    return fn(cmd)
+}
+
+// Manejadores especificos
+func cmdEcho(c Comando) Resultado {
+    texto := strings.Join(c.Args, " ")
+    return Resultado{true, texto, texto}
+}
+
+func cmdSuma(c Comando) Resultado {
+    var total int
+    for _, arg := range c.Args {
+        var n int
+        if _, err := fmt.Sscanf(arg, "%d", &n); err != nil {
+            return Resultado{false, "Argumento no valido: " + arg, nil}
+        }
+        total += n
+    }
+    return Resultado{true, fmt.Sprintf("Total: %d", total), total}
+}
+
+func cmdInfo(c Comando) Resultado {
+    if len(c.Args) == 0 {
+        return Resultado{false, "Uso: info <tipo>", nil}
+    }
+
+    // Demostracion de type assertion con datos variados
+    var dato any
+    switch c.Args[0] {
+    case "string":
+        dato = "ejemplo"
+    case "int":
+        dato = 42
+    case "slice":
+        dato = []int{1, 2, 3}
+    case "mapa":
+        dato = map[string]int{"a": 1, "b": 2}
+    default:
+        dato = nil
+    }
+
+    info := ""
+    switch v := dato.(type) {
+    case string:
+        info = fmt.Sprintf("string de longitud %d", len(v))
+    case int:
+        info = fmt.Sprintf("int con valor %d", v)
+    case []int:
+        info = fmt.Sprintf("slice de ints: %v", v)
+    case map[string]int:
+        info = fmt.Sprintf("mapa con %d entradas", len(v))
+    case nil:
+        info = "valor nulo"
+    default:
+        info = fmt.Sprintf("tipo desconocido: %T", v)
+    }
+
+    return Resultado{true, info, dato}
+}
+
+func main() {
+    shell := NewShell()
+    shell.Registrar("echo", cmdEcho)
+    shell.Registrar("suma", cmdSuma)
+    shell.Registrar("info", cmdInfo)
+
+    entradas := []string{
+        "echo Hola mundo",
+        "suma 1 2 3 4 5",
+        "info string",
+        "info slice",
+        "info mapa",
+        "comando_invalido",
+    }
+
+    for _, entrada := range entradas {
+        r := shell.Ejecutar(entrada)
+        estado := "OK"
+        if !r.Exitoso {
+            estado = "ERROR"
+        }
+        fmt.Printf("[%s] %s -> %s\n", estado, entrada, r.Mensaje)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 19. TYPE ASSERTION Y JSON UNMARSHAL --------------------------------------
+
+Un caso comun: JSON.Unmarshal produce map[string]any, y necesitas
+type assertions para acceder a los datos:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+func main() {
+    jsonStr := `{
+        "nombre": "Lucas",
+        "edad": 30,
+        "activo": true,
+        "datos": {
+            "peso": 75.5,
+            "altura": 1.80
+        }
+    }`
+
+    var datos map[string]any
+    if err := json.Unmarshal([]byte(jsonStr), &datos); err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+
+    // Type assertions para acceder a los valores
+    if nombre, ok := datos["nombre"].(string); ok {
+        fmt.Println("Nombre:", nombre)
+    }
+
+    if edad, ok := datos["edad"].(float64); ok {
+        fmt.Println("Edad:", int(edad))
+    }
+
+    if activo, ok := datos["activo"].(bool); ok {
+        fmt.Println("Activo:", activo)
+    }
+
+    // Acceso a mapa anidado
+    if datosMap, ok := datos["datos"].(map[string]any); ok {
+        if peso, ok := datosMap["peso"].(float64); ok {
+            fmt.Println("Peso:", peso)
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 20. TYPE ASSERTION EN BUCLES ---------------------------------------------
+
+Iterando sobre slices de any con type switch:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    items := []any{
+        1, 2, 3,
+        "a", "b", "c",
+        true, false,
+    }
+
+    var sumaInts int
+    var sumaStrings string
+    var countBools int
+
+    for _, item := range items {
+        switch v := item.(type) {
+        case int:
+            sumaInts += v
+        case string:
+            sumaStrings += v
+        case bool:
+            countBools++
+            if v {
+                fmt.Println("Bool verdadero encontrado")
+            }
+        }
+    }
+
+    fmt.Printf("Suma ints: %d\n", sumaInts)
+    fmt.Printf("Concatenacion strings: %s\n", sumaStrings)
+    fmt.Printf("Total bools: %d\n", countBools)
+}
+--------------------------------------------------------------------------------
+
+--- 21. TYPE ASSERTION Y SEGURIDAD EN CONCURRENCIA ---------------------------
+
+Si compartes valores any entre gorutinas, las type assertions son
+seguras (la interfaz es inmutable), pero los valores concretos
+subyacentes pueden no serlo. Usa mutex o canales.
+
+--------------------------------------------------------------------------------
+  RESUMEN DEL CAPITULO
+--------------------------------------------------------------------------------
+
+  * Type assertion: x.(T) extrae el tipo concreto de una interfaz.
+  * Forma simple: valor := x.(T) - paniquea si falla.
+  * Forma segura: valor, ok := x.(T) - ok indica exito.
+  * Type switch: switch v := x.(type) { case T: ... }
+  * Type switch agrupa type assertions por tipo.
+  * Comma ok idiom es la forma preferida en Go.
+  * Las type assertions funcionan con tipos concretos y con interfaces.
+  * Siempre usa comma ok cuando no estes 100% seguro del tipo.
+
+--------------------------------------------------------------------------------
+  EJERCICIOS
+--------------------------------------------------------------------------------
+
+--- Ejercicio 1: Type assertion basica ---
+
+Crea una funcion ObtenerLongitud(v any) int que retorne la longitud
+si es string, slice o mapa. Usa type assertion segura.
+
+--- Ejercicio 2: Suma segura ---
+
+Crea una funcion SumarSeguro(a, b any) (float64, error) que sume
+dos valores si son numericos (int, float64). Usa comma ok.
+
+--- Ejercicio 3: Type switch con formas ---
+
+Define la interfaz Forma con Area() float64.
+Define Circulo, Rectangulo, Triangulo.
+Crea una funcion Informacion(f Forma) string que use type switch
+para dar informacion especifica de cada forma.
+
+--- Ejercicio 4: JSON dinamico ---
+
+Dado un JSON arbitrario, escribe una funcion que extraiga todos
+los valores de tipo string recursivamente. Usa type switch.
+
+--- Ejercicio 5: Validador de tipos ---
+
+Crea una funcion ValidarEstructura(v any, plantilla map[string]string) error
+que verifique que los tipos coinciden.
+Ejemplo: plantilla {"nombre": "string", "edad": "float64"}
+
+--- Ejercicio 6: Cache tipada ---
+
+Del ejemplo Registry, agrega metodos genericos:
+  - GetOrElse(clave string, def any) any
+  - GetAndDelete(clave string) (any, bool)
+  - Map(clave string, fn func(any) any) bool
+
+--- Ejercicio 7: Type assertion con interfaces ---
+
+Crea un tipo Logger que implemente io.Writer.
+Crea una funcion EscribirLog(w io.Writer, mensaje string).
+Extra: verifica si w implementa tambien io.Closer y cierralo.
+
+--- Ejercicio 8: Arbol de tipos ---
+
+Crea un tipo NodoArbol con campo Valor any e Hijos []*NodoArbol.
+Escribe una funcion SumarNodos(n *NodoArbol) float64 que sume
+todos los valores numericos en el arbol.
+
+--- Ejercicio 9: Convertidor recursivo ---
+
+Crea una funcion Convertir(v any, tipo string) (any, error) que
+convierta entre tipos: "string" a int, int a string, etc.
+
+--- Ejercicio 10: REPL con type assertion ---
+
+Crea un REPL simple que acepte comandos y use type assertion
+para ejecutar operaciones sobre diferentes tipos.
+
+--------------------------------------------------------------------------------
+  FAQ - PREGUNTAS FRECUENTES
+--------------------------------------------------------------------------------
+
+P: Cual es la diferencia entre type assertion y type switch?
+R: Type assertion verifica un solo tipo. Type switch prueba multiples
+   tipos en una estructura switch.
+
+P: Por que paniquea la type assertion simple?
+R: Por diseno: si sabes con certeza el tipo, no deberias pagar el
+   overhead de ok. Si no sabes, usa comma ok.
+
+P: Puedo hacer type assertion a un tipo de otro paquete?
+R: Si, siempre que importes el paquete y el tipo sea exportado.
+
+P: Que pasa si hago type assertion de una interfaz a otra interfaz?
+R: Funciona igual. Verifica si el valor concreto implementa la
+   interfaz destino.
+
+P: Como verifico si un any es nil?
+R: if v == nil { ... } o usa type switch con case nil.
+
+P: Type assertion afecta el rendimiento?
+R: Si, pero es minima. Una type assertion es una comparacion de
+   punteros a tipos en tiempo de ejecucion.
+
+P: Puedo hacer type assertion sobre un tipo generico T?
+R: Indirectamente, convirtiendo a any primero: any(valor).(Tipo).
+
+--------------------------------------------------------------------------------
+  DESAFIO DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+Sistema de Plugins con Carga Dinamica:
+
+Construye un sistema que cargue modulos (plugins) en tiempo de
+ejecucion y ejecute operaciones sobre ellos usando type assertion.
+
+  type Plugin interface {
+      Nombre() string
+      Version() string
+      Ejecutar(datos any) (any, error)
+  }
+
+  type GestorPlugins struct {
+      plugins map[string]Plugin
+  }
+
+  Funciones del gestor:
+    - Registrar(p Plugin) error
+    - Obtener(nombre string) (Plugin, bool)
+    - EjecutarPlugin(nombre string, datos any) (any, error)
+    - Listar() []string
+    - EjecutarTodos(datos any) map[string]any
+
+  Plugins a implementar:
+    1. PluginMayusculas - convierte string a mayusculas
+    2. PluginSuma - suma numeros (acepta []any)
+    3. PluginReverse - invierte string o slice
+    4. PluginStats - calcula estadisticas de []float64
+
+  Ademas:
+    5. Crea un plugin "Compuesto" que contenga sub-plugins
+    6. Usa type assertion para verificar los tipos en Ejecutar
+    7. Si un plugin no recibe el tipo esperado, error descriptivo
+
+  Extra: Carga de plugins desde un mapa de configuracion JSON.
+
+Este desafio integra type assertion, type switch, interfaces y
+diseno de sistemas extensibles.
+
+--------------------------------------------------------------------------------
+  CIERRE DEL CAPITULO
+--------------------------------------------------------------------------------
+
+Has dominado la type assertion en Go. Ahora sabes extraer tipos
+concretos de interfaces de forma segura, usar el comma ok idiom,
+y organizar logicas de tipo con type switch.
+
+Recuerda: la type assertion es una pregunta. Pregunta siempre con
+"ok" para evitar sorpresas.
+
+En el proximo capitulo veremos embedding (composicion), el mecanismo
+de Go para reutilizar codigo sin herencia.
+
+Nos vemos en el capitulo 36: EMBEDDING (COMPOSICION).
+
+--------------------------------------------------------------------------------
+  PROXIMO CAPITULO
+--------------------------------------------------------------------------------
+
+  CAPITULO 36: EMBEDDING (COMPOSICION)
+    -> Struct embedding, promoted fields/methods, embedding
+      interfaces, y composicion vs herencia.
+
+===============================================================================
+  FIN DEL CAPITULO 35 - TYPE ASSERTION
+===============================================================================

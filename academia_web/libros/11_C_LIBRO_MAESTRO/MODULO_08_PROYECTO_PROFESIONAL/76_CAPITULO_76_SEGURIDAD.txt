@@ -1,0 +1,1088 @@
+================================================================================
+  MÓDULO VIII: PROYECTO PROFESIONAL
+  CAPÍTULO 76: SEGURIDAD EN C
+================================================================================
+
+________________________________________________________________________________
+  BIENVENIDA
+________________________________________________________________________________
+
+Bienvenido al Capítulo 76. Hemos recorrido un largo camino: arquitectura,
+modularización, depuración, memoria y optimización. Ahora llegamos a uno
+de los temas más críticos para cualquier programador profesional de C:
+la seguridad.
+
+C es un lenguaje poderoso que te da control total sobre la memoria y el
+sistema. Pero ese poder viene con una gran responsabilidad. Los errores
+de seguridad en C han sido responsables de algunas de las vulnerabilidades
+más graves de la historia: buffer overflows, format string attacks, use-
+after-free, y muchos más.
+
+En este capítulo aprenderás a escribir código C seguro, a reconocer
+vulnerabilidades comunes y a proteger tus programas contra ataques.
+
+________________________________________________________________________________
+  FRASE DEL CAPÍTULO
+________________________________________________________________________________
+
+"En C, la seguridad no es una característica: es una disciplina. Cada
+línea que escribes es una potencial puerta de entrada si no tienes
+cuidado." — Lucas Ega
+
+________________________________________________________________________________
+  OBJETIVOS DEL CAPÍTULO
+________________________________________________________________________________
+
+  ✅ Identificar y prevenir buffer overflows.
+  ✅ Usar funciones seguras (fgets, strncpy, snprintf).
+  ✅ Prevenir format string attacks.
+  ✅ Manejar correctamente la memoria para evitar vulnerabilidades.
+  ✅ Implementar prácticas de codificación segura en C.
+
+________________________________________________________________________________
+  CONTENIDO
+________________________________________________________________________________
+
+=== 1. INTRODUCCIÓN A LA SEGURIDAD EN C ===
+
+La seguridad en C se centra principalmente en la gestión de memoria
+y la validación de entradas. Las vulnerabilidades más comunes son:
+
+  1. BUFFER OVERFLOW: Escribir más datos de los que un buffer puede
+     contener, corrompiendo memoria adyacente.
+  2. FORMAT STRING: Usar entradas del usuario como formato en printf.
+  3. USE-AFTER-FREE: Acceder a memoria después de liberarla.
+  4. INTEGER OVERFLOW: Desbordamiento aritmético que lleva a
+     comportamientos inesperados.
+  5. INYECCIÓN: Cuando datos del usuario se interpretan como comandos.
+
+OWASP (Open Web Application Security Project) clasifica C como un
+lenguaje de alto riesgo debido a la falta de protecciones automáticas.
+
+=== 2. BUFFER OVERFLOW: EL ENEMIGO PÚBLICO NÚMERO 1 ===
+
+El buffer overflow ocurre cuando se escriben datos más allá de los
+límites de un buffer, sobrescribiendo memoria adyacente.
+
+```c
+// buffer_overflow.c - Ejemplo de vulnerabilidad
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+void vulnerable() {
+    char buffer[64];
+    printf("Ingrese su nombre: ");
+    gets(buffer);  // PELIGRO: No hay límite de tamaño
+    printf("Hola, %s\n", buffer);
+}
+
+void corregido() {
+    char buffer[64];
+    printf("Ingrese su nombre: ");
+    if (fgets(buffer, sizeof(buffer), stdin)) {
+        // Eliminar el newline
+        buffer[strcspn(buffer, "\n")] = '\0';
+        printf("Hola, %s\n", buffer);
+    }
+}
+
+int main(int argc, char** argv) {
+    // vulnerable();  // Descomentar para ver el peligro
+    corregido();
+
+    // Ejemplo de overflow con argumentos
+    char copia[16];
+    if (argc > 1) {
+        strcpy(copia, argv[1]);  // PELIGRO: si argv[1] es más largo...
+        printf("Copiado: %s\n", copia);
+    }
+
+    return 0;
+}
+```
+
+```bash
+# Probar el overflow
+$ ./programa AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+# Puede causar: segmentation fault, corrupción de datos, o peor
+```
+
+Alternativas seguras a funciones peligrosas:
+
+```c
+// PELIGROSO                       // SEGURO
+gets(buffer)                        fgets(buffer, sizeof(buffer), stdin)
+strcpy(dest, src)                   strncpy(dest, src, n) o strlcpy()
+strcat(dest, src)                   strncat(dest, src, n)
+sprintf(buffer, fmt, ...)           snprintf(buffer, size, fmt, ...)
+vsprintf(buffer, fmt, args)         vsnprintf(buffer, size, fmt, args)
+scanf("%s", buffer)                 scanf("%63s", buffer)  // con límite
+```
+
+La función strncpy tiene sus propias trampas:
+
+```c
+char buffer[16];
+
+// strncpy NO agrega terminación nula si el origen es >= tamaño
+strncpy(buffer, "Un texto muy largo que excede el buffer", sizeof(buffer));
+// buffer NO tiene terminación nula! Peligro al usarlo como string
+
+// La forma correcta:
+strncpy(buffer, "Texto", sizeof(buffer) - 1);
+buffer[sizeof(buffer) - 1] = '\0';
+
+// O mejor: usar snprintf
+snprintf(buffer, sizeof(buffer), "%s", "Texto");
+```
+
+=== 3. FORMAT STRING ATTACK ===
+
+Este ataque ocurre cuando una entrada del usuario se pasa como
+formato a printf o funciones similares.
+
+```c
+// format_string.c
+#include <stdio.h>
+#include <stdlib.h>
+
+void vulnerable(const char* entrada) {
+    printf(entrada);  // PELIGRO: entrada del usuario como formato
+    // Si el usuario ingresa "%x %x %x %x", lee la pila
+    // Si ingresa "%n", escribe en direcciones de memoria
+}
+
+void corregido(const char* entrada) {
+    printf("%s", entrada);  // SEGURO: entrada como argumento, no formato
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        fprintf(stderr, "Uso: %s <formato>\n", argv[0]);
+        return 1;
+    }
+
+    printf("=== VULNERABLE ===\n");
+    vulnerable(argv[1]);
+
+    printf("\n=== CORREGIDO ===\n");
+    corregido(argv[1]);
+
+    return 0;
+}
+```
+
+```bash
+$ ./programa "%x.%x.%x.%x"
+# El programa vulnerable muestra valores de la pila (filtración de info)
+
+$ ./programa "%s%s%s%s"
+# Puede causar crash o filtrar strings de la pila
+
+$ ./programa "%n"
+# Intenta escribir en la dirección apuntada por el siguiente argumento
+# Esto puede causar segmentation fault o, en casos extremos,
+# permitir ejecución de código arbitrario
+```
+
+REGLAS para prevenir format string attacks:
+  - NUNCA uses datos del usuario como formato.
+  - Siempre usa printf("%s", datos) en lugar de printf(datos).
+  - Valida que los formatos sean fijos y conocidos.
+  - Usa compiladores con -Wformat-security (GCC).
+
+=== 4. INTEGER OVERFLOW ===
+
+El desbordamiento de enteros ocurre cuando una operación aritmética
+produce un valor fuera del rango del tipo de dato.
+
+```c
+// integer_overflow.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+
+void malloc_overflow() {
+    size_t n = 0;
+    printf("¿Cuántos elementos? ");
+    scanf("%zu", &n);
+
+    // PELIGRO: si n es muy grande, n * sizeof(int) puede desbordar
+    int* datos = malloc(n * sizeof(int));
+
+    // SEGURO: verificar desbordamiento antes de multiplicar
+    if (n > SIZE_MAX / sizeof(int)) {
+        fprintf(stderr, "Tamaño demasiado grande\n");
+        return;
+    }
+    datos = malloc(n * sizeof(int));
+    free(datos);
+}
+
+void suma_overflow() {
+    int a = INT_MAX;
+    int b = 1;
+
+    // PELIGRO: desbordamiento de signed (comportamiento indefinido)
+    int c = a + b;
+    printf("a + b = %d\n", c);
+
+    // SEGURO: verificar antes de sumar
+    if (a > INT_MAX - b) {
+        printf("Desbordamiento detectado\n");
+    } else {
+        c = a + b;
+        printf("a + b = %d\n", c);
+    }
+}
+
+int main() {
+    malloc_overflow();
+    suma_overflow();
+    return 0;
+}
+```
+
+Verificaciones de desbordamiento comunes:
+
+```c
+#include <stdckint.h>  // C23: funciones checked
+
+// Suma segura (C23)
+// int result = ckd_add(&r, a, b);
+
+// Suma segura (manual)
+bool suma_segura(int a, int b, int* resultado) {
+    if ((b > 0 && a > INT_MAX - b) ||
+        (b < 0 && a < INT_MIN - b)) {
+        return false;  // Desbordamiento
+    }
+    *resultado = a + b;
+    return true;
+}
+
+// Multiplicación segura
+bool multiplicacion_segura(size_t a, size_t b, size_t* resultado) {
+    if (a > 0 && b > SIZE_MAX / a) {
+        return false;  // Desbordamiento
+    }
+    *resultado = a * b;
+    return true;
+}
+```
+
+=== 5. POINTER SUBTERFUGE (NULL POINTER + OFFSETS) ===
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+// PELIGROSO: No verificar puntero antes de usarlo
+size_t longitud_insegura(const char* s) {
+    return strlen(s);  // Crash si s es NULL
+}
+
+// SEGURO: Verificar antes
+size_t longitud_segura(const char* s) {
+    return s ? strlen(s) : 0;
+}
+
+// PELIGROSO: Dangling pointer
+char* obtener_mensaje() {
+    char buffer[64];
+    strcpy(buffer, "Hola, mundo!");
+    return buffer;  // PELIGRO: retorna puntero a variable local
+}
+
+// SEGURO: Memoria dinámica o parámetro de salida
+char* obtener_mensaje_seguro() {
+    char* buffer = malloc(64);
+    if (buffer) {
+        strcpy(buffer, "Hola, mundo!");
+    }
+    return buffer;  // El llamador debe liberarlo
+}
+
+void obtener_mensaje_param(char* buffer, size_t tam) {
+    if (buffer) {
+        strncpy(buffer, "Hola, mundo!", tam - 1);
+        buffer[tam - 1] = '\0';
+    }
+}
+
+int main() {
+    // Probar con NULL
+    printf("Longitud: %zu\n", longitud_segura(NULL));
+
+    // Probar dangling pointer
+    char* msg = obtener_mensaje();  // Comportamiento indefinido
+    printf("%s\n", msg);  // Puede funcionar... o no
+
+    return 0;
+}
+```
+
+=== 6. COMAND INJECTION ===
+
+Cuando datos del usuario se usan para construir comandos del sistema:
+
+```c
+// command_injection.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// PELIGRO: Inyección de comandos
+void listar_archivos_peligroso(const char* ruta) {
+    char comando[256];
+    sprintf(comando, "ls -la %s", ruta);  // PELIGRO
+    system(comando);  // Si ruta es "; rm -rf /", se ejecuta
+}
+
+// SEGURO: Validar entrada
+bool es_ruta_segura(const char* ruta) {
+    if (!ruta || strlen(ruta) == 0) return false;
+
+    // No permitir caracteres peligrosos
+    const char* peligrosos = ";|&`$(){}[]!<>\\'\"\n\t";
+    for (const char* p = ruta; *p; p++) {
+        if (strchr(peligrosos, *p)) return false;
+    }
+
+    // No permitir rutas absolutas o relativas que escapen
+    if (ruta[0] == '/' || strstr(ruta, "..") != NULL) return false;
+
+    return true;
+}
+
+void listar_archivos_seguro(const char* ruta) {
+    if (!es_ruta_segura(ruta)) {
+        fprintf(stderr, "Ruta no válida\n");
+        return;
+    }
+    // Usar execve en lugar de system para más control
+    // (implementación segura)
+    printf("Listando: %s\n", ruta);
+    // Idealmente: fork + execve con argumentos separados
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        fprintf(stderr, "Uso: %s <ruta>\n", argv[0]);
+        return 1;
+    }
+
+    printf("Versión peligrosa:\n");
+    // listar_archivos_peligroso(argv[1]);  // No ejecutar
+
+    printf("Versión segura:\n");
+    listar_archivos_seguro(argv[1]);
+
+    return 0;
+}
+```
+
+=== 7. SEGURIDAD EN ARCHIVOS ===
+
+Las operaciones con archivos tienen múltiples vulnerabilidades:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+// PELIGRO: Race condition (TOCTOU)
+void leer_archivo_peligroso(const char* ruta) {
+    if (access(ruta, R_OK) != 0) {
+        fprintf(stderr, "No hay permiso\n");
+        return;
+    }
+    // TOCTOU: entre access() y fopen(), el archivo puede cambiar
+    FILE* f = fopen(ruta, "r");
+    if (f) {
+        // Leer archivo
+        fclose(f);
+    }
+}
+
+// SEGURO: Abrir directamente y manejar errores
+void leer_archivo_seguro(const char* ruta) {
+    FILE* f = fopen(ruta, "r");
+    if (!f) {
+        fprintf(stderr, "Error al abrir: %s\n", ruta);
+        return;
+    }
+    // Leer archivo con límites
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), f)) {
+        printf("%s", buffer);
+    }
+    fclose(f);
+}
+
+// PELIGRO: Nombre de archivo temporal predecible
+void crear_temp_peligroso() {
+    char nombre[] = "/tmp/mi_archivo.txt";
+    FILE* f = fopen(nombre, "w");
+    if (f) {
+        // Escribir datos sensibles
+        fclose(f);
+    }
+}
+
+// SEGURO: Usar mkstemp
+void crear_temp_seguro() {
+    char nombre[] = "/tmp/mi_temp_XXXXXX";
+    int fd = mkstemp(nombre);
+    if (fd == -1) {
+        perror("Error al crear temp");
+        return;
+    }
+    FILE* f = fdopen(fd, "w");
+    if (f) {
+        fprintf(f, "Datos temporales\n");
+        fclose(f);
+    }
+}
+
+int main() {
+    leer_archivo_seguro("/etc/hostname");
+    crear_temp_seguro();
+    return 0;
+}
+```
+
+=== 8. FIXED vs VARIABLE LENGTH ARRAYS ===
+
+Los VLA (Variable Length Arrays) pueden causar stack overflow si
+el tamaño es controlado por el usuario:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// PELIGRO: VLA con tamaño controlado por el usuario
+void procesar_vla_peligroso(size_t n) {
+    if (n > 1000000) {
+        fprintf(stderr, "Tamaño excesivo\n");
+        return;
+    }
+    int datos[n];  // VLA - peligro de stack overflow
+    // Si n es grande, la pila se desborda antes de llegar a la verificación
+    // Porque la verificación solo controla hasta 1M, pero 1M ints son 4MB
+    memset(datos, 0, sizeof(datos));
+}
+
+// SEGURO: No usar VLA para tamaños grandes
+void procesar_seguro(size_t n) {
+    // Verificar límite razonable
+    if (n == 0 || n > 1024 * 1024) {
+        fprintf(stderr, "Tamaño inválido\n");
+        return;
+    }
+    // Usar heap para tamaños grandes
+    int* datos = malloc(n * sizeof(int));
+    if (!datos) {
+        fprintf(stderr, "Error de memoria\n");
+        return;
+    }
+    memset(datos, 0, n * sizeof(int));
+    free(datos);
+}
+
+int main() {
+    printf("Con VLA cuidadoso:\n");
+    procesar_vla_peligroso(10000);  // Puede funcionar
+
+    printf("Con heap:\n");
+    procesar_seguro(1000000);  // Seguro
+
+    return 0;
+}
+```
+
+=== 9. SEGURIDAD EN STRING COPY ===
+
+```c
+// seguridad_strings.c - Comparación de funciones
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+int main() {
+    char destino[16];
+    const char* fuente = "Este texto es demasiado largo para el buffer";
+
+    // 1. strcpy - PELIGROSO
+    // strcpy(destino, fuente);  // Desbordamiento seguro
+
+    // 2. strncpy - PARCIALMENTE SEGURO
+    strncpy(destino, fuente, sizeof(destino));
+    // PROBLEMA: strncpy no agrega '\0' si el origen es >= tamaño
+    destino[sizeof(destino) - 1] = '\0';  // Forzar terminación
+
+    // 3. snprintf - SEGURO
+    snprintf(destino, sizeof(destino), "%s", fuente);
+    // snprintf siempre agrega terminación nula
+
+    // 4. strlcpy - SEGURO (BSD, no estándar pero común)
+    // strlcpy(destino, fuente, sizeof(destino));
+    // strlcpy siempre agrega terminación nula
+
+    printf("Destino: %s\n", destino);
+
+    return 0;
+}
+```
+
+=== 10. STACK CANARIES Y PROTECCIONES DEL COMPILADOR ===
+
+GCC ofrece protecciones contra buffer overflow:
+
+```bash
+# Stack canary (protege contra overflow en el stack)
+gcc -fstack-protector -o programa programa.c
+gcc -fstack-protector-strong -o programa programa.c  # Más cobertura
+gcc -fstack-protector-all -o programa programa.c      # Todas las funciones
+
+# Fortify (detecta funciones inseguras en tiempo de compilación)
+gcc -D_FORTIFY_SOURCE=1 -O1 -o programa programa.c
+gcc -D_FORTIFY_SOURCE=2 -O2 -o programa programa.c  # Más estricto
+
+# RELRO (Reubicación de solo lectura)
+gcc -Wl,-z,relro -Wl,-z,now -o programa programa.c
+
+# ASLR (Address Space Layout Randomization) - del sistema
+# echo 2 > /proc/sys/kernel/randomize_va_space
+
+# NX (No-Execute) - del compilador
+gcc -z noexecstack -o programa programa.c
+```
+
+Ejemplo de stack protector en acción:
+
+```c
+// stack_protect.c
+#include <stdio.h>
+#include <string.h>
+
+__attribute__((noinline)) void funcion_con_canary() {
+    char buffer[64];
+    // Si escribimos más allá del buffer, el canary se corrompe
+    // y el programa aborta con "stack smashing detected"
+    gets(buffer);  // Descomentar para probar
+}
+
+int main() {
+    printf("Compilar con: gcc -fstack-protector-strong\n");
+    // funcion_con_canary();
+    return 0;
+}
+```
+
+=== 11. SEGURIDAD EN MULTIHILO ===
+
+Los programas multihilo tienen vulnerabilidades específicas:
+
+```c
+// seguridad_multihilo.c
+#include <stdio.h>
+#include <pthread.h>
+#include <string.h>
+#include <stdlib.h>
+
+typedef struct {
+    char nombre[64];
+    int  saldo;
+} Cuenta;
+
+Cuenta cuenta_global;
+
+void* actualizar_cuenta(void* arg) {
+    int cantidad = *(int*)arg;
+
+    // PELIGRO: race condition
+    cuenta_global.saldo += cantidad;  // No atómico
+
+    return NULL;
+}
+
+// SEGURO: usar mutex
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void* actualizar_cuenta_seguro(void* arg) {
+    int cantidad = *(int*)arg;
+
+    pthread_mutex_lock(&mutex);
+    cuenta_global.saldo += cantidad;  // Protegido
+    pthread_mutex_unlock(&mutex);
+
+    return NULL;
+}
+
+// PELIGRO: string compartido sin protección
+char mensaje_compartido[256];
+
+void* escribir_mensaje(void* arg) {
+    const char* texto = (const char*)arg;
+    strcpy(mensaje_compartido, texto);  // Race condition en string
+    return NULL;
+}
+
+int main() {
+    pthread_t hilos[10];
+    int cantidades[10];
+
+    // Versión peligrosa
+    for (int i = 0; i < 10; i++) {
+        cantidades[i] = 100;
+        pthread_create(&hilos[i], NULL, actualizar_cuenta, &cantidades[i]);
+    }
+    for (int i = 0; i < 10; i++) {
+        pthread_join(hilos[i], NULL);
+    }
+    printf("Saldo esperado: 1000, obtenido: %d\n", cuenta_global.saldo);
+
+    return 0;
+}
+```
+
+=== 12. CALLBACKS NO SEGUROS ===
+
+Los punteros a función pueden ser peligrosos si no se controlan:
+
+```c
+// callbacks_seguros.c
+#include <stdio.h>
+#include <string.h>
+
+// PELIGRO: puntero a función sin tipo seguro
+typedef void (*Callback)(void);
+Callback callback_global = NULL;
+
+void registrar_callback_peligroso(Callback cb) {
+    callback_global = cb;  // No hay verificación
+}
+
+void ejecutar_callback_peligroso() {
+    if (callback_global) {
+        callback_global();  // Podría ser cualquier dirección
+    }
+}
+
+// SEGURO: usar tipos específicos con contexto
+typedef struct {
+    void (*funcion)(void* ctx);
+    void* contexto;
+    char  nombre[32];
+} CallbackSegura;
+
+CallbackSegura registrados[10];
+int num_registrados = 0;
+
+bool registrar_callback_seguro(const char* nombre,
+                               void (*func)(void*),
+                               void* ctx) {
+    if (num_registrados >= 10) return false;
+    CallbackSegura* cb = &registrados[num_registrados];
+    cb->funcion = func;
+    cb->contexto = ctx;
+    strncpy(cb->nombre, nombre, sizeof(cb->nombre) - 1);
+    num_registrados++;
+    return true;
+}
+
+void ejecutar_callbacks_seguro() {
+    for (int i = 0; i < num_registrados; i++) {
+        registrados[i].funcion(registrados[i].contexto);
+    }
+}
+
+// Función callback de ejemplo
+void saludar(void* ctx) {
+    const char* nombre = (const char*)ctx;
+    printf("Hola, %s!\n", nombre);
+}
+
+int main() {
+    registrar_callback_seguro("saludar", saludar, "Mundo");
+    ejecutar_callbacks_seguro();
+    return 0;
+}
+```
+
+=== 13. MANEJO SEGURO DE ARCHIVOS CON PRIVILEGIOS ===
+
+```c
+// privilegios.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+// PELIGRO: ejecutar con privilegios elevados sin necesidad
+void proceso_peligroso() {
+    // Ejecutando como root innecesariamente
+    FILE* f = fopen("/etc/config.txt", "r");
+    if (f) {
+        char cmd[256];
+        while (fgets(cmd, sizeof(cmd), f)) {
+            system(cmd);  // Ejecuta comandos como root!
+        }
+        fclose(f);
+    }
+}
+
+// SEGURO: drop de privilegios
+void proceso_seguro() {
+    uid_t uid = getuid();
+    gid_t gid = getgid();
+
+    // Si somos root, cambiar a nobody
+    if (uid == 0) {
+        // Primero: cambiar grupo
+        struct passwd* pw = getpwnam("nobody");
+        if (pw) {
+            setgid(pw->pw_gid);
+            setuid(pw->pw_uid);
+        }
+    }
+
+    // Ahora trabajamos con privilegios reducidos
+    FILE* f = fopen("/etc/config.txt", "r");
+    if (f) {
+        // Leer sin privilegios de root
+        printf("Archivo legible\n");
+        fclose(f);
+    }
+}
+
+int main() {
+    printf("Ejemplo de drop de privilegios\n");
+    // proceso_seguro();
+    return 0;
+}
+```
+
+=== 14. CODIFICACIÓN SEGURA: LISTA DE VERIFICACIÓN ===
+
+Lista de verificación para código C seguro:
+
+[ ] Toda entrada del usuario está validada (tamaño, tipo, rango).
+[ ] No se usa gets(), solo fgets() con límite.
+[ ] strcpy() se reemplaza por strncpy() o snprintf().
+[ ] strcat() se reemplaza por strncat().
+[ ] No se usan format strings con datos del usuario.
+[ ] Los VLA no se usan con tamaños controlados por el usuario.
+[ ] Toda memoria asignada se libera explícitamente.
+[ ] Los punteros se verifican antes de usarlos (NULL check).
+[ ] Las operaciones aritméticas no desbordan.
+[ ] No hay condiciones de carrera en secciones críticas.
+[ ] Los nombres de archivos temporales son impredecibles.
+[ ] Los privilegios se reducen cuando no son necesarios.
+[ ] Los mensajes de error no revelan información sensible.
+[ ] El código se compila con -fstack-protector -D_FORTIFY_SOURCE=2.
+
+=== 15. HERRAMIENTAS DE ANÁLISIS DE SEGURIDAD ===
+
+```bash
+# Análisis estático
+cppcheck --enable=all --suppress=missingIncludeSystem ./
+scan-build gcc -c programa.c  # Clang Static Analyzer
+flawfinder programa.c
+rats programa.c
+
+# Análisis dinámico
+valgrind --tool=memcheck ./programa
+valgrind --tool=helgrind ./programa  # Condiciones de carrera
+
+# Fuzzing
+afl-gcc -o programa programa.c
+afl-fuzz -i input_dir -o output_dir ./programa
+
+# Desinfección (AddressSanitizer, UndefinedBehaviorSanitizer)
+gcc -fsanitize=address -g -o programa programa.c
+gcc -fsanitize=undefined -g -o programa programa.c
+gcc -fsanitize=thread -g -pthread -o programa programa.c
+```
+
+Ejemplo con AddressSanitizer:
+
+```bash
+$ gcc -fsanitize=address -g -o buggy buggy.c
+$ ./buggy
+=================================================================
+==12345==ERROR: AddressSanitizer: heap-buffer-overflow on address...
+    #0 0x1091b4 in main buggy.c:12
+    #1 0x7f123456789 in __libc_start_main libc-start.c:308
+```
+
+=== 16. CASO PRÁCTICO: SERVIDOR HTTP SEGURO ===
+
+```c
+// mini_httpd_seguro.c - Fragmento
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUFFER_TAM 4096
+#define RUTA_MAX 256
+
+int leer_solicitud(int client_fd, char* buffer, size_t tam) {
+    ssize_t bytes = read(client_fd, buffer, tam - 1);
+    if (bytes <= 0) return -1;
+    buffer[bytes] = '\0';
+    return (int)bytes;
+}
+
+bool validar_ruta(const char* ruta) {
+    // No permitir rutas con ".." o caracteres peligrosos
+    if (!ruta || ruta[0] != '/') return false;
+    if (strstr(ruta, "..") != NULL) return false;
+    if (strchr(ruta, '\\') != NULL) return false;
+    return true;
+}
+
+int manejar_solicitud(int client_fd) {
+    char buffer[BUFFER_TAM];
+    char ruta[RUTA_MAX];
+    char respuesta[BUFFER_TAM];
+
+    if (leer_solicitud(client_fd, buffer, sizeof(buffer)) < 0) {
+        return -1;
+    }
+
+    // Parsear la solicitud de forma segura
+    if (sscanf(buffer, "GET %255s HTTP", ruta) != 1) {
+        snprintf(respuesta, sizeof(respuesta),
+                 "HTTP/1.1 400 Bad Request\r\n\r\n");
+        write(client_fd, respuesta, strlen(respuesta));
+        return -1;
+    }
+
+    // Validar la ruta
+    if (!validar_ruta(ruta)) {
+        snprintf(respuesta, sizeof(respuesta),
+                 "HTTP/1.1 403 Forbidden\r\n\r\n");
+        write(client_fd, respuesta, strlen(respuesta));
+        return -1;
+    }
+
+    // Servir el archivo (limitado a directorio específico)
+    char ruta_completa[RUTA_MAX + 32];
+    snprintf(ruta_completa, sizeof(ruta_completa),
+             "./htdocs%s", ruta);
+
+    FILE* f = fopen(ruta_completa, "rb");
+    if (!f) {
+        snprintf(respuesta, sizeof(respuesta),
+                 "HTTP/1.1 404 Not Found\r\n\r\n");
+        write(client_fd, respuesta, strlen(respuesta));
+        return -1;
+    }
+
+    // Leer y enviar archivo
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        write(client_fd, buffer, n);
+    }
+
+    fclose(f);
+    return 0;
+}
+
+int main() {
+    // Configurar socket seguro
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(8080),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 10);
+
+    printf("Servidor HTTP seguro en puerto 8080\n");
+
+    while (1) {
+        struct sockaddr_in client;
+        socklen_t client_len = sizeof(client);
+        int client_fd = accept(server_fd,
+                               (struct sockaddr*)&client,
+                               &client_len);
+        if (client_fd < 0) continue;
+
+        manejar_solicitud(client_fd);
+        close(client_fd);
+    }
+
+    close(server_fd);
+    return 0;
+}
+```
+
+________________________________________________________________________________
+  RESUMEN
+________________________________________________________________________________
+
+En este capítulo hemos aprendido:
+
+  ✅ Los buffer overflows se previenen usando funciones con límites.
+  ✅ Las format string attacks se evitan con printf("%s", datos).
+  ✅ Los integer overflows se verifican antes de la operación.
+  ✅ La inyección de comandos se previene validando entradas.
+  ✅ Las funciones inseguras (gets, strcpy) tienen alternativas seguras.
+  ✅ Las protecciones del compilador (stack protector, fortify source).
+  ✅ AddressSanitizer detecta errores de memoria en tiempo de ejecución.
+  ✅ El principio de mínimo privilegio reduce el impacto de ataques.
+
+La seguridad en C no es un tema opcional: es una responsabilidad de
+todo programador profesional. Cada función insegura es una potencial
+vulnerabilidad esperando ser explotada.
+
+________________________________________________________________________________
+  EJERCICIOS
+________________________________________________________________________________
+
+1. EJERCICIO BÁSICO: Identifica todas las funciones inseguras en
+   el siguiente código y reemplázalas con versiones seguras:
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char** argv) {
+    char buffer[64];
+    char comando[128];
+
+    gets(buffer);
+    printf(buffer);
+
+    strcpy(comando, "cat ");
+    strcat(comando, argv[1]);
+    system(comando);
+
+    return 0;
+}
+```
+
+2. EJERCICIO PRÁCTICO: Implementa una función segura para leer
+   una línea de un archivo que garantice: (a) no desbordamiento,
+   (b) terminación nula, (c) detección de líneas truncadas.
+
+3. EJERCICIO AVANZADO: Escribe un programa que demuestre un format
+   string attack. Luego, implementa la versión corregida y explica
+   por qué es segura.
+
+4. EJERCICIO DE ANÁLISIS: Dado el siguiente código, encuentra
+   todas las vulnerabilidades de seguridad y clasifícalas según
+   el tipo de ataque que permiten:
+
+```c
+void procesar(int fd, const char* input) {
+    char buf[256];
+    char cmd[512];
+    int n;
+    char* p;
+
+    read(fd, buf, 512);
+    p = strstr(buf, "USER=");
+    if (p) {
+        sprintf(cmd, "echo %s >> /tmp/users.log", p + 5);
+        system(cmd);
+    }
+    n = atoi(buf);
+    int datos[n];
+    printf(buf);
+}
+```
+
+5. EJERCICIO CREATIVO: Implementa un sandbox minimalista que
+   restrinja las operaciones que un programa C puede realizar
+   (solo lectura de archivos específicos, sin ejecución de
+   comandos, con límite de memoria). Usa seccomp (BPF) en Linux.
+
+________________________________________________________________________________
+  PREGUNTAS FRECUENTES
+________________________________________________________________________________
+
+P: ¿Es suficiente con usar strncpy en lugar de strcpy?
+R: No completamente. strncpy no agrega terminación nula si el
+origen es igual o mayor que el límite. Siempre debes agregar
+manual: destino[sizeof(destino) - 1] = '\0'.
+
+P: ¿Cómo protejo mi programa contra ataques de desbordamiento?
+R: Compila con -fstack-protector-strong, -D_FORTIFY_SOURCE=2,
+y usa AddressSanitizer durante el desarrollo. Además, revisa
+que todo uso de strings tenga límites.
+
+P: ¿Qué es TOCTOU?
+R: Time Of Check Time Of Use. Ocurre cuando verificas una condición
+y luego usas el recurso, pero entre la verificación y el uso el
+estado cambió. Ejemplo: access() seguido de fopen().
+
+P: ¿Los programas en C son inherentemente inseguros?
+R: No, pero requieren más disciplina que otros lenguajes. C te da
+control total, y con ese control viene la responsabilidad de
+gestionar la memoria y validar entradas correctamente.
+
+P: ¿Debo usar system() en mis programas?
+R: Evita system() siempre que sea posible. Usa fork() + execve()
+que te da más control y evita la interpretación del shell.
+
+________________________________________________________________________________
+  DESAFÍO DEL ARQUITECTO
+________________________________________________________________________________
+
+Implementa un administrador de contraseñas simple en C que cumpla
+con los más altos estándares de seguridad:
+
+  - Las contraseñas se almacenan cifradas (usa libsodium o AES).
+  - La interfaz es por línea de comandos con lectura segura (getpass).
+  - No hay fugas de memoria que expongan contraseñas.
+  - Las contraseñas en memoria se sobrescriben después de usar.
+  - El programa resiste ataques de timing.
+  - Se compila con todas las protecciones activadas.
+
+Además, documenta un análisis de seguridad completo:
+  - Amenazas identificadas.
+  - Contramedidas implementadas.
+  - Cómo probarías cada vulnerabilidad.
+  - Resultados de herramientas (Valgrind, ASan, cppcheck).
+
+Este desafío integra todo lo aprendido en seguridad y te prepara
+para escribir código C profesional y seguro en entornos reales.
+
+________________________________________________________________________________
+  CIERRE DEL CAPÍTULO
+________________________________________________________________________________
+
+La seguridad en C no se trata de memorizar una lista de funciones
+seguras. Se trata de desarrollar una mentalidad de seguridad: siempre
+preguntarte "¿qué pasa si un usuario malicioso envía esto?".
+
+Cada vez que escribes una función que recibe entrada externa, cada
+vez que asignas memoria, cada vez que copias un string, estás
+tomando una decisión de seguridad. Que esas decisiones sean las
+correctas depende de tu disciplina y conocimiento.
+
+En el próximo capítulo enfrentaremos el Examen Profesional de C,
+una evaluación exhaustiva de todo lo que has aprendido en este
+master book. Prepárate para demostrar tu dominio.
+
+¡Nos vemos en el Capítulo 77, donde pondremos a prueba todo
+tu conocimiento!
+
+================================================================================
+  FIN DEL CAPÍTULO 76
+================================================================================

@@ -1,0 +1,702 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                       CAPÍTULO 72
+##
+##                   ORGANIZACIÓN DEL CÓDIGO
+##
+################################################################################
+################################################################################
+
+"Un código bien organizado no necesita comentarios que expliquen dónde están
+las cosas: la estructura misma es el mapa."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante,
+
+En el capítulo anterior aprendiste los fundamentos de la arquitectura de
+software y los patrones que guían la construcción de sistemas profesionales.
+Ahora es momento de bajar al detalle concreto: ¿cómo organizamos los archivos
+y carpetas de nuestro proyecto? ¿Dónde va cada cosa? ¿Cómo nombramos nuestros
+módulos? La organización del código es una de las habilidades más
+infravaloradas en el desarrollo de software. Un proyecto bien organizado es
+un proyecto que cualquier desarrollador puede entender, modificar y mantener.
+En este capítulo aprenderás estructuras de carpetas profesionales, convenciones
+de nomenclatura, separación de responsabilidades a nivel de archivo, y cómo
+TypeScript puede ayudarte a mantener el orden a medida que el proyecto crece.
+Un código ordenado no es un lujo: es una necesidad profesional.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La organización del código es el primer regalo que le haces a tu yo del
+futuro y a tus compañeros de equipo."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Diseñar una estructura de carpetas profesional para proyectos TypeScript
+✓ Aplicar el principio de Separación de Responsabilidades a nivel de archivos
+✓ Implementar módulos con importaciones y exportaciones limpias
+✓ Utilizar barriles (barrel files) para organizar interfaces públicas
+✓ Nombrar archivos, clases, funciones y variables de forma consistente
+✓ Estructurar un proyecto para escalar sin perder claridad
+✓ Organizar tests junto al código fuente
+✓ Mantener la coherencia estructural mediante guías de equipo
+
+===============================================================================
+1. ESTRUCTURA DE CARPETAS PROFESIONAL
+===============================================================================
+
+La estructura de carpetas es el esqueleto del proyecto. Una buena estructura
+comunica la intención del proyecto y facilita la navegación.
+
+1.1 ESTRUCTURA POR CARACTERÍSTICAS (FEATURE-BASED)
+
+Agrupa archivos por funcionalidad o característica del dominio.
+
+```
+src/
+├── features/
+│   ├── auth/
+│   │   ├── auth.controller.ts
+│   │   ├── auth.service.ts
+│   │   ├── auth.repository.ts
+│   │   ├── auth.types.ts
+│   │   └── auth.test.ts
+│   ├── products/
+│   │   ├── products.controller.ts
+│   │   ├── products.service.ts
+│   │   ├── products.repository.ts
+│   │   ├── products.types.ts
+│   │   └── products.test.ts
+│   └── orders/
+│       ├── orders.controller.ts
+│       ├── orders.service.ts
+│       ├── orders.repository.ts
+│       ├── orders.types.ts
+│       └── orders.test.ts
+├── shared/
+│   ├── middleware/
+│   ├── utils/
+│   └── types/
+├── config/
+└── app.ts
+```
+
+```typescript
+// features/products/products.types.ts
+export interface Producto {
+  id: string;
+  nombre: string;
+  precio: number;
+  stock: number;
+  categoria: CategoriaProducto;
+}
+
+export type CategoriaProducto =
+  | "electronica"
+  | "ropa"
+  | "alimentos"
+  | "hogar";
+
+export interface CrearProductoDTO {
+  nombre: string;
+  precio: number;
+  stock: number;
+  categoria: CategoriaProducto;
+}
+
+export interface ProductoRespuesta {
+  exito: boolean;
+  data?: Producto;
+  error?: string;
+}
+
+// features/products/products.service.ts
+import { Producto, CrearProductoDTO, ProductoRespuesta } from "./products.types";
+import { ProductsRepository } from "./products.repository";
+
+export class ProductsService {
+  constructor(private readonly repository: ProductsRepository) {}
+
+  async crearProducto(dto: CrearProductoDTO): Promise<ProductoRespuesta> {
+    try {
+      const producto: Producto = {
+        id: crypto.randomUUID(),
+        ...dto
+      };
+      await this.repository.save(producto);
+      return { exito: true, data: producto };
+    } catch (error) {
+      return { exito: false, error: (error as Error).message };
+    }
+  }
+
+  async obtenerProductos(): Promise<Producto[]> {
+    return this.repository.findAll();
+  }
+}
+
+// features/products/products.repository.ts
+import { Producto } from "./products.types";
+
+export interface ProductsRepository {
+  save(producto: Producto): Promise<void>;
+  findAll(): Promise<Producto[]>;
+  findById(id: string): Promise<Producto | null>;
+  delete(id: string): Promise<void>;
+}
+
+export class ProductsRepositoryMemory implements ProductsRepository {
+  private productos: Map<string, Producto> = new Map();
+
+  async save(producto: Producto): Promise<void> {
+    this.productos.set(producto.id, producto);
+  }
+
+  async findAll(): Promise<Producto[]> {
+    return Array.from(this.productos.values());
+  }
+
+  async findById(id: string): Promise<Producto | null> {
+    return this.productos.get(id) ?? null;
+  }
+
+  async delete(id: string): Promise<void> {
+    this.productos.delete(id);
+  }
+}
+
+// features/products/products.controller.ts
+import { ProductsService } from "./products.service";
+import { CrearProductoDTO } from "./products.types";
+
+export class ProductsController {
+  constructor(private readonly service: ProductsService) {}
+
+  async crear(req: { body: CrearProductoDTO }): Promise<void> {
+    const resultado = await this.service.crearProducto(req.body);
+    if (resultado.exito) {
+      console.log("Producto creado:", resultado.data);
+    } else {
+      console.error("Error:", resultado.error);
+    }
+  }
+}
+```
+
+1.2 ESTRUCTURA POR CAPAS (LAYER-BASED)
+
+Agrupa archivos por su rol arquitectónico.
+
+```
+src/
+├── controllers/       # Manejan las peticiones HTTP
+├── services/          # Lógica de negocio
+├── repositories/      # Acceso a datos
+├── models/            # Modelos de datos y esquemas
+├── middleware/        # Middleware de Express, etc.
+├── utils/             # Utilidades generales
+├── types/             # Tipos globales
+├── config/            # Configuración
+└── app.ts             # Punto de entrada
+```
+
+1.3 ESTRUCTURA HÍBRIDA (RECOMENDADA)
+
+Combina lo mejor de ambos mundos: carpetas por características dentro de
+capas lógicas.
+
+```
+src/
+├── modules/
+│   ├── auth/
+│   │   ├── application/      # Casos de uso
+│   │   ├── domain/           # Entidades, repositorios (interfaces)
+│   │   ├── infrastructure/   # Implementaciones
+│   │   └── presentation/     # Controladores
+│   ├── products/
+│   │   ├── application/
+│   │   ├── domain/
+│   │   ├── infrastructure/
+│   │   └── presentation/
+│   └── orders/
+│       ├── application/
+│       ├── domain/
+│       ├── infrastructure/
+│       └── presentation/
+├── shared/
+│   ├── kernel/         # Base de dominio
+│   └── utils/          # Utilidades
+└── main.ts
+```
+
+===============================================================================
+2. SEPARACIÓN DE RESPONSABILIDADES
+===============================================================================
+
+Cada archivo debe tener una responsabilidad clara y única. Esto facilita la
+localización de código y reduce el acoplamiento.
+
+2.1 RESPONSABILIDADES TÍPICAS POR ARCHIVO
+
+- Archivo de tipos: Define interfaces, tipos, enums y type aliases
+- Archivo de servicio: Contiene lógica de negocio
+- Archivo de repositorio: Define el acceso a datos
+- Archivo de controlador: Maneja la comunicación externa
+- Archivo de utilidad: Funciones auxiliares puras
+- Archivo de pruebas: Tests para un módulo específico
+
+```typescript
+// types/usuario.types.ts — Solo tipos, sin lógica
+export interface Usuario {
+  id: string;
+  nombre: string;
+  email: string;
+  rol: RolUsuario;
+  activo: boolean;
+}
+
+export type RolUsuario = "admin" | "editor" | "lector";
+
+export interface CrearUsuarioDTO {
+  nombre: string;
+  email: string;
+  password: string;
+}
+
+export type OrdenarUsuariosPor = "nombre" | "email" | "fecha";
+
+// services/usuario.service.ts — Solo lógica de negocio
+import { Usuario, CrearUsuarioDTO, RolUsuario } from "../types/usuario.types";
+
+export class UsuarioService {
+  constructor(private readonly repositorio: UsuarioRepositorio) {}
+
+  async crearUsuario(dto: CrearUsuarioDTO): Promise<Usuario> {
+    this.validarEmailUnico(dto.email);
+    const usuario: Usuario = {
+      id: crypto.randomUUID(),
+      nombre: dto.nombre,
+      email: dto.email,
+      rol: "lector",
+      activo: true
+    };
+    await this.repositorio.guardar(usuario);
+    return usuario;
+  }
+
+  private async validarEmailUnico(email: string): Promise<void> {
+    const existente = await this.repositorio.buscarPorEmail(email);
+    if (existente) {
+      throw new Error("El email ya está registrado");
+    }
+  }
+
+  async cambiarRol(usuarioId: string, nuevoRol: RolUsuario): Promise<Usuario> {
+    const usuario = await this.repositorio.buscarPorId(usuarioId);
+    if (!usuario) {
+      throw new Error("Usuario no encontrado");
+    }
+    usuario.rol = nuevoRol;
+    await this.repositorio.guardar(usuario);
+    return usuario;
+  }
+}
+
+// repositories/usuario.repository.ts — Solo persistencia
+import { Usuario } from "../types/usuario.types";
+
+export interface UsuarioRepositorio {
+  guardar(usuario: Usuario): Promise<void>;
+  buscarPorId(id: string): Promise<Usuario | null>;
+  buscarPorEmail(email: string): Promise<Usuario | null>;
+  eliminar(id: string): Promise<void>;
+}
+```
+
+2.2 EL PRINCIPIO DE MÓDULOS COHESIVOS
+
+Un módulo es cohesivo cuando todos sus elementos internos están relacionados
+y trabajan juntos para un propósito común.
+
+```typescript
+// Módulo cohesivo: todo lo relacionado con autenticación
+export interface Credenciales {
+  email: string;
+  password: string;
+}
+
+export interface Sesion {
+  token: string;
+  usuario: {
+    id: string;
+    nombre: string;
+    email: string;
+  };
+  expiraEn: Date;
+}
+
+export type EstadoAutenticacion =
+  | { tipo: "no_autenticado" }
+  | { tipo: "autenticando" }
+  | { tipo: "autenticado"; sesion: Sesion }
+  | { tipo: "error"; mensaje: string };
+
+export class ServicioAutenticacion {
+  private estado: EstadoAutenticacion = { tipo: "no_autenticado" };
+
+  async iniciarSesion(creds: Credenciales): Promise<Sesion> {
+    this.estado = { tipo: "autenticando" };
+    try {
+      const sesion = await this.api.autenticar(creds);
+      this.estado = { tipo: "autenticado", sesion };
+      return sesion;
+    } catch (error) {
+      this.estado = { tipo: "error", mensaje: (error as Error).message };
+      throw error;
+    }
+  }
+
+  cerrarSesion(): void {
+    this.estado = { tipo: "no_autenticado" };
+  }
+
+  obtenerEstado(): EstadoAutenticacion {
+    return this.estado;
+  }
+}
+```
+
+===============================================================================
+3. CONVENCIONES DE NOMENCLATURA
+===============================================================================
+
+Las convenciones de nomenclatura hacen que el código sea predecible y fácil
+de leer. Son el estándar del equipo.
+
+3.1 NOMBRES DE ARCHIVOS
+
+Tipo de archivo       | Convención              | Ejemplo
+----------------------|-------------------------|---------------------------
+Tipos                 | *.types.ts              | usuario.types.ts
+Servicios             | *.service.ts            | auth.service.ts
+Repositorios          | *.repository.ts         | producto.repository.ts
+Controladores         | *.controller.ts         | usuario.controller.ts
+Middleware            | *.middleware.ts          | auth.middleware.ts
+Utilidades            | *.util.ts o *.utils.ts  | fecha.util.ts
+Pruebas               | *.test.ts o *.spec.ts   | auth.service.test.ts
+Configuración         | *.config.ts             | database.config.ts
+Módulo principal      | index.ts                | index.ts
+
+3.2 NOMBRES DE CLASES, INTERFACES Y TIPOS
+
+Elemento              | Convención              | Ejemplo
+----------------------|-------------------------|---------------------------
+Clase                 | PascalCase              | class UsuarioService
+Interfaz              | PascalCase              | interface Repositorio
+Type                  | PascalCase              | type EstadoPedido
+Enum                  | PascalCase              | enum RolUsuario
+Función               | camelCase               | function crearUsuario()
+Variable              | camelCase               | const nombreUsuario
+Constante             | UPPER_CASE              | const MAX_INTENTOS = 3
+Genérico              | Una letra o PascalCase  | <T>, <TEntity>, <TId>
+
+```typescript
+// Ejemplos de nomenclatura correcta
+const API_BASE_URL = "https://api.example.com";
+const MAX_RETRY_ATTEMPTS = 3;
+
+interface PaginacionParams {
+  pagina: number;
+  limite: number;
+}
+
+enum EstadoCivil {
+  Soltero = "soltero",
+  Casado = "casado",
+  Divorciado = "divorciado",
+  Viudo = "viudo"
+}
+
+class UsuarioRepository {
+  async buscarPorEmail<T>(email: string): Promise<T | null> {
+    // ...
+    return null;
+  }
+}
+```
+
+===============================================================================
+4. BARRILES (BARREL FILES) Y EXPORTACIONES LIMPIAS
+===============================================================================
+
+Los archivos barril (index.ts) simplifican las importaciones agrupando
+exportaciones de un módulo.
+
+```typescript
+// modules/products/index.ts — Barril
+export { ProductsService } from "./products.service";
+export { ProductsRepository, ProductsRepositoryMemory } from "./products.repository";
+export { ProductsController } from "./products.controller";
+export type {
+  Producto,
+  CrearProductoDTO,
+  ProductoRespuesta,
+  CategoriaProducto
+} from "./products.types";
+
+// main.ts — Importación limpia desde el barril
+import { ProductsService, ProductsRepositoryMemory } from "./modules/products";
+
+const repo = new ProductsRepositoryMemory();
+const service = new ProductsService(repo);
+```
+
+4.1 EXPORTACIONES NOMBRADAS VS DEFAULT
+
+En TypeScript profesional se prefieren las exportaciones nombradas sobre las
+default, ya que facilitan la refactorización y la autocorrección.
+
+```typescript
+// RECOMENDADO: Exportaciones nombradas
+export class AuthService { /* ... */ }
+export function validarToken(token: string): boolean { /* ... */ }
+export type AuthState = { /* ... */ };
+
+// Importación explícita
+import { AuthService, validarToken } from "./auth.service";
+
+// EVITAR: Export default (dificulta la refactorización)
+export default class AuthService { /* ... */ }
+
+// La importación puede tener cualquier nombre (confuso)
+import ServicioAutenticacion from "./auth.service";
+```
+
+4.2 RE-EXPORTACIONES
+
+Puedes re-exportar tipos desde un punto centralizado.
+
+```typescript
+// shared/types/index.ts
+export type { Usuario, CrearUsuarioDTO } from "../../modules/auth/auth.types";
+export type { Producto } from "../../modules/products/products.types";
+export type { Orden } from "../../modules/orders/orders.types";
+```
+
+===============================================================================
+5. PATRÓN DE ORGANIZACIÓN POR MÓDULOS
+===============================================================================
+
+Cada módulo debe ser autocontenido y tener interfaces bien definidas con
+el exterior. A esto se le llama "bounded context" en Domain-Driven Design.
+
+```typescript
+// modules/pagos/domain/pago.entity.ts
+export interface Pago {
+  id: string;
+  ordenId: string;
+  monto: number;
+  metodo: MetodoPago;
+  estado: EstadoPago;
+  creadoEn: Date;
+}
+
+export type MetodoPago = "tarjeta" | "transferencia" | "cripto";
+
+export type EstadoPago =
+  | { tipo: "pendiente" }
+  | { tipo: "procesando"; intento: number }
+  | { tipo: "completado"; transaccionId: string }
+  | { tipo: "fallido"; motivo: string };
+
+// modules/pagos/domain/pago.repository.ts
+import { Pago } from "./pago.entity";
+
+export interface PagoRepositorio {
+  guardar(pago: Pago): Promise<void>;
+  buscarPorId(id: string): Promise<Pago | null>;
+  buscarPorOrdenId(ordenId: string): Promise<Pago[]>;
+}
+
+// modules/pagos/application/pago.service.ts
+import { Pago, EstadoPago } from "../domain/pago.entity";
+import { PagoRepositorio } from "../domain/pago.repository";
+
+export class PagoService {
+  constructor(private readonly repo: PagoRepositorio) {}
+
+  async procesarPago(ordenId: string, monto: number, metodo: MetodoPago): Promise<Pago> {
+    const pago: Pago = {
+      id: crypto.randomUUID(),
+      ordenId,
+      monto,
+      metodo,
+      estado: { tipo: "pendiente" },
+      creadoEn: new Date()
+    };
+
+    pago.estado = { tipo: "procesando", intento: 1 };
+
+    try {
+      const transaccionId = await this.ejecutarCobro(pago);
+      pago.estado = { tipo: "completado", transaccionId };
+    } catch (error) {
+      pago.estado = { tipo: "fallido", motivo: (error as Error).message };
+    }
+
+    await this.repo.guardar(pago);
+    return pago;
+  }
+
+  private async ejecutarCobro(pago: Pago): Promise<string> {
+    // Llamada a pasarela de pago real
+    return "txn_" + Date.now();
+  }
+}
+
+// modules/pagos/index.ts
+export { PagoService } from "./application/pago.service";
+export { PagoRepositorio } from "./domain/pago.repository";
+export type { Pago, EstadoPago, MetodoPago } from "./domain/pago.entity";
+```
+
+===============================================================================
+6. ORGANIZACIÓN DE PRUEBAS
+===============================================================================
+
+Los tests deben estar cerca del código que prueban para facilitar el
+mantenimiento. La convención es colocar los archivos .test.ts junto al
+archivo que prueban, o en una carpeta __tests__ por módulo.
+
+```typescript
+// products.service.ts
+export class ProductsService {
+  sumar(a: number, b: number): number {
+    return a + b;
+  }
+}
+
+// products.service.test.ts (junto al archivo)
+import { ProductsService } from "./products.service";
+
+function probarSuma(): void {
+  const service = new ProductsService();
+  const resultado = service.sumar(2, 3);
+  console.assert(resultado === 5, "2 + 3 debe ser 5");
+  console.log("Test suma: OK");
+}
+
+probarSuma();
+```
+
+6.1 ESTRUCTURA DE TESTS RECOMENDADA
+
+```
+src/
+├── modules/
+│   ├── auth/
+│   │   ├── auth.service.ts
+│   │   ├── auth.service.test.ts      # Test unitario
+│   │   └── auth.integration.test.ts  # Test de integración
+│   └── products/
+│       ├── products.service.ts
+│       └── products.service.test.ts
+└── tests/
+    ├── e2e/                          # Tests end-to-end
+    └── fixtures/                     # Datos de prueba compartidos
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- La estructura de carpetas debe reflejar la organización lógica del proyecto
+- La estructura por características agrupa código por funcionalidad
+- Cada archivo debe tener una única responsabilidad bien definida
+- Las convenciones de nomenclatura hacen el código predecible y legible
+- Los archivos barril (index.ts) simplifican las importaciones
+- Las exportaciones nombradas son preferibles a las default
+- Los módulos deben ser cohesivos y tener interfaces claras
+- Los tests deben colocarse junto al código que prueban
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:**
+Crea la estructura de carpetas completa para una aplicación de gestión de
+tareas. Incluye módulos para autenticación, tareas y proyectos. Cada módulo
+debe tener su barril (index.ts).
+
+🧩 **Ejercicio 2:**
+Refactoriza el siguiente código para separar responsabilidades en archivos
+distintos: tipos, servicio y repositorio. Usa la convención de nomenclatura
+adecuada.
+
+```typescript
+// Código a refactorizar
+class GestorTareas {
+  private tareas: any[] = [];
+  crear(titulo: string) { this.tareas.push({ id: Date.now(), titulo, completa: false }); }
+  listar() { return this.tareas; }
+  marcarCompleta(id: number) { const t = this.tareas.find(t => t.id === id); if (t) t.completa = true; }
+}
+```
+
+🧩 **Ejercicio 3:**
+Diseña un barril (index.ts) para un módulo de usuarios que exporte servicios,
+tipos y repositorios. Luego muestra cómo se importaría desde otro módulo.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo usar una convención de nomenclatura específica?**
+Lo importante es la consistencia, no la convención concreta. Elige una
+convención (como la presentada aquí) y aplícala en todo el proyecto.
+
+❓ **¿Cuándo debo crear un nuevo módulo?**
+Cuando un conjunto de funcionalidades tiene una responsabilidad claramente
+diferenciada y puede tener sentido como unidad independiente.
+
+❓ **¿Qué hago si un archivo se vuelve demasiado grande?**
+Es señal de que tiene más de una responsabilidad. Divide el archivo siguiendo
+los principios de este capítulo. Un archivo de servicio rara vez debe superar
+las 200-300 líneas.
+
+❓ **¿Los barriles pueden causar problemas de rendimiento?**
+En proyectos grandes, los barriles pueden causar importaciones circulares o
+problemas de tree-shaking. Úsalos con moderación y solo para agrupar
+exportaciones públicas de un módulo.
+
+===============================================================================
+FIN DEL CAPÍTULO 72
+===============================================================================
+
+"El orden no es un destino, es un hábito que se practica en cada archivo,
+en cada carpeta, en cada importación."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+
+73_CAPITULO_73_BUENAS_PRACTICAS.txt
+===============================================================================

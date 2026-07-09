@@ -1,0 +1,1222 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                        CAPÍTULO 68
+##
+##                          DESPLIEGUE
+##
+################################################################################
+################################################################################
+
+"Desplegar no es el final del viaje, es el inicio de la responsabilidad:
+tu código ahora vive en el mundo real y debe funcionar."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Saludos, arquitecto backend. Has construido una API REST completa con
+autenticación, autorización, middlewares y documentación. Ahora llega el
+momento de la verdad: desplegarla en producción para que el mundo la use.
+
+El despliegue es el proceso de llevar tu código del entorno de desarrollo
+a un servidor en producción donde los usuarios reales puedan acceder a él.
+Pero un despliegue profesional va mucho más allá de subir archivos por FTP:
+implica configuración de servidores, variables de entorno, seguridad,
+monitoreo, backups, y estrategias de actualización sin caídas.
+
+En este capítulo cubriremos todas las estrategias de despliegue: desde
+hosting compartido para proyectos pequeños, hasta VPS y Docker para
+aplicaciones empresariales. Aprenderás a configurar Apache y Nginx,
+manejar variables de entorno, crear scripts de despliegue automatizado,
+y establecer prácticas de monitoreo y logging.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El código que no se despliega es solo un sueño. El código que se despliega
+es una solución real que cambia vidas."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Configurar un servidor Apache/Nginx para servir una API PHP.
+✓ Manejar variables de entorno para diferentes entornos.
+✓ Desplegar una API en hosting compartido y en VPS.
+✓ Configurar HTTPS con Let's Encrypt y certificados SSL.
+✓ Crear un script de despliegue automatizado con CI/CD.
+✓ Implementar estrategias de backup y restauración.
+✓ Configurar logging, monitoreo y alertas en producción.
+
+===============================================================================
+1. PREPARACIÓN DEL ENTORNO DE PRODUCCIÓN
+===============================================================================
+
+Antes de desplegar, asegúrate de que tu código esté listo para producción.
+
+```php
+<?php
+// config/app.php — Configuración por entorno
+class AppConfig
+{
+    private static ?array $config = null;
+
+    public static function get(string $key, mixed $default = null): mixed
+    {
+        if (self::$config === null) {
+            self::cargar();
+        }
+
+        return self::$config[$key] ?? $default;
+    }
+
+    private static function cargar(): void
+    {
+        $env = getenv('APP_ENV') ?: 'production';
+
+        $configBase = [
+            'app_name' => 'EGA Enterprise API',
+            'debug'    => false,
+            'timezone' => 'America/Mexico_City',
+            'locale'   => 'es_MX',
+        ];
+
+        $configEntorno = match ($env) {
+            'development' => [
+                'debug'  => true,
+                'url'    => 'http://localhost:8000',
+            ],
+            'staging' => [
+                'debug'  => true,
+                'url'    => 'https://staging.egaenterprise.com',
+            ],
+            'production' => [
+                'debug'  => false,
+                'url'    => 'https://api.egaenterprise.com',
+            ],
+            default => []
+        };
+
+        self::$config = array_merge($configBase, $configEntorno);
+    }
+}
+
+// Uso
+$debug = AppConfig::get('debug');
+$url = AppConfig::get('url');
+?>
+```
+
+Archivo de variables de entorno `.env`:
+
+```bash
+# .env.production — Variables de entorno para producción
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=https://api.egaenterprise.com
+APP_TIMEZONE=America/Mexico_City
+
+# Base de datos
+DB_CONNECTION=mysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=ega_api
+DB_USERNAME=ega_user
+DB_PASSWORD=Str0ngP@ssw0rd!
+
+# JWT
+JWT_SECRET=8X5vK2pL9mN4qR7tW1zY3bA6cD8eF0gH2jK4lM6nP8qR0sT2uV4wX6yZ
+JWT_EXPIRATION=3600
+
+# Email
+MAIL_HOST=smtp.egaenterprise.com
+MAIL_PORT=587
+MAIL_USERNAME=notificaciones@egaenterprise.com
+MAIL_PASSWORD=M@ilP@ss2025!
+MAIL_ENCRYPTION=tls
+
+# Redis (caché)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Logging
+LOG_LEVEL=warning
+LOG_CHANNEL=daily
+```
+
+Carga segura del `.env`:
+
+```php
+<?php
+// src/Config/DotEnv.php
+namespace App\Config;
+
+class DotEnv
+{
+    public static function load(string $path): void
+    {
+        if (!file_exists($path)) {
+            throw new \RuntimeException(".env file not found: {$path}");
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+
+            if (str_contains($line, '=')) {
+                [$key, $value] = explode('=', $line, 2);
+                $key = trim($key);
+                $value = trim($value);
+
+                // Remover comillas
+                $value = trim($value, '"\'');
+                $value = str_replace(['\\"', "\\'"], ['"', "'"], $value);
+
+                // Manejar valores especiales
+                $value = match (strtolower($value)) {
+                    'true', '(true)' => true,
+                    'false', '(false)' => false,
+                    'null', '(null)' => null,
+                    default => $value
+                };
+
+                putenv("{$key}={$value}");
+                $_ENV[$key] = $value;
+                $_SERVER[$key] = $value;
+            }
+        }
+    }
+}
+
+// Cargar al inicio
+// require_once __DIR__ . '/../vendor/autoload.php';
+// \App\Config\DotEnv::load(__DIR__ . '/../.env');
+?>
+```
+
+===============================================================================
+2. CONFIGURACIÓN DE APACHE
+===============================================================================
+
+Apache es el servidor web más usado para PHP. Configuración para producción:
+
+```apache
+# /etc/apache2/sites-available/api.egaenterprise.com.conf
+
+<VirtualHost *:80>
+    ServerName api.egaenterprise.com
+    Redirect permanent / https://api.egaenterprise.com/
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName api.egaenterprise.com
+    DocumentRoot /var/www/api.egaenterprise.com/public
+
+    # SSL
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/api.egaenterprise.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/api.egaenterprise.com/privkey.pem
+
+    # Security headers
+    Header always set X-Frame-Options "DENY"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    # CORS
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization"
+
+    <Directory /var/www/api.egaenterprise.com/public>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+
+        # Redirigir todo a index.php
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule ^(.*)$ index.php [QSA,L]
+    </Directory>
+
+    # Denegar acceso a archivos sensibles
+    <FilesMatch "\.(env|log|md|yml|yaml|json|lock)$">
+        Require all denied
+    </FilesMatch>
+
+    # Logs
+    ErrorLog ${APACHE_LOG_DIR}/api.egaenterprise.com-error.log
+    CustomLog ${APACHE_LOG_DIR}/api.egaenterprise.com-access.log combined
+
+    # PHP-FPM (PHP 8.x)
+    <FilesMatch \.php$>
+        SetHandler "proxy:fcgi://127.0.0.1:9000"
+    </FilesMatch>
+</VirtualHost>
+```
+
+Archivo `.htaccess` en la raíz del proyecto:
+
+```apache
+# .htaccess — Seguridad y redirección
+RewriteEngine On
+
+# Redirigir a HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+# Proteger archivos sensibles
+<FilesMatch "\.(env|log|md|yml|yaml|json|lock|git)">
+    Require all denied
+</FilesMatch>
+
+# Deshabilitar listado de directorios
+Options -Indexes
+
+# Redirigir todo a public/
+RewriteCond %{REQUEST_URI} !^/public/
+RewriteRule ^(.*)$ public/$1 [L]
+```
+
+===============================================================================
+3. CONFIGURACIÓN DE NGINX
+===============================================================================
+
+Nginx es conocido por su alto rendimiento y bajo consumo de recursos.
+
+```nginx
+# /etc/nginx/sites-available/api.egaenterprise.com
+
+upstream php_backend {
+    server unix:/var/run/php/php8.2-fpm.sock;
+    # server 127.0.0.1:9000;
+}
+
+server {
+    listen 80;
+    server_name api.egaenterprise.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.egaenterprise.com;
+
+    root /var/www/api.egaenterprise.com/public;
+    index index.php;
+
+    # SSL
+    ssl_certificate /etc/letsencrypt/live/api.egaenterprise.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.egaenterprise.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Security headers
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # CORS
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+
+    # Logs
+    access_log /var/log/nginx/api.egaenterprise.com-access.log;
+    error_log /var/log/nginx/api.egaenterprise.com-error.log;
+
+    # Denegar acceso a archivos sensibles
+    location ~ /\. {
+        deny all;
+    }
+
+    location ~ \.(env|log|md|yml|yaml|json|lock)$ {
+        deny all;
+    }
+
+    # Manejo de OPTIONS (CORS preflight)
+    location / {
+        if ($request_method = OPTIONS) {
+            add_header Content-Length 0;
+            add_header Content-Type text/plain;
+            return 204;
+        }
+
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # PHP-FPM
+    location ~ \.php$ {
+        fastcgi_pass php_backend;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+
+        fastcgi_param PHP_VALUE "
+            upload_max_filesize = 10M
+            post_max_size = 10M
+            max_execution_time = 60
+        ";
+
+        # Cache de fastcgi
+        fastcgi_cache_path /var/cache/nginx levels=1:2 keys_zone=api_cache:10m;
+        fastcgi_cache api_cache;
+        fastcgi_cache_valid 200 1m;
+        fastcgi_cache_use_stale error timeout updating;
+    }
+}
+```
+
+===============================================================================
+4. HTTPS CON LET'S ENCRYPT
+===============================================================================
+
+HTTPS es obligatorio para cualquier API en producción. Let's Encrypt
+proporciona certificados SSL gratuitos.
+
+```bash
+# Instalar Certbot
+sudo apt update
+sudo apt install certbot python3-certbot-apache  # Para Apache
+sudo apt install certbot python3-certbot-nginx    # Para Nginx
+
+# Obtener certificado
+sudo certbot --apache -d api.egaenterprise.com
+sudo certbot --nginx -d api.egaenterprise.com
+
+# Verificar renovación automática
+sudo certbot renew --dry-run
+
+# Verificar configuración SSL
+curl -I https://api.egaenterprise.com
+
+# Los certificados se renuevan automáticamente cada 90 días
+# La renovación se maneja via systemd timer o cron
+sudo systemctl status certbot.timer
+
+# Backup de certificados
+sudo tar -czf ssl-backup-$(date +%Y%m%d).tar.gz /etc/letsencrypt/
+```
+
+===============================================================================
+5. DEPLOY EN HOSTING COMPARTIDO
+===============================================================================
+
+Para proyectos pequeños, el hosting compartido es económico y simple.
+
+```bash
+# Estructura recomendada para hosting compartido
+/public_html/
+├── api/                    # Código de la API (fuera de public_html raíz)
+│   ├── src/
+│   ├── vendor/
+│   ├── config/
+│   ├── storage/
+│   ├── .env
+│   └── composer.json
+└── public/                 # Punto de entrada (en public_html)
+    ├── index.php           # Front controller
+    ├── .htaccess
+    └── docs/
+        └── index.html      # Swagger UI
+
+# .htaccess en public_html raíz
+RewriteEngine On
+RewriteRule ^api/(.*)$ public/$1 [QSA,L]
+
+# Configurar PHP en hosting compartido (php.ini vía .user.ini)
+; .user.ini
+upload_max_filesize = 10M
+post_max_size = 10M
+max_execution_time = 60
+memory_limit = 256M
+date.timezone = America/Mexico_City
+
+# Despliegue via Git (si el hosting lo soporta)
+git clone https://github.com/ega/api-rest.git public_html/api
+cd public_html/api
+cp .env.example .env
+composer install --no-dev --optimize-autoloader
+```
+
+===============================================================================
+6. DEPLOY EN VPS CON SCRIPTS AUTOMATIZADOS
+===============================================================================
+
+Para aplicaciones empresariales, un VPS te da control total.
+
+```bash
+#!/bin/bash
+# deploy.sh — Script de despliegue automatizado
+
+set -euo pipefail
+
+# Configuración
+REPO_URL="https://github.com/egaenterprise/api-rest.git"
+DEPLOY_DIR="/var/www/api.egaenterprise.com"
+BACKUP_DIR="/var/backups/api"
+PHP_BIN="/usr/bin/php8.2"
+COMPOSER_BIN="/usr/bin/composer"
+ENVIRONMENT="${1:-production}"
+
+echo "=== Iniciando despliegue a $ENVIRONMENT ==="
+echo "$(date): Inicio de despliegue"
+
+# 1. Backup de la versión actual
+echo "Creando backup..."
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+if [ -d "$DEPLOY_DIR" ]; then
+    tar -czf "${BACKUP_DIR}/pre-deploy-${TIMESTAMP}.tar.gz" \
+        -C "$(dirname $DEPLOY_DIR)" "$(basename $DEPLOY_DIR)"
+    echo "Backup creado: pre-deploy-${TIMESTAMP}.tar.gz"
+fi
+
+# 2. Clonar/actualizar repositorio
+echo "Actualizando código..."
+if [ ! -d "$DEPLOY_DIR" ]; then
+    git clone --branch $ENVIRONMENT $REPO_URL $DEPLOY_DIR
+else
+    cd $DEPLOY_DIR
+    git fetch origin
+    git reset --hard origin/$ENVIRONMENT
+fi
+
+# 3. Instalar dependencias
+echo "Instalando dependencias..."
+cd $DEPLOY_DIR
+$COMPOSER_BIN install --no-dev --optimize-autoloader --no-interaction
+
+# 4. Configurar entorno
+echo "Configurando entorno..."
+if [ ! -f ".env" ]; then
+    cp ".env.${ENVIRONMENT}" .env
+fi
+
+# 5. Cache de configuración
+echo "Optimizando configuración..."
+$PHP_BIN artisan config:cache 2>/dev/null || true
+$PHP_BIN artisan route:cache 2>/dev/null || true
+
+# 6. Migraciones de base de datos
+echo "Ejecutando migraciones..."
+$PHP_BIN artisan migrate --force 2>/dev/null || true
+
+# 7. Permisos
+echo "Configurando permisos..."
+chown -R www-data:www-data $DEPLOY_DIR
+chmod -R 755 $DEPLOY_DIR/public
+chmod -R 775 $DEPLOY_DIR/storage
+chmod -R 775 $DEPLOY_DIR/bootstrap/cache 2>/dev/null || true
+
+# 8. Reiniciar PHP-FPM
+echo "Reiniciando PHP-FPM..."
+sudo systemctl reload php8.2-fpm
+
+# 9. Limpiar caché de opcache
+echo "Limpiando opcache..."
+$PHP_BIN -r "opcache_reset();" 2>/dev/null || true
+
+echo "=== Despliegue completado exitosamente ==="
+echo "$(date): Fin de despliegue"
+```
+
+===============================================================================
+7. DEPLOY CON DOCKER
+===============================================================================
+
+Docker empaqueta la aplicación con todas sus dependencias en contenedores
+portables.
+
+```dockerfile
+# Dockerfile — API PHP con FPM
+FROM php:8.2-fpm-alpine
+
+# Instalar extensiones
+RUN docker-php-ext-install \
+    pdo_mysql \
+    opcache \
+    bcmath \
+    && pecl install redis \
+    && docker-php-ext-enable redis
+
+# Configuración de PHP para producción
+COPY docker/php.ini /usr/local/etc/php/conf.d/production.ini
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# Instalar Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Copiar código
+WORKDIR /var/www/app
+COPY . .
+
+# Instalar dependencias
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+
+# Permisos
+RUN chown -R www-data:www-data /var/www/app/storage
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD php -r "echo 'OK';" || exit 1
+
+USER www-data
+EXPOSE 9000
+```
+
+```yaml
+# docker-compose.yml — Stack completo
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./storage:/var/www/app/storage
+      - ./public:/var/www/app/public
+    environment:
+      - APP_ENV=production
+      - DB_HOST=db
+      - REDIS_HOST=cache
+    depends_on:
+      - db
+      - cache
+    networks:
+      - api-network
+
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./public:/var/www/app/public
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./docker/ssl:/etc/nginx/ssl
+    depends_on:
+      - app
+    networks:
+      - api-network
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_DATABASE}
+      - MYSQL_USER=${DB_USERNAME}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - api-network
+
+  cache:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - api-network
+
+volumes:
+  db_data:
+  redis_data:
+
+networks:
+  api-network:
+    driver: bridge
+```
+
+===============================================================================
+8. CI/CD CON GITHUB ACTIONS
+===============================================================================
+
+Automatiza el despliegue con GitHub Actions.
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy API
+
+on:
+  push:
+    branches: [main, staging]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Entorno de despliegue'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: api_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: pdo_mysql, json, mbstring
+          coverage: xdebug
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Copy .env
+        run: cp .env.testing .env
+
+      - name: Run tests
+        run: vendor/bin/phpunit --coverage-clover=coverage.xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+      - name: PHP Lint
+        run: find src/ -name "*.php" -exec php -l {} \;
+      - name: PHP CodeSniffer
+        run: |
+          composer global require squizlabs/php_codesniffer
+          ~/.composer/vendor/bin/phpcs --standard=PSR12 src/
+
+  deploy:
+    needs: [test, lint]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            cd /var/www/api.egaenterprise.com
+            git fetch origin
+            git reset --hard origin/main
+            composer install --no-dev --optimize-autoloader
+            php artisan migrate --force
+            sudo systemctl reload php8.2-fpm
+
+      - name: Health check
+        run: |
+          sleep 10
+          curl -f -s -o /dev/null https://api.egaenterprise.com/health || exit 1
+
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: "Despliegue completado: API EGA Enterprise"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+```
+
+===============================================================================
+9. MONITOREO Y LOGGING EN PRODUCCIÓN
+===============================================================================
+
+```php
+<?php
+// src/Monitoring/HealthController.php
+namespace App\Monitoring;
+
+class HealthController
+{
+    private PDO $db;
+    private \Redis $redis;
+
+    public function check(): void
+    {
+        $checks = [
+            'database' => $this->checkDatabase(),
+            'cache'    => $this->checkCache(),
+            'storage'  => $this->checkStorage(),
+            'memory'   => $this->checkMemoryUsage(),
+            'uptime'   => $this->getUptime()
+        ];
+
+        $healthy = !in_array(false, array_column($checks, 'healthy'), true);
+
+        $status = $healthy ? 200 : 503;
+
+        http_response_code($status);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'status' => $healthy ? 'healthy' : 'unhealthy',
+            'timestamp' => date('c'),
+            'checks' => $checks
+        ], JSON_PRETTY_PRINT);
+    }
+
+    private function checkDatabase(): array
+    {
+        try {
+            $this->db->query("SELECT 1");
+            return ['healthy' => true, 'message' => 'Database connected'];
+        } catch (\Exception $e) {
+            return ['healthy' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    private function checkCache(): array
+    {
+        try {
+            $this->redis->ping();
+            return ['healthy' => true, 'message' => 'Redis connected'];
+        } catch (\Exception $e) {
+            return ['healthy' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    private function checkStorage(): array
+    {
+        $path = __DIR__ . '/../../storage/logs';
+        $writable = is_writable($path);
+
+        $usage = disk_free_space($path);
+        $total = disk_total_space($path);
+        $percent = ($usage / $total) * 100;
+
+        return [
+            'healthy' => $writable && $percent > 10,
+            'message' => $writable
+                ? "Storage writable, {$percent}% free"
+                : "Storage not writable",
+            'free_percent' => round($percent, 2)
+        ];
+    }
+
+    private function checkMemoryUsage(): array
+    {
+        $usage = memory_get_usage(true);
+        $peak = memory_get_peak_usage(true);
+        $limit = $this->getMemoryLimit();
+
+        return [
+            'healthy' => $usage < $limit * 0.8,
+            'usage_mb' => round($usage / 1024 / 1024, 2),
+            'peak_mb' => round($peak / 1024 / 1024, 2),
+            'limit_mb' => round($limit / 1024 / 1024, 2)
+        ];
+    }
+
+    private function getMemoryLimit(): int
+    {
+        $limit = ini_get('memory_limit');
+        $unit = substr($limit, -1);
+        $value = (int)$limit;
+
+        return match ($unit) {
+            'G' => $value * 1024 * 1024 * 1024,
+            'M' => $value * 1024 * 1024,
+            'K' => $value * 1024,
+            default => $value
+        };
+    }
+
+    private function getUptime(): array
+    {
+        $uptime = @file_get_contents('/proc/uptime');
+        $seconds = $uptime ? (float)strtok($uptime, ' ') : 0;
+
+        return [
+            'healthy' => true,
+            'uptime_seconds' => $seconds,
+            'uptime_human' => gmdate(
+                'H\h i\m s\s',
+                $seconds
+            )
+        ];
+    }
+}
+?>
+```
+
+Logging centralizado:
+
+```php
+<?php
+// src/Logging/Logger.php
+namespace App\Logging;
+
+class Logger
+{
+    private string $channel;
+    private string $level;
+    private string $logDir;
+
+    private const LEVELS = [
+        'debug'     => 100,
+        'info'      => 200,
+        'notice'    => 250,
+        'warning'   => 300,
+        'error'     => 400,
+        'critical'  => 500,
+        'alert'     => 550,
+        'emergency' => 600,
+    ];
+
+    public function __construct()
+    {
+        $this->channel = getenv('LOG_CHANNEL') ?: 'daily';
+        $this->level = getenv('LOG_LEVEL') ?: 'warning';
+        $this->logDir = __DIR__ . '/../../storage/logs';
+
+        if (!is_dir($this->logDir)) {
+            mkdir($this->logDir, 0775, true);
+        }
+    }
+
+    public function log(string $level, string $message, array $context = []): void
+    {
+        if (self::LEVELS[$level] < self::LEVELS[$this->level]) {
+            return;
+        }
+
+        $entry = [
+            'timestamp' => date('c'),
+            'channel'   => $this->channel,
+            'level'     => $level,
+            'message'   => $message,
+            'context'   => $this->sanitizeContext($context),
+            'extra'     => [
+                'ip'        => $_SERVER['REMOTE_ADDR'] ?? 'cli',
+                'method'    => $_SERVER['REQUEST_METHOD'] ?? 'CLI',
+                'uri'       => $_SERVER['REQUEST_URI'] ?? 'unknown',
+                'user_id'   => $_SERVER['AUTH_USER_ID'] ?? null,
+                'request_id' => $_SERVER['REQUEST_ID'] ?? uniqid()
+            ]
+        ];
+
+        $filename = match ($this->channel) {
+            'daily'  => $this->logDir . '/api-' . date('Y-m-d') . '.log',
+            'single' => $this->logDir . '/api.log',
+            default  => $this->logDir . '/api-' . date('Y-m-d') . '.log'
+        };
+
+        file_put_contents(
+            $filename,
+            json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n",
+            FILE_APPEND | LOCK_EX
+        );
+    }
+
+    private function sanitizeContext(array $context): array
+    {
+        $sensitive = ['password', 'token', 'secret', 'credit_card', 'ssn'];
+
+        array_walk_recursive($context, function (&$value, $key) use ($sensitive) {
+            if (in_array(strtolower($key), $sensitive, true)) {
+                $value = str_repeat('*', strlen((string)$value));
+            }
+        });
+
+        return $context;
+    }
+
+    public function info(string $message, array $context = []): void
+    {
+        $this->log('info', $message, $context);
+    }
+
+    public function warning(string $message, array $context = []): void
+    {
+        $this->log('warning', $message, $context);
+    }
+
+    public function error(string $message, array $context = []): void
+    {
+        $this->log('error', $message, $context);
+    }
+
+    public function critical(string $message, array $context = []): void
+    {
+        $this->log('critical', $message, $context);
+    }
+}
+?>
+```
+
+===============================================================================
+10. BACKUPS Y RECUPERACIÓN
+===============================================================================
+
+```bash
+#!/bin/bash
+# backup.sh — Script de backups automatizados
+
+set -euo pipefail
+
+BACKUP_DIR="/var/backups/api"
+DB_NAME="ega_api"
+DB_USER="ega_user"
+DB_PASS="Str0ngP@ssw0rd!"
+APP_DIR="/var/www/api.egaenterprise.com"
+RETENTION_DAYS=30
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+mkdir -p "${BACKUP_DIR}/{database,files,ssl}"
+
+# 1. Backup de base de datos
+echo "Backup de base de datos..."
+mysqldump \
+    --single-transaction \
+    --routines \
+    --triggers \
+    --events \
+    -u "$DB_USER" \
+    -p"$DB_PASS" \
+    "$DB_NAME" \
+    | gzip > "${BACKUP_DIR}/database/${DB_NAME}_${TIMESTAMP}.sql.gz"
+
+# 2. Backup de archivos de la aplicación
+echo "Backup de archivos..."
+tar -czf "${BACKUP_DIR}/files/app_${TIMESTAMP}.tar.gz" \
+    -C "$(dirname $APP_DIR)" \
+    --exclude="vendor" \
+    --exclude="node_modules" \
+    --exclude=".git" \
+    "$(basename $APP_DIR)"
+
+# 3. Backup de SSL
+echo "Backup de certificados SSL..."
+tar -czf "${BACKUP_DIR}/ssl/ssl_${TIMESTAMP}.tar.gz" \
+    /etc/letsencrypt/live/ 2>/dev/null || true
+
+# 4. Backup de configuraciones de servidor
+echo "Backup de configuraciones..."
+tar -czf "${BACKUP_DIR}/configs/config_${TIMESTAMP}.tar.gz" \
+    /etc/nginx/sites-available/ 2>/dev/null || true
+
+# 5. Limpiar backups antiguos
+echo "Limpiando backups antiguos..."
+find "${BACKUP_DIR}/database" -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete
+find "${BACKUP_DIR}/files" -name "*.tar.gz" -mtime +$RETENTION_DAYS -delete
+find "${BACKUP_DIR}/ssl" -name "*.tar.gz" -mtime +$RETENTION_DAYS -delete
+
+# 6. Verificar integridad
+echo "Verificando integridad..."
+gzip -t "${BACKUP_DIR}/database/${DB_NAME}_${TIMESTAMP}.sql.gz"
+tar -tzf "${BACKUP_DIR}/files/app_${TIMESTAMP}.tar.gz" > /dev/null
+
+echo "Backup completado: ${TIMESTAMP}"
+```
+
+===============================================================================
+11. LISTA DE VERIFICACIÓN PRE-DESPLIEGUE
+===============================================================================
+
+```bash
+#!/bin/bash
+# pre-deploy-check.sh — Checklist antes de desplegar
+
+echo "=== LISTA DE VERIFICACIÓN PRE-DESPLIEGUE ==="
+PASS=0
+FAIL=0
+
+check() {
+    local desc="$1"
+    local cmd="$2"
+    if eval "$cmd" > /dev/null 2>&1; then
+        echo "  ✓ $desc"
+        ((PASS++))
+    else
+        echo "  ✗ $desc"
+        ((FAIL++))
+    fi
+}
+
+echo ""
+echo "1. Código"
+check "Sin errores de sintaxis PHP" "find src/ -name '*.php' -exec php -l {} \; > /dev/null"
+check "Composer instalado sin dev" "composer install --dry-run --no-dev --optimize-autoloader"
+check "PSR-12 coding standards" "phpcs --standard=PSR12 src/ 2>/dev/null"
+
+echo ""
+echo "2. Seguridad"
+check "APP_DEBUG=false en .env" "grep -q 'APP_DEBUG=false' .env.production"
+check "JWT_SECRET no es default" "grep -v 'your-secret-key' .env.production"
+check "APP_ENV=production" "grep -q 'APP_ENV=production' .env.production"
+check "HTTPS forzado en htaccess" "grep -q 'HTTPS' public/.htaccess"
+check "Archivos .env protegidos" "grep -q 'FilesMatch.*env' .htaccess"
+
+echo ""
+echo "3. Base de datos"
+check "Migraciones listas" "ls database/migrations/*.php 2>/dev/null | head -1"
+check "Seeders listos" "ls database/seeders/*.php 2>/dev/null | head -1"
+
+echo ""
+echo "4. Rendimiento"
+check "Opcache habilitado" "php -i | grep -q 'opcache.enable => On'"
+check "Autoloader optimizado" "composer dump-autoload -o --dry-run"
+
+echo ""
+echo "5. Monitoreo"
+check "Health endpoint existe" "grep -q 'health' routes/api.php"
+check "Logging configurado" "grep -q 'LOG_' .env.production"
+
+echo ""
+echo "6. Documentación"
+check "OpenAPI spec existe" "ls docs/openapi.yaml 2>/dev/null"
+check "Swagger UI configurado" "ls public/docs/index.html 2>/dev/null"
+
+echo ""
+echo "=== RESULTADO: $PASS checks pasados, $FAIL checks fallidos ==="
+
+if [ $FAIL -gt 0 ]; then
+    echo "⚠ Corrige los checks fallidos antes de desplegar"
+    exit 1
+else
+    echo "✓ Listo para desplegar!"
+fi
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- La configuración por entorno (desarrollo, staging, producción) se maneja
+  con variables de entorno y archivos `.env`.
+- Apache se configura con VirtualHost vhost, rewrite rules, y PHP-FPM
+  para servir la API de forma segura y eficiente.
+- Nginx ofrece mayor rendimiento con configuración similar mediante
+  server blocks y fastcgi_pass.
+- HTTPS es obligatorio: Let's Encrypt proporciona certificados SSL
+  gratuitos con renovación automática.
+- Docker empaqueta la aplicación con sus dependencias en contenedores
+  portables usando Dockerfile y docker-compose.
+- GitHub Actions automatiza tests, linting y despliegue en un pipeline
+  CI/CD completo.
+- El monitoreo en producción incluye health checks, logging estructurado,
+  y alertas de rendimiento y disponibilidad.
+- Los backups automatizados (base de datos, archivos, configuraciones)
+  con retención de 30 días garantizan la recuperación ante desastres.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Configura un VPS con Ubuntu, instala PHP 8.2, Nginx,
+MySQL y Redis. Despliega tu API usando el script deploy.sh del capítulo.
+
+🧩 **Ejercicio 2:** Crea un Dockerfile y docker-compose.yml para tu API
+que incluya: app (PHP-FPM), web (Nginx), db (MySQL), cache (Redis).
+Asegura que los datos sean persistentes con volúmenes.
+
+🧩 **Ejercicio 3:** Configura un pipeline CI/CD con GitHub Actions que
+ejecute tests, lint, y despliegue automáticamente a staging al hacer push
+a la rama develop, y a producción al hacer push a main.
+
+🧩 **Ejercicio 4:** Implementa el endpoint `/health` que verifique base de
+datos, Redis, espacio en disco, memoria y uptime. Configura alertas para
+cuando el health check falle.
+
+🧩 **Ejercicio 5:** Crea un script de backup completo que respalde: base
+de datos (mysqldump con compresión), archivos de la aplicación, y
+certificados SSL. Implementa rotación de backups con retención de 30 días.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo usar Apache o Nginx?** Nginx ofrece mejor rendimiento con menos
+consumo de recursos. Apache es más simple de configurar y tiene soporte
+nativo de .htaccess. Para APIs REST, Nginx es la opción recomendada.
+
+❓ **¿Cómo manejo la migración de base de datos en producción?** Usa
+migraciones versionadas (como las que vimos en módulos anteriores).
+Nunca modifiques la base de datos manualmente en producción.
+
+❓ **¿Es necesario usar Docker en producción?** No es obligatorio, pero
+Docker garantiza que el entorno de producción sea idéntico al de desarrollo,
+eliminando el clásico "en mi máquina funciona".
+
+❓ **¿Cómo sé si mi API está funcionando correctamente?** Implementa el
+endpoint `/health` y configúralo en tu balanceador de carga o servicio de
+monitoreo (Pingdom, UptimeRobot, Datadog).
+
+❓ **¿Debo hacer backup de los logs?** Los logs son importantes para
+forense y depuración, pero ocupan mucho espacio. Rotación diaria con
+retención de 30-90 días es práctica común.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Infraestructura de despliegue enterprise** — Diseña una infraestructura
+completa de despliegue para la API empresarial EGA que incluya: balanceador
+de carga (Nginx o HAProxy) distribuyendo tráfico entre 2+ servidores de
+aplicación, base de datos MySQL en replicación maestro-esclavo con
+failover automático, Redis como caché distribuido y manejador de sesiones,
+almacenamiento de archivos en S3-compatible (MinIO), pipeline CI/CD con
+GitHub Actions que ejecute tests, lint, análisis de seguridad (SonarQube),
+y despliegue blue-green sin downtime. Configura monitoreo con Prometheus
++ Grafana, logging centralizado con ELK (Elasticsearch, Logstash, Kibana),
+alertas en Slack/PagerDuty, backups automáticos cifrados a S3, y un
+playbook de Ansible para aprovisionamiento de servidores. Incluye scripts
+de rollback automático si el health check falla después del despliegue.
+
+===============================================================================
+FIN DEL CAPÍTULO 68
+===============================================================================
+
+"Desplegar con miedo es normal. Desplegar sin pruebas, sin backup y sin
+plan de rollback es una irresponsabilidad."
+                              — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+69_CAPITULO_69_BUENAS_PRACTICAS_EMPRESARIALES.txt
+===============================================================================

@@ -1,0 +1,880 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO VI: ARCHIVOS Y RED
+================================================================================
+  CAPÍTULO 51: ARCHIVOS (os.File)
+================================================================================
+
+  "Los archivos son la memoria persistente de todo sistema. 
+   Dominarlos es dominar el estado."
+
+================================================================================
+
+  BIENVENIDA
+  -------------------------------------------------------------------------------
+  ¡Bienvenido al Módulo VI de GO MASTER BOOK! En este módulo exploraremos
+  uno de los aspectos más prácticos y poderosos de Go: el manejo de archivos
+  y la comunicación en red. Comenzamos con el Capítulo 51, dedicado al
+  paquete os y el tipo File. Aprenderás a abrir, crear, leer, escribir
+  y administrar archivos usando la API estándar de Go. Este conocimiento
+  es fundamental para construir aplicaciones que persistan datos, procesen
+  configuraciones, generen informes y mucho más.
+
+  FRASE CLAVE
+  -------------------------------------------------------------------------------
+  "Un archivo bien manejado es la diferencia entre un dato seguro y un 
+   desastre anunciado."
+
+  — Principio de Arquitectura de Software
+
+  OBJETIVOS DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+  ✓ Comprender el tipo os.File y su relación con el sistema operativo.
+  ✓ Aprender a abrir archivos con os.Open y os.OpenFile.
+  ✓ Crear archivos nuevos con os.Create.
+  ✓ Cerrar archivos correctamente con File.Close.
+  ✓ Leer archivos completos con os.ReadFile.
+  ✓ Escribir archivos completos con os.WriteFile.
+  ✓ Manejar permisos de archivos en Linux/Unix.
+  ✓ Implementar patrones seguros de apertura y cierre (defer).
+  ✓ Diferenciar entre modos de apertura (O_RDONLY, O_WRONLY, O_RDWR, etc.).
+  ✓ Aplicar buffering y flags de creación.
+  ✓ Conocer el manejo de errores específico de archivos.
+  ✓ Entender el concepto de file descriptor y su gestión en Go.
+
+  CONTENIDO
+  -------------------------------------------------------------------------------
+
+  1. INTRODUCCIÓN AL PAQUETE os
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  El paquete os de la biblioteca estándar de Go proporciona una interfaz 
+  independiente de la plataforma para las operaciones del sistema operativo. 
+  Entre sus múltiples funcionalidades, una de las más utilizadas es el 
+  manejo de archivos a través del tipo File.
+
+  File representa un descriptor de archivo abierto. No es solo un archivo 
+  en disco; también puede representar una conexión de red, un pipe, o 
+  cualquier otro recurso que utilice el sistema de E/S de Unix.
+
+  La firma básica del tipo es:
+
+  ```go
+  type File struct {
+      // contiene campos no exportados
+  }
+  ```
+
+  File implementa las interfaces io.Reader, io.Writer, io.ReaderAt, 
+  io.WriterAt, io.Seeker, y io.Closer. Esto significa que puedes usar 
+  un File en cualquier función que acepte estas interfaces, lo que brinda 
+  una enorme flexibilidad.
+
+  2. ABRIENDO ARCHIVOS CON os.Open
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  La función os.Open abre un archivo en modo solo lectura. Es la forma 
+  más simple de acceder a un archivo existente.
+
+  ```go
+  func Open(name string) (*File, error)
+  ```
+
+  Ejemplo básico:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      archivo, err := os.Open("ejemplo.txt")
+      if err != nil {
+          fmt.Println("Error al abrir el archivo:", err)
+          return
+      }
+      defer archivo.Close()
+
+      fmt.Println("Archivo abierto exitosamente:", archivo.Name())
+  }
+  ```
+
+  os.Open abre el archivo con el flag O_RDONLY. Si el archivo no existe, 
+  devuelve un error de tipo *os.PathError.
+
+  3. CREANDO ARCHIVOS CON os.Create
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  os.Create crea o trunca un archivo para escritura. Si el archivo ya 
+  existe, lo trunca (borra su contenido). Si no existe, lo crea con 
+  permisos 0666 (antes de la máscara umask).
+
+  ```go
+  func Create(name string) (*File, error)
+  ```
+
+  Ejemplo:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      archivo, err := os.Create("nuevo.txt")
+      if err != nil {
+          fmt.Println("Error al crear el archivo:", err)
+          return
+      }
+      defer archivo.Close()
+
+      fmt.Println("Archivo creado:", archivo.Name())
+  }
+  ```
+
+  Internamente, os.Create llama a OpenFile con flags O_RDWR|O_CREATE|O_TRUNC.
+
+  4. os.OpenFile — CONTROL TOTAL
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Para tener control completo sobre cómo se abre un archivo, usamos 
+  os.OpenFile. Esta función acepta un nombre, un conjunto de flags 
+  y un permiso.
+
+  ```go
+  func OpenFile(name string, flag int, perm FileMode) (*File, error)
+  ```
+
+  Flags disponibles (combinables con |):
+
+  ```go
+  const (
+      O_RDONLY int = syscall.O_RDONLY // solo lectura
+      O_WRONLY int = syscall.O_WRONLY // solo escritura
+      O_RDWR   int = syscall.O_RDWR   // lectura y escritura
+      O_APPEND int = syscall.O_APPEND // agregar al final
+      O_CREATE int = syscall.O_CREATE // crear si no existe
+      O_EXCL   int = syscall.O_EXCL   // exclusivo con O_CREATE
+      O_SYNC   int = syscall.O_SYNC   // E/S síncrona
+      O_TRUNC  int = syscall.O_TRUNC  // truncar al abrir
+  )
+  ```
+
+  Ejemplo de apertura para agregar (append):
+
+  ```go
+  archivo, err := os.OpenFile("log.txt", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+  if err != nil {
+      log.Fatal(err)
+  }
+  defer archivo.Close()
+  ```
+
+  5. CERRANDO ARCHIVOS CON Close
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Siempre debemos cerrar los archivos cuando terminamos de usarlos. 
+  El método Close libera el descriptor de archivo y escribe cualquier 
+  dato pendiente en el buffer del sistema operativo.
+
+  ```go
+  func (f *File) Close() error
+  ```
+
+  Patrón recomendado con defer:
+
+  ```go
+  func procesarArchivo(nombre string) error {
+      f, err := os.Open(nombre)
+      if err != nil {
+          return err
+      }
+      defer f.Close()
+
+      // trabajar con el archivo...
+      return nil
+  }
+  ```
+
+  Es importante verificar el error de Close en operaciones de escritura:
+
+  ```go
+  func escribirArchivo(nombre string, datos []byte) error {
+      f, err := os.Create(nombre)
+      if err != nil {
+          return err
+      }
+      defer func() {
+          if cerr := f.Close(); cerr != nil {
+              err = cerr
+          }
+      }()
+
+      _, err = f.Write(datos)
+      return err
+  }
+  ```
+
+  6. LEYENDO ARCHIVOS CON os.ReadFile
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  A partir de Go 1.16, os.ReadFile permite leer un archivo completo 
+  en memoria de manera simple y eficiente.
+
+  ```go
+  func ReadFile(name string) ([]byte, error)
+  ```
+
+  Ejemplo:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      datos, err := os.ReadFile("datos.txt")
+      if err != nil {
+          fmt.Println("Error al leer:", err)
+          return
+      }
+      fmt.Println("Contenido:")
+      fmt.Println(string(datos))
+  }
+  ```
+
+  Esta función es ideal para archivos pequeños que caben cómodamente 
+  en memoria. Para archivos grandes, es mejor usar bufio o leer 
+  por partes.
+
+  7. ESCRIBIENDO ARCHIVOS CON os.WriteFile
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  os.WriteFile escribe datos en un archivo, creándolo o truncándolo 
+  si existe. También disponible desde Go 1.16.
+
+  ```go
+  func WriteFile(name string, data []byte, perm FileMode) error
+  ```
+
+  Ejemplo:
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      contenido := []byte("Hola, Go Master Book!\n")
+      err := os.WriteFile("salida.txt", contenido, 0644)
+      if err != nil {
+          fmt.Println("Error al escribir:", err)
+          return
+      }
+      fmt.Println("Archivo escrito exitosamente")
+  }
+  ```
+
+  8. PERMISOS DE ARCHIVOS (FileMode)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  En sistemas Unix, los permisos se representan con os.FileMode, que 
+  es un alias para uint32. Los permisos se expresan típicamente en 
+  octal:
+
+  ```go
+  const (
+      // Permisos comunes
+      PermisoLectura     os.FileMode = 0444 // r--r--r--
+      PermisoEscritura   os.FileMode = 0222 // -w--w--w-
+      PermisoEjecucion   os.FileMode = 0111 // --x--x--x
+      PermisoCompleto    os.FileMode = 0777 // rwxrwxrwx
+      PermisoSeguro      os.FileMode = 0600 // rw-------
+      PermisoCompartido  os.FileMode = 0644 // rw-r--r--
+  )
+  ```
+
+  Ejemplo de verificación de permisos:
+
+  ```go
+  func verificarPermisos(nombre string) {
+      info, err := os.Stat(nombre)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      modo := info.Mode()
+      fmt.Printf("Permisos: %o\n", modo.Perm())
+      fmt.Printf("Es directorio: %v\n", modo.IsDir())
+      fmt.Printf("Es regular: %v\n", modo.IsRegular())
+  }
+  ```
+
+  La máscara umask del proceso afecta los permisos finales. Si el 
+  sistema tiene umask 0022, un permiso solicitado de 0666 resultará 
+  en 0644.
+
+  9. TRABAJANDO CON RUTAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  El paquete path/filepath complementa a os para el manejo de rutas:
+
+  ```go
+  import "path/filepath"
+
+  func main() {
+      // Unir rutas de forma segura
+      ruta := filepath.Join("directorio", "subdir", "archivo.txt")
+      fmt.Println(ruta) // directorio/subdir/archivo.txt
+
+      // Obtener componentes
+      dir := filepath.Dir(ruta)     // directorio/subdir
+      base := filepath.Base(ruta)   // archivo.txt
+      ext := filepath.Ext(ruta)     // .txt
+
+      // Rutas absolutas y relativas
+      abs, _ := filepath.Abs("relativa.txt")
+      fmt.Println("Absoluta:", abs)
+  }
+  ```
+
+  10. MANEJO DE ERRORES ESPECÍFICOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Es importante distinguir entre diferentes tipos de errores al 
+  trabajar con archivos:
+
+  ```go
+  package main
+
+  import (
+      "errors"
+      "fmt"
+      "os"
+  )
+
+  func main() {
+      _, err := os.Open("no-existe.txt")
+      if err != nil {
+          if errors.Is(err, os.ErrNotExist) {
+              fmt.Println("El archivo no existe")
+          } else if errors.Is(err, os.ErrPermission) {
+              fmt.Println("Permiso denegado")
+          } else if errors.Is(err, os.ErrExist) {
+              fmt.Println("El archivo ya existe")
+          } else {
+              fmt.Println("Error desconocido:", err)
+          }
+      }
+  }
+  ```
+
+  Los errores centinela del paquete os son:
+
+  ```go
+  var (
+      ErrInvalid    = fs.ErrInvalid    // operación inválida
+      ErrPermission = fs.ErrPermission // permiso denegado
+      ErrExist      = fs.ErrExist      // archivo ya existe
+      ErrNotExist   = fs.ErrNotExist    // archivo no existe
+      ErrClosed     = fs.ErrClosed     // archivo cerrado
+  )
+  ```
+
+  11. PATRONES AVANZADOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  11.1. COPIA SEGURA DE ARCHIVOS
+
+  ```go
+  func copiarArchivo(origen, destino string) error {
+      src, err := os.Open(origen)
+      if err != nil {
+          return fmt.Errorf("error al abrir origen: %w", err)
+      }
+      defer src.Close()
+
+      dst, err := os.Create(destino)
+      if err != nil {
+          return fmt.Errorf("error al crear destino: %w", err)
+      }
+      defer dst.Close()
+
+      _, err = io.Copy(dst, src)
+      if err != nil {
+          return fmt.Errorf("error al copiar: %w", err)
+      }
+
+      return dst.Close()
+  }
+  ```
+
+  11.2. ESCRITURA ATÓMICA CON ARCHIVO TEMPORAL
+
+  ```go
+  func escribirAtomico(nombre string, datos []byte, perm os.FileMode) error {
+      tmp, err := os.CreateTemp("", "temp-*")
+      if err != nil {
+          return err
+      }
+      defer os.Remove(tmp.Name())
+
+      if _, err := tmp.Write(datos); err != nil {
+          tmp.Close()
+          return err
+      }
+
+      if err := tmp.Close(); err != nil {
+          return err
+      }
+
+      return os.Rename(tmp.Name(), nombre)
+  }
+  ```
+
+  11.3. LISTAR ARCHIVOS EN UN DIRECTORIO
+
+  ```go
+  func listarArchivos(dir string) ([]string, error) {
+      entradas, err := os.ReadDir(dir)
+      if err != nil {
+          return nil, err
+      }
+
+      var archivos []string
+      for _, entrada := range entradas {
+          if !entrada.IsDir() {
+              info, _ := entrada.Info()
+              archivos = append(archivos, fmt.Sprintf(
+                  "%s (%d bytes)", entrada.Name(), info.Size(),
+              ))
+          }
+      }
+      return archivos, nil
+  }
+  ```
+
+  11.4. WATCHER DE ARCHIVOS SIMPLE
+
+  ```go
+  func vigilarArchivo(nombre string, intervalo time.Duration) {
+      info, err := os.Stat(nombre)
+      if err != nil {
+          fmt.Println("Error inicial:", err)
+          return
+      }
+      modTime := info.ModTime()
+
+      for {
+          time.Sleep(intervalo)
+          info, err := os.Stat(nombre)
+          if err != nil {
+              fmt.Println("Error al vigilar:", err)
+              continue
+          }
+          if info.ModTime().After(modTime) {
+              fmt.Println("El archivo ha cambiado:", nombre)
+              modTime = info.ModTime()
+          }
+      }
+  }
+  ```
+
+  12. PROGRAMA COMPLETO — ADMINISTRADOR DE ARCHIVOS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ```go
+  package main
+
+  import (
+      "fmt"
+      "os"
+      "path/filepath"
+      "time"
+  )
+
+  func main() {
+      for {
+          fmt.Println("\n=== ADMINISTRADOR DE ARCHIVOS ===")
+          fmt.Println("1. Leer archivo")
+          fmt.Println("2. Crear archivo")
+          fmt.Println("3. Ver información")
+          fmt.Println("4. Copiar archivo")
+          fmt.Println("5. Listar directorio")
+          fmt.Println("6. Salir")
+          fmt.Print("Opción: ")
+
+          var opcion int
+          fmt.Scan(&opcion)
+
+          switch opcion {
+          case 1:
+              leerArchivo()
+          case 2:
+              crearArchivo()
+          case 3:
+              verInformacion()
+          case 4:
+              copiarArchivo()
+          case 5:
+              listarDirectorio()
+          case 6:
+              fmt.Println("¡Hasta luego!")
+              return
+          default:
+              fmt.Println("Opción inválida")
+          }
+      }
+  }
+
+  func leerArchivo() {
+      fmt.Print("Nombre del archivo: ")
+      var nombre string
+      fmt.Scan(&nombre)
+
+      datos, err := os.ReadFile(nombre)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+      fmt.Println("\n--- CONTENIDO ---")
+      fmt.Println(string(datos))
+      fmt.Println("-----------------")
+  }
+
+  func crearArchivo() {
+      fmt.Print("Nombre del archivo: ")
+      var nombre string
+      fmt.Scan(&nombre)
+      fmt.Print("Contenido: ")
+      var contenido string
+      fmt.Scan(&contenido)
+
+      err := os.WriteFile(nombre, []byte(contenido), 0644)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+      fmt.Println("Archivo creado exitosamente")
+  }
+
+  func verInformacion() {
+      fmt.Print("Nombre del archivo: ")
+      var nombre string
+      fmt.Scan(&nombre)
+
+      info, err := os.Stat(nombre)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+
+      fmt.Println("\n--- INFORMACIÓN ---")
+      fmt.Printf("Nombre: %s\n", info.Name())
+      fmt.Printf("Tamaño: %d bytes\n", info.Size())
+      fmt.Printf("Modo: %s\n", info.Mode())
+      fmt.Printf("Modificado: %s\n", info.ModTime().Format(time.RFC1123))
+      fmt.Printf("Es directorio: %v\n", info.IsDir())
+      fmt.Println("--------------------")
+  }
+
+  func copiarArchivo() {
+      fmt.Print("Archivo origen: ")
+      var origen string
+      fmt.Scan(&origen)
+      fmt.Print("Archivo destino: ")
+      var destino string
+      fmt.Scan(&destino)
+
+      src, err := os.Open(origen)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+      defer src.Close()
+
+      dst, err := os.Create(destino)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+      defer dst.Close()
+
+      buf := make([]byte, 4096)
+      for {
+          n, err := src.Read(buf)
+          if n > 0 {
+              if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
+                  fmt.Printf("Error al escribir: %v\n", writeErr)
+                  return
+              }
+          }
+          if err != nil {
+              break
+          }
+      }
+      fmt.Println("Archivo copiado exitosamente")
+  }
+
+  func listarDirectorio() {
+      fmt.Print("Directorio: ")
+      var dir string
+      fmt.Scan(&dir)
+
+      entries, err := os.ReadDir(dir)
+      if err != nil {
+          fmt.Printf("Error: %v\n", err)
+          return
+      }
+
+      fmt.Println("\n--- CONTENIDO ---")
+      for _, entry := range entries {
+          info, _ := entry.Info()
+          tamaño := fileSize(info.Size())
+          if entry.IsDir() {
+              fmt.Printf("[DIR]  %s\n", entry.Name())
+          } else {
+              fmt.Printf("[FILE] %s (%s)\n", entry.Name(), tamaño)
+          }
+      }
+      fmt.Println("-----------------")
+  }
+
+  func fileSize(bytes int64) string {
+      const unit = 1024
+      if bytes < unit {
+          return fmt.Sprintf("%d B", bytes)
+      }
+      div, exp := int64(unit), 0
+      for n := bytes / unit; n >= unit; n /= unit {
+          div *= unit
+          exp++
+      }
+      return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+  }
+  ```
+
+  RESULTADO DEL PROGRAMA (ejemplo de ejecución):
+  ```
+  === ADMINISTRADOR DE ARCHIVOS ===
+  1. Leer archivo
+  2. Crear archivo
+  3. Ver información
+  4. Copiar archivo
+  5. Listar directorio
+  6. Salir
+  Opción: 3
+  Nombre del archivo: main.go
+
+  --- INFORMACIÓN ---
+  Nombre: main.go
+  Tamaño: 2048 bytes
+  Modo: -rw-r--r--
+  Modificado: Thu, 02 Jul 2026 10:30:00 UTC
+  Es directorio: false
+  --------------------
+  ```
+
+  13. BUENAS PRÁCTICAS
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  1. Siempre usar defer para cerrar archivos inmediatamente después de abrirlos.
+  2. Verificar errores en cada operación de archivo.
+  3. Preferir os.ReadFile/os.WriteFile para archivos pequeños.
+  4. Usar os.OpenFile para control granular sobre flags.
+  5. Considerar el umask del sistema al establecer permisos.
+  6. Para escrituras atómicas, escribir a un temporal y renombrar.
+  7. No ignorar el error de Close en operaciones de escritura.
+  8. Usar filepath.Join en lugar de concatenar rutas manualmente.
+  9. Limitar el tamaño de archivos leídos en memoria.
+  10. Implementar timeouts para operaciones que puedan bloquearse.
+
+  14. COMPARATIVA: os VS io/ioutil (DEPRECATED)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Desde Go 1.16, las funciones de ioutil están deprecadas en favor de os:
+
+  | ioutil (obsoleto)      | os (nuevo)         |
+  |------------------------|--------------------|
+  | ioutil.ReadFile        | os.ReadFile        |
+  | ioutil.WriteFile       | os.WriteFile       |
+  | ioutil.ReadAll         | io.ReadAll         |
+  | ioutil.ReadDir         | os.ReadDir         |
+  | ioutil.TempFile        | os.CreateTemp      |
+  | ioutil.TempDir         | os.MkdirTemp       |
+
+  15. DIFERENCIAS CLAVE CON OTROS LENGUAJES
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  A diferencia de Python (open) o Java (FileInputStream/FileOutputStream),
+  Go utiliza un único tipo File que implementa múltiples interfaces.
+  Esto simplifica la API y permite composición mediante interfaces.
+
+  En C, el manejo de archivos requiere gestión manual de buffers y 
+  verificación constante de errores. Go abstrae esto con io.Reader 
+  e io.Writer, y el recolector de basura ayuda con la memoria, 
+  aunque los descriptores de archivo deben cerrarse explícitamente.
+
+  RESUMEN DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  En este capítulo hemos aprendido:
+
+  • os.File es el tipo fundamental para operaciones de archivo en Go.
+  • os.Open abre archivos en modo lectura; os.Create los crea/trunca.
+  • os.OpenFile ofrece control total con flags y permisos.
+  • El cierre con defer es el patrón estándar de seguridad.
+  • os.ReadFile y os.WriteFile simplifican operaciones completas.
+  • Los permisos se manejan con FileMode (notación octal).
+  • Los errores específicos (ErrNotExist, ErrPermission) permiten 
+    manejo granular.
+  • Los patrones avanzados incluyen copia segura, escritura atómica 
+    y listado de directorios.
+
+  EJERCICIOS PROPUESTOS
+  -------------------------------------------------------------------------------
+
+  ★ EJERCICIO 1 (FÁCIL):
+    Crea un programa que lea un archivo de texto y cuente el número 
+    de líneas, palabras y caracteres. Usa os.ReadFile.
+
+  ★ EJERCICIO 2 (FÁCIL):
+    Implementa una función que reciba un directorio y devuelva el 
+    tamaño total de todos los archivos regulares que contiene.
+
+  ★ EJERCICIO 3 (MEDIO):
+    Crea un programa que lea un archivo CSV simple (separado por comas) 
+    usando os.Open y bufio.Scanner, y calcule el promedio de una 
+    columna numérica.
+
+  ★ EJERCICIO 4 (MEDIO):
+    Implementa un sistema de logging simple que escriba mensajes con 
+    timestamp en un archivo, usando os.OpenFile con O_APPEND.
+
+  ★ EJERCICIO 5 (DIFÍCIL):
+    Escribe un programa que divida un archivo grande en múltiples 
+    archivos más pequeños de tamaño fijo (por ejemplo, 1 MB cada uno). 
+    El programa debe aceptar el nombre del archivo y el tamaño de 
+    los fragmentos como argumentos.
+
+  ★ EJERCICIO 6 (DIFÍCIL):
+    Implementa un "vigilante de archivos" que monitoree un directorio 
+    y reporte cuando se creen, modifiquen o eliminen archivos. Usa 
+    os.Stat y time.Sleep para el polling.
+
+  ★ EJERCICIO 7 (AVANZADO):
+    Crea una herramienta de sincronización simple que mantenga dos 
+    directorios sincronizados (copia los archivos nuevos/modificados 
+    de origen a destino). Usa filepath.Walk.
+
+  ★ EJERCICIO 8 (AVANZADO):
+    Implementa un backup incremental que solo respalde los archivos 
+    que hayan cambiado desde el último backup, usando un archivo de 
+    índice con las marcas de tiempo.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  -------------------------------------------------------------------------------
+
+  ❓ ¿Qué pasa si no cierro un archivo?
+  R: Los descriptores de archivo son recursos limitados del sistema. 
+  No cerrarlos puede llevar a "too many open files". El GC no cierra 
+  archivos automáticamente. Siempre usa defer Close().
+
+  ❓ ¿Cuál es la diferencia entre os.OpenFile y os.Create?
+  R: os.Create es un atajo que abre con O_RDWR|O_CREATE|O_TRUNC. 
+  os.OpenFile permite especificar exactamente qué flags usar.
+
+  ❓ ¿Cómo manejo archivos binarios?
+  R: Go no distingue entre archivos de texto y binarios. Simplemente 
+  lees y escribes slices de bytes. La interpretación depende de ti.
+
+  ❓ ¿Qué tamaño de buffer debo usar para copiar archivos?
+  R: 32 KB es un buen valor por defecto. Para máximo rendimiento, 
+  puedes usar 64 KB o io.Copy (que internamente usa 32 KB).
+
+  ❓ ¿os.ReadFile es seguro para archivos grandes?
+  R: No. os.ReadFile carga todo el archivo en memoria. Para archivos 
+  grandes (>100 MB), usa bufio.Scanner o lectura por partes.
+
+  ❓ ¿Cómo verifico si un archivo existe sin abrirlo?
+  R: Usa os.Stat. Si el error es os.ErrNotExist, el archivo no existe. 
+  Pero ten cuidado con condiciones de carrera (TOCTOU).
+
+  ❓ ¿Qué significa el permiso 0644?
+  R: En octal: 0 = prefijo octal, 6 = rw- para el dueño, 4 = r-- 
+  para el grupo, 4 = r-- para otros. Es el permiso más común para 
+  archivos regulares.
+
+  ❓ ¿Puedo usar un archivo como io.Reader?
+  R: Sí, *os.File implementa io.Reader, io.Writer y io.Closer.
+
+  DESAFÍO DEL ARQUITECTO
+  -------------------------------------------------------------------------------
+
+  🏆 SISTEMA DE ARCHIVOS VIRTUAL CON CACHÉ
+
+  Diseña e implementa un sistema de archivos virtual que:
+
+  1. Almacene archivos en memoria con estructura de directorios.
+  2. Proporcione una API similar a os.File (Open, Create, Read, Write, Close).
+  3. Implemente una caché LRU que mantenga los archivos más usados 
+     en memoria y persista los menos usados a disco.
+  4. Sincronice los cambios a disco cada N segundos (write-behind).
+  5. Maneje conflictos si el mismo archivo se modifica desde 
+     dos instancias.
+  6. Implemente un sistema de bloqueo (file locking) para evitar 
+     escrituras concurrentes al mismo archivo.
+  7. Proporcione estadísticas de uso (hits de caché, archivos 
+     más accedidos, tiempo promedio de E/S).
+
+  Requisitos técnicos:
+  - Usa mapas concurrentes con sync.RWMutex.
+  - Implementa una cola LRU con listas enlazadas o un heap.
+  - Usa un worker pool para las escrituras diferidas.
+  - Los metadatos deben persistirse en un archivo JSON.
+
+  Este desafío pone a prueba tu comprensión de:
+  - Manejo avanzado de archivos en Go
+  - Concurrencia y sincronización
+  - Patrones de caché y persistencia
+  - Diseño de APIs coherentes
+
+  CIERRE DEL CAPÍTULO
+  -------------------------------------------------------------------------------
+
+  Has completado el Capítulo 51 de GO MASTER BOOK. Ahora dominas 
+  los fundamentos del manejo de archivos con os.File en Go. Este 
+  conocimiento es la base sobre la que construiremos operaciones 
+  más avanzadas de lectura, escritura y procesamiento de datos 
+  en los capítulos siguientes.
+
+  Recuerda: cada archivo que abres es un recurso del sistema que 
+  debe gestionarse con cuidado. La disciplina de cerrar siempre 
+  con defer, verificar errores y elegir el modo de apertura 
+  correcto distinguirá a un desarrollador novato de uno experto.
+
+  En el próximo capítulo, exploraremos la lectura de archivos en 
+  profundidad con bufio y io, aprendiendo a procesar grandes 
+  volúmenes de datos de manera eficiente.
+
+  PRÓXIMO CAPÍTULO
+  -------------------------------------------------------------------------------
+  ▶ CAPÍTULO 52: LECTURA DE ARCHIVOS (bufio, io, utilerías)
+    Aprenderás a leer archivos de forma eficiente usando buffering,
+    scanners para líneas, y lectores especializados. Ideal para
+    procesar archivos grandes, logs y datos estructurados.
+
+================================================================================
+  GO MASTER BOOK — CAPÍTULO 51 — FIN DEL CAPÍTULO
+================================================================================

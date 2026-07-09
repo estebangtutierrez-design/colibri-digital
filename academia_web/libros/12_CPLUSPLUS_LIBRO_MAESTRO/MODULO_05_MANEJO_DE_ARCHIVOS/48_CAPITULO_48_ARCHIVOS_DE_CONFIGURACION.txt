@@ -1,0 +1,1159 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 48: ARCHIVOS DE CONFIGURACIÓN
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo de archivos de configuración. Toda aplicación necesita
+configuración: parámetros que el usuario puede ajustar sin recompilar. Aquí
+aprenderemos a implementar parsers para formatos INI, key=value, JSON y XML,
+así como sistemas completos de gestión de configuración con secciones, tipos
+y valores por defecto.
+
+FRASE
+-----
+"La configuración es el arte de separar lo variable de lo inmutable."
+— Anónimo
+
+OBJETIVOS
+---------
+• Parsear archivos de configuración en formato INI (secciones y claves).
+• Implementar un parser key=value con soporte de comentarios.
+• Introducir el parseo básico de JSON para configuración.
+• Gestionar tipos de configuración (int, double, string, bool).
+• Implementar valores por defecto y validación de rangos.
+• Construir un gestor de configuración completo y extensible.
+
+CONTENIDO
+---------
+
+1. FORMATO INI
+
+Formato clásico de configuración:
+
+  [seccion]
+  clave = valor
+  ; comentario
+
+2. FORMATO KEY=VALUE
+
+Formato simple sin secciones, ideal para configuraciones pequeñas.
+Soporta líneas con clave=valor y comentarios con # o ;.
+
+3. FORMATO JSON
+
+Formato moderno y jerárquico. Usaremos una implementación manual
+simplificada para entender el principio.
+
+4. TIPOS DE CONFIGURACIÓN
+
+Los valores en configuración siempre son texto, pero las aplicaciones
+necesitan interpretarlos como tipos específicos.
+
+5. VALIDACIÓN Y VALORES POR DEFECTO
+
+Toda configuración debe tener un valor por defecto. La validación
+verifica que los valores estén dentro de rangos aceptables.
+
+================================================================================
+CÓDIGO DE EJEMPLO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <map>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+using namespace std;
+
+//==============================================================================
+// EJEMPLO 1: PARSER KEY=VALUE SIMPLE
+//==============================================================================
+class ConfigSimple
+{
+    map<string, string> datos_;
+
+public:
+    bool cargar(const string& archivo)
+    {
+        ifstream in(archivo);
+        if (!in) return false;
+
+        string linea;
+        int num_linea = 0;
+
+        while (getline(in, linea))
+        {
+            num_linea++;
+
+            // Eliminar espacios y comentarios
+            size_t comment = linea.find_first_of("#;");
+            if (comment != string::npos)
+                linea = linea.substr(0, comment);
+
+            // Trim
+            auto trim = [](string& s)
+            {
+                size_t start = s.find_first_not_of(" \t\r\n");
+                size_t end = s.find_last_not_of(" \t\r\n");
+                if (start == string::npos)
+                    s.clear();
+                else
+                    s = s.substr(start, end - start + 1);
+            };
+            trim(linea);
+
+            if (linea.empty()) continue;
+
+            size_t eq = linea.find('=');
+            if (eq == string::npos)
+            {
+                cerr << "  Línea " << num_linea
+                     << ": sin '=' (saltando)\n";
+                continue;
+            }
+
+            string clave = linea.substr(0, eq);
+            string valor = linea.substr(eq + 1);
+            trim(clave);
+            trim(valor);
+
+            datos_[clave] = valor;
+        }
+
+        return true;
+    }
+
+    string getString(const string& clave,
+                     const string& def = "") const
+    {
+        auto it = datos_.find(clave);
+        return (it != datos_.end()) ? it->second : def;
+    }
+
+    int getInt(const string& clave, int def = 0) const
+    {
+        auto it = datos_.find(clave);
+        if (it == datos_.end()) return def;
+        try { return stoi(it->second); }
+        catch (...) { return def; }
+    }
+
+    double getDouble(const string& clave, double def = 0.0) const
+    {
+        auto it = datos_.find(clave);
+        if (it == datos_.end()) return def;
+        try { return stod(it->second); }
+        catch (...) { return def; }
+    }
+
+    bool getBool(const string& clave, bool def = false) const
+    {
+        auto it = datos_.find(clave);
+        if (it == datos_.end()) return def;
+        string v = it->second;
+        transform(v.begin(), v.end(), v.begin(), ::tolower);
+        return v == "true" || v == "1" || v == "yes" || v == "on";
+    }
+
+    void listar() const
+    {
+        for (const auto& [k, v] : datos_)
+            cout << "    " << k << " = " << v << "\n";
+    }
+};
+
+void ejemplo_key_value()
+{
+    cout << "\n--- EJEMPLO 1: Parser key=value ---\n";
+
+    ofstream("config.conf") <<
+        "# Configuración del servidor\n"
+        "puerto = 8080\n"
+        "host = localhost\n"
+        "debug = true\n"
+        "timeout = 30.5\n"
+        "; comentario ignorado\n"
+        "max_conexiones = 100\n";
+
+    ConfigSimple cfg;
+    if (cfg.cargar("config.conf"))
+    {
+        cout << "  Configuración cargada:\n";
+        cfg.listar();
+
+        cout << "\n  Valores tipados:\n";
+        cout << "    puerto: " << cfg.getInt("puerto") << "\n";
+        cout << "    host: " << cfg.getString("host") << "\n";
+        cout << "    debug: " << boolalpha << cfg.getBool("debug") << "\n";
+        cout << "    timeout: " << cfg.getDouble("timeout") << "s\n";
+        cout << "    max_conexiones: " << cfg.getInt("max_conexiones") << "\n";
+
+        // Valores por defecto
+        cout << "    no_existe: " << cfg.getString("no_existe", "DEFECTO") << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 2: PARSER INI CON SECCIONES
+//==============================================================================
+class ConfigINI
+{
+    map<string, map<string, string>> datos_;
+
+    string trim(const string& s) const
+    {
+        size_t start = s.find_first_not_of(" \t\r\n");
+        size_t end = s.find_last_not_of(" \t\r\n");
+        if (start == string::npos) return "";
+        return s.substr(start, end - start + 1);
+    }
+
+public:
+    bool cargar(const string& archivo)
+    {
+        ifstream in(archivo);
+        if (!in) return false;
+
+        string linea;
+        string seccion_actual = "GLOBAL";
+        int num = 0;
+
+        while (getline(in, linea))
+        {
+            num++;
+
+            // Quitar comentarios
+            size_t comment = linea.find_first_of("#;");
+            if (comment != string::npos)
+                linea = linea.substr(0, comment);
+
+            string s = trim(linea);
+            if (s.empty()) continue;
+
+            // Sección?
+            if (s.front() == '[' && s.back() == ']')
+            {
+                seccion_actual = s.substr(1, s.size() - 2);
+                seccion_actual = trim(seccion_actual);
+                if (datos_.count(seccion_actual) > 0)
+                    cerr << "  Sección duplicada: " << seccion_actual << "\n";
+                continue;
+            }
+
+            size_t eq = s.find('=');
+            if (eq == string::npos)
+            {
+                cerr << "  Línea " << num << ": formato inválido\n";
+                continue;
+            }
+
+            string clave = trim(s.substr(0, eq));
+            string valor = trim(s.substr(eq + 1));
+            datos_[seccion_actual][clave] = valor;
+        }
+
+        return true;
+    }
+
+    string getString(const string& seccion, const string& clave,
+                     const string& def = "") const
+    {
+        auto sec = datos_.find(seccion);
+        if (sec == datos_.end()) return def;
+        auto it = sec->second.find(clave);
+        return (it != sec->second.end()) ? it->second : def;
+    }
+
+    int getInt(const string& seccion, const string& clave,
+               int def = 0) const
+    {
+        string v = getString(seccion, clave, "");
+        if (v.empty()) return def;
+        try { return stoi(v); }
+        catch (...) { return def; }
+    }
+
+    bool existeSeccion(const string& s) const
+    {
+        return datos_.count(s) > 0;
+    }
+
+    vector<string> secciones() const
+    {
+        vector<string> secs;
+        for (const auto& [s, _] : datos_)
+            secs.push_back(s);
+        return secs;
+    }
+
+    void listar() const
+    {
+        for (const auto& [sec, claves] : datos_)
+        {
+            cout << "  [" << sec << "]\n";
+            for (const auto& [k, v] : claves)
+                cout << "    " << k << " = " << v << "\n";
+        }
+    }
+};
+
+void ejemplo_ini()
+{
+    cout << "\n--- EJEMPLO 2: INI con secciones ---\n";
+
+    ofstream("app.ini") <<
+        "[database]\n"
+        "host = localhost\n"
+        "port = 5432\n"
+        "name = mi_app\n"
+        "user = admin\n"
+        "password = secret\n"
+        "\n"
+        "[server]\n"
+        "port = 3000\n"
+        "workers = 4\n"
+        "max_requests = 10000\n"
+        "\n"
+        "[logging]\n"
+        "level = debug\n"
+        "file = /var/log/app.log\n"
+        "format = json\n"
+        "\n"
+        "[features]\n"
+        "enable_cache = true\n"
+        "enable_auth = true\n"
+        "max_items = 500\n";
+
+    ConfigINI ini;
+    if (ini.cargar("app.ini"))
+    {
+        cout << "  Configuración INI cargada:\n";
+        ini.listar();
+
+        cout << "\n  Consultas:\n";
+        cout << "    database.host: " << ini.getString("database", "host") << "\n";
+        cout << "    database.port: " << ini.getInt("database", "port") << "\n";
+        cout << "    server.port: " << ini.getInt("server", "port") << "\n";
+        cout << "    logging.level: " << ini.getString("logging", "level") << "\n";
+        cout << "    ¿existe [database]? " << (ini.existeSeccion("database") ? "sí" : "no") << "\n";
+        cout << "    ¿existe [no_existe]? " << (ini.existeSeccion("no_existe") ? "sí" : "no") << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 3: PARSER JSON SIMPLIFICADO
+//==============================================================================
+class JsonValue;
+
+using JsonObject = map<string, JsonValue>;
+using JsonArray = vector<JsonValue>;
+
+class JsonValue
+{
+public:
+    enum Type { NULL_VAL, BOOL, INT, DOUBLE, STRING, ARRAY, OBJECT };
+
+private:
+    Type type_ = NULL_VAL;
+    bool bool_ = false;
+    int64_t int_ = 0;
+    double double_ = 0.0;
+    string string_;
+    JsonArray array_;
+    JsonObject object_;
+
+public:
+    JsonValue() = default;
+    JsonValue(bool v) : type_(BOOL), bool_(v) {}
+    JsonValue(int64_t v) : type_(INT), int_(v) {}
+    JsonValue(double v) : type_(DOUBLE), double_(v) {}
+    JsonValue(const string& v) : type_(STRING), string_(v) {}
+    JsonValue(const char* v) : type_(STRING), string_(v) {}
+    JsonValue(const JsonArray& v) : type_(ARRAY), array_(v) {}
+    JsonValue(const JsonObject& v) : type_(OBJECT), object_(v) {}
+
+    Type type() const { return type_; }
+    bool asBool() const { return bool_; }
+    int64_t asInt() const { return int_; }
+    double asDouble() const { return double_; }
+    string asString() const { return string_; }
+    const JsonArray& asArray() const { return array_; }
+    const JsonObject& asObject() const { return object_; }
+
+    string toString(int indent = 0) const
+    {
+        string prefix(indent, ' ');
+        string child_prefix(indent + 2, ' ');
+
+        switch (type_)
+        {
+            case NULL_VAL: return "null";
+            case BOOL: return bool_ ? "true" : "false";
+            case INT: return to_string(int_);
+            case DOUBLE: return to_string(double_);
+            case STRING: return "\"" + string_ + "\"";
+            case ARRAY:
+            {
+                if (array_.empty()) return "[]";
+                string r = "[\n";
+                for (size_t i = 0; i < array_.size(); ++i)
+                {
+                    r += child_prefix + array_[i].toString(indent + 2);
+                    if (i < array_.size() - 1) r += ",";
+                    r += "\n";
+                }
+                r += prefix + "]";
+                return r;
+            }
+            case OBJECT:
+            {
+                if (object_.empty()) return "{}";
+                string r = "{\n";
+                size_t i = 0;
+                for (const auto& [k, v] : object_)
+                {
+                    r += child_prefix + "\"" + k + "\": " + v.toString(indent + 2);
+                    if (++i < object_.size()) r += ",";
+                    r += "\n";
+                }
+                r += prefix + "}";
+                return r;
+            }
+        }
+        return "";
+    }
+};
+
+JsonValue parsear_json(istream& in)
+{
+    char c;
+    in >> c;
+    if (!in) return JsonValue();
+
+    if (c == '{')
+    {
+        JsonObject obj;
+        in >> c;
+        if (c == '}') return JsonValue(obj);
+
+        in.putback(c);
+        while (true)
+        {
+            in >> c; // "
+            string key;
+            getline(in, key, '"');
+            in >> c; // :
+            JsonValue val = parsear_json(in);
+            obj[key] = val;
+
+            in >> c;
+            if (c == '}') break;
+            // else ',' continuar
+        }
+        return JsonValue(obj);
+    }
+    else if (c == '[')
+    {
+        JsonArray arr;
+        in >> c;
+        if (c == ']') return JsonValue(arr);
+        in.putback(c);
+
+        while (true)
+        {
+            arr.push_back(parsear_json(in));
+            in >> c;
+            if (c == ']') break;
+        }
+        return JsonValue(arr);
+    }
+    else if (c == '"')
+    {
+        string s;
+        getline(in, s, '"');
+        return JsonValue(s);
+    }
+    else if (c == 't')
+    {
+        string rest(3, ' ');
+        in.read(&rest[0], 3);
+        return JsonValue(true);
+    }
+    else if (c == 'f')
+    {
+        string rest(4, ' ');
+        in.read(&rest[0], 4);
+        return JsonValue(false);
+    }
+    else if (c == 'n')
+    {
+        string rest(3, ' ');
+        in.read(&rest[0], 3);
+        return JsonValue();
+    }
+    else
+    {
+        string num;
+        num += c;
+        char n;
+        while (in.get(n) && (isdigit(n) || n == '.' || n == '-' || n == 'e' || n == 'E' || n == '+'))
+            num += n;
+        if (!in.eof()) in.putback(n);
+
+        if (num.find('.') != string::npos || num.find('e') != string::npos)
+            return JsonValue(stod(num));
+        else
+            return JsonValue(stoll(num));
+    }
+}
+
+JsonValue parsear_json_string(const string& s)
+{
+    istringstream in(s);
+    return parsear_json(in);
+}
+
+void ejemplo_json()
+{
+    cout << "\n--- EJEMPLO 3: Parser JSON ---\n";
+
+    string json_str = R"({
+        "servidor": {
+            "puerto": 8080,
+            "host": "localhost",
+            "ssl": true
+        },
+        "base_datos": {
+            "motor": "postgresql",
+            "pool": 10,
+            "credenciales": {
+                "user": "admin",
+                "pass": "1234"
+            }
+        },
+        "limites": [100, 200, 300],
+        "debug": false
+    })";
+
+    JsonValue doc = parsear_json_string(json_str);
+
+    cout << "  JSON parseado:\n";
+    cout << doc.toString() << "\n";
+
+    // Navegación simple
+    auto obj = doc.asObject();
+    auto serv = obj["servidor"].asObject();
+    cout << "\n  puerto: " << serv["puerto"].asInt() << "\n";
+    cout << "  host: " << serv["host"].asString() << "\n";
+    cout << "  ssl: " << boolalpha << serv["ssl"].asBool() << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 4: GESTOR DE CONFIGURACIÓN COMPLETO
+//==============================================================================
+template<typename T>
+struct ValorConfig
+{
+    T valor;
+    T defecto;
+    T minimo;
+    T maximo;
+    string descripcion;
+};
+
+class GestorConfig
+{
+    ConfigINI ini_;
+    map<string, ValorConfig<int>> ints_;
+    map<string, ValorConfig<double>> doubles_;
+    map<string, ValorConfig<string>> strings_;
+    map<string, ValorConfig<bool>> bools_;
+
+public:
+    bool cargar(const string& archivo)
+    {
+        return ini_.cargar(archivo);
+    }
+
+    void registrarInt(const string& sec, const string& clave,
+                      int def, int min, int max, const string& desc)
+    {
+        string key = sec + "." + clave;
+        ints_[key] = {ini_.getInt(sec, clave, def), def, min, max, desc};
+    }
+
+    void registrarString(const string& sec, const string& clave,
+                         const string& def, const string& desc)
+    {
+        string key = sec + "." + clave;
+        strings_[key] = {ini_.getString(sec, clave, def), def, "", "", desc};
+    }
+
+    void registrarBool(const string& sec, const string& clave,
+                       bool def, const string& desc)
+    {
+        string key = sec + "." + clave;
+        bools_[key] = {ini_.getString(sec, clave, def ? "true" : "false") == "true",
+                       def, false, true, desc};
+    }
+
+    void validar()
+    {
+        cout << "  Validando configuración:\n";
+
+        for (auto& [k, v] : ints_)
+        {
+            if (v.valor < v.minimo || v.valor > v.maximo)
+            {
+                cout << "    Advertencia: " << k << " = " << v.valor
+                     << " fuera de rango [" << v.minimo << "-" << v.maximo
+                     << "]. Usando defecto: " << v.defecto << "\n";
+                v.valor = v.defecto;
+            }
+        }
+
+        for (auto& [k, v] : bools_)
+        {
+            string val_str = ini_.getString(k.substr(0, k.find('.')),
+                                            k.substr(k.find('.') + 1), "");
+            if (!val_str.empty())
+            {
+                string lower = val_str;
+                transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                if (lower != "true" && lower != "false" && lower != "1" && lower != "0")
+                {
+                    cout << "    Advertencia: " << k << " = '" << val_str
+                         << "' no es booleano. Usando defecto: "
+                         << (v.defecto ? "true" : "false") << "\n";
+                    v.valor = v.defecto;
+                }
+            }
+        }
+
+        cout << "    Validación completada.\n";
+    }
+
+    void mostrarConfig() const
+    {
+        cout << "\n  Configuración final:\n";
+
+        for (const auto& [k, v] : ints_)
+            cout << "    " << k << " = " << v.valor
+                 << " (int, " << v.descripcion << ")\n";
+
+        for (const auto& [k, v] : doubles_)
+            cout << "    " << k << " = " << v.valor
+                 << " (double, " << v.descripcion << ")\n";
+
+        for (const auto& [k, v] : strings_)
+            cout << "    " << k << " = " << v.valor
+                 << " (string, " << v.descripcion << ")\n";
+
+        for (const auto& [k, v] : bools_)
+            cout << "    " << k << " = " << boolalpha << v.valor
+                 << " (bool, " << v.descripcion << ")\n";
+    }
+};
+
+void ejemplo_gestor()
+{
+    cout << "\n--- EJEMPLO 4: Gestor de configuración ---\n";
+
+    GestorConfig gc;
+
+    ofstream("app_detallada.ini") <<
+        "[server]\n"
+        "port = 8080\n"
+        "workers = 4\n"
+        "\n"
+        "[database]\n"
+        "pool_size = 10\n"
+        "host = db.example.com\n"
+        "\n"
+        "[features]\n"
+        "enable_cache = true\n"
+        "debug_mode = maybe\n";  // valor inválido para bool
+
+    gc.cargar("app_detallada.ini");
+
+    gc.registrarInt("server", "port", 3000, 1, 65535, "Puerto del servidor");
+    gc.registrarInt("server", "workers", 2, 1, 32, "Workers del pool");
+    gc.registrarInt("database", "pool_size", 5, 1, 100, "Tamaño del pool");
+    gc.registrarString("database", "host", "localhost", "Host de DB");
+    gc.registrarBool("features", "enable_cache", false, "Activar caché");
+    gc.registrarBool("features", "debug_mode", false, "Modo debug");
+
+    gc.validar();
+    gc.mostrarConfig();
+}
+
+//==============================================================================
+// EJEMPLO 5: CONFIGURACIÓN CON VARIABLES DE ENTORNO
+//==============================================================================
+string get_env(const string& key, const string& def = "")
+{
+    const char* val = getenv(key.c_str());
+    return val ? string(val) : def;
+}
+
+void ejemplo_env()
+{
+    cout << "\n--- EJEMPLO 5: Variables de entorno ---\n";
+
+    string host = get_env("DB_HOST", "localhost");
+    string port = get_env("DB_PORT", "5432");
+    string debug = get_env("DEBUG", "false");
+
+    cout << "  DB_HOST: " << host << "\n";
+    cout << "  DB_PORT: " << port << "\n";
+    cout << "  DEBUG: " << debug << "\n";
+    cout << "  PATH (sistema): " << get_env("PATH", "no definido") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 6: CONFIGURACIÓN JERÁRQUICA CON PUNTO
+//==============================================================================
+class ConfigJerarquica
+{
+    map<string, string> datos_;
+
+    string trim(const string& s) const
+    {
+        size_t start = s.find_first_not_of(" \t");
+        size_t end = s.find_last_not_of(" \t");
+        if (start == string::npos) return "";
+        return s.substr(start, end - start + 1);
+    }
+
+public:
+    void set(const string& clave, const string& valor)
+    {
+        datos_[clave] = valor;
+    }
+
+    string get(const string& clave, const string& def = "") const
+    {
+        auto it = datos_.find(clave);
+        return (it != datos_.end()) ? it->second : def;
+    }
+
+    template<typename T>
+    T getT(const string& clave, T def = T()) const
+    {
+        auto it = datos_.find(clave);
+        if (it == datos_.end()) return def;
+
+        istringstream ss(it->second);
+        T valor;
+        if (ss >> valor) return valor;
+        return def;
+    }
+
+    bool cargar(const string& archivo)
+    {
+        ifstream in(archivo);
+        if (!in) return false;
+
+        string linea;
+        while (getline(in, linea))
+        {
+            size_t comment = linea.find_first_of("#;");
+            if (comment != string::npos)
+                linea = linea.substr(0, comment);
+
+            string s = trim(linea);
+            if (s.empty()) continue;
+
+            size_t eq = s.find('=');
+            if (eq == string::npos) continue;
+
+            string clave = trim(s.substr(0, eq));
+            string valor = trim(s.substr(eq + 1));
+            datos_[clave] = valor;
+        }
+        return true;
+    }
+
+    void listar(const string& prefijo = "") const
+    {
+        for (const auto& [k, v] : datos_)
+        {
+            if (k.find(prefijo) == 0)
+                cout << "    " << k << " = " << v << "\n";
+        }
+    }
+};
+
+void ejemplo_jerarquica()
+{
+    cout << "\n--- EJEMPLO 6: Config jerárquica ---\n";
+
+    ofstream("jerarquica.conf") <<
+        "database.host = localhost\n"
+        "database.port = 5432\n"
+        "database.name = testdb\n"
+        "server.host = 0.0.0.0\n"
+        "server.port = 3000\n"
+        "server.ssl.enabled = true\n"
+        "server.ssl.cert = /etc/certs/cert.pem\n"
+        "logging.level = info\n"
+        "logging.file = /var/log/app.log\n";
+
+    ConfigJerarquica cfg;
+    cfg.cargar("jerarquica.conf");
+
+    cout << "  Todo:\n";
+    cfg.listar();
+
+    cout << "\n  Sólo database:\n";
+    cfg.listar("database");
+
+    cout << "\n  Sólo server.ssl:\n";
+    cfg.listar("server.ssl");
+
+    cout << "\n  database.port (int): " << cfg.getT<int>("database.port") << "\n";
+    cout << "  server.ssl.enabled: " << cfg.get("server.ssl.enabled") << "\n";
+    cout << "  no.existe (default): " << cfg.get("no.existe", "VALOR_DEFECTO") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 7: GUARDAR CONFIGURACIÓN
+//==============================================================================
+void ejemplo_guardar()
+{
+    cout << "\n--- EJEMPLO 7: Guardar configuración ---\n";
+
+    map<string, map<string, string>> config = {
+        {"app", {{"nombre", "MiApp"}, {"version", "2.0"}, {"debug", "false"}}},
+        {"network", {{"host", "0.0.0.0"}, {"port", "9090"}, {"protocol", "tcp"}}},
+        {"user", {{"name", "admin"}, {"theme", "dark"}, {"lang", "es"}}}
+    };
+
+    ofstream out("guardada.ini");
+
+    for (const auto& [seccion, claves] : config)
+    {
+        out << "[" << seccion << "]\n";
+        for (const auto& [k, v] : claves)
+            out << k << " = " << v << "\n";
+        out << "\n";
+    }
+
+    out.close();
+    cout << "  Configuración guardada en guardada.ini\n";
+}
+
+//==============================================================================
+// EJEMPLO 8: VALORES POR DEFECTO PROGRAMÁTICOS
+//==============================================================================
+struct AppConfig
+{
+    // Server
+    int port = 3000;
+    string host = "0.0.0.0";
+    int workers = 4;
+
+    // Database
+    string db_host = "localhost";
+    int db_port = 5432;
+    string db_name = "app";
+    int db_pool = 10;
+
+    // Features
+    bool cache = true;
+    bool auth = true;
+    int max_items = 1000;
+
+    bool cargarDeINI(const string& archivo)
+    {
+        ConfigINI ini;
+        if (!ini.cargar(archivo)) return false;
+
+        port = ini.getInt("server", "port", port);
+        host = ini.getString("server", "host", host);
+        workers = ini.getInt("server", "workers", workers);
+
+        db_host = ini.getString("database", "host", db_host);
+        db_port = ini.getInt("database", "port", db_port);
+        db_name = ini.getString("database", "name", db_name);
+        db_pool = ini.getInt("database", "pool", db_pool);
+
+        cache = ini.getString("features", "cache", cache ? "true" : "false") == "true";
+        auth = ini.getString("features", "auth", auth ? "true" : "false") == "true";
+        max_items = ini.getInt("features", "max_items", max_items);
+
+        return true;
+    }
+
+    void mostrar() const
+    {
+        cout << "    Servidor: " << host << ":" << port
+             << " (" << workers << " workers)\n";
+        cout << "    Base datos: " << db_host << ":" << db_port
+             << "/" << db_name << " pool=" << db_pool << "\n";
+        cout << "    Features: cache=" << boolalpha << cache
+             << " auth=" << auth << " max=" << max_items << "\n";
+    }
+};
+
+void ejemplo_defecto()
+{
+    cout << "\n--- EJEMPLO 8: Valores por defecto ---\n";
+
+    AppConfig cfg;
+
+    cout << "  Sin archivo (todo por defecto):\n";
+    cfg.mostrar();
+
+    // Crear archivo parcial
+    ofstream("parcial.ini") <<
+        "[server]\n"
+        "port = 5000\n"
+        "workers = 8\n";
+
+    cfg.cargarDeINI("parcial.ini");
+
+    cout << "  Con archivo parcial:\n";
+    cfg.mostrar();
+}
+
+//==============================================================================
+// EJEMPLO 9: DETECCIÓN AUTOMÁTICA DE FORMATO
+//==============================================================================
+enum class FormatoConfig { INI, KeyValue, JSON, Desconocido };
+
+FormatoConfig detectarFormato(const string& archivo)
+{
+    ifstream in(archivo);
+    if (!in) return FormatoConfig::Desconocido;
+
+    // Leer primeras líneas
+    string linea;
+    bool tiene_corchete = false;
+    bool tiene_llave = false;
+
+    while (getline(in, linea) && !tiene_corchete && !tiene_llave)
+    {
+        if (linea.find('{') != string::npos)
+            tiene_llave = true;
+        if (linea.front() == '[' && linea.back() == ']')
+            tiene_corchete = true;
+    }
+
+    if (tiene_llave) return FormatoConfig::JSON;
+    if (tiene_corchete) return FormatoConfig::INI;
+    return FormatoConfig::KeyValue;
+}
+
+void ejemplo_detectar()
+{
+    cout << "\n--- EJEMPLO 9: Detección de formato ---\n";
+
+    cout << "  app.ini: ";
+    switch (detectarFormato("app.ini"))
+    {
+        case FormatoConfig::INI: cout << "INI\n"; break;
+        case FormatoConfig::KeyValue: cout << "KeyValue\n"; break;
+        case FormatoConfig::JSON: cout << "JSON\n"; break;
+        default: cout << "Desconocido\n";
+    }
+
+    string json_file = "test_config.json";
+    ofstream(json_file) << R"({"key": "value"})";
+
+    cout << "  test_config.json: ";
+    switch (detectarFormato(json_file))
+    {
+        case FormatoConfig::INI: cout << "INI\n"; break;
+        case FormatoConfig::KeyValue: cout << "KeyValue\n"; break;
+        case FormatoConfig::JSON: cout << "JSON\n"; break;
+        default: cout << "Desconocido\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 10: VALIDACIÓN DE ESQUEMA
+//==============================================================================
+void ejemplo_validacion_esquema()
+{
+    cout << "\n--- EJEMPLO 10: Validación de esquema ---\n";
+
+    ConfigINI cfg;
+    cfg.cargar("app.ini");
+
+    struct Regla
+    {
+        string seccion;
+        string clave;
+        string tipo;
+        bool requerido;
+    };
+
+    vector<Regla> esquema = {
+        {"database", "host", "string", true},
+        {"database", "port", "int", true},
+        {"database", "name", "string", true},
+        {"server", "port", "int", true},
+        {"server", "workers", "int", false},
+        {"logging", "level", "string", false},
+        {"no_existe", "clave", "string", true}
+    };
+
+    cout << "  Validación contra esquema:\n";
+    for (const auto& r : esquema)
+    {
+        string valor = cfg.getString(r.seccion, r.clave);
+        bool existe = !valor.empty();
+
+        if (!existe && r.requerido)
+            cout << "    [ERROR] " << r.seccion << "." << r.clave
+                 << " es requerido pero no existe.\n";
+        else if (existe && r.tipo == "int")
+        {
+            try { stoi(valor); }
+            catch (...)
+            {
+                cout << "    [ERROR] " << r.seccion << "." << r.clave
+                     << " debería ser int pero es '" << valor << "'.\n";
+            }
+        }
+        else if (existe)
+            cout << "    [OK] " << r.seccion << "." << r.clave
+                 << " = " << valor << "\n";
+        else
+            cout << "    [INFO] " << r.seccion << "." << r.clave
+                 << " no es requerido, omitido.\n";
+    }
+}
+
+//==============================================================================
+// MAIN
+//==============================================================================
+int main()
+{
+    cout << "=============================================\n";
+    cout << "  C++ MASTER BOOK  CAP. 48: CONFIGURACIÓN\n";
+    cout << "=============================================\n";
+
+    ejemplo_key_value();
+    ejemplo_ini();
+    ejemplo_json();
+    ejemplo_gestor();
+    ejemplo_env();
+    ejemplo_jerarquica();
+    ejemplo_guardar();
+    ejemplo_defecto();
+    ejemplo_detectar();
+    ejemplo_validacion_esquema();
+
+    cout << "\n=============================================\n";
+    cout << "  Fin del capítulo 48.\n";
+    cout << "=============================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN
+-------
+En este capítulo construimos sistemas completos de gestión de configuración:
+desde un parser key=value con comentarios, pasando por el formato INI con
+secciones, hasta un parser JSON simplificado. Implementamos un gestor de
+configuración con tipado fuerte, validación de rangos y valores por defecto.
+Vimos cómo integrar variables de entorno, configuraciones jerárquicas con
+puntos, y detección automática de formato. La clave de un buen sistema de
+configuración es: valores por defecto siempre, validación rigurosa, y un
+formato claro y portable.
+
+EJERCICIOS
+----------
+1. Extiende el parser INI para soportar valores multilínea y caracteres de
+   escape (\\, \", \;).
+
+2. Implementa un parser YAML simplificado que soporte anidación por
+   indentación (2 espacios por nivel).
+
+3. Añade al gestor de configuración soporte para arrays (ej: puertos=8080,8081,8082).
+
+4. Crea un sistema de "perfiles de configuración" donde puedas tener
+   [perfil:desarrollo], [perfil:producción] y seleccionar uno.
+
+5. Implementa recarga en caliente: cuando el archivo de configuración cambia
+   en disco, el gestor lo detecta y aplica los cambios sin reiniciar.
+
+6. Añade herencia entre secciones: [desarrollo] hereda de [base] y solo
+   sobreescribe ciertos valores.
+
+7. Implementa un parser de argumentos de línea de comandos que se fusione
+   con la configuración del archivo (args > archivo > defecto).
+
+8. Cifra valores sensibles en el archivo de configuración (contraseñas) usando
+   AES simple. El gestor debe descifrar al leer.
+
+9. Crea un "validador de esquema" que lea un archivo .schema que describa
+   los tipos, rangos y valores permitidos de cada clave.
+
+10. (Avanzado) Implementa un "árbol de configuración unificado" que combine
+    archivos INI, JSON, variables de entorno y args en una sola estructura
+    navegable, con prioridades configurables.
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: JSON es mejor que INI?
+R: JSON soporta anidación jerárquica y arrays. INI es más legible para
+   configuraciones planas. La elección depende del contexto.
+
+P: Cómo manejo valores que no están en el archivo?
+R: Siempre ten un valor por defecto programático. La configuración debe
+   ser completamente opcional.
+
+P: Debo usar variables de entorno además de archivos?
+R: Sí, es una buena práctica. Las variables de entorno son ideales para
+   secretos y configuraciones del entorno (dev/prod).
+
+P: Cómo documento las opciones de configuración?
+R: Incluye comentarios en el archivo de ejemplo y documenta cada opción
+   en tu sistema con descripción, tipo, defecto y rango.
+
+P: Cómo evito que mi aplicación falle por mala configuración?
+R: Validación al inicio: verifica tipos y rangos, usa valores por defecto
+   si algo falla, y registra advertencias claras.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+Implementa un "Sistema de Configuración Unificado" (UniConfig) que:
+  - Soporte múltiples fuentes: archivos (INI, JSON, YAML, TOML), variables
+    de entorno, args de línea de comandos.
+  - Fusione fuentes con prioridad configurable.
+  - Ofrezca un sistema de esquema para validación automática.
+  - Soporte recarga en caliente (hot reload) con callbacks de notificación.
+  - Incluya una herramienta CLI para validar y exportar configuraciones.
+  - Maneje secretos con descifrado automático.
+  - Proporcione una API de acceso tipada (get<T>("path.to.key")).
+  - Genere documentación automática de todas las opciones.
+
+Este desafío integra todo el capítulo: parseo de múltiples formatos,
+validación, fusión de fuentes y gestión de tipos.
+
+CIERRE
+------
+Los archivos de configuración son la interfaz entre el usuario y la
+aplicación. Un buen sistema de configuración hace que el software sea
+flexible, adaptable y fácil de usar. En el próximo capítulo veremos cómo
+manejar los errores que inevitablemente ocurren al trabajar con archivos.
+
+PRÓXIMO CAPÍTULO
+----------------
+Capítulo 49: MANEJO DE ERRORES EN ARCHIVOS  try/catch con operaciones de
+archivo, exception flags, patrones de manejo robusto.
+
+================================================================================
+  FIN DEL CAPÍTULO 48  C++ MASTER BOOK
+================================================================================

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exámenes · Lucas EGA Academy</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body{background:#0d1117;color:#c9d1d9;font-family:Arial,sans-serif;padding:20px;max-width:1000px;margin:auto;}
+  h1{color:#f0883e;border-bottom:2px solid #30363d;padding-bottom:10px;}
+  .examen-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin:15px 0;cursor:pointer;}
+  .examen-card:hover{border-color:#58a6ff;}
+  .examen-card h3{color:#58a6ff;margin:0 0 8px;}
+  .examen-card .meta{color:#8b949e;font-size:13px;}
+  .question-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin:15px 0;}
+  .question-card h3{color:#d29922;margin:0 0 5px;font-size:16px;}
+  .question-card .lenguaje{color:#8b949e;font-size:13px;margin-bottom:10px;}
+  textarea{width:100%;min-height:200px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:10px;font-family:'Courier New',monospace;font-size:14px;resize:vertical;box-sizing:border-box;}
+  .btn{background:#238636;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;}
+  .btn:hover{background:#2ea043;}
+  .btn-secondary{background:#1f6feb;}
+  .btn-secondary:hover{background:#388bfd;}
+  .result-box{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:15px;margin-top:10px;white-space:pre-wrap;font-family:'Courier New',monospace;font-size:13px;}
+  .score{display:inline-block;padding:4px 12px;border-radius:20px;font-weight:bold;font-size:14px;}
+  .score-high{background:#238636;color:#fff;}
+  .score-mid{background:#d29922;color:#000;}
+  .score-low{background:#da3633;color:#fff;}
+  .back{color:#58a6ff;cursor:pointer;margin-bottom:20px;display:inline-block;}
+  .nav-links{display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap;}
+  .nav-links a{color:#8b949e;text-decoration:none;font-size:14px;}
+  .nav-links a:hover{color:#58a6ff;}
+  .puntaje-final{text-align:center;padding:30px;background:#161b22;border-radius:12px;border:2px solid #d29922;margin:20px 0;}
+  .puntaje-final .num{font-size:60px;font-weight:bold;color:#d29922;}
+</style>
+</head>
+<body>
+<nav class="nav-links">
+  <a href="index.html">⬅ Academia</a>
+  <a href="lector.html">📚 Aula</a>
+  <a href="playground.html">💻 Playground</a>
+  <a href="foro.html">💬 Foro</a>
+  <a href="perfil.html">👤 Perfil</a>
+</nav>
+
+<h1>📝 Exámenes</h1>
+<p style="color:#8b949e;">Selecciona un curso para rendir su examen. Cada pregunta se evalúa automáticamente comparando la salida de tu código.</p>
+
+<div id="examenesList"></div>
+<div id="examenDetail" style="display:none;"></div>
+
+<script>
+const API = "";
+const TOKEN = localStorage.getItem("token");
+
+function api(path, opts={}) {
+  const headers = {"Authorization":"Bearer "+TOKEN, ...(opts.body?{"Content-Type":"application/json"}:{})};
+  return fetch(API+path, {...opts, headers}).then(r=>r.json());
+}
+
+async function cargarExamenes() {
+  const data = await api("/api/examenes");
+  const h = document.getElementById("examenesList");
+  if (!data || data.error) {
+    h.innerHTML = `<p style="color:#f85149;">🔒 ${data?.error||'Debes iniciar sesión'}</p>`;
+    return;
+  }
+  h.innerHTML = data.map(e => `
+    <div class="examen-card" onclick="abrirExamen(${e.id})">
+      <h3>📖 ${e.titulo}</h3>
+      <p>${e.descripcion}</p>
+      <div class="meta">${e.num_preguntas} preguntas</div>
+    </div>
+  `).join('');
+}
+
+let examenActual = null;
+let preguntas = [];
+let respuestas = {};
+
+async function abrirExamen(id) {
+  const d = await api(`/api/examenes/${id}`);
+  if (!d.examen) return;
+  examenActual = d.examen;
+  preguntas = d.preguntas;
+  respuestas = {};
+  document.getElementById("examenesList").style.display = "none";
+  const det = document.getElementById("examenDetail");
+  det.style.display = "block";
+  det.innerHTML = `<a class="back" onclick="volverLista()">⬅ Volver a exámenes</a>
+    <h2>📖 ${examenActual.titulo}</h2>
+    <p style="color:#8b949e;">${examenActual.descripcion} (${preguntas.length} preguntas)</p>
+    <div id="preguntasContainer">${preguntas.map((p, i) => `
+      <div class="question-card" id="q_${p.id}">
+        <h3>${i+1}. ${p.enunciado}</h3>
+        <div class="lenguaje">🔤 Lenguaje: ${p.lenguaje}</div>
+        <textarea id="code_${p.id}" placeholder="Escribe tu código aquí...">${p.codigo_base||''}</textarea>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn" onclick="evaluar(${p.id})">✅ Evaluar</button>
+          <span id="status_${p.id}"></span>
+        </div>
+        <pre id="result_${p.id}" class="result-box" style="display:none;"></pre>
+      </div>
+    `).join('')}</div>`;
+}
+
+async function evaluar(preguntaId) {
+  const codigo = document.getElementById(`code_${preguntaId}`).value;
+  const statusEl = document.getElementById(`status_${preguntaId}`);
+  const resultEl = document.getElementById(`result_${preguntaId}`);
+  statusEl.innerHTML = "⏳ Evaluando...";
+  const res = await api("/api/examenes/evaluar", {
+    method:"POST",
+    body:JSON.stringify({pregunta_id: preguntaId, codigo})
+  });
+  statusEl.innerHTML = "";
+  resultEl.style.display = "block";
+  const scoreClass = res.puntaje >= 80 ? "score-high" : res.puntaje >= 40 ? "score-mid" : "score-low";
+  resultEl.innerHTML = `<span class="score ${scoreClass}">${res.puntaje}/100</span>\n\n📤 Salida:\n${res.resultado||'(sin salida)'}\n${res.errores?'\n❌ Errores:\n'+res.errores:''}`;
+}
+
+function volverLista() {
+  document.getElementById("examenDetail").style.display = "none";
+  document.getElementById("examenesList").style.display = "block";
+  examenActual = null;
+  cargarExamenes();
+}
+
+if (!TOKEN) {
+  document.getElementById("examenesList").innerHTML = '<p style="color:#f85149;">🔒 Debes <a href="index.html" style="color:#58a6ff;">iniciar sesión</a> para rendir exámenes.</p>';
+} else {
+  cargarExamenes();
+}
+</script>
+</body>
+</html>

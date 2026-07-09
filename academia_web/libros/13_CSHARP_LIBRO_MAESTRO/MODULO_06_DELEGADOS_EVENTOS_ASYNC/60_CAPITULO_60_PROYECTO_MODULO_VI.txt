@@ -1,0 +1,933 @@
+══════════════════════════════════════════════════════════════════════════════════
+            C# MASTER BOOK — MÓDULO VI: DELEGADOS, EVENTOS Y ASYNC
+══════════════════════════════════════════════════════════════════════════════════
+  CAPÍTULO 60: PROYECTO MÓDULO VI
+══════════════════════════════════════════════════════════════════════════════════
+
+BIENVENIDA
+════════════
+
+¡Bienvenido al capítulo 60 de C# MASTER BOOK! Este es el proyecto final
+del Módulo VI. Aquí pondremos en práctica TODO lo aprendido:
+
+  • Delegados y eventos (cap. 51-53)
+  • Func, Action, Predicate (cap. 54)
+  • async/await (cap. 55)
+  • Task (cap. 56)
+  • CancellationToken (cap. 57)
+  • Parallel y PLINQ (cap. 58)
+  • TPL y Dataflow (cap. 59)
+
+Construiremos un DESCARGADOR ASÍNCRONO DE ARCHIVOS con procesamiento
+paralelo, reportes, cancelación, progreso, y pipeline Dataflow.
+
+El proyecto está diseñado para ser realista, modular y extensible.
+Podrás usarlo como base para tus propias herramientas.
+
+FRASE DEL CAPÍTULO
+══════════════════
+
+"La mejor manera de aprender a programar es programando.
+No hay atajo que evite las horas frente al teclado."
+— Dennis Ritchie
+
+══════════════════════════════════════════════════════════════════════════════════
+OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+  • Integrar todos los conceptos del módulo en un proyecto real.
+  • Diseñar una arquitectura modular con separación de responsabilidades.
+  • Implementar un descargador asíncrono con control de concurrencia.
+  • Usar Dataflow para el pipeline de procesamiento.
+  • Reportar progreso con eventos e IProgress<T>.
+  • Soportar cancelación cooperativa en todos los niveles.
+  • Generar reportes de descarga con Parallel y PLINQ.
+  • Escribir código profesional, con manejo de errores y logging.
+
+══════════════════════════════════════════════════════════════════════════════════
+DESARROLLO DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════════
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+ARQUITECTURA DEL PROYECTO
+
+  ┌───────────────────────────────────────────────────────────┐
+  │                    AsyncDownloader                        │
+  ├───────────────────────────────────────────────────────────┤
+  │  • DownloadManager (coordina descargas)                   │
+  │  • DownloadTask (representa una descarga individual)      │
+  │  • DownloadReport (resultados agregados)                  │
+  │  • DownloadPipeline (Dataflow pipeline)                   │
+  │  • Program (UI de consola y demostración)                 │
+  └───────────────────────────────────────────────────────────┘
+
+  Patrones usados:
+    • Publisher/Subscriber (eventos)
+    • Strategy (Func<>) para políticas de reintento
+    • Pipeline (Dataflow)
+    • Observer (IProgress<T>)
+    • Factory (TaskCompletionSource)
+
+──§≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋≋§──
+
+CÓDIGO COMPLETO DEL PROYECTO
+════════════════════════════
+
+```csharp
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
+
+namespace ProyectoModuloVI
+{
+    // ═══════════════════════════════════════════════════════════════════
+    // 1. EventArgs personalizados
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class DescargaEventArgs : EventArgs
+    {
+        public string Url { get; }
+        public string Destino { get; }
+        public long BytesDescargados { get; set; }
+        public long BytesTotales { get; set; }
+        public TimeSpan Duracion { get; set; }
+        public bool Exito { get; set; }
+        public string Error { get; set; }
+
+        public DescargaEventArgs(string url, string destino)
+        {
+            Url = url;
+            Destino = destino;
+        }
+
+        public int Porcentaje =>
+            BytesTotales > 0 ? (int)(BytesDescargados * 100 / BytesTotales) : 0;
+    }
+
+    public class ProgresoGlobalEventArgs : EventArgs
+    {
+        public int DescargasCompletadas { get; set; }
+        public int DescargasTotales { get; set; }
+        public int DescargasExitosas { get; set; }
+        public int DescargasFallidas { get; set; }
+        public long BytesTotalesDescargados { get; set; }
+        public TimeSpan TiempoTranscurrido { get; set; }
+
+        public int PorcentajeGlobal =>
+            DescargasTotales > 0
+                ? (int)(DescargasCompletadas * 100 / DescargasTotales)
+                : 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 2. Interfaces
+    // ═══════════════════════════════════════════════════════════════════
+
+    public interface IDescargable
+    {
+        Task<DescargaEventArgs> DescargarAsync(
+            IProgress<DescargaEventArgs> progreso = null,
+            CancellationToken ct = default);
+    }
+
+    public interface IDescargaReporter
+    {
+        event EventHandler<DescargaEventArgs> DescargaCompletada;
+        event EventHandler<DescargaEventArgs> DescargaFallida;
+        event EventHandler<ProgresoGlobalEventArgs> ProgresoGlobal;
+    }
+
+    public interface IPoliticaReintento
+    {
+        bool DebeReintentar(int intentoActual, Exception ex);
+        TimeSpan ObtenerDelay(int intentoActual);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 3. Políticas de reintento (Strategy con Func)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class PoliticaReintentoLineal : IPoliticaReintento
+    {
+        private readonly int _maxIntentos;
+        private readonly TimeSpan _delay;
+
+        public PoliticaReintentoLineal(int maxIntentos, TimeSpan delay)
+        {
+            _maxIntentos = maxIntentos;
+            _delay = delay;
+        }
+
+        public bool DebeReintentar(int intentoActual, Exception ex) =>
+            intentoActual < _maxIntentos;
+
+        public TimeSpan ObtenerDelay(int intentoActual) => _delay;
+    }
+
+    public class PoliticaReintentoExponencial : IPoliticaReintento
+    {
+        private readonly int _maxIntentos;
+        private readonly TimeSpan _delayBase;
+
+        public PoliticaReintentoExponencial(int maxIntentos, TimeSpan delayBase)
+        {
+            _maxIntentos = maxIntentos;
+            _delayBase = delayBase;
+        }
+
+        public bool DebeReintentar(int intentoActual, Exception ex) =>
+            intentoActual < _maxIntentos;
+
+        public TimeSpan ObtenerDelay(int intentoActual) =>
+            TimeSpan.FromMilliseconds(
+                _delayBase.TotalMilliseconds * Math.Pow(2, intentoActual - 1));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 4. DownloadTask (descarga individual con delegados y eventos)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class DownloadTask : IDescargable
+    {
+        public string Url { get; }
+        public string Destino { get; }
+        public int Id { get; }
+        public IPoliticaReintento PoliticaReintento { get; set; }
+
+        // Delegados para callbacks
+        public Action<DownloadTask, DescargaEventArgs> OnCompletado { get; set; }
+        public Action<DownloadTask, Exception> OnError { get; set; }
+        public Func<DownloadTask, long, long, Task> OnProgreso { get; set; }
+
+        private static int _contadorId;
+        private readonly HttpClient _httpClient;
+
+        public DownloadTask(string url, string destino, HttpClient httpClient = null)
+        {
+            Url = url;
+            Destino = destino;
+            Id = Interlocked.Increment(ref _contadorId);
+            _httpClient = httpClient ?? new HttpClient();
+            PoliticaReintento = new PoliticaReintentoLineal(0, TimeSpan.Zero);
+        }
+
+        // Evento público
+        public event EventHandler<DescargaEventArgs> ProgresoDescarga;
+
+        public async Task<DescargaEventArgs> DescargarAsync(
+            IProgress<DescargaEventArgs> progreso = null,
+            CancellationToken ct = default)
+        {
+            var args = new DescargaEventArgs(Url, Destino);
+            var sw = Stopwatch.StartNew();
+
+            int intento = 0;
+            Exception ultimaExcepcion = null;
+
+            do
+            {
+                try
+                {
+                    if (intento > 0)
+                    {
+                        var delay = PoliticaReintento.ObtenerDelay(intento);
+                        Console.WriteLine($"  [Reintento {intento}] Esperando {delay.TotalMilliseconds}ms...");
+                        await Task.Delay(delay, ct);
+                    }
+
+                    intento++;
+                    Console.WriteLine($"  [{Id}] Descargando: {Url} (intento {intento})");
+
+                    using var response = await _httpClient.GetAsync(Url,
+                        HttpCompletionOption.ResponseHeadersRead, ct);
+                    response.EnsureSuccessStatusCode();
+
+                    args.BytesTotales = response.Content.Headers.ContentLength ?? -1;
+
+                    await using var contentStream = await response.Content.ReadAsStreamAsync(ct);
+                    await using var fileStream = new FileStream(Destino,
+                        FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+
+                    var buffer = new byte[8192];
+                    long bytesLeidos = 0;
+
+                    while (true)
+                    {
+                        ct.ThrowIfCancellationRequested();
+
+                        int leido = await contentStream.ReadAsync(buffer, 0,
+                            buffer.Length, ct);
+
+                        if (leido == 0) break;
+
+                        await fileStream.WriteAsync(buffer, 0, leido, ct);
+                        bytesLeidos += leido;
+                        args.BytesDescargados = bytesLeidos;
+
+                        // Notificar progreso via delegado
+                        OnProgreso?.Invoke(this, bytesLeidos, args.BytesTotales);
+
+                        // Notificar via evento
+                        ProgresoDescarga?.Invoke(this, args);
+
+                        // Notificar via IProgress
+                        progreso?.Report(args);
+                    }
+
+                    args.Duracion = sw.Elapsed;
+                    args.Exito = true;
+
+                    OnCompletado?.Invoke(this, args);
+                    return args;
+                }
+                catch (OperationCanceledException)
+                {
+                    sw.Stop();
+                    args.Duracion = sw.Elapsed;
+                    args.Exito = false;
+                    args.Error = "Cancelada";
+
+                    // Si tenemos archivo parcial, lo limpiamos
+                    if (File.Exists(Destino))
+                        File.Delete(Destino);
+
+                    OnCompletado?.Invoke(this, args);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    ultimaExcepcion = ex;
+                    args.Error = ex.Message;
+                    Console.WriteLine($"  [{Id}] Error: {ex.Message}");
+                }
+            }
+            while (PoliticaReintento.DebeReintentar(intento, ultimaExcepcion));
+
+            sw.Stop();
+            args.Duracion = sw.Elapsed;
+            args.Exito = false;
+            args.Error = ultimaExcepcion?.Message;
+
+            OnError?.Invoke(this, ultimaExcepcion);
+            OnCompletado?.Invoke(this, args);
+
+            return args;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 5. DownloadReport (resultados agregados)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class DownloadReport
+    {
+        public int TotalDescargas { get; set; }
+        public int Exitosas { get; set; }
+        public int Fallidas { get; set; }
+        public long BytesTotales { get; set; }
+        public TimeSpan DuracionTotal { get; set; }
+        public List<DescargaEventArgs> Detalles { get; set; } = new();
+
+        public double BytesPorSegundo =>
+            DuracionTotal.TotalSeconds > 0
+                ? BytesTotales / DuracionTotal.TotalSeconds
+                : 0;
+
+        public double TasaExito =>
+            TotalDescargas > 0
+                ? (double)Exitosas / TotalDescargas * 100
+                : 0;
+
+        public override string ToString()
+        {
+            return $"""
+            ═══════ REPORTE DE DESCARGAS ═══════
+            Total:        {TotalDescargas}
+            Exitosas:     {Exitosas}
+            Fallidas:     {Fallidas}
+            Bytes:        {BytesTotales:N0}
+            Duración:     {DuracionTotal:hh\:mm\:ss}
+            Velocidad:    {BytesPorSegundo:N2} B/s
+            Tasa de éxito: {TasaExito:F1}%
+            ════════════════════════════════════
+            """;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 6. DownloadPipeline (Dataflow pipeline)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class DownloadPipeline
+    {
+        private readonly int _maxConcurrente;
+        private readonly IPoliticaReintento _politicaReintento;
+        private readonly CancellationToken _ct;
+
+        // Eventos de progreso global
+        public event EventHandler<ProgresoGlobalEventArgs> ProgresoGlobal;
+
+        public DownloadPipeline(
+            int maxConcurrente = 3,
+            IPoliticaReintento politicaReintento = null,
+            CancellationToken ct = default)
+        {
+            _maxConcurrente = maxConcurrente;
+            _politicaReintento = politicaReintento
+                ?? new PoliticaReintentoLineal(0, TimeSpan.Zero);
+            _ct = ct;
+        }
+
+        public async Task<DownloadReport> EjecutarAsync(
+            IEnumerable<(string url, string destino)> descargas,
+            IProgress<ProgresoGlobalEventArgs> progresoGlobal = null)
+        {
+            var report = new DownloadReport();
+            var resultados = new ConcurrentBag<DescargaEventArgs>();
+            var swTotales = Stopwatch.StartNew();
+
+            // Bloque 1: Buffer de entrada
+            var inputBuffer = new BufferBlock<(string url, string destino)>(
+                new DataflowBlockOptions
+                {
+                    CancellationToken = _ct,
+                    BoundedCapacity = 100
+                });
+
+            // Bloque 2: TransformBlock que descarga
+            var downloadBlock = new TransformBlock<(string url, string destino),
+                DescargaEventArgs>(
+                async item =>
+                {
+                    var task = new DownloadTask(item.url, item.destino)
+                    {
+                        PoliticaReintento = _politicaReintento
+                    };
+
+                    task.OnProgreso = (t, leido, total) =>
+                    {
+                        // Actualizar progreso
+                        return Task.CompletedTask;
+                    };
+
+                    return await task.DescargarAsync(ct: _ct);
+                },
+                new ExecutionDataflowBlockOptions
+                {
+                    MaxDegreeOfParallelism = _maxConcurrente,
+                    CancellationToken = _ct,
+                    BoundedCapacity = _maxConcurrente * 2
+                });
+
+            // Bloque 3: ActionBlock para recolectar resultados
+            var collectBlock = new ActionBlock<DescargaEventArgs>(args =>
+            {
+                resultados.Add(args);
+                Interlocked.Increment(ref args.Exito
+                    ? ref report.Exitosas
+                    : ref report.Fallidas);
+                Interlocked.Add(ref report.BytesTotales, args.BytesDescargados);
+                Interlocked.Increment(ref report.TotalDescargas);
+
+                var progreso = new ProgresoGlobalEventArgs
+                {
+                    DescargasCompletadas = report.TotalDescargas,
+                    DescargasTotales = resultados.Count,
+                    DescargasExitosas = report.Exitosas,
+                    DescargasFallidas = report.Fallidas,
+                    BytesTotalesDescargados = report.BytesTotales,
+                    TiempoTranscurrido = swTotales.Elapsed
+                };
+
+                ProgresoGlobal?.Invoke(this, progreso);
+                progresoGlobal?.Report(progreso);
+            },
+            new ExecutionDataflowBlockOptions
+            {
+                CancellationToken = _ct,
+                MaxDegreeOfParallelism = 1
+            });
+
+            // Link: conectar bloques
+            inputBuffer.LinkTo(downloadBlock,
+                new DataflowLinkOptions { PropagateCompletion = true });
+            downloadBlock.LinkTo(collectBlock,
+                new DataflowLinkOptions { PropagateCompletion = true });
+
+            // Enviar URLs al buffer
+            foreach (var item in descargas)
+            {
+                await inputBuffer.SendAsync(item, _ct);
+            }
+
+            inputBuffer.Complete();
+            await collectBlock.Completion;
+
+            swTotales.Stop();
+            report.DuracionTotal = swTotales.Elapsed;
+            report.Detalles = resultados.ToList();
+
+            return report;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 7. DownloadManager (coordinador con eventos)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public class DownloadManager : IDescargaReporter
+    {
+        private readonly DownloadPipeline _pipeline;
+
+        // Eventos públicos
+        public event EventHandler<DescargaEventArgs> DescargaCompletada;
+        public event EventHandler<DescargaEventArgs> DescargaFallida;
+        public event EventHandler<ProgresoGlobalEventArgs> ProgresoGlobal;
+
+        public DownloadManager(int maxConcurrente = 3,
+            IPoliticaReintento politicaReintento = null)
+        {
+            _pipeline = new DownloadPipeline(maxConcurrente, politicaReintento);
+
+            _pipeline.ProgresoGlobal += (s, e) => ProgresoGlobal?.Invoke(s, e);
+        }
+
+        public async Task<DownloadReport> DescargarMultiplesAsync(
+            IEnumerable<(string url, string destino)> descargas,
+            IProgress<ProgresoGlobalEventArgs> progresoGlobal = null,
+            CancellationToken ct = default)
+        {
+            var pipeline = new DownloadPipeline(
+                _pipeline.GetType().GetField("_maxConcurrente",
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance)?.GetValue(_pipeline)
+                    is int max ? max : 3,
+                null, ct);
+
+            pipeline.ProgresoGlobal += (s, e) =>
+            {
+                ProgresoGlobal?.Invoke(s, e);
+                progresoGlobal?.Report(e);
+            };
+
+            var report = await pipeline.EjecutarAsync(descargas, progresoGlobal);
+
+            // Disparar eventos individuales
+            foreach (var detalle in report.Detalles)
+            {
+                if (detalle.Exito)
+                    DescargaCompletada?.Invoke(this, detalle);
+                else
+                    DescargaFallida?.Invoke(this, detalle);
+            }
+
+            return report;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 8. Program (UI de consola)
+    // ═══════════════════════════════════════════════════════════════════
+
+    class Program
+    {
+        static async Task Main(string[] args)
+        {
+            Console.WriteLine("═══════════════════════════════════════════════");
+            Console.WriteLine("  PROYECTO MÓDULO VI: ASYNC DOWNLOADER");
+            Console.WriteLine("═══════════════════════════════════════════════\n");
+
+            // ─── Configuración ───
+            int maxConcurrente = 3;
+            var cts = new CancellationTokenSource();
+
+            Console.WriteLine($"Concurrencia máxima: {maxConcurrente}");
+            Console.WriteLine("Presiona Q en cualquier momento para cancelar.\n");
+
+            // ─── Lista de descargas simuladas ───
+            var descargas = new List<(string url, string destino)>
+            {
+                ("https://httpbin.org/delay/2", "archivo1.json"),
+                ("https://httpbin.org/delay/3", "archivo2.json"),
+                ("https://httpbin.org/delay/1", "archivo3.json"),
+                ("https://httpbin.org/delay/4", "archivo4.json"),
+                ("https://httpbin.org/delay/2", "archivo5.json"),
+                ("https://httpbin.org/delay/3", "archivo6.json"),
+                ("https://httpbin.org/delay/1", "archivo7.json"),
+                ("https://httpbin.org/delay/5", "archivo8.json"),
+                ("https://httpbin.org/delay/2", "archivo9.json"),
+                ("https://httpbin.org/delay/3", "archivo10.json"),
+            };
+
+            // ─── Hilo para cancelación por teclado ───
+            _ = Task.Run(() =>
+            {
+                while (true)
+                {
+                    if (Console.KeyAvailable &&
+                        Console.ReadKey(true).Key == ConsoleKey.Q)
+                    {
+                        Console.WriteLine("\n⚠ Cancelación solicitada por el usuario...\n");
+                        cts.Cancel();
+                        break;
+                    }
+                }
+            });
+
+            // ─── Crear manager ───
+            var manager = new DownloadManager(
+                maxConcurrente: maxConcurrente,
+                politicaReintento: new PoliticaReintentoExponencial(
+                    maxIntentos: 2,
+                    delayBase: TimeSpan.FromMilliseconds(500))
+            );
+
+            // ─── Suscribirse a eventos ───
+            manager.DescargaCompletada += (s, e) =>
+                Console.WriteLine($"  ✅ [{e.Url}] Completada: {e.BytesDescargados} bytes en {e.Duracion.TotalSeconds:F1}s");
+
+            manager.DescargaFallida += (s, e) =>
+                Console.WriteLine($"  ❌ [{e.Url}] Fallida: {e.Error}");
+
+            manager.ProgresoGlobal += (s, e) =>
+            {
+                Console.Title = $"Downloader: {e.PorcentajeGlobal}% - " +
+                    $"{e.DescargasExitosas} OK / {e.DescargasFallidas} ERROR";
+            };
+
+            // ─── Progreso vía IProgress<T> ───
+            var progresoConsola = new Progress<ProgresoGlobalEventArgs>(e =>
+            {
+                // Solo mostrar cada 20% para no spamear
+                if (e.PorcentajeGlobal % 20 == 0 && e.PorcentajeGlobal > 0)
+                {
+                    Console.WriteLine($"  📊 Progreso global: {e.PorcentajeGlobal}% " +
+                        $"({e.DescargasCompletadas}/{e.DescargasTotales})");
+                }
+            });
+
+            // ─── Ejecutar descargas ───
+            Console.WriteLine("Iniciando descargas...\n");
+
+            try
+            {
+                var report = await manager.DescargarMultiplesAsync(
+                    descargas, progresoConsola, cts.Token);
+
+                Console.WriteLine($"\n{report}");
+
+                // ─── Procesamiento paralelo del reporte (PLINQ) ───
+                Console.WriteLine("─── Análisis del reporte con PLINQ ───");
+
+                if (report.Detalles.Any())
+                {
+                    var estadisticas = report.Detalles
+                        .AsParallel()
+                        .GroupBy(d => d.Exito ? "Exitosas" : "Fallidas")
+                        .Select(g => new
+                        {
+                            Estado = g.Key,
+                            Total = g.Count(),
+                            BytesPromedio = g.Average(d => d.BytesDescargados),
+                            DuracionPromedio = TimeSpan.FromSeconds(
+                                g.Average(d => d.Duracion.TotalSeconds))
+                        })
+                        .OrderByDescending(x => x.Total)
+                        .ToList();
+
+                    foreach (var est in estadisticas)
+                    {
+                        Console.WriteLine(
+                            $"  {est.Estado}: {est.Total} descargas, " +
+                            $"{est.BytesPromedio / 1024:F1} KB promedio, " +
+                            $"{est.DuracionPromedio.TotalSeconds:F1}s promedio");
+                    }
+
+                    var masRapida = report.Detalles
+                        .Where(d => d.Exito)
+                        .AsParallel()
+                        .OrderBy(d => d.Duracion)
+                        .FirstOrDefault();
+
+                    if (masRapida != null)
+                        Console.WriteLine($"  🏆 Más rápida: {masRapida.Url} " +
+                            $"({masRapida.Duracion.TotalSeconds:F1}s)");
+
+                    var masLenta = report.Detalles
+                        .Where(d => d.Exito)
+                        .AsParallel()
+                        .OrderByDescending(d => d.Duracion)
+                        .FirstOrDefault();
+
+                    if (masLenta != null)
+                        Console.WriteLine($"  🐢 Más lenta: {masLenta.Url} " +
+                            $"({masLenta.Duracion.TotalSeconds:F1}s)");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("\n⚠ Operación cancelada por el usuario.");
+            }
+            catch (AggregateException ae)
+            {
+                Console.WriteLine($"\n💥 Errores múltiples:");
+                foreach (var ex in ae.InnerExceptions)
+                    Console.WriteLine($"  - {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n💥 Error general: {ex.Message}");
+            }
+            finally
+            {
+                cts.Dispose();
+            }
+
+            // ─── Limpiar archivos de prueba ───
+            Console.WriteLine("\n─── Limpiando archivos temporales ───");
+            foreach (var (_, destino) in descargas)
+            {
+                if (File.Exists(destino))
+                {
+                    File.Delete(destino);
+                    Console.WriteLine($"  Eliminado: {destino}");
+                }
+            }
+
+            Console.WriteLine("\n═══════════════════════════════════════════════");
+            Console.WriteLine("  PROYECTO MÓDULO VI COMPLETADO");
+            Console.WriteLine("═══════════════════════════════════════════════");
+        }
+    }
+}
+```
+
+PRUEBA DEL PROYECTO
+══════════════════
+
+Para ejecutar el proyecto:
+
+  1. Crea una nueva consola: dotnet new console -n AsyncDownloader
+  2. Reemplaza Program.cs con el código completo.
+  3. Agrega la referencia Dataflow:
+     dotnet add package System.Threading.Tasks.Dataflow
+  4. Ejecuta: dotnet run
+
+Salida esperada:
+
+  ═══════════════════════════════════════════════
+    PROYECTO MÓDULO VI: ASYNC DOWNLOADER
+  ═══════════════════════════════════════════════
+
+  Concurrencia máxima: 3
+  Presiona Q en cualquier momento para cancelar.
+
+  Iniciando descargas...
+
+  [1] Descargando: https://httpbin.org/delay/2 (intento 1)
+  [2] Descargando: https://httpbin.org/delay/3 (intento 1)
+  [3] Descargando: https://httpbin.org/delay/1 (intento 1)
+  ✅ [https://httpbin.org/delay/1] Completada: 315 bytes en 1.2s
+  [4] Descargando: https://httpbin.org/delay/4 (intento 1)
+  ...
+
+RESUMEN DEL CAPÍTULO
+════════════════════
+
+  • Proyecto integrador que combina todos los conceptos del módulo.
+  • DownloadManager coordina descargas con eventos y delegados.
+  • DownloadPipeline usa Dataflow para el pipeline de procesamiento.
+  • DownloadTask expone eventos, delegados callbacks, e IProgress<T>.
+  • Políticas de reintento implementadas con Strategy (IPoliticaReintento).
+  • Reporte generado y analizado con PLINQ para estadísticas.
+  • Cancelación cooperativa en todos los niveles del pipeline.
+  • Separación de responsabilidades en clases bien definidas.
+  • Listo para extender con más funcionalidades.
+
+EJERCICIOS DEL CAPÍTULO
+═══════════════════════
+
+  ✦ Ejercicio 1: Agrega una política de reintento "Jitter" que añada
+    un factor aleatorio al delay exponencial.
+
+  ✦ Ejercicio 2: Implementa un límite de velocidad (rate limiting)
+    usando SemaphoreSlim para no saturar el servidor.
+
+  ✦ Ejercicio 3: Agrega un bloque Dataflow que comprima los archivos
+    descargados (GZip/Deflate) como etapa post-descarga.
+
+  ✦ Ejercicio 4: Implementa un caché de descargas: si la URL ya se
+    descargó antes, saltar la descarga.
+
+  ✦ Ejercicio 5: Agrega un endpoint de health check que monitoree
+    el estado del gestor de descargas.
+
+  ✦ Ejercicio 6: Serializa el reporte a JSON y guárdalo en disco.
+
+  ✦ Ejercicio 7: Implementa un Web UI minimalista (consola con
+    barras de progreso usando \r).
+
+  ✦ Ejercicio 8: Agrega soporte para autenticación (headers Bearer)
+    configurable por descarga.
+
+  ✦ Ejercicio 9: Implementa un modo "programado" que descargue a
+    una hora específica.
+
+  ✦ Ejercicio 10: Agrega verificación de checksum (MD5/SHA256) post-descarga.
+
+FAQ (PREGUNTAS FRECUENTES)
+══════════════════════════
+
+  ❓ ¿El proyecto funciona sin conexión a Internet?
+  → Las URLs de ejemplo (httpbin.org) requieren internet. Puedes
+    reemplazarlas con descargas simuladas que usen Task.Delay.
+
+  ❓ ¿Cómo cambio el número de descargas concurrentes?
+  → Modifica maxConcurrente en el constructor de DownloadManager.
+
+  ❓ ¿Qué hace exactamente el pipeline Dataflow?
+  → BufferBlock recibe URLs, TransformBlock descarga en paralelo,
+    ActionBlock recolecta resultados.
+
+  ❓ ¿Cómo extiendo el proyecto para descargar archivos reales?
+  → Ya usa HttpClient. Solo cambia las URLs por archivos reales.
+
+  ❓ ¿El proyecto es thread-safe?
+  → Sí. Usa ConcurrentBag, Interlocked, y Dataflow que es thread-safe.
+
+  ❓ ¿Puedo usar esto en producción?
+  → Es una base excelente. Añade logging, persistencia, y tests.
+
+  ❓ ¿Por qué usar eventos y delegados si ya tengo IProgress<T>?
+  → Los eventos permiten múltiples suscriptores desacoplados.
+    IProgress<T> es más simple para un solo consumidor.
+
+  ❓ ¿Cómo manejo archivos muy grandes?
+  → El streaming (ReadAsync/WriteAsync) ya maneja archivos grandes
+    sin cargarlos en memoria.
+
+DESAFÍO DEL ARQUITECTO (FINAL DEL MÓDULO)
+══════════════════════════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  🏆 MEGA PROYECTO FINAL DEL MÓDULO VI 🏆                          │
+  │                                                                     │
+  │  Construye un SISTEMA DE PROCESAMIENTO DISTRIBUIDO SIMULADO         │
+  │  que coordine múltiples nodos de procesamiento usando todos los     │
+  │  conceptos del módulo.                                              │
+  │                                                                     │
+  │  DistributedTaskOrchestrator                                       │
+  │                                                                     │
+  │  Componentes:                                                       │
+  │                                                                     │
+  │  1. TaskProducer (IAsyncEnumerable<WorkItem>): genera tareas       │
+  │     cada cierto tiempo (simula llegada de trabajo).                │
+  │                                                                     │
+  │  2. TaskDispatcher (Dataflow pipeline): recibe tareas y las         │
+  │     distribuye a nodos disponibles usando BufferBlock +            │
+  │     TransformBlock.                                                │
+  │                                                                     │
+  │  3. WorkerNode (Task + CancellationToken): cada nodo procesa       │
+  │     tareas con un grado de paralelismo configurable. Reporta       │
+  │     progreso vía eventos (EventHandler<WorkProgressEventArgs>).    │
+  │                                                                     │
+  │  4. ResultAggregator (Parallel / PLINQ): agrupa resultados,        │
+  │     calcula estadísticas (media, mediana, percentiles).            │
+  │                                                                     │
+  │  5. HealthMonitor (Timer + event): monitorea nodos, detecta        │
+  │     nodos caídos, redistribuye tareas.                             │
+  │                                                                     │
+  │  6. CancellationManager: permite cancelar por:                     │
+  │     • Timeout global                                               │
+  │     • Tecla presionada                                             │
+  │     • Tasa de error > umbral                                       │
+  │     (linked CancellationTokenSource)                               │
+  │                                                                     │
+  │  7. FinalReport: generado con PLINQ, incluye:                      │
+  │     • Tareas procesadas por nodo                                   │
+  │     • Tiempo promedio por tipo de tarea                            │
+  │     • Top 5 tareas más lentas                                      │
+  │     • Distribución de errores                                      │
+  │     • Throughput (tareas/segundo)                                  │
+  │                                                                     │
+  │  8. Interfaz de consola con barras de progreso animadas.           │
+  │                                                                     │
+  │  Arquitectura:                                                      │
+  │    Producer → BufferBlock → TransformBlock (distribute)            │
+  │                                  ↓                                  │
+  │                     ┌──────┬──────┬──────┐                         │
+  │                     │ Nodo1│ Nodo2│ Nodo3│  ← Tasks con CT         │
+  │                     └──┬───┴──┬───┴──┬───┘                         │
+  │                        ↓      ↓      ↓                              │
+  │                     ┌──────────────────┐                           │
+  │                     │ ResultAggregator │  ← Parallel/PLINQ         │
+  │                     └──────────────────┘                           │
+  │                              ↓                                       │
+  │                     FinalReport (evento)                           │
+  │                                                                     │
+  │  Entrega: Todo el código en un solo archivo DistributedSystem.cs   │
+  │  con clase Program que demuestre el sistema funcionando.           │
+  │  Mínimo 500 líneas de código funcional.                            │
+  │                                                                     │
+  │  CRITERIOS DE EVALUACIÓN:                                           │
+  │    ✅ Usa delegados personalizados al menos 1 vez                  │
+  │    ✅ Usa Func/Action/Predicate al menos 2 veces                   │
+  │    ✅ Usa eventos con EventArgs personalizados                     │
+  │    ✅ Usa async/await en todos los métodos I/O                     │
+  │    ✅ Usa Task, Task<T>, WaitAll o WhenAll                         │
+  │    ✅ Usa CancellationTokenSource con linked tokens                │
+  │    ✅ Usa Parallel.For o Parallel.ForEach                          │
+  │    ✅ Usa PLINQ (AsParallel) para análisis                         │
+  │    ✅ Usa Dataflow (al menos 2 bloques)                            │
+  │    ✅ Maneja excepciones en todos los niveles                      │
+  │    ✅ Código modular con clases separadas                          │
+  │    ✅ Reporte final completo                                        │
+  │                                                                     │
+  │  ¡Este proyecto demuestra maestría en programación concurrente!    │
+  └─────────────────────────────────────────────────────────────────────┘
+
+CIERRE DEL MÓDULO VI
+════════════════════
+
+¡Felicidades! Has completado el MÓDULO VI de C# MASTER BOOK.
+
+En este módulo has aprendido:
+
+  • Delegados (cap. 51) — la base de todo
+  • Delegados Multicast (cap. 52) — cadenas de métodos
+  • Eventos (cap. 53) — el patrón publisher/subscriber
+  • Func y Action (cap. 54) — delegados predefinidos
+  • Async/Await (cap. 55) — programación asíncrona moderna
+  • Task (cap. 56) — el corazón de TPL
+  • Cancelación (cap. 57) — control cooperativo
+  • Parallel y PLINQ (cap. 58) — paralelismo CPU-bound
+  • TPL Avanzado (cap. 59) — Dataflow y pipelines
+  • Proyecto (cap. 60) — integración de todo
+
+Estos temas no son solo teóricos: los usarás a diario en cualquier
+aplicación profesional. Desde un botón de UI hasta un servicio web
+que procesa millones de requests, los delegados, eventos y la
+programación asíncrona están en todas partes.
+
+Lo que sigue:
+  • MÓDULO VII: PROGRAMACIÓN FUNCIONAL EN C#
+  • MÓDULO VIII: PATRONES DE DISEÑO
+  • MÓDULO IX: ASP.NET CORE
+  • MÓDULO X: PROYECTO FINAL
+
+¡Nos vemos en el MÓDULO VII!
+
+"What I cannot create, I do not understand."
+— Richard Feynman
+
+══════════════════════════════════════════════════════════════════════════════════
+  C# MASTER BOOK — CAPÍTULO 60 — FIN DEL MÓDULO VI — © 2026
+══════════════════════════════════════════════════════════════════════════════════

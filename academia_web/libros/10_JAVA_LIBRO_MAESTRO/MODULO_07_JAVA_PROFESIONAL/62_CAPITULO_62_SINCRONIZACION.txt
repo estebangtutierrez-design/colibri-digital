@@ -1,0 +1,907 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     JAVA MASTER BOOK
+##
+##                         MÓDULO VII
+##                   JAVA PROFESIONAL
+##
+##                     CAPÍTULO 62
+##
+##                     SINCRONIZACIÓN
+##
+################################################################################
+################################################################################
+
+"La sincronización es el arte de coordinar hilos para que avancen en
+armonía sin pisarse unos a otros."
+— Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, arquitecto de la concurrencia! En el capítulo anterior aprendiste
+a crear hilos y lanzarlos a ejecutar tareas de forma independiente. Pero en
+el mundo real, los hilos rara vez son completamente independientes: necesitan
+compartir datos, comunicarse entre sí y coordinarse.
+
+Imagina una cocina con varios chefs. Si todos intentan usar el mismo cuchillo
+al mismo tiempo, tendremos un accidente. Necesitamos reglas: quién usa el
+cuchillo, cuándo lo devuelve y cómo avisar a los demás que está disponible.
+
+En programación, estos problemas se llaman condiciones de carrera (race
+conditions), y las soluciones son las técnicas de sincronización.
+
+En este capítulo aprenderás a usar la palabra clave synchronized, los métodos
+wait() y notify() para comunicación entre hilos, los Locks de la API moderna
+de Java, y las estrategias para prevenir los temidos deadlocks.
+
+¡Prepárate para orquestar la sinfonía de la concurrencia!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Sin sincronización, los hilos son una multitud desordenada. Con ella,
+se convierten en una orquesta perfectamente dirigida."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Comprender el problema de las condiciones de carrera (race conditions).
+✓ Utilizar la palabra clave synchronized para proteger secciones críticas.
+✓ Conocer los bloques synchronized y su alcance.
+✓ Implementar comunicación entre hilos con wait() y notify().
+✓ Utilizar la interfaz Lock y sus implementaciones (ReentrantLock).
+✓ Comprender qué es un deadlock y cómo evitarlo.
+✓ Conocer las reglas para escribir código thread-safe.
+✓ Implementar el patrón productor-consumidor.
+
+===============================================================================
+1. EL PROBLEMA DE LA CONDICIÓN DE CARRERA
+===============================================================================
+
+Una condición de carrera (race condition) ocurre cuando múltiples hilos
+acceden y modifican datos compartidos simultáneamente, y el resultado final
+depende del orden impredecible de ejecución de los hilos.
+
+```java
+class ContadorCompartido {
+    private int contador = 0;
+
+    public void incrementar() {
+        contador++; // Operación no atómica: leer, incrementar, escribir
+    }
+
+    public int getContador() {
+        return contador;
+    }
+}
+
+public class RaceConditionDemo {
+    public static void main(String[] args) throws InterruptedException {
+        ContadorCompartido contador = new ContadorCompartido();
+
+        Runnable tarea = () -> {
+            for (int i = 0; i < 1000; i++) {
+                contador.incrementar();
+            }
+        };
+
+        Thread hilo1 = new Thread(tarea);
+        Thread hilo2 = new Thread(tarea);
+        Thread hilo3 = new Thread(tarea);
+
+        hilo1.start();
+        hilo2.start();
+        hilo3.start();
+
+        hilo1.join();
+        hilo2.join();
+        hilo3.join();
+
+        System.out.println("Valor final (esperado: 3000): " +
+            contador.getContador());
+        // Generalmente imprime menos de 3000 por la race condition
+    }
+}
+```
+
+El problema es que contador++ no es atómico. Internamente implica:
+1. Leer el valor actual.
+2. Incrementarlo.
+3. Escribir el nuevo valor.
+
+Si dos hilos leen el mismo valor (ej: 5) antes de que alguno escriba,
+ambos escribirán 6 en lugar de llegar a 7 como debería ser.
+
+===============================================================================
+2. LA PALABRA CLAVE SYNCHRONIZED
+===============================================================================
+
+synchronized es el mecanismo más básico de sincronización en Java. Garantiza
+que solo un hilo a la vez pueda ejecutar un método o bloque marcado.
+
+```java
+class ContadorSeguro {
+    private int contador = 0;
+
+    public synchronized void incrementar() {
+        contador++;
+    }
+
+    public synchronized int getContador() {
+        return contador;
+    }
+}
+
+public class SynchronizedDemo {
+    public static void main(String[] args) throws InterruptedException {
+        ContadorSeguro contador = new ContadorSeguro();
+
+        Runnable tarea = () -> {
+            for (int i = 0; i < 1000; i++) {
+                contador.incrementar();
+            }
+        };
+
+        Thread[] hilos = new Thread[10];
+        for (int i = 0; i < 10; i++) {
+            hilos[i] = new Thread(tarea);
+            hilos[i].start();
+        }
+
+        for (Thread hilo : hilos) {
+            hilo.join();
+        }
+
+        System.out.println("Valor final (esperado: 10000): " +
+            contador.getContador());
+        // Ahora siempre será 10000
+    }
+}
+```
+
+Cada objeto en Java tiene un monitor (lock intrínseco). Cuando un hilo entra
+en un método synchronized, adquiere el monitor del objeto (this). Cuando sale,
+lo libera.
+
+===============================================================================
+3. BLOQUES SYNCHRONIZED
+===============================================================================
+
+A veces sincronizar todo un método es demasiado restrictivo. Un bloque
+synchronized permite proteger solo la sección crítica.
+
+```java
+class ListaSegura {
+    private final List<String> lista = new java.util.ArrayList<>();
+    private final Object lock = new Object();
+
+    public void agregar(String elemento) {
+        // Código no sincronizado (rápido)
+        System.out.println(Thread.currentThread().getName() +
+            " agregando elemento...");
+
+        // Solo esta sección está sincronizada
+        synchronized (lock) {
+            lista.add(elemento);
+        }
+    }
+
+    public String obtener(int indice) {
+        synchronized (lock) {
+            return lista.get(indice);
+        }
+    }
+
+    public int tamano() {
+        synchronized (lock) {
+            return lista.size();
+        }
+    }
+}
+
+public class BloqueSynchronized {
+    public static void main(String[] args) throws InterruptedException {
+        ListaSegura lista = new ListaSegura();
+
+        Runnable tarea = () -> {
+            for (int i = 0; i < 100; i++) {
+                lista.agregar("Item-" + i + "-" +
+                    Thread.currentThread().getId());
+            }
+        };
+
+        Thread hilo1 = new Thread(tarea, "Escritor-1");
+        Thread hilo2 = new Thread(tarea, "Escritor-2");
+
+        hilo1.start();
+        hilo2.start();
+        hilo1.join();
+        hilo2.join();
+
+        System.out.println("Tamaño final: " + lista.tamano());
+    }
+}
+```
+
+Usar un objeto lock privado (lock) en lugar de synchronized(this) es una
+buena práctica porque evita que código externo pueda adquirir tu lock.
+
+===============================================================================
+4. SINCRONIZACIÓN ESTÁTICA
+===============================================================================
+
+Cuando un método static es synchronized, el lock se adquiere sobre el objeto
+Class de la clase, no sobre una instancia.
+
+```java
+class ContadorEstatico {
+    private static int contador = 0;
+
+    public static synchronized void incrementar() {
+        contador++;
+    }
+
+    public static synchronized int getContador() {
+        return contador;
+    }
+}
+
+public class SincronizacionEstatica {
+    public static void main(String[] args) throws InterruptedException {
+        Runnable tarea = () -> {
+            for (int i = 0; i < 5000; i++) {
+                ContadorEstatico.incrementar();
+            }
+        };
+
+        Thread hilo1 = new Thread(tarea);
+        Thread hilo2 = new Thread(tarea);
+        hilo1.start();
+        hilo2.start();
+        hilo1.join();
+        hilo2.join();
+
+        System.out.println("Contador estático: " +
+            ContadorEstatico.getContador());
+    }
+}
+```
+
+Un método static synchronized y un método de instancia synchronized no
+se bloquean mutuamente porque usan locks diferentes (Class vs this).
+
+===============================================================================
+5. COMUNICACIÓN ENTRE HILOS: WAIT() Y NOTIFY()
+===============================================================================
+
+wait() hace que un hilo espere hasta que otro hilo lo notifique. notify()
+despierta a un hilo en espera. notifyAll() despierta a todos.
+
+Estos métodos deben llamarse dentro de un bloque synchronized.
+
+```java
+class Mensajero {
+    private String mensaje;
+    private boolean disponible = false;
+
+    public synchronized void enviar(String msg) throws InterruptedException {
+        while (disponible) {
+            wait(); // Espera a que se consuma el mensaje anterior
+        }
+        this.mensaje = msg;
+        this.disponible = true;
+        notify(); // Notifica al consumidor
+    }
+
+    public synchronized String recibir() throws InterruptedException {
+        while (!disponible) {
+            wait(); // Espera a que haya un mensaje disponible
+        }
+        String msg = this.mensaje;
+        this.disponible = false;
+        notify(); // Notifica al productor
+        return msg;
+    }
+}
+
+public class WaitNotifyDemo {
+    public static void main(String[] args) {
+        Mensajero mensajero = new Mensajero();
+
+        Thread productor = new Thread(() -> {
+            String[] mensajes = {"Hola", "Mundo", "Java", "Threads", "FIN"};
+            try {
+                for (String msg : mensajes) {
+                    mensajero.enviar(msg);
+                    System.out.println("Enviado: " + msg);
+                    Thread.sleep(500);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "Productor");
+
+        Thread consumidor = new Thread(() -> {
+            try {
+                String msg;
+                do {
+                    msg = mensajero.recibir();
+                    System.out.println("Recibido: " + msg);
+                } while (!msg.equals("FIN"));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "Consumidor");
+
+        productor.start();
+        consumidor.start();
+    }
+}
+```
+
+Reglas importantes:
+- wait(), notify() y notifyAll() deben llamarse dentro de synchronized.
+- wait() libera el monitor y el hilo entra en estado WAITING.
+- Al ser notificado, el hilo compite por readquirir el monitor.
+- Siempre usa wait() dentro de un bucle while (no if) para evitar
+  despertares espurios (spurious wakeups).
+
+===============================================================================
+6. PATRÓN PRODUCTOR-CONSUMIDOR
+===============================================================================
+
+El patrón productor-consumidor es un clásico donde uno o más productores
+generan datos y uno o más consumidores los procesan.
+
+```java
+import java.util.LinkedList;
+import java.util.Queue;
+
+class BufferCompartido {
+    private final Queue<Integer> buffer = new LinkedList<>();
+    private final int CAPACIDAD = 5;
+
+    public synchronized void producir(int valor)
+            throws InterruptedException {
+        while (buffer.size() == CAPACIDAD) {
+            System.out.println("Buffer lleno. Productor espera...");
+            wait();
+        }
+
+        buffer.add(valor);
+        System.out.println("Producido: " + valor +
+            " | Tamaño: " + buffer.size());
+        notifyAll();
+    }
+
+    public synchronized int consumir()
+            throws InterruptedException {
+        while (buffer.isEmpty()) {
+            System.out.println("Buffer vacío. Consumidor espera...");
+            wait();
+        }
+
+        int valor = buffer.poll();
+        System.out.println("Consumido: " + valor +
+            " | Tamaño: " + buffer.size());
+        notifyAll();
+        return valor;
+    }
+}
+
+public class ProductorConsumidor {
+    public static void main(String[] args) {
+        BufferCompartido buffer = new BufferCompartido();
+
+        Runnable productor = () -> {
+            try {
+                for (int i = 1; i <= 10; i++) {
+                    buffer.producir(i);
+                    Thread.sleep((long)(Math.random() * 500));
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        Runnable consumidor = () -> {
+            try {
+                for (int i = 1; i <= 10; i++) {
+                    buffer.consumir();
+                    Thread.sleep((long)(Math.random() * 1000));
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        new Thread(productor, "Productor").start();
+        new Thread(consumidor, "Consumidor-1").start();
+        new Thread(consumidor, "Consumidor-2").start();
+    }
+}
+```
+
+===============================================================================
+7. LOCKS EXPLÍCITOS: REENTRANTLOCK
+===============================================================================
+
+Desde Java 5, la API java.util.concurrent.locks ofrece Lock como alternativa
+más flexible a synchronized.
+
+```java
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+class CuentaBancaria {
+    private double saldo;
+    private final Lock lock = new ReentrantLock();
+
+    public CuentaBancaria(double saldoInicial) {
+        this.saldo = saldoInicial;
+    }
+
+    public void depositar(double cantidad) {
+        lock.lock();
+        try {
+            System.out.println(Thread.currentThread().getName() +
+                " depositando " + cantidad);
+            saldo += cantidad;
+            System.out.println("Saldo actual: " + saldo);
+        } finally {
+            lock.unlock(); // Siempre liberar en finally
+        }
+    }
+
+    public void retirar(double cantidad) {
+        lock.lock();
+        try {
+            if (saldo >= cantidad) {
+                System.out.println(Thread.currentThread().getName() +
+                    " retirando " + cantidad);
+                saldo -= cantidad;
+                System.out.println("Saldo actual: " + saldo);
+            } else {
+                System.out.println("Fondos insuficientes para " +
+                    Thread.currentThread().getName());
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public double getSaldo() {
+        lock.lock();
+        try {
+            return saldo;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+public class ReentrantLockDemo {
+    public static void main(String[] args) throws InterruptedException {
+        CuentaBancaria cuenta = new CuentaBancaria(1000);
+
+        Runnable tareaDeposito = () -> {
+            for (int i = 0; i < 5; i++) {
+                cuenta.depositar(100);
+            }
+        };
+
+        Runnable tareaRetiro = () -> {
+            for (int i = 0; i < 5; i++) {
+                cuenta.retirar(50);
+            }
+        };
+
+        Thread h1 = new Thread(tareaDeposito, "Hilo-Dep-1");
+        Thread h2 = new Thread(tareaDeposito, "Hilo-Dep-2");
+        Thread h3 = new Thread(tareaRetiro, "Hilo-Ret-1");
+        Thread h4 = new Thread(tareaRetiro, "Hilo-Ret-2");
+
+        h1.start();
+        h2.start();
+        h3.start();
+        h4.start();
+
+        h1.join();
+        h2.join();
+        h3.join();
+        h4.join();
+
+        System.out.println("Saldo final: " + cuenta.getSaldo());
+    }
+}
+```
+
+Ventajas de Lock sobre synchronized:
+- tryLock(): intenta adquirir el lock sin bloquearse.
+- lockInterruptibly(): permite interrupción mientras espera el lock.
+- Múltiples condiciones con newCondition().
+
+```java
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+class BufferLock {
+    private final int[] buffer;
+    private int count, putIdx, takeIdx;
+    private final Lock lock = new ReentrantLock();
+    private final Condition noLleno = lock.newCondition();
+    private final Condition noVacio = lock.newCondition();
+
+    public BufferLock(int capacidad) {
+        buffer = new int[capacidad];
+    }
+
+    public void put(int valor) throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == buffer.length) {
+                noLleno.await();
+            }
+            buffer[putIdx] = valor;
+            putIdx = (putIdx + 1) % buffer.length;
+            count++;
+            noVacio.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == 0) {
+                noVacio.await();
+            }
+            int valor = buffer[takeIdx];
+            takeIdx = (takeIdx + 1) % buffer.length;
+            count--;
+            noLleno.signal();
+            return valor;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+===============================================================================
+8. DEADLOCK Y CÓMO EVITARLO
+===============================================================================
+
+Un deadlock (interbloqueo) ocurre cuando dos o más hilos se bloquean
+mutuamente, esperando cada uno que el otro libere un recurso.
+
+```java
+class RecursoA {
+    private final Lock lockA = new ReentrantLock();
+    private final Lock lockB = new ReentrantLock();
+
+    public void metodo1() {
+        lockA.lock();
+        System.out.println("Hilo " + Thread.currentThread().getName() +
+            " adquirió lockA");
+        try { Thread.sleep(100); } catch (InterruptedException e) {}
+
+        lockB.lock();
+        System.out.println("Hilo " + Thread.currentThread().getName() +
+            " adquirió lockB");
+        lockB.unlock();
+        lockA.unlock();
+    }
+
+    public void metodo2() {
+        lockB.lock();
+        System.out.println("Hilo " + Thread.currentThread().getName() +
+            " adquirió lockB");
+        try { Thread.sleep(100); } catch (InterruptedException e) {}
+
+        lockA.lock();
+        System.out.println("Hilo " + Thread.currentThread().getName() +
+            " adquirió lockA");
+        lockA.unlock();
+        lockB.unlock();
+    }
+}
+
+public class DeadlockDemo {
+    public static void main(String[] args) {
+        RecursoA recurso = new RecursoA();
+
+        // Esto PUEDE causar deadlock (y probablemente lo hará)
+        Thread hilo1 = new Thread(recurso::metodo1, "Hilo-1");
+        Thread hilo2 = new Thread(recurso::metodo2, "Hilo-2");
+
+        hilo1.start();
+        hilo2.start();
+    }
+}
+```
+
+Estrategias para evitar deadlocks:
+
+1. Adquirir locks en el mismo orden: Siempre adquirir los locks en el mismo
+   orden global.
+
+2. Usar tryLock() con timeout: Si no se puede adquirir el lock, liberar los
+   ya adquiridos y reintentar.
+
+3. Mantener locks el mínimo tiempo posible.
+
+```java
+import java.util.concurrent.TimeUnit;
+
+class DeadlockSafe {
+    private final Lock lockA = new ReentrantLock();
+    private final Lock lockB = new ReentrantLock();
+
+    public void metodoSeguro() {
+        boolean tieneA = false;
+        boolean tieneB = false;
+
+        try {
+            tieneA = lockA.tryLock(100, TimeUnit.MILLISECONDS);
+            if (!tieneA) {
+                System.out.println("No se pudo adquirir lockA");
+                return;
+            }
+            System.out.println(Thread.currentThread().getName() +
+                " adquirió lockA");
+
+            tieneB = lockB.tryLock(100, TimeUnit.MILLISECONDS);
+            if (!tieneB) {
+                System.out.println("No se pudo adquirir lockB, liberando lockA");
+                return;
+            }
+            System.out.println(Thread.currentThread().getName() +
+                " adquirió lockB");
+
+            // Trabajo crítico
+            System.out.println("Trabajando con ambos locks...");
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            if (tieneB) lockB.unlock();
+            if (tieneA) lockA.unlock();
+        }
+    }
+}
+```
+
+===============================================================================
+9. COLECCIÓN THREAD-SAFE: BLOCKINGQUEUE
+===============================================================================
+
+Java proporciona implementaciones thread-safe listas para usar. Una de las
+más útiles es BlockingQueue, que implementa el patrón productor-consumidor
+de manera eficiente.
+
+```java
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+
+public class BlockingQueueDemo {
+    public static void main(String[] args) {
+        BlockingQueue<String> cola = new ArrayBlockingQueue<>(3);
+
+        Runnable productor = () -> {
+            try {
+                for (int i = 1; i <= 6; i++) {
+                    String item = "Item-" + i;
+                    cola.put(item); // Bloquea si la cola está llena
+                    System.out.println("Producido: " + item);
+                    Thread.sleep(400);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        Runnable consumidor = () -> {
+            try {
+                for (int i = 1; i <= 6; i++) {
+                    String item = cola.take(); // Bloquea si la cola está vacía
+                    System.out.println("  Consumido: " + item);
+                    Thread.sleep(800);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+
+        new Thread(productor, "Productor").start();
+        new Thread(consumidor, "Consumidor").start();
+    }
+}
+```
+
+Otras colecciones thread-safe:
+- ConcurrentHashMap: HashMap thread-safe de alto rendimiento.
+- CopyOnWriteArrayList: Ideal para lecturas frecuentes y escrituras escasas.
+- ConcurrentLinkedQueue: Cola thread-safe sin bloqueo.
+
+===============================================================================
+10. ATOMICIDAD CON CLASES ATOMIC
+===============================================================================
+
+Para operaciones simples como incrementar un contador, las clases del paquete
+java.util.concurrent.atomic ofrecen operaciones atómicas sin usar locks.
+
+```java
+import java.util.concurrent.atomic.AtomicInteger;
+
+class ContadorAtomico {
+    private AtomicInteger contador = new AtomicInteger(0);
+
+    public void incrementar() {
+        contador.incrementAndGet(); // Atómico, sin locks
+    }
+
+    public int getContador() {
+        return contador.get();
+    }
+}
+
+public class AtomicDemo {
+    public static void main(String[] args) throws InterruptedException {
+        ContadorAtomico contador = new ContadorAtomico();
+
+        Runnable tarea = () -> {
+            for (int i = 0; i < 10000; i++) {
+                contador.incrementar();
+            }
+        };
+
+        Thread[] hilos = new Thread[20];
+        for (int i = 0; i < 20; i++) {
+            hilos[i] = new Thread(tarea);
+            hilos[i].start();
+        }
+
+        for (Thread h : hilos) h.join();
+
+        System.out.println("Contador atómico: " + contador.getContador());
+    }
+}
+```
+
+Clases atómicas disponibles:
+- AtomicBoolean, AtomicInteger, AtomicLong
+- AtomicReference<T> para referencias a objetos
+- AtomicIntegerArray, AtomicLongArray, AtomicReferenceArray
+- LongAdder, DoubleAdder (mejor rendimiento para alta contención)
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+En este capítulo hemos aprendido:
+
+• Las condiciones de carrera ocurren cuando múltiples hilos acceden a datos
+  compartidos sin sincronización, causando resultados impredecibles.
+
+• synchronized es el mecanismo básico de sincronización. Puede aplicarse a
+  métodos o bloques, usando el monitor del objeto o de la clase.
+
+• Un bloque synchronized ofrece granularidad más fina que un método
+  synchronized.
+
+• wait() y notify()/notifyAll() permiten comunicación entre hilos dentro
+  de un bloque synchronized.
+
+• La interfaz Lock (con ReentrantLock) ofrece funcionalidad más rica que
+  synchronized: tryLock(), lockInterruptibly() y múltiples condiciones.
+
+• Un deadlock ocurre cuando dos hilos se esperan mutuamente. Se evita
+  adquiriendo locks en un orden consistente o usando tryLock().
+
+• BlockingQueue y las clases atómicas simplifican la programación
+  concurrente y son preferibles a implementaciones caseras.
+
+===============================================================================
+EJERCICIOS DEL CAPÍTULO
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa un sistema de transferencias bancarias donde
+múltiples hilos transfieren dinero entre cuentas. Usa synchronized para
+evitar condiciones de carrera. Cada transferencia debe ser atómica.
+
+🧩 **Ejercicio 2:** Implementa el patrón productor-consumidor con 3
+productores y 2 consumidores usando wait() y notifyAll(). Los productores
+producen números aleatorios y los consumidores los suman.
+
+🧩 **Ejercicio 3:** Crea un ejemplo que demuestre un deadlock y luego
+refactorízalo para evitarlo usando tryLock() con timeout.
+
+🧩 **Ejercicio 4:** Usando ReentrantLock y Condition, implementa un
+semáforo que permita que hasta 3 hilos accedan simultáneamente a un
+recurso compartido.
+
+🧩 **Ejercicio 5:** Compara el rendimiento de AtomicInteger vs synchronized
+vs ReentrantLock incrementando un contador 1,000,000 veces con 10 hilos.
+Mide el tiempo de cada enfoque.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Qué significa que un método sea thread-safe?**
+Significa que puede ser invocado por múltiples hilos simultáneamente sin
+causar condiciones de carrera o corrupción de datos.
+
+❓ **¿synchronized(this) es una mala práctica?**
+No es mala, pero puede ser peligrosa si código externo también sincroniza
+sobre tu instancia. Es mejor usar un objeto lock privado.
+
+❓ **¿Qué son los spurious wakeups?**
+Son despertares de wait() sin que haya ocurrido un notify(). Por eso
+siempre debes usar wait() dentro de un bucle while que verifique la
+condición.
+
+❓ **¿Cuándo usar synchronized vs Lock?**
+synchronized es más simple y suficiente para la mayoría de casos. Lock
+es necesario cuando necesitas tryLock(), lockInterruptibly() o múltiples
+condiciones.
+
+❓ **¿Qué es volatile y cómo se diferencia de synchronized?**
+volatile garantiza visibilidad (los cambios son visibles para otros hilos)
+pero NO atomicidad. synchronized garantiza ambas. Usa volatile solo para
+flags o variables independientes.
+
+❓ **¿Qué es el reentrante en ReentrantLock?**
+Significa que el mismo hilo puede adquirir el mismo lock múltiples veces
+sin bloquearse. Un contador interno lleva la cuenta y debe liberarse el
+mismo número de veces.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Sistema de Reserva de Boletos para un Concierto**
+
+Diseña e implementa un sistema concurrente de reserva de boletos para un
+concierto con las siguientes características:
+
+Requisitos:
+1. Hay N asientos numerados del 1 al N (ej: 100 asientos).
+2. Múltiples clientes (hilos) intentan reservar asientos simultáneamente.
+3. Cada asiento solo puede ser reservado por un cliente.
+4. La reserva debe ser atómica: o se reserva o no, sin estados intermedios.
+5. Cuando un asiento se reserva, debe notificarse al cliente.
+6. Si un asiento ya está reservado, el cliente debe recibir un mensaje.
+
+Implementa:
+- Una clase SalaConciertos que gestione los asientos.
+- Una clase Cliente (Thread/Runnable) que intente reservar.
+- Sincronización con Lock y Condition para manejar la concurrencia.
+- Un sistema que permita a clientes esperar si un asiento se libera.
+
+Este desafío integra todos los conceptos del capítulo y simula un sistema
+real de venta de entradas concurrente.
+
+===============================================================================
+FIN DEL CAPÍTULO 62
+===============================================================================
+
+"Dominar la sincronización es como dirigir una orquesta: cada hilo toca
+su parte, pero todos siguen al mismo director."
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+63_CAPITULO_63_EJECUTORES.txt → EJECUTORES (EXECUTOR SERVICE)
+===============================================================================

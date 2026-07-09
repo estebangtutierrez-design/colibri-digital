@@ -1,0 +1,1025 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                TYPESCRIPT MASTER BOOK
+##
+##                         MÓDULO VII
+##
+##                       CAPÍTULO 70
+##
+##               PROYECTO: FRONT-END COMPLETO
+##
+################################################################################
+################################################################################
+
+"El conocimiento sin proyecto es teoría. El proyecto sin conocimiento es
+caos. Pero ambos juntos son dominio."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante,
+
+Has llegado al final del Módulo VII. Durante nueve capítulos has
+aprendido DOM tipado, eventos, fetch, JSON, promesas, async/await,
+consumo de APIs, integración con JavaScript y optimización.
+
+Ahora es momento de unir todas esas piezas en un solo proyecto completo.
+Construirás desde cero una aplicación front-end que consume una API real,
+manipula el DOM con tipos precisos, maneja eventos, carga datos de forma
+asíncrona y está optimizada para producción.
+
+Este proyecto será el broche de oro de tu aprendizaje. Al completarlo,
+habrás demostrado que dominas TypeScript en el front-end. Y lo más
+importante: tendrás un proyecto real en tu portafolio.
+
+¡Manos a la obra!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Un proyecto completo vale más que mil ejercicios. Este es tu momento de
+brillar."
+                              — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Integrar todos los conceptos del módulo en un solo proyecto
+✓ Construir una SPA (Single Page Application) con TypeScript puro
+✓ Consumir APIs REST con tipado completo
+✓ Implementar navegación entre vistas con lazy loading
+✓ Manejar estados de carga, éxito y error en la UI
+✓ Construir una interfaz responsive y accesible
+✓ Aplicar optimizaciones básicas de bundle y rendimiento
+✓ Desplegar la aplicación en un entorno de producción
+
+===============================================================================
+1. DESCRIPCIÓN DEL PROYECTO
+===============================================================================
+
+Construiremos una aplicación llamada **Dashboard Admin** que permite:
+
+- Ver un tablero principal con estadísticas
+- Gestionar usuarios (listar, crear, editar, eliminar)
+- Ver publicaciones con sus comentarios
+- Navegar entre vistas sin recargar la página
+- Todo con tipos seguros y código optimizado
+
+Utilizaremos la API pública JSONPlaceholder como backend simulado.
+
+Arquitectura del proyecto:
+
+```
+src/
+  types/
+    index.ts          # Interfaces compartidas
+    api.ts            # Tipos de API
+  services/
+    api.ts            # Cliente HTTP tipado
+    usuarios.ts       # Servicio de usuarios
+    publicaciones.ts  # Servicio de publicaciones
+  components/
+    Layout.ts         # Layout principal
+    Tablero.ts        # Vista de dashboard
+    Usuarios.ts       # Vista de gestión de usuarios
+    Publicaciones.ts  # Vista de publicaciones
+    UsuarioForm.ts    # Formulario de usuario
+  utils/
+    dom.ts            # Utilidades DOM
+    debounce.ts       # Utilidades de rendimiento
+  main.ts             # Punto de entrada
+  styles.css          # Estilos
+index.html            # HTML principal
+```
+
+===============================================================================
+2. TIPOS COMPARTIDOS
+===============================================================================
+
+```typescript
+// src/types/index.ts
+
+export interface Usuario {
+  id: number;
+  name: string;
+  username: string;
+  email: string;
+  address: {
+    street: string;
+    suite: string;
+    city: string;
+    zipcode: string;
+    geo: { lat: string; lng: string };
+  };
+  phone: string;
+  website: string;
+  company: {
+    name: string;
+    catchPhrase: string;
+    bs: string;
+  };
+}
+
+export interface Publicacion {
+  userId: number;
+  id: number;
+  title: string;
+  body: string;
+}
+
+export interface Comentario {
+  postId: number;
+  id: number;
+  name: string;
+  email: string;
+  body: string;
+}
+
+export type PaginaVista = "dashboard" | "usuarios" | "publicaciones";
+
+export interface EstadoApp {
+  paginaActual: PaginaVista;
+  cargando: boolean;
+  error: string | null;
+}
+
+export interface Estadisticas {
+  totalUsuarios: number;
+  totalPublicaciones: number;
+  totalComentarios: number;
+  usuarioMasActivo: string;
+}
+```
+
+===============================================================================
+3. CLIENTE HTTP TIPADO
+===============================================================================
+
+```typescript
+// src/services/api.ts
+
+import type { Usuario, Publicacion, Comentario, Estadisticas } from "../types";
+
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public data?: unknown
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+class ApiCliente {
+  private baseUrl = "https://jsonplaceholder.typicode.com";
+
+  private async peticion<T>(endpoint: string): Promise<T> {
+    const respuesta = await fetch(`${this.baseUrl}${endpoint}`);
+
+    if (!respuesta.ok) {
+      throw new ApiError(
+        respuesta.status,
+        `Error HTTP: ${respuesta.status} ${respuesta.statusText}`
+      );
+    }
+
+    return respuesta.json() as Promise<T>;
+  }
+
+  async obtenerUsuarios(): Promise<Usuario[]> {
+    return this.peticion<Usuario[]>("/users");
+  }
+
+  async obtenerUsuario(id: number): Promise<Usuario> {
+    return this.peticion<Usuario>(`/users/${id}`);
+  }
+
+  async obtenerPublicaciones(): Promise<Publicacion[]> {
+    return this.peticion<Publicacion[]>("/posts");
+  }
+
+  async obtenerPublicacionesPorUsuario(userId: number): Promise<Publicacion[]> {
+    return this.peticion<Publicacion[]>(`/posts?userId=${userId}`);
+  }
+
+  async obtenerComentarios(postId: number): Promise<Comentario[]> {
+    return this.peticion<Comentario[]>(`/posts/${postId}/comments`);
+  }
+
+  async obtenerEstadisticas(): Promise<Estadisticas> {
+    const [usuarios, publicaciones] = await Promise.all([
+      this.obtenerUsuarios(),
+      this.obtenerPublicaciones()
+    ]);
+
+    const totalPublicaciones = publicaciones.length;
+    const totalUsuarios = usuarios.length;
+
+    // Contar publicaciones por usuario
+    const conteo = new Map<number, number>();
+    for (const pub of publicaciones) {
+      conteo.set(pub.userId, (conteo.get(pub.userId) || 0) + 1);
+    }
+
+    let usuarioMasActivo = "";
+    let maxPublicaciones = 0;
+    for (const [userId, count] of conteo) {
+      if (count > maxPublicaciones) {
+        maxPublicaciones = count;
+        const user = usuarios.find(u => u.id === userId);
+        usuarioMasActivo = user?.name ?? "Desconocido";
+      }
+    }
+
+    return {
+      totalUsuarios,
+      totalPublicaciones,
+      totalComentarios: 500,
+      usuarioMasActivo
+    };
+  }
+
+  async crearUsuario(datos: Omit<Usuario, "id">): Promise<Usuario> {
+    const respuesta = await fetch(`${this.baseUrl}/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(datos)
+    });
+    return respuesta.json() as Promise<Usuario>;
+  }
+}
+
+export const api = new ApiCliente();
+export { ApiError };
+```
+
+===============================================================================
+4. UTILIDADES DOM Y RENDIMIENTO
+===============================================================================
+
+```typescript
+// src/utils/dom.ts
+
+export function $<T extends HTMLElement>(selector: string): T {
+  const elemento = document.querySelector<T>(selector);
+  if (!elemento) throw new Error(`Elemento no encontrado: ${selector}`);
+  return elemento;
+}
+
+export function crearElemento<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  clases: string[] = [],
+  contenido?: string
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (clases.length) el.classList.add(...clases);
+  if (contenido) el.textContent = contenido;
+  return el;
+}
+
+export function vaciarElemento(el: HTMLElement): void {
+  el.innerHTML = "";
+}
+
+export function mostrarCargando(contenedor: HTMLElement): void {
+  contenedor.innerHTML = `
+    <div class="cargando">
+      <div class="spinner"></div>
+      <p>Cargando datos...</p>
+    </div>
+  `;
+}
+
+export function mostrarError(contenedor: HTMLElement, mensaje: string): void {
+  contenedor.innerHTML = `
+    <div class="error">
+      <h3>Error</h3>
+      <p>${mensaje}</p>
+      <button class="btn-reintentar">Reintentar</button>
+    </div>
+  `;
+}
+```
+
+```typescript
+// src/utils/debounce.ts
+
+export function debounce<T extends (...args: any[]) => void>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>): void => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}
+```
+
+===============================================================================
+5. SERVICIOS ESPECÍFICOS
+===============================================================================
+
+```typescript
+// src/services/usuarios.ts
+
+import { api, ApiError } from "./api";
+import type { Usuario } from "../types";
+
+export class UsuarioServicio {
+  async listar(): Promise<Usuario[]> {
+    return api.obtenerUsuarios();
+  }
+
+  async obtener(id: number): Promise<Usuario> {
+    return api.obtenerUsuario(id);
+  }
+
+  async crear(datos: {
+    name: string;
+    email: string;
+    username: string;
+  }): Promise<Usuario> {
+    const usuarioCompleto: Omit<Usuario, "id"> = {
+      ...datos,
+      address: { street: "", suite: "", city: "", zipcode: "", geo: { lat: "", lng: "" } },
+      phone: "",
+      website: "",
+      company: { name: "", catchPhrase: "", bs: "" }
+    };
+    return api.crearUsuario(usuarioCompleto);
+  }
+
+  async eliminar(id: number): Promise<boolean> {
+    try {
+      await fetch(`https://jsonplaceholder.typicode.com/users/${id}`, {
+        method: "DELETE"
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export const usuarioServicio = new UsuarioServicio();
+```
+
+===============================================================================
+6. COMPONENTES DE LA UI
+===============================================================================
+
+```typescript
+// src/components/Layout.ts
+import { $ } from "../utils/dom";
+import type { PaginaVista } from "../types";
+
+export class Layout {
+  private navLinks: NodeListOf<HTMLAnchorElement>;
+
+  constructor(
+    private onNavigate: (pagina: PaginaVista) => void
+  ) {
+    this.navLinks = document.querySelectorAll<HTMLAnchorElement>("[data-nav]");
+
+    this.navLinks.forEach(link => {
+      link.addEventListener("click", (e: MouseEvent) => {
+        e.preventDefault();
+        const pagina = (e.currentTarget as HTMLAnchorElement).dataset
+          .nav as PaginaVista;
+        this.activarEnlace(pagina);
+        this.onNavigate(pagina);
+      });
+    });
+  }
+
+  private activarEnlace(pagina: PaginaVista): void {
+    this.navLinks.forEach(link => {
+      link.classList.toggle(
+        "activo",
+        link.dataset.nav === pagina
+      );
+    });
+  }
+
+  obtenerContenedor(): HTMLElement {
+    return $("#contenido-principal");
+  }
+}
+```
+
+```typescript
+// src/components/Tablero.ts
+import { api } from "../services/api";
+import { $, mostrarCargando, mostrarError } from "../utils/dom";
+import type { Estadisticas } from "../types";
+
+export class Tablero {
+  private contenedor: HTMLElement;
+
+  constructor() {
+    this.contenedor = $("#contenido-principal");
+  }
+
+  async montar(): Promise<void> {
+    this.contenedor.innerHTML = `
+      <div class="vista-tablero">
+        <h1>Dashboard</h1>
+        <div class="tarjetas-estadisticas" id="estadisticas"></div>
+      </div>
+    `;
+
+    await this.cargarEstadisticas();
+  }
+
+  private async cargarEstadisticas(): Promise<void> {
+    const contenedorStats = $("#estadisticas");
+    mostrarCargando(contenedorStats);
+
+    try {
+      const stats: Estadisticas = await api.obtenerEstadisticas();
+      this.renderizarEstadisticas(stats);
+    } catch (error) {
+      mostrarError(
+        contenedorStats,
+        error instanceof Error ? error.message : "Error desconocido"
+      );
+    }
+  }
+
+  private renderizarEstadisticas(stats: Estadisticas): void {
+    const contenedorStats = $("#estadisticas");
+    contenedorStats.innerHTML = `
+      <div class="tarjeta">
+        <h3>Usuarios</h3>
+        <p class="numero">${stats.totalUsuarios}</p>
+      </div>
+      <div class="tarjeta">
+        <h3>Publicaciones</h3>
+        <p class="numero">${stats.totalPublicaciones}</p>
+      </div>
+      <div class="tarjeta">
+        <h3>Comentarios</h3>
+        <p class="numero">${stats.totalComentarios}</p>
+      </div>
+      <div class="tarjeta">
+        <h3>Usuario más activo</h3>
+        <p class="nombre">${stats.usuarioMasActivo}</p>
+      </div>
+    `;
+  }
+
+  desmontar(): void {
+    // Limpiar si es necesario
+  }
+}
+```
+
+```typescript
+// src/components/Usuarios.ts
+import { usuarioServicio } from "../services/usuarios";
+import { $, mostrarCargando, mostrarError } from "../utils/dom";
+import type { Usuario } from "../types";
+
+export class Usuarios {
+  private contenedor: HTMLElement;
+
+  constructor() {
+    this.contenedor = $("#contenido-principal");
+  }
+
+  async montar(): Promise<void> {
+    this.contenedor.innerHTML = `
+      <div class="vista-usuarios">
+        <h1>Usuarios</h1>
+        <div class="acciones">
+          <button id="btn-nuevo-usuario" class="btn btn-primario">
+            + Nuevo Usuario
+          </button>
+        </div>
+        <div id="lista-usuarios" class="lista"></div>
+      </div>
+    `;
+
+    $("#btn-nuevo-usuario").addEventListener("click", () => {
+      this.mostrarFormulario();
+    });
+
+    await this.cargarUsuarios();
+  }
+
+  private async cargarUsuarios(): Promise<void> {
+    const lista = $("#lista-usuarios");
+    mostrarCargando(lista);
+
+    try {
+      const usuarios = await usuarioServicio.listar();
+      this.renderizarUsuarios(usuarios);
+    } catch (error) {
+      mostrarError(
+        lista,
+        error instanceof Error ? error.message : "Error al cargar usuarios"
+      );
+    }
+  }
+
+  private renderizarUsuarios(usuarios: Usuario[]): void {
+    const lista = $("#lista-usuarios");
+    lista.innerHTML = usuarios.map(u => `
+      <div class="item-usuario" data-id="${u.id}">
+        <div class="info">
+          <h3>${u.name}</h3>
+          <p>${u.email}</p>
+          <p class="empresa">${u.company.name}</p>
+        </div>
+        <div class="acciones-item">
+          <button class="btn-ver" data-id="${u.id}">Ver</button>
+          <button class="btn-eliminar" data-id="${u.id}">Eliminar</button>
+        </div>
+      </div>
+    `).join("");
+
+    this.inicializarEventosUsuarios();
+  }
+
+  private inicializarEventosUsuarios(): void {
+    this.contenedor.addEventListener("click", async (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      if (target.classList.contains("btn-eliminar")) {
+        const id = Number(target.dataset.id);
+        await usuarioServicio.eliminar(id);
+        target.closest(".item-usuario")?.remove();
+      }
+    });
+  }
+
+  private mostrarFormulario(): void {
+    const lista = $("#lista-usuarios");
+    lista.innerHTML = `
+      <form id="form-usuario" class="formulario">
+        <h2>Nuevo Usuario</h2>
+        <div class="campo">
+          <label>Nombre</label>
+          <input type="text" id="campo-nombre" required />
+        </div>
+        <div class="campo">
+          <label>Email</label>
+          <input type="email" id="campo-email" required />
+        </div>
+        <div class="campo">
+          <label>Username</label>
+          <input type="text" id="campo-username" required />
+        </div>
+        <div class="acciones-form">
+          <button type="submit" class="btn btn-primario">Guardar</button>
+          <button type="button" id="btn-cancelar" class="btn">Cancelar</button>
+        </div>
+      </form>
+    `;
+
+    $("#form-usuario").addEventListener("submit", async (e: Event) => {
+      e.preventDefault();
+      const nombre = ($("#campo-nombre") as HTMLInputElement).value;
+      const email = ($("#campo-email") as HTMLInputElement).value;
+      const username = ($("#campo-username") as HTMLInputElement).value;
+
+      await usuarioServicio.crear({ name: nombre, email, username });
+      this.cargarUsuarios();
+    });
+
+    $("#btn-cancelar").addEventListener("click", () => {
+      this.cargarUsuarios();
+    });
+  }
+
+  desmontar(): void {
+    // Limpiar
+  }
+}
+```
+
+===============================================================================
+7. PUNTO DE ENTRADA PRINCIPAL
+===============================================================================
+
+```typescript
+// src/main.ts
+import { Layout } from "./components/Layout";
+import { Tablero } from "./components/Tablero";
+import { Usuarios } from "./components/Usuarios";
+
+import type { PaginaVista } from "./types";
+
+class App {
+  private layout: Layout;
+  private componenteActual: { montar: () => Promise<void>; desmontar: () => void } | null = null;
+
+  constructor() {
+    this.layout = new Layout(this.navegar.bind(this));
+  }
+
+  private async navegar(pagina: PaginaVista): Promise<void> {
+    this.componenteActual?.desmontar();
+
+    const contenedor = this.layout.obtenerContenedor();
+    contenedor.innerHTML = `
+      <div class="cargando-pagina">
+        <div class="spinner"></div>
+        <p>Cargando ${pagina}...</p>
+      </div>
+    `;
+
+    try {
+      let componente: { montar: () => Promise<void>; desmontar: () => void };
+
+      switch (pagina) {
+        case "dashboard":
+          componente = new Tablero();
+          break;
+        case "usuarios":
+          componente = new Usuarios();
+          break;
+        case "publicaciones":
+          const { Publicaciones } = await import("./components/Publicaciones");
+          componente = new Publicaciones();
+          break;
+        default:
+          componente = new Tablero();
+      }
+
+      this.componenteActual = componente;
+      await componente.montar();
+    } catch (error) {
+      contenedor.innerHTML = `
+        <div class="error">
+          <h2>Error al cargar la página</h2>
+          <p>${(error as Error).message}</p>
+          <button onclick="location.reload()">Reintentar</button>
+        </div>
+      `;
+    }
+  }
+
+  async iniciar(): Promise<void> {
+    await this.navegar("dashboard");
+  }
+}
+
+// Inicializar la aplicación cuando el DOM esté listo
+document.addEventListener("DOMContentLoaded", () => {
+  const app = new App();
+  app.iniciar();
+});
+```
+
+===============================================================================
+8. HTML PRINCIPAL CON ESTILOS
+===============================================================================
+
+```html
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Admin — TypeScript</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <h1 class="logo">📊 Dashboard Admin</h1>
+    <nav class="nav">
+      <a href="#" data-nav="dashboard" class="activo">Dashboard</a>
+      <a href="#" data-nav="usuarios">Usuarios</a>
+      <a href="#" data-nav="publicaciones">Publicaciones</a>
+    </nav>
+  </header>
+
+  <main id="contenido-principal" class="contenido">
+    <div class="cargando-pagina">
+      <div class="spinner"></div>
+      <p>Cargando aplicación...</p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p>Proyecto TypeScript Master Book — Módulo VII</p>
+  </footer>
+
+  <script type="module" src="src/main.ts"></script>
+</body>
+</html>
+```
+
+```css
+/* src/styles.css */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f5f7fa;
+  color: #1a1a2e;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: #1a1a2e;
+  color: white;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nav a {
+  color: #a0a0b8;
+  text-decoration: none;
+  margin-left: 1.5rem;
+  padding: 0.5rem;
+  transition: color 0.3s;
+}
+
+.nav a:hover,
+.nav a.activo {
+  color: white;
+}
+
+.contenido {
+  flex: 1;
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.cargando-pagina,
+.cargando {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e0e0e0;
+  border-top-color: #1a1a2e;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tarjetas-estadisticas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.tarjeta {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.tarjeta h3 {
+  color: #666;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.tarjeta .numero {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #1a1a2e;
+}
+
+.lista {
+  margin-top: 1.5rem;
+}
+
+.item-usuario {
+  background: white;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #e0e0e0;
+  transition: background 0.2s;
+}
+
+.btn-primario {
+  background: #1a1a2e;
+  color: white;
+}
+
+.btn-primario:hover {
+  background: #2d2d4e;
+}
+
+.error {
+  background: #fff0f0;
+  border: 1px solid #ffc0c0;
+  padding: 2rem;
+  border-radius: 8px;
+  text-align: center;
+  color: #c00;
+}
+
+.footer {
+  background: #1a1a2e;
+  color: #a0a0b8;
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.875rem;
+}
+```
+
+===============================================================================
+9. CONFIGURACIÓN DEL PROYECTO
+===============================================================================
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "sourceMap": true,
+    "removeComments": true
+  },
+  "include": ["src/**/*"]
+}
+```
+
+```json
+// package.json
+{
+  "name": "dashboard-admin-ts",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.0.0"
+  }
+}
+```
+
+===============================================================================
+10. DESPLIEGUE
+===============================================================================
+
+```bash
+# Construir para producción
+npm run build
+
+# El resultado estará en dist/
+# Puedes desplegar en:
+# - Netlify: arrastra la carpeta dist
+# - Vercel: conecta el repositorio
+# - GitHub Pages: usa gh-pages
+# - Cualquier servidor estático
+```
+
+El proyecto completo demuestra:
+
+1. **DOM tipado** — selectores con tipos, creación de elementos
+2. **Eventos tipados** — click, submit con MouseEvent, Event
+3. **Fetch con tipos** — cliente HTTP genérico
+4. **JSON y tipos** — interfaces para datos de API
+5. **Promesas tipadas** — Promise.all, async/await
+6. **Async/Await** — flujos asíncronos limpios
+7. **Consumo de APIs** — servicios específicos por recurso
+8. **Optimización** — lazy loading de componentes
+9. **Integración con JS** — convivencia con estilos y HTML
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- El proyecto integra DOM, eventos, fetch, promesas, async/await y APIs.
+- La arquitectura separa tipos, servicios, componentes y utilidades.
+- El cliente HTTP genérico tipifica todas las respuestas de la API.
+- Los componentes tienen ciclo de vida: montar, renderizar, desmontar.
+- La navegación carga componentes bajo demanda con lazy loading.
+- Los estados de carga, éxito y error se manejan en la UI.
+- TypeScript garantiza que los datos de la API se usen correctamente.
+- El proyecto está listo para desplegarse en producción.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1: Completar el componente Publicaciones**
+
+Implementa el componente `Publicaciones` que cargue y muestre las
+publicaciones con sus comentarios. Usa lazy loading para los comentarios.
+
+🧩 **Ejercicio 2: Añadir búsqueda en usuarios**
+
+Agrega un campo de búsqueda en la vista de usuarios que filtre en
+tiempo real. Usa debounce para no hacer peticiones en cada tecla.
+
+🧩 **Ejercicio 3: Modo oscuro**
+
+Implementa un botón para cambiar entre tema claro y oscuro. Guarda la
+preferencia en localStorage y aplícala al cargar la página.
+
+🧩 **Ejercicio 4: Paginación en publicaciones**
+
+Añade paginación a la lista de publicaciones. Cada página debe cargar
+10 publicaciones. Usa el tipado de paginación del capítulo 67.
+
+🧩 **Ejercicio 5: Despliegue**
+
+Despliega el proyecto en Vercel, Netlify o GitHub Pages. Comparte el
+enlace para validar que funciona en producción.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usar TypeScript puro sin frameworks?**
+
+Para entender los fundamentos. Los frameworks (React, Vue, Angular) usan
+los mismos principios. Si dominas TypeScript puro, cualquier framework
+se te hará más fácil.
+
+❓ **¿El proyecto funciona con la API de JSONPlaceholder?**
+
+Sí, la API está diseñada para pruebas. Los datos son estáticos pero las
+peticiones son reales. Puedes crear, leer, actualizar y eliminar.
+
+❓ **¿Cómo añado más vistas al proyecto?**
+
+Crea un nuevo componente que implemente `{ montar: () => Promise<void>;
+desmontar: () => void }`, agrégarlo al switch en `main.ts` y añade un
+enlace en el menú de navegación.
+
+❓ **¿Necesito un servidor para desarrollo?**
+
+Vite incluye un servidor de desarrollo. Solo ejecuta `npm run dev` y
+abre `http://localhost:5173`.
+
+===============================================================================
+FIN DEL CAPÍTULO 70
+===============================================================================
+
+"Has llegado al final del Módulo VII, pero esto no es un adiós. Es el
+comienzo de tu viaje como desarrollador front-end con TypeScript. Cada
+línea que escribas de ahora en adelante llevará la marca de la excelencia."
+
+¿Te entrego el **Capítulo 71** ahora mismo? Dime "**Sí**" y continuamos.
+🦉📘🚀
+
+— Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+
+— (Último capítulo del Módulo VII) —
+===============================================================================

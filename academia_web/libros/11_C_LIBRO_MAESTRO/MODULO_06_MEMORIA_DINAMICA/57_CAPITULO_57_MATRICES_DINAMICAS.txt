@@ -1,0 +1,1230 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                      C MASTER BOOK
+##
+##                         MÓDULO VI
+##                       MEMORIA DINÁMICA
+##
+##                        CAPÍTULO 57
+##
+##                  MATRICES DINÁMICAS
+##
+################################################################################
+################################################################################
+
+"Una matriz dinámica es como un edificio: primero construyes la estructura,
+luego llenas cada habitación, y finalmente demueles todo en orden inverso."
+— Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+¡Bienvenido, arquitecto de la memoria dinámica! Has llegado al capítulo
+donde las matrices dejan de ser rígidas y se convierten en estructuras
+flexibles, adaptables y poderosas.
+
+En los capítulos anteriores aprendiste punteros simples, dobles y la
+importancia de free(). Ahora es momento de combinar todo ese conocimiento
+para crear y manipular matrices bidimensionales completamente dinámicas.
+
+Una matriz dinámica es aquella cuyas dimensiones no se conocen en tiempo
+de compilación, sino que se deciden y asignan durante la ejecución.
+Esto te permite crear programas que se adaptan al tamaño de los datos
+de entrada sin desperdiciar memoria.
+
+Aprenderás dos enfoques: la matriz de punteros a filas (no contigua) y
+la matriz contigua (un solo bloque). Cada una tiene sus ventajas y
+desventajas. ¡Prepárate para dominar ambas!
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"Las matrices estáticas son como cadenas: te limitan. Las matrices
+dinámicas son como ríos: fluyen y se adaptan al terreno."
+— Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Construir matrices 2D dinámicas con array de punteros más filas
+✓ Implementar matrices 2D contiguas con un solo malloc
+✓ Dominar la liberación ordenada de matrices dinámicas
+✓ Comprender la diferencia entre acceso por filas y columnas
+✓ Optimizar el rendimiento mediante localidad de referencia
+✓ Implementar funciones de redimensionamiento dinámico
+✓ Aplicar matrices dinámicas en problemas del mundo real
+
+===============================================================================
+1. MATRIZ 2D CON ARRAY DE PUNTEROS
+===============================================================================
+
+El método más común para crear matrices dinámicas en C consiste en dos
+pasos:
+
+1. Asignar un array de punteros (uno por cada fila).
+2. Asignar un array de datos para cada fila.
+
+Estructura en memoria:
+
+  matriz  →  [0] → [0,0] [0,1] [0,2] ...
+             [1] → [1,0] [1,1] [1,2] ...
+             [2] → [2,0] [2,1] [2,2] ...
+
+Cada fila es un bloque independiente en el heap. Esto significa que las
+filas NO son contiguas entre sí.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int **matriz_crear(int filas, int columnas) {
+    // Paso 1: Asignar array de punteros a filas
+    int **matriz = (int **)malloc(filas * sizeof(int *));
+    if (matriz == NULL) return NULL;
+
+    // Paso 2: Asignar cada fila individualmente
+    for (int i = 0; i < filas; i++) {
+        matriz[i] = (int *)malloc(columnas * sizeof(int));
+        if (matriz[i] == NULL) {
+            // Error: liberar lo ya asignado
+            for (int j = 0; j < i; j++) {
+                free(matriz[j]);
+            }
+            free(matriz);
+            return NULL;
+        }
+    }
+
+    return matriz;
+}
+
+void matriz_inicializar(int **matriz, int filas, int columnas) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            matriz[i][j] = i * columnas + j;
+        }
+    }
+}
+
+void matriz_imprimir(int **matriz, int filas, int columnas) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            printf("%4d ", matriz[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void matriz_liberar(int **matriz, int filas) {
+    if (matriz == NULL) return;
+    for (int i = 0; i < filas; i++) {
+        free(matriz[i]);  // Liberar cada fila
+    }
+    free(matriz);         // Liberar array de punteros
+}
+
+int main() {
+    int filas = 3, columnas = 5;
+
+    int **m = matriz_crear(filas, columnas);
+    if (m == NULL) {
+        fprintf(stderr, "Error: no se pudo crear la matriz\n");
+        return 1;
+    }
+
+    matriz_inicializar(m, filas, columnas);
+    matriz_imprimir(m, filas, columnas);
+
+    // Verificar que las filas NO son contiguas
+    printf("\nDirecciones de memoria:\n");
+    for (int i = 0; i < filas; i++) {
+        printf("Fila %d: %p\n", i, (void*)m[i]);
+    }
+    printf("Separación entre fila 0 y fila 1: %ld bytes\n",
+           (long)((char*)m[1] - (char*)m[0]));
+
+    matriz_liberar(m, filas);
+    return 0;
+}
+```
+
+**Ventajas:**
+- Sintaxis natural: m[i][j]
+- Cada fila se puede redimensionar independientemente
+- Adecuado para matrices "irregulares" (triangulares, etc.)
+
+**Desventajas:**
+- Las filas no son contiguas: peor localidad de referencia
+- Mayor overhead: N+1 llamadas a malloc (para N filas)
+- Fragmentación del heap
+- Liberación más compleja
+
+===============================================================================
+2. MATRIZ 2D CONTIGUA (UN SOLO BLOQUE)
+===============================================================================
+
+Este método asigna un único bloque contiguo para todos los elementos
+y utiliza un array de punteros para el acceso con sintaxis m[i][j].
+
+Estructura en memoria:
+
+  matriz  →  [0] [1] [2]       ← array de punteros (filas)
+             ↓    ↓    ↓
+             datos → [0,0] [0,1] [0,2] [1,0] [1,1] [1,2] [2,0] [2,1] [2,2]
+                     ─────────────────────────────────────────────────────
+                       Todos los datos en un solo bloque contiguo
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int **matriz_contigua_crear(int filas, int columnas) {
+    // Paso 1: Asignar array de punteros a filas
+    int **matriz = (int **)malloc(filas * sizeof(int *));
+    if (matriz == NULL) return NULL;
+
+    // Paso 2: Asignar UN solo bloque para todos los datos
+    matriz[0] = (int *)malloc(filas * columnas * sizeof(int));
+    if (matriz[0] == NULL) {
+        free(matriz);
+        return NULL;
+    }
+
+    // Paso 3: Apuntar cada puntero de fila a su posición en el bloque
+    for (int i = 1; i < filas; i++) {
+        matriz[i] = matriz[0] + i * columnas;
+    }
+
+    return matriz;
+}
+
+int **matriz_contigua_crear_v2(int filas, int columnas) {
+    // Versión con un solo malloc (más eficiente)
+    size_t tam_punteros = filas * sizeof(int *);
+    size_t tam_datos = filas * columnas * sizeof(int);
+
+    int **matriz = (int **)malloc(tam_punteros + tam_datos);
+    if (matriz == NULL) return NULL;
+
+    // La zona de datos comienza después del array de punteros
+    int *datos = (int *)((char *)matriz + tam_punteros);
+
+    for (int i = 0; i < filas; i++) {
+        matriz[i] = datos + i * columnas;
+    }
+
+    return matriz;
+}
+
+void matriz_contigua_liberar(int **matriz) {
+    if (matriz == NULL) return;
+    // En la versión estándar:
+    free(matriz[0]);  // Liberar el bloque de datos
+    free(matriz);     // Liberar el array de punteros
+}
+
+void matriz_contigua_liberar_v2(int **matriz) {
+    // En la versión de un solo malloc:
+    free(matriz);     // Un solo free libera todo
+}
+
+int main() {
+    int filas = 4, columnas = 3;
+
+    int **m = matriz_contigua_crear(filas, columnas);
+    if (m == NULL) return 1;
+
+    // Inicializar
+    for (int i = 0; i < filas; i++)
+        for (int j = 0; j < columnas; j++)
+            m[i][j] = i * 10 + j;
+
+    // Imprimir y verificar contigüidad
+    printf("Matriz contigua:\n");
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++)
+            printf("%3d ", m[i][j]);
+        printf("  [%p]", (void*)m[i]);
+        printf("\n");
+    }
+
+    printf("\nLos datos están en un solo bloque:\n");
+    printf("m[0][0] = %p\n", (void*)&m[0][0]);
+    printf("m[0][%d] = %p\n", columnas - 1, (void*)&m[0][columnas - 1]);
+    printf("m[1][0] = %p (debe ser contiguo)\n", (void*)&m[1][0]);
+    printf("Diferencia: %ld bytes\n",
+           (long)(&m[1][0] - &m[0][0]));
+
+    matriz_contigua_liberar(m);
+
+    // Probar versión v2 (un solo malloc)
+    printf("\n--- Versión con un solo malloc ---\n");
+    int **m2 = matriz_contigua_crear_v2(filas, columnas);
+    if (m2 == NULL) return 1;
+
+    for (int i = 0; i < filas; i++)
+        for (int j = 0; j < columnas; j++)
+            m2[i][j] = (i + 1) * 100 + j;
+
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++)
+            printf("%4d ", m2[i][j]);
+        printf("\n");
+    }
+
+    matriz_contigua_liberar_v2(m2);  // Un solo free
+
+    return 0;
+}
+```
+
+**Ventajas:**
+- Datos contiguos: máxima localidad de referencia → más rápido
+- Menor overhead: 2 llamadas a malloc (o solo 1 en v2)
+- Menos fragmentación del heap
+- Liberación más simple
+
+**Desventajas:**
+- No se pueden redimensionar filas individualmente
+- No es adecuado para matrices irregulares
+- La sintaxis es igualmente natural: m[i][j]
+
+===============================================================================
+3. COMPARATIVA DE RENDIMIENTO
+===============================================================================
+
+La diferencia de rendimiento entre ambos métodos puede ser dramática.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+int **crear_filas_separadas(int n) {
+    int **m = (int **)malloc(n * sizeof(int *));
+    for (int i = 0; i < n; i++) {
+        m[i] = (int *)malloc(n * sizeof(int));
+    }
+    return m;
+}
+
+int **crear_contigua(int n) {
+    int **m = (int **)malloc(n * sizeof(int *));
+    m[0] = (int *)malloc(n * n * sizeof(int));
+    for (int i = 1; i < n; i++) {
+        m[i] = m[0] + i * n;
+    }
+    return m;
+}
+
+double probar_acceso_filas(int **matriz, int n) {
+    clock_t inicio = clock();
+    volatile long suma = 0;
+    for (int iter = 0; iter < 100; iter++) {
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                suma += matriz[i][j];
+            }
+        }
+    }
+    clock_t fin = clock();
+    return (double)(fin - inicio) / CLOCKS_PER_SEC;
+}
+
+double probar_acceso_columnas(int **matriz, int n) {
+    clock_t inicio = clock();
+    volatile long suma = 0;
+    for (int iter = 0; iter < 100; iter++) {
+        for (int j = 0; j < n; j++) {
+            for (int i = 0; i < n; i++) {
+                suma += matriz[i][j];
+            }
+        }
+    }
+    clock_t fin = clock();
+    return (double)(fin - inicio) / CLOCKS_PER_SEC;
+}
+
+int main() {
+    int n = 1000;
+
+    printf("Comparativa de rendimiento para matriz %dx%d:\n\n", n, n);
+
+    // Matriz con filas separadas
+    int **m1 = crear_filas_separadas(n);
+    double t1_filas = probar_acceso_filas(m1, n);
+    double t1_cols = probar_acceso_columnas(m1, n);
+    free(m1[0]);
+    free(m1);
+
+    // Matriz contigua
+    int **m2 = crear_contigua(n);
+    double t2_filas = probar_acceso_filas(m2, n);
+    double t2_cols = probar_acceso_columnas(m2, n);
+    free(m2[0]);
+    free(m2);
+
+    printf("Filas separadas  - acceso por filas:    %.3f seg\n", t1_filas);
+    printf("Filas separadas  - acceso por columnas: %.3f seg\n", t1_cols);
+    printf("Contigua         - acceso por filas:    %.3f seg\n", t2_filas);
+    printf("Contigua         - acceso por columnas: %.3f seg\n", t2_cols);
+    printf("\nLa matriz contigua es %.2fx más rápida en acceso por filas\n",
+           t1_filas / t2_filas);
+    printf("Acceder por filas es %.2fx más rápido que por columnas\n",
+           t1_cols / t1_filas);
+
+    return 0;
+}
+```
+
+La diferencia se debe a la **localidad de referencia**: cuando accedes a
+elementos consecutivos en memoria, la CPU los precarga en caché. El acceso
+por columnas en una matriz de filas separadas salta entre bloques no
+contiguos, causando fallos de caché constantemente.
+
+===============================================================================
+4. MATRICES DE OTROS TIPOS
+===============================================================================
+
+4.1. Matriz de doubles
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+double **matriz_double_crear(int filas, int columnas) {
+    double **m = (double **)malloc(filas * sizeof(double *));
+    if (m == NULL) return NULL;
+
+    m[0] = (double *)malloc(filas * columnas * sizeof(double));
+    if (m[0] == NULL) {
+        free(m);
+        return NULL;
+    }
+
+    for (int i = 1; i < filas; i++) {
+        m[i] = m[0] + i * columnas;
+    }
+    return m;
+}
+
+void matriz_double_identidad(double **m, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            m[i][j] = (i == j) ? 1.0 : 0.0;
+        }
+    }
+}
+
+void matriz_double_multiplicar(double **a, double **b, double **c,
+                                int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            c[i][j] = 0.0;
+            for (int k = 0; k < n; k++) {
+                c[i][j] += a[i][k] * b[k][j];
+            }
+        }
+    }
+}
+
+void matriz_double_imprimir(double **m, int filas, int columnas) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            printf("%6.1f ", m[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void matriz_double_liberar(double **m) {
+    if (m == NULL) return;
+    free(m[0]);
+    free(m);
+}
+
+int main() {
+    int n = 3;
+
+    double **a = matriz_double_crear(n, n);
+    double **b = matriz_double_crear(n, n);
+    double **c = matriz_double_crear(n, n);
+
+    if (!a || !b || !c) {
+        matriz_double_liberar(a);
+        matriz_double_liberar(b);
+        matriz_double_liberar(c);
+        return 1;
+    }
+
+    // a = [[1,2,3],[4,5,6],[7,8,9]]
+    int val = 1;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            a[i][j] = val++;
+
+    // b = identidad
+    matriz_double_identidad(b, n);
+
+    printf("Matriz A:\n");
+    matriz_double_imprimir(a, n, n);
+    printf("\nMatriz B (identidad):\n");
+    matriz_double_imprimir(b, n, n);
+
+    matriz_double_multiplicar(a, b, c, n);
+
+    printf("\nA x B (debe ser igual a A):\n");
+    matriz_double_imprimir(c, n, n);
+
+    matriz_double_liberar(a);
+    matriz_double_liberar(b);
+    matriz_double_liberar(c);
+
+    return 0;
+}
+```
+
+4.2. Matriz de caracteres (tablero)
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+char **tablero_crear(int filas, int columnas, char valor_inicial) {
+    char **t = (char **)malloc(filas * sizeof(char *));
+    if (t == NULL) return NULL;
+
+    t[0] = (char *)malloc(filas * columnas * sizeof(char));
+    if (t[0] == NULL) {
+        free(t);
+        return NULL;
+    }
+
+    for (int i = 1; i < filas; i++) {
+        t[i] = t[0] + i * columnas;
+    }
+
+    for (int i = 0; i < filas; i++)
+        for (int j = 0; j < columnas; j++)
+            t[i][j] = valor_inicial;
+
+    return t;
+}
+
+void tablero_imprimir(char **t, int filas, int columnas) {
+    printf("  ");
+    for (int j = 0; j < columnas; j++) {
+        printf("%d ", j);
+    }
+    printf("\n");
+
+    for (int i = 0; i < filas; i++) {
+        printf("%d ", i);
+        for (int j = 0; j < columnas; j++) {
+            printf("%c ", t[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void tablero_liberar(char **t) {
+    if (t == NULL) return;
+    free(t[0]);
+    free(t);
+}
+
+int main() {
+    int filas = 8, columnas = 8;
+
+    // Crear un tablero de ajedrez
+    char **tablero = tablero_crear(filas, columnas, '.');
+
+    // Colocar algunas piezas
+    tablero[0][0] = 'T';
+    tablero[0][1] = 'C';
+    tablero[0][2] = 'A';
+    tablero[0][3] = 'D';
+    tablero[0][4] = 'R';
+    tablero[0][5] = 'A';
+    tablero[0][6] = 'C';
+    tablero[0][7] = 'T';
+
+    for (int j = 0; j < columnas; j++) {
+        tablero[1][j] = 'P';
+        tablero[6][j] = 'p';
+    }
+
+    tablero[7][0] = 't';
+    tablero[7][1] = 'c';
+    tablero[7][2] = 'a';
+    tablero[7][3] = 'd';
+    tablero[7][4] = 'r';
+    tablero[7][5] = 'a';
+    tablero[7][6] = 'c';
+    tablero[7][7] = 't';
+
+    printf("=== TABLERO DE AJEDREZ ===\n\n");
+    tablero_imprimir(tablero, filas, columnas);
+
+    tablero_liberar(tablero);
+    return 0;
+}
+```
+
+===============================================================================
+5. MATRICES IRREGULARES (JAGGED ARRAYS)
+===============================================================================
+
+Las matrices irregulares tienen filas de diferentes longitudes. Son
+útiles para triángulos, diagonales, o datos con estructura variable.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int **crear_matriz_triangular_inferior(int n) {
+    int **m = (int **)malloc(n * sizeof(int *));
+    if (m == NULL) return NULL;
+
+    for (int i = 0; i < n; i++) {
+        // Cada fila tiene i+1 elementos
+        m[i] = (int *)malloc((i + 1) * sizeof(int));
+        if (m[i] == NULL) {
+            for (int j = 0; j < i; j++) free(m[j]);
+            free(m);
+            return NULL;
+        }
+        for (int j = 0; j <= i; j++) {
+            m[i][j] = i * (i + 1) / 2 + j + 1;
+        }
+    }
+    return m;
+}
+
+void imprimir_triangular(int **m, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j <= i; j++) {
+            printf("%4d ", m[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void liberar_triangular(int **m, int n) {
+    for (int i = 0; i < n; i++) free(m[i]);
+    free(m);
+}
+
+int main() {
+    int n = 6;
+    int **tri = crear_matriz_triangular_inferior(n);
+
+    printf("Matriz triangular inferior %dx%d:\n\n", n, n);
+    imprimir_triangular(tri, n);
+
+    printf("\nLongitudes de fila:\n");
+    for (int i = 0; i < n; i++) {
+        printf("  Fila %d: %d elementos\n", i, i + 1);
+    }
+
+    liberar_triangular(tri, n);
+    return 0;
+}
+```
+
+Otro ejemplo: array de strings (matriz irregular de caracteres).
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+char **leer_palabras(int *count) {
+    char buffer[256];
+    int capacidad = 10;
+    char **palabras = (char **)malloc(capacidad * sizeof(char *));
+    if (palabras == NULL) return NULL;
+
+    int n = 0;
+    printf("Ingresa palabras (una por línea, Enter vacío para terminar):\n");
+
+    while (1) {
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+
+        // Eliminar newline
+        size_t len = strlen(buffer);
+        if (len > 0 && buffer[len - 1] == '\n') buffer[len - 1] = '\0';
+        if (buffer[0] == '\0') break;
+
+        if (n >= capacidad) {
+            capacidad *= 2;
+            char **temp = (char **)realloc(palabras, capacidad * sizeof(char *));
+            if (temp == NULL) {
+                for (int i = 0; i < n; i++) free(palabras[i]);
+                free(palabras);
+                return NULL;
+            }
+            palabras = temp;
+        }
+
+        palabras[n] = (char *)malloc(strlen(buffer) + 1);
+        if (palabras[n] == NULL) {
+            for (int i = 0; i < n; i++) free(palabras[i]);
+            free(palabras);
+            return NULL;
+        }
+        strcpy(palabras[n], buffer);
+        n++;
+    }
+
+    *count = n;
+    return palabras;
+}
+
+void imprimir_palabras(char **palabras, int count) {
+    printf("\nPalabras ingresadas (%d):\n", count);
+    for (int i = 0; i < count; i++) {
+        printf("  [%d] '%s' (%ld caracteres)\n",
+               i, palabras[i], strlen(palabras[i]));
+    }
+}
+
+void liberar_palabras(char **palabras, int count) {
+    for (int i = 0; i < count; i++) free(palabras[i]);
+    free(palabras);
+}
+
+int main() {
+    int count = 0;
+    char **palabras = leer_palabras(&count);
+
+    if (palabras == NULL) {
+        fprintf(stderr, "Error al leer palabras.\n");
+        return 1;
+    }
+
+    imprimir_palabras(palabras, count);
+    liberar_palabras(palabras, count);
+
+    return 0;
+}
+```
+
+===============================================================================
+6. REDIMENSIONAMIENTO DE MATRICES
+===============================================================================
+
+Una de las ventajas de las matrices dinámicas es que pueden crecer
+o encogerse según sea necesario.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int **matriz_redimensionar(int **matriz, int filas_viejas, int cols_viejas,
+                            int filas_nuevas, int cols_nuevas) {
+    // Crear nueva matriz
+    int **nueva = (int **)malloc(filas_nuevas * sizeof(int *));
+    if (nueva == NULL) return NULL;
+
+    nueva[0] = (int *)malloc(filas_nuevas * cols_nuevas * sizeof(int));
+    if (nueva[0] == NULL) {
+        free(nueva);
+        return NULL;
+    }
+
+    for (int i = 1; i < filas_nuevas; i++) {
+        nueva[i] = nueva[0] + i * cols_nuevas;
+    }
+
+    // Copiar datos viejos (truncando si es necesario)
+    int min_filas = (filas_viejas < filas_nuevas) ? filas_viejas : filas_nuevas;
+    int min_cols = (cols_viejas < cols_nuevas) ? cols_viejas : cols_nuevas;
+
+    for (int i = 0; i < min_filas; i++) {
+        for (int j = 0; j < min_cols; j++) {
+            nueva[i][j] = matriz[i][j];
+        }
+    }
+
+    // Liberar matriz vieja
+    if (matriz != NULL) {
+        free(matriz[0]);
+        free(matriz);
+    }
+
+    return nueva;
+}
+
+int main() {
+    int filas = 2, cols = 3;
+    int **m = (int **)malloc(filas * sizeof(int *));
+    m[0] = (int *)malloc(filas * cols * sizeof(int));
+    for (int i = 1; i < filas; i++) m[i] = m[0] + i * cols;
+
+    for (int i = 0; i < filas; i++)
+        for (int j = 0; j < cols; j++)
+            m[i][j] = i * 10 + j;
+
+    printf("Matriz original %dx%d:\n", filas, cols);
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < cols; j++) printf("%3d ", m[i][j]);
+        printf("\n");
+    }
+
+    // Redimensionar a 4x5
+    m = matriz_redimensionar(m, filas, cols, 4, 5);
+    filas = 4; cols = 5;
+
+    printf("\nMatriz redimensionada %dx%d:\n", filas, cols);
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < cols; j++) printf("%3d ", m[i][j]);
+        printf("\n");
+    }
+
+    free(m[0]);
+    free(m);
+    return 0;
+}
+```
+
+===============================================================================
+7. MATRICES 3D DINÁMICAS
+===============================================================================
+
+Extendemos el concepto a tres dimensiones.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int ***crear_cubo(int x, int y, int z) {
+    int ***cubo = (int ***)malloc(x * sizeof(int **));
+    if (cubo == NULL) return NULL;
+
+    // Primer plano: asignar todos los punteros intermedios
+    cubo[0] = (int **)malloc(x * y * sizeof(int *));
+    if (cubo[0] == NULL) {
+        free(cubo);
+        return NULL;
+    }
+
+    // Configurar punteros de cada plano
+    for (int i = 1; i < x; i++) {
+        cubo[i] = cubo[0] + i * y;
+    }
+
+    // Asignar todos los datos en un solo bloque contiguo 3D
+    cubo[0][0] = (int *)malloc(x * y * z * sizeof(int));
+    if (cubo[0][0] == NULL) {
+        free(cubo[0]);
+        free(cubo);
+        return NULL;
+    }
+
+    // Configurar punteros de filas dentro de cada plano
+    for (int i = 0; i < x; i++) {
+        for (int j = 0; j < y; j++) {
+            if (i == 0 && j == 0) continue;
+            cubo[i][j] = cubo[0][0] + (i * y + j) * z;
+        }
+    }
+
+    return cubo;
+}
+
+void cubo_llenar(int ***cubo, int x, int y, int z, int valor_inicial) {
+    for (int i = 0; i < x; i++)
+        for (int j = 0; j < y; j++)
+            for (int k = 0; k < z; k++)
+                cubo[i][j][k] = valor_inicial + i * 100 + j * 10 + k;
+}
+
+void cubo_imprimir_capa(int ***cubo, int capa, int y, int z) {
+    printf("Capa %d:\n", capa);
+    for (int j = 0; j < y; j++) {
+        for (int k = 0; k < z; k++) {
+            printf("%4d ", cubo[capa][j][k]);
+        }
+        printf("\n");
+    }
+}
+
+void cubo_liberar(int ***cubo) {
+    if (cubo == NULL) return;
+    free(cubo[0][0]);  // Datos
+    free(cubo[0]);     // Punteros intermedios
+    free(cubo);        // Punteros de planos
+}
+
+int main() {
+    int x = 3, y = 4, z = 5;
+
+    int ***cubo = crear_cubo(x, y, z);
+    if (cubo == NULL) return 1;
+
+    cubo_llenar(cubo, x, y, z, 0);
+
+    for (int i = 0; i < x; i++) {
+        cubo_imprimir_capa(cubo, i, y, z);
+        printf("\n");
+    }
+
+    printf("Verificación de contigüidad:\n");
+    printf("cubo[0][0][0] = %p\n", (void*)&cubo[0][0][0]);
+    printf("cubo[0][1][0] = %p\n", (void*)&cubo[0][1][0]);
+    printf("cubo[1][0][0] = %p\n", (void*)&cubo[1][0][0]);
+    printf("Diferencia entre capas: %ld bytes\n",
+           (long)(&cubo[1][0][0] - &cubo[0][0][0]));
+
+    cubo_liberar(cubo);
+    return 0;
+}
+```
+
+===============================================================================
+8. MATRICES CON FUNCIONES GENÉRICAS
+===============================================================================
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    int filas;
+    int columnas;
+    size_t tam_elem;
+    void **filas_ptr;    // Array de punteros a filas
+    void *datos;         // Datos contiguos
+} MatrizGenerica;
+
+MatrizGenerica *matriz_gen_crear(int filas, int columnas, size_t tam_elem) {
+    MatrizGenerica *m = (MatrizGenerica *)malloc(sizeof(MatrizGenerica));
+    if (m == NULL) return NULL;
+
+    m->filas = filas;
+    m->columnas = columnas;
+    m->tam_elem = tam_elem;
+
+    m->filas_ptr = (void **)malloc(filas * sizeof(void *));
+    if (m->filas_ptr == NULL) {
+        free(m);
+        return NULL;
+    }
+
+    m->datos = malloc(filas * columnas * tam_elem);
+    if (m->datos == NULL) {
+        free(m->filas_ptr);
+        free(m);
+        return NULL;
+    }
+
+    for (int i = 0; i < filas; i++) {
+        m->filas_ptr[i] = (char *)m->datos + i * columnas * tam_elem;
+    }
+
+    return m;
+}
+
+void *matriz_gen_get(MatrizGenerica *m, int fila, int columna) {
+    if (m == NULL || fila < 0 || fila >= m->filas ||
+        columna < 0 || columna >= m->columnas) return NULL;
+    return (char *)m->filas_ptr[fila] + columna * m->tam_elem;
+}
+
+void matriz_gen_set(MatrizGenerica *m, int fila, int columna, void *valor) {
+    void *dest = matriz_gen_get(m, fila, columna);
+    if (dest != NULL) {
+        memcpy(dest, valor, m->tam_elem);
+    }
+}
+
+void matriz_gen_liberar(MatrizGenerica *m) {
+    if (m == NULL) return;
+    free(m->datos);
+    free(m->filas_ptr);
+    free(m);
+}
+
+void matriz_gen_imprimir_int(MatrizGenerica *m) {
+    for (int i = 0; i < m->filas; i++) {
+        for (int j = 0; j < m->columnas; j++) {
+            int *val = (int *)matriz_gen_get(m, i, j);
+            printf("%4d ", *val);
+        }
+        printf("\n");
+    }
+}
+
+void matriz_gen_imprimir_double(MatrizGenerica *m) {
+    for (int i = 0; i < m->filas; i++) {
+        for (int j = 0; j < m->columnas; j++) {
+            double *val = (double *)matriz_gen_get(m, i, j);
+            printf("%7.2f ", *val);
+        }
+        printf("\n");
+    }
+}
+
+int main() {
+    // Matriz de enteros
+    MatrizGenerica *m_int = matriz_gen_crear(3, 4, sizeof(int));
+    int val = 1;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 4; j++)
+            matriz_gen_set(m_int, i, j, &val++);
+
+    printf("Matriz de enteros:\n");
+    matriz_gen_imprimir_int(m_int);
+    matriz_gen_liberar(m_int);
+
+    // Matriz de doubles
+    MatrizGenerica *m_dbl = matriz_gen_crear(2, 3, sizeof(double));
+    double dvals[] = {1.1, 2.2, 3.3, 4.4, 5.5, 6.6};
+    int idx = 0;
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 3; j++)
+            matriz_gen_set(m_dbl, i, j, &dvals[idx++]);
+
+    printf("\nMatriz de doubles:\n");
+    matriz_gen_imprimir_double(m_dbl);
+    matriz_gen_liberar(m_dbl);
+
+    return 0;
+}
+```
+
+===============================================================================
+9. MATRICES COMO PARÁMETROS DE FUNCIÓN
+===============================================================================
+
+Pasar matrices dinámicas a funciones requiere cuidado con la sintaxis.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+// Forma 1: Puntero doble (más común para matrices dinámicas)
+void procesar_matriz_v1(int **matriz, int filas, int columnas) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            matriz[i][j] *= 2;
+        }
+    }
+}
+
+// Forma 2: Array de tamaño variable (C99 VLA - solo stack)
+void procesar_matriz_v2(int filas, int columnas, int matriz[filas][columnas]) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < columnas; j++) {
+            matriz[i][j] *= 2;
+        }
+    }
+}
+
+// Forma 3: Puntero a array de tamaño fijo
+void procesar_matriz_v3(int (*matriz)[4], int filas) {
+    for (int i = 0; i < filas; i++) {
+        for (int j = 0; j < 4; j++) {
+            matriz[i][j] *= 2;
+        }
+    }
+}
+
+// Función que devuelve una matriz dinámica
+int **crear_matriz_identidad(int n) {
+    int **m = (int **)malloc(n * sizeof(int *));
+    if (m == NULL) return NULL;
+
+    m[0] = (int *)malloc(n * n * sizeof(int));
+    if (m[0] == NULL) {
+        free(m);
+        return NULL;
+    }
+
+    for (int i = 1; i < n; i++) m[i] = m[0] + i * n;
+
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            m[i][j] = (i == j) ? 1 : 0;
+
+    return m;
+}
+
+int main() {
+    int **m = crear_matriz_identidad(4);
+    if (m == NULL) return 1;
+
+    printf("Matriz identidad:\n");
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) printf("%d ", m[i][j]);
+        printf("\n");
+    }
+
+    procesar_matriz_v1(m, 4, 4);
+
+    printf("\nDespués de v1 (x2):\n");
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) printf("%d ", m[i][j]);
+        printf("\n");
+    }
+
+    free(m[0]);
+    free(m);
+    return 0;
+}
+```
+
+===============================================================================
+10. ERRORES COMUNES CON MATRICES DINÁMICAS
+===============================================================================
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    // Error 1: Olvidar verificar NULL después de malloc
+    int **m1 = (int **)malloc(10 * sizeof(int *));
+    // if (m1 == NULL) ...  ← falta esta verificación
+
+    // Error 2: Mezclar métodos de asignación y liberación
+    int **m2 = (int **)malloc(5 * sizeof(int *));
+    m2[0] = (int *)malloc(20 * sizeof(int));
+    for (int i = 1; i < 5; i++) m2[i] = m2[0] + i * 4;
+
+    // Liberación incorrecta:
+    // for (int i = 0; i < 5; i++) free(m2[i]);  // ¡ERROR! m2[1..4] no son de malloc
+    // free(m2);                                   // Esto sí es correcto
+
+    // Forma correcta si todas las filas son malloc individuales:
+    int **m3 = (int **)malloc(3 * sizeof(int *));
+    for (int i = 0; i < 3; i++) m3[i] = (int *)malloc(4 * sizeof(int));
+
+    // ✅ for (int i = 0; i < 3; i++) free(m3[i]); free(m3);
+
+    // Error 3: Acceso fuera de límites
+    int **m4 = (int **)malloc(3 * sizeof(int *));
+    m4[0] = (int *)malloc(12 * sizeof(int));
+    for (int i = 1; i < 3; i++) m4[i] = m4[0] + i * 4;
+
+    // m4[3][0] = 99;  // ¡ERROR! No existe fila 3 (índices 0-2)
+    // m4[0][5] = 99;  // ¡ERROR! No existe columna 5 (índices 0-3)
+
+    // Error 4: Memory leak al reasignar matriz
+    int **m5 = (int **)malloc(3 * sizeof(int *));
+    m5[0] = (int *)malloc(12 * sizeof(int));
+    for (int i = 1; i < 3; i++) m5[i] = m5[0] + i * 4;
+
+    // m5 = (int **)malloc(5 * sizeof(int *));  // ¡Fuga! m5 original perdido
+
+    free(m4[0]); free(m4);
+    free(m3[0]); free(m3);  // Asumiendo contigua
+    free(m2[0]); free(m2);
+    // m1 y m5 tienen fugas
+
+    return 0;
+}
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Las matrices dinámicas 2D se crean con malloc en dos pasos: array de
+  punteros + datos de cada fila (o un solo bloque contiguo).
+- Las matrices contiguas ofrecen mejor rendimiento por localidad de
+  referencia y requieren menos llamadas a malloc/free.
+- Las matrices irregulares (jagged arrays) permiten filas de longitudes
+  variables usando malloc individual por fila.
+- El acceso por filas es más rápido que por columnas debido a la
+  localidad de referencia y el caché de la CPU.
+- Las matrices 3D dinámicas extienden el mismo principio con un nivel
+  adicional de indirección.
+- Las matrices genéricas se implementan con void* y callbacks.
+- Siempre verifica NULL después de cada malloc y libera en orden
+  inverso a la asignación.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa una función que cree una matriz contigua de
+filas×columnas, la inicialice con valores aleatorios entre 0 y 99, y
+devuelva el puntero doble. La función debe manejar correctamente errores.
+
+🧩 **Ejercicio 2:** Escribe una función de multiplicación de matrices
+dinámicas: given A (m×n) y B (n×p), calcula C = A × B. Asegúrate de que
+las matrices sean contiguas para mejor rendimiento.
+
+🧩 **Ejercicio 3:** Implementa una función que traslade (transponga) una
+matriz dinámica. La transpuesta debe devolverse en una nueva matriz.
+Compara el rendimiento transpuesta por filas vs por columnas.
+
+🧩 **Ejercicio 4:** Crea un programa que lea una imagen PGM (formato texto)
+y la almacene en una matriz dinámica de enteros. Implementa funciones
+para invertir la imagen y guardarla de vuelta.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Debo usar filas separadas o matriz contigua?**
+Usa contigua para rendimiento general. Usa filas separadas solo cuando
+necesites matrices irregulares o redimensionar filas individualmente.
+
+❓ **¿Cómo accedo a un elemento con un solo puntero si la matriz es contigua?**
+Puedes usar m[0][i*cols+j] o *(m[0] + i*cols + j). La sintaxis m[i][j]
+es más legible y equivalente.
+
+❓ **¿Puedo usar VLA (Variable Length Arrays) para matrices dinámicas?**
+Los VLA existen desde C99, pero se almacenan en el stack, no en el heap.
+Para matrices grandes (>1 MB), usa malloc. Además, los VLA son opcionales
+desde C11.
+
+❓ **¿Cómo invierto filas y columnas (transpuesta) de una matriz dinámica?**
+Crea una nueva matriz con dimensiones invertidas y copia elemento
+(i,j) a (j,i). La implementación debe ser cuidadosa con matrices
+no cuadradas.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Biblioteca de Álgebra Lineal con Matrices Dinámicas Contiguas**
+
+Diseña e implementa una biblioteca completa de álgebra lineal que:
+1. Use matrices contiguas en un solo bloque de memoria.
+2. Implemente operaciones: suma, resta, multiplicación, transpuesta,
+   determinante (para matrices cuadradas), inversa.
+3. Soporte al menos 3 tipos: float, double, complex (struct con real+imag).
+4. Use punteros a función para operaciones genéricas.
+5. Incluya funciones de factorización LU y resolución de sistemas.
+6. Proporcione iteradores por filas, columnas y diagonal.
+7. Implemente una función de benchmark para comparar métodos contiguos
+   vs no contiguos.
+
+Este desafío te llevará a dominar completamente las matrices dinámicas
+en C y crear una herramienta útil para proyectos de computación científica.
+
+===============================================================================
+FIN DEL CAPÍTULO 57
+===============================================================================
+
+"Las matrices dinámicas son los pilares sobre los que se construyen
+los programas que manejan datos del mundo real: flexibles, adaptables
+y eficientes." — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+58_CAPITULO_58_LISTAS_ENLAZADAS.txt
+===============================================================================

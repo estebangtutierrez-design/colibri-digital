@@ -1,0 +1,1089 @@
+===============================================================================
+  GO MASTER BOOK — MÓDULO IV: POO EN GO
+  CAPÍTULO 34: INTERFAZ VACÍA (ANY)
+===============================================================================
+
+--------------------------------------------------------------------------------
+  BIENVENIDA
+--------------------------------------------------------------------------------
+
+Bienvenido al capítulo 34. Hasta ahora hemos visto interfaces con
+métodos bien definidos. Pero hay un caso especial: la interfaz que
+no declara ningún método.
+
+En Go, interface{} —renombrado como any en Go 1.18— es la interfaz
+vacía. Cualquier tipo en Go la satisface automáticamente porque no
+exige ningún método.
+
+Esto la convierte en una herramienta increíblemente flexible… y
+también peligrosa si se usa sin cuidado.
+
+En este capítulo aprenderás cuándo usar any, cuándo evitarlo, cómo
+recuperar el tipo original mediante type switch, y las diferencias
+con los genéricos introducidos en Go 1.18.
+
+¡Cuidado con el abismo de la falta de tipo!
+
+--------------------------------------------------------------------------------
+  FRASE DEL ARQUITECTO
+--------------------------------------------------------------------------------
+
+"interface{} es la puerta abierta a cualquier tipo. Pero una puerta
+sin llave también deja entrar el caos."
+
+  — E.G.A.
+
+--------------------------------------------------------------------------------
+  OBJETIVOS DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+  • Comprender qué es interface{} / any y cómo funciona.
+  • Saber cuándo es apropiado usar la interfaz vacía.
+  • Dominar el type switch para recuperar tipos concretos.
+  • Diferenciar entre any y genéricos (Go 1.18+).
+  • Identificar los pitfalls de usar interface{} sin control.
+  • Aplicar buenas prácticas para mantener la seguridad de tipos.
+
+--------------------------------------------------------------------------------
+  DESARROLLO DEL CAPÍTULO
+--------------------------------------------------------------------------------
+
+--- 1. ¿QUÉ ES interface{}? ---------------------------------------------------
+
+interface{} es un tipo interfaz que no declara ningún método. Por
+lo tanto, TODOS los tipos en Go la satisfacen.
+
+Cualquier valor puede asignarse a una variable interface{}:
+
+    var x interface{}
+    x = 42
+    x = "hola"
+    x = []int{1, 2, 3}
+    x = struct{ Nombre string }{"Ana"}
+
+Desde Go 1.18, interface{} tiene un alias: any
+
+    var x any
+    x = "texto"
+
+Son exactamente lo mismo. Se recomienda usar any por brevedad.
+
+--- 2. CREADOR DE LA CONFUSIÓN: SIN TIPO EN COMPILACIÓN -----------------------
+
+Cuando tienes un valor de tipo any, el compilador NO sabe qué tipo
+concreto contiene. No puedes acceder a campos ni métodos sin
+recuperar el tipo original.
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Persona struct {
+    Nombre string
+}
+
+func main() {
+    var v any = Persona{Nombre: "Lucas"}
+
+    // Error de compilación:
+    // fmt.Println(v.Nombre) // v.Nombre indefinido (tipo any)
+
+    // Necesitamos recuperar el tipo concreto
+    p := v.(Persona) // type assertion (capítulo 35)
+    fmt.Println(p.Nombre) // Lucas
+}
+--------------------------------------------------------------------------------
+
+--- 3. ¿PARA QUÉ SIRVE interface{}? -------------------------------------------
+
+Casos de uso LEGÍTIMOS de any:
+
+  1. fmt.Println, fmt.Sprintf — aceptan cualquier tipo.
+  2. json.Marshal / json.Unmarshal — trabajan con any.
+  3. Contenedores heterogéneos (slices, mapas de tipos mixtos).
+  4. Manejadores de eventos donde el tipo del evento es variable.
+  5. Árboles de datos genéricos (JSON, XML, YAML).
+  6. Middleware que envuelve funciones de cualquier tipo.
+
+--- 4. EJEMPLO: CONTENEDOR HETEROGÉNEO ---------------------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    // Slice de any: puede contener tipos distintos
+    items := []any{
+        42,
+        "Hola mundo",
+        3.14,
+        true,
+        []int{1, 2, 3},
+        struct{ X, Y int }{10, 20},
+    }
+
+    for i, item := range items {
+        fmt.Printf("%d: %T -> %v\n", i, item, item)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 5. TYPE SWITCH: RECUPERANDO EL TIPO ---------------------------------------
+
+El type switch es la forma más limpia de trabajar con any:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func TipoValor(v any) string {
+    switch v := v.(type) {
+    case int:
+        return fmt.Sprintf("int: %d", v)
+    case string:
+        return fmt.Sprintf("string: %q (len=%d)", v, len(v))
+    case bool:
+        return fmt.Sprintf("bool: %v", v)
+    case float64:
+        return fmt.Sprintf("float64: %.2f", v)
+    case []int:
+        return fmt.Sprintf("[]int: %v (len=%d)", v, len(v))
+    case nil:
+        return "nil"
+    default:
+        return fmt.Sprintf("%T: %v", v, v)
+    }
+}
+
+func main() {
+    valores := []any{42, "hola", true, 3.14, []int{1, 2}, nil, struct{}{}}
+    for _, v := range valores {
+        fmt.Println(TipoValor(v))
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 6. TYPE SWITCH CON VARIOS CASOS -------------------------------------------
+
+Puedes agrupar varios tipos en un mismo caso:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func EsNumerico(v any) bool {
+    switch v.(type) {
+    case int, int8, int16, int32, int64,
+        uint, uint8, uint16, uint32, uint64,
+        float32, float64,
+        complex64, complex128:
+        return true
+    }
+    return false
+}
+
+func main() {
+    fmt.Println(EsNumerico(42))      // true
+    fmt.Println(EsNumerico(3.14))    // true
+    fmt.Println(EsNumerico("hola"))  // false
+    fmt.Println(EsNumerico(true))    // false
+}
+--------------------------------------------------------------------------------
+
+--- 7. TIPO RECUPERADO DENTRO DEL CASE ----------------------------------------
+
+Dentro de cada case del type switch, la variable v (o la que declares)
+tiene el tipo concreto correspondiente:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "strings"
+)
+
+func Procesar(v any) string {
+    switch val := v.(type) {
+    case string:
+        // val es string aquí
+        return strings.ToUpper(val)
+    case int:
+        // val es int aquí
+        return fmt.Sprintf("%d (0x%x)", val, val)
+    case []byte:
+        // val es []byte aquí
+        return fmt.Sprintf("bytes: %x", val)
+    default:
+        return fmt.Sprintf("%T -> %v", val, val)
+    }
+}
+
+func main() {
+    fmt.Println(Procesar("hola"))
+    fmt.Println(Procesar(255))
+    fmt.Println(Procesar([]byte{0x48, 0x69}))
+    fmt.Println(Procesar(3.14))
+}
+--------------------------------------------------------------------------------
+
+--- 8. ANY EN MAPAS Y SLICES --------------------------------------------------
+
+Los mapas y slices de any son útiles para datos dinámicos:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    // Mapa heterogéneo típico de JSON
+    datos := map[string]any{
+        "nombre":   "Lucas",
+        "edad":     30,
+        "activo":   true,
+        "saldo":    99.99,
+        "tags":     []string{"go", "programacion"},
+        "metadata": map[string]any{
+            "version": 1,
+            "hash":    "abc123",
+        },
+    }
+
+    fmt.Println("Nombre:", datos["nombre"])
+    fmt.Println("Edad:", datos["edad"])
+
+    // Para acceder al mapa interno necesitamos type assertion
+    if meta, ok := datos["metadata"].(map[string]any); ok {
+        fmt.Println("Versión:", meta["version"])
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 9. ANY VS GENÉRICOS (GO 1.18+) -------------------------------------------
+
+Antes de Go 1.18, para escribir una función que trabajara con tipos
+arbitrarios, necesitabas any. Pero esto perdía la seguridad de tipos.
+
+Con los genéricos (Go 1.18+), puedes parametrizar tipos y mantener
+la seguridad en compilación:
+
+Sin genéricos (usando any, inseguro):
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func SumarAny(a, b any) any {
+    switch va := a.(type) {
+    case int:
+        if vb, ok := b.(int); ok {
+            return va + vb
+        }
+    case float64:
+        if vb, ok := b.(float64); ok {
+            return va + vb
+        }
+    case string:
+        if vb, ok := b.(string); ok {
+            return va + vb
+        }
+    }
+    return nil
+}
+
+func main() {
+    fmt.Println(SumarAny(1, 2))       // 3
+    fmt.Println(SumarAny(1.5, 2.5))   // 4.0
+    fmt.Println(SumarAny("Hola ", "Mundo")) // "Hola Mundo"
+    // fmt.Println(SumarAny(1, "hola")) // nil (error silencioso)
+}
+--------------------------------------------------------------------------------
+
+Con genéricos (seguro en compilación):
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+// Genérico: mantiene el tipo concreto
+func Sumar[T int | float64 | string](a, b T) T {
+    return a + b
+}
+
+func main() {
+    fmt.Println(Sumar(1, 2))           // 3
+    fmt.Println(Sumar(1.5, 2.5))       // 4.0
+    fmt.Println(Sumar("Hola ", "Mundo")) // "Hola Mundo"
+    // Sumar(1, "hola") // error en compilación
+}
+--------------------------------------------------------------------------------
+
+¿Cuándo usar each?
+
+  Genéricos: Cuando el comportamiento es uniforme para cualquier tipo
+  (ej: contenedores, algoritmos como sort, map, filter).
+
+  any + type switch: Cuando necesitas tratar DIFERENTE según el tipo
+  (ej: marshaling, serialización, manejo de eventos heterogéneos).
+
+--- 10. PELIGROS DE interface{} -----------------------------------------------
+
+1. Pérdida de seguridad de tipos en compilación:
+
+    func Dividir(a, b any) any {
+        // Hay que verificar todo manualmente
+    }
+
+2. Performance: los valores any requieren boxing/unboxing (asignación
+   en heap en algunos casos).
+
+3. Código verboso y propenso a errores: necesitas type assertions
+   constantemente.
+
+4. Panic en runtime si el type assertion falla sin el comma ok idiom.
+
+5. Dificulta el mantenimiento: perder la trazabilidad del tipo.
+
+--- 11. PREGUNTAS PARA DECIDIR SI USAR ANY ------------------------------------
+
+Antes de declarar un parámetro any, pregúntate:
+
+  • ¿Realmente necesito aceptar cualquier tipo?
+  • ¿Podría usar una interfaz con métodos?
+  • ¿Podría usar un genérico (Go 1.18+)?
+  • ¿Podría definir un tipo específico?
+  • ¿Cuántos type switch voy a necesitar?
+
+Si la respuesta te lleva a más de 2 type switch, probablemente algo
+está mal diseñado.
+
+--- 12. ANY EN FUNCIONES VARIÁDICAS -------------------------------------------
+
+Un patrón común: funciones variádicas que aceptan any:
+
+    fmt.Println(a ...any)
+    fmt.Sprintf(format string, a ...any)
+
+Ejemplo personalizado:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "strings"
+)
+
+type LogEntry struct {
+    Nivel   string
+    Mensaje string
+    Args    []any
+}
+
+func Log(nivel string, formato string, args ...any) {
+    log := LogEntry{
+        Nivel:   nivel,
+        Mensaje: fmt.Sprintf(formato, args...),
+    }
+    fmt.Printf("[%s] %s\n", log.Nivel, log.Mensaje)
+}
+
+func main() {
+    Log("INFO", "Usuario %s inició sesión desde %s", "lucas", "192.168.1.1")
+    Log("ERROR", "Error en línea %d: %s", 42, "archivo no encontrado")
+}
+--------------------------------------------------------------------------------
+
+--- 13. ANY CON MAPA PARA CONFIGURACIONES -------------------------------------
+
+Un uso típico: cargar configuraciones dinámicas:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Config struct {
+    Datos map[string]any
+}
+
+func (c *Config) String(key string, defaultVal string) string {
+    if v, ok := c.Datos[key]; ok {
+        if s, ok := v.(string); ok {
+            return s
+        }
+    }
+    return defaultVal
+}
+
+func (c *Config) Int(key string, defaultVal int) int {
+    if v, ok := c.Datos[key]; ok {
+        // Manejar tanto int como float64 (JSON)
+        switch val := v.(type) {
+        case int:
+            return val
+        case float64:
+            return int(val)
+        }
+    }
+    return defaultVal
+}
+
+func (c *Config) Bool(key string, defaultVal bool) bool {
+    if v, ok := c.Datos[key]; ok {
+        if b, ok := v.(bool); ok {
+            return b
+        }
+    }
+    return defaultVal
+}
+
+func main() {
+    cfg := &Config{Datos: map[string]any{
+        "host":    "localhost",
+        "port":    8080,
+        "debug":   true,
+        "max_conn": float64(100), // JSON decodifica números como float64
+    }}
+
+    fmt.Println("Host:", cfg.String("host", "default"))
+    fmt.Println("Port:", cfg.Int("port", 3000))
+    fmt.Println("Debug:", cfg.Bool("debug", false))
+    fmt.Println("MaxConn:", cfg.Int("max_conn", 50))
+}
+--------------------------------------------------------------------------------
+
+--- 14. EJEMPLO: SERIALIZADOR GENÉRICO ----------------------------------------
+
+Un serializador que convierte any a diferentes formatos:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+type Serializador struct{}
+
+func (s *Serializador) AJSON(v any) (string, error) {
+    datos, err := json.MarshalIndent(v, "", "  ")
+    if err != nil {
+        return "", fmt.Errorf("error serializando a JSON: %w", err)
+    }
+    return string(datos), nil
+}
+
+func (s *Serializador) ATexto(v any) string {
+    switch val := v.(type) {
+    case string:
+        return val
+    case int:
+        return fmt.Sprintf("%d", val)
+    case float64:
+        return fmt.Sprintf("%.2f", val)
+    case bool:
+        if val {
+            return "verdadero"
+        }
+        return "falso"
+    case []any:
+        result := "["
+        for i, item := range val {
+            if i > 0 {
+                result += ", "
+            }
+            result += s.ATexto(item)
+        }
+        result += "]"
+        return result
+    case map[string]any:
+        result := "{"
+        first := true
+        for k, v := range val {
+            if !first {
+                result += ", "
+            }
+            result += fmt.Sprintf("%s: %s", k, s.ATexto(v))
+            first = false
+        }
+        result += "}"
+        return result
+    case nil:
+        return "nulo"
+    default:
+        return fmt.Sprintf("%v", val)
+    }
+}
+
+func main() {
+    s := &Serializador{}
+
+    datos := map[string]any{
+        "nombre": "Lucas",
+        "edad":   30,
+        "activo": true,
+        "skills": []any{"Go", "Python", "Rust"},
+        "datos": map[string]any{
+            "peso": 75.5,
+            "altura": 1.80,
+        },
+    }
+
+    fmt.Println("=== JSON ===")
+    jsonStr, err := s.AJSON(datos)
+    if err != nil {
+        fmt.Println("Error:", err)
+        return
+    }
+    fmt.Println(jsonStr)
+
+    fmt.Println("\n=== Texto ===")
+    fmt.Println(s.ATexto(datos))
+}
+--------------------------------------------------------------------------------
+
+--- 15. COMPARACIÓN: ANY VS INTERFAZ CONCRETA ---------------------------------
+
+| Característica          | any                    | Interfaz con métodos    |
+|-------------------------|------------------------|-------------------------|
+| Tipos que satisface     | Todos                  | Solo los que implementan|
+| Seguridad en compilación| Baja                   | Alta                    |
+| Type switch requerido   | Sí                     | No (solo los métodos)   |
+| Performance             | Menor (boxing)         | Mayor (directo)         |
+| Caso de uso             | Datos dinámicos/JSON   | Polimorfismo controlado |
+| Legibilidad             | Baja (qué hay ahí?)    | Alta (sé qué hace)      |
+
+--- 16. RECOMENDACIONES FINALES -----------------------------------------------
+
+1. Prefiere interfaces con métodos sobre any.
+2. Usa any SOLO cuando realmente necesites heterogeneidad.
+3. Si usas any, documenta qué tipos esperas.
+4. No uses any para evitar definir tipos — es pereza, no flexibilidad.
+5. En Go 1.18+, considera genéricos como alternativa segura a any.
+6. Siempre usa comma ok idiom en type assertions sobre any.
+7. Limita el uso de any a las fronteras del sistema (entrada/salida).
+
+--- 17. EJEMPLO COMPLETO: PROCESADOR DE EVENTOS --------------------------------
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+type Evento struct {
+    Tipo      string
+    Timestamp time.Time
+    Datos     any
+}
+
+type ManejadorFunc func(Evento)
+
+type BusEventos struct {
+    manejadores map[string][]ManejadorFunc
+}
+
+func NewBusEventos() *BusEventos {
+    return &BusEventos{manejadores: make(map[string][]ManejadorFunc)}
+}
+
+func (b *BusEventos) Suscribir(tipo string, fn ManejadorFunc) {
+    b.manejadores[tipo] = append(b.manejadores[tipo], fn)
+}
+
+func (b *BusEventos) Publicar(tipo string, datos any) {
+    evento := Evento{
+        Tipo:      tipo,
+        Timestamp: time.Now(),
+        Datos:     datos,
+    }
+    for _, fn := range b.manejadores[tipo] {
+        fn(evento)
+    }
+}
+
+// Manejadores específicos
+func manejadorLogin(e Evento) {
+    // Type switch para acceder a los datos concretos
+    switch datos := e.Datos.(type) {
+    case map[string]any:
+        usuario, _ := datos["usuario"].(string)
+        ip, _ := datos["ip"].(string)
+        fmt.Printf("[LOGIN] %s desde %s a las %s\n",
+            usuario, ip, e.Timestamp.Format("15:04:05"))
+    default:
+        fmt.Printf("[LOGIN] Datos no reconocidos: %v\n", datos)
+    }
+}
+
+func manejadorPago(e Evento) {
+    switch datos := e.Datos.(type) {
+    case struct {
+        Usuario string
+        Monto   float64
+        Metodo  string
+    }:
+        fmt.Printf("[PAGO] %s pagó $%.2f con %s\n",
+            datos.Usuario, datos.Monto, datos.Metodo)
+    default:
+        fmt.Printf("[PAGO] %v\n", datos)
+    }
+}
+
+func manejadorError(e Evento) {
+    switch datos := e.Datos.(type) {
+    case error:
+        fmt.Printf("[ERROR] %s\n", datos.Error())
+    case string:
+        fmt.Printf("[ERROR] %s\n", datos)
+    default:
+        fmt.Printf("[ERROR] %v\n", datos)
+    }
+}
+
+func main() {
+    bus := NewBusEventos()
+
+    bus.Suscribir("login", manejadorLogin)
+    bus.Suscribir("pago", manejadorPago)
+    bus.Suscribir("error", manejadorError)
+
+    bus.Publicar("login", map[string]any{
+        "usuario": "lucas",
+        "ip":      "192.168.1.1",
+    })
+
+    bus.Publicar("pago", struct {
+        Usuario string
+        Monto   float64
+        Metodo  string
+    }{"lucas", 99.99, "TC"})
+
+    bus.Publicar("error", fmt.Errorf("conexión perdida"))
+    bus.Publicar("error", "timeout en la respuesta")
+}
+--------------------------------------------------------------------------------
+
+--- 18. ANY EN REFLECT --------------------------------------------------------
+
+El paquete reflect trabaja con any para inspeccionar tipos en runtime:
+
+--------------------------------------------------------------------------------
+package main
+
+import (
+    "fmt"
+    "reflect"
+)
+
+func Inspeccionar(v any) {
+    t := reflect.TypeOf(v)
+    fmt.Printf("Tipo: %s\n", t)
+    fmt.Printf("Kind: %s\n", t.Kind())
+
+    vv := reflect.ValueOf(v)
+    switch t.Kind() {
+    case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+        fmt.Printf("Valor: %d\n", vv.Int())
+    case reflect.Float32, reflect.Float64:
+        fmt.Printf("Valor: %.2f\n", vv.Float())
+    case reflect.String:
+        fmt.Printf("Valor: %q\n", vv.String())
+    case reflect.Struct:
+        fmt.Printf("Número de campos: %d\n", t.NumField())
+        for i := 0; i < t.NumField(); i++ {
+            campo := t.Field(i)
+            valor := vv.Field(i)
+            fmt.Printf("  Campo %d: %s = %v\n", i, campo.Name, valor)
+        }
+    default:
+        fmt.Printf("Valor: %v\n", v)
+    }
+}
+
+type Persona struct {
+    Nombre string
+    Edad   int
+}
+
+func main() {
+    Inspeccionar(42)
+    Inspeccionar("hola")
+    Inspeccionar(Persona{"Ana", 30})
+}
+--------------------------------------------------------------------------------
+
+--- 19. EL PELIGRO DE LAS COMPARACIONES CON ANY -------------------------------
+
+Comparar valores any puede ser tramposo:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func main() {
+    var a any = []int{1, 2, 3}
+    var b any = []int{1, 2, 3}
+
+    // fmt.Println(a == b) // PANIC: slice no es comparable
+
+    // Solo tipos comparables pueden compararse dentro de any
+    var c any = 42
+    var d any = 42
+    fmt.Println(c == d) // true
+
+    var e any = map[string]int{"a": 1}
+    var f any = map[string]int{"a": 1}
+    // fmt.Println(e == f) // PANIC: map no es comparable
+    _ = e
+    _ = f
+}
+--------------------------------------------------------------------------------
+
+--- 20. ANY EN CONJUNTO CON GENERADORES ---------------------------------------
+
+Un patrón útil: fábrica de objetos que retorna any (cuando no hay
+interfaz común):
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+func Fabricar(tipo string) any {
+    switch tipo {
+    case "coche":
+        return struct{ Ruedas int }{4}
+    case "moto":
+        return struct{ Ruedas int }{2}
+    case "saludo":
+        return "¡Hola!"
+    case "numero":
+        return 42
+    default:
+        return nil
+    }
+}
+
+func main() {
+    items := []string{"coche", "moto", "saludo", "numero"}
+    for _, t := range items {
+        obj := Fabricar(t)
+        fmt.Printf("%s -> %T: %v\n", t, obj, obj)
+    }
+}
+--------------------------------------------------------------------------------
+
+--- 21. LIMITACIONES: NO POLIMORFISMO REAL ------------------------------------
+
+Recuerda que any NO es polimorfismo. Es borrado de tipo. No puedes
+llamar métodos específicos sin type assertion.
+
+Mal diseño:
+
+    func Procesar(v any) {
+        v.Procesar() // ERROR: any no tiene método Procesar
+    }
+
+Buen diseño:
+
+    type Procesable interface {
+        Procesar() error
+    }
+
+    func Procesar(p Procesable) error {
+        return p.Procesar()
+    }
+
+--- 22. EJEMPLO DE MAL USO: SLICE DE ANY VS TIPADO ---------------------------
+
+Mal uso (lento, inseguro, verboso):
+
+    func SumaSlice(nums []any) any {
+        var total float64
+        for _, n := range nums {
+            switch v := n.(type) {
+            case int:
+                total += float64(v)
+            case float64:
+                total += v
+            }
+        }
+        return total
+    }
+
+Buen uso con genéricos:
+
+    func SumaSlice[T int | float64](nums []T) T {
+        var total T
+        for _, n := range nums {
+            total += n
+        }
+        return total
+    }
+
+--- 23. TYPE SWITCH CON INTERFACES ANIDADAS -----------------------------------
+
+Puedes combinar type switch con interfaces de método:
+
+--------------------------------------------------------------------------------
+package main
+
+import "fmt"
+
+type Stringer interface {
+    String() string
+}
+
+type Formateador interface {
+    Formatear() string
+}
+
+type Datos struct {
+    Valor string
+}
+
+func (d Datos) String() string {
+    return d.Valor
+}
+
+func (d Datos) Formatear() string {
+    return fmt.Sprintf("<<<%s>>>", d.Valor)
+}
+
+func Mostrar(v any) {
+    switch val := v.(type) {
+    case Formateador:
+        fmt.Println("Formateado:", val.Formatear())
+    case Stringer:
+        fmt.Println("Stringer:", val.String())
+    default:
+        fmt.Println("Genérico:", v)
+    }
+}
+
+func main() {
+    Mostrar(Datos{"Hola"})
+    Mostrar(42)
+}
+--------------------------------------------------------------------------------
+
+--- 24. RECOMENDACIÓN: USA ANY COMO ÚLTIMO RECURSO ----------------------------
+
+Jerarquía de decisión:
+
+  1. ¿Puedo definir un tipo concreto? → Usa el tipo concreto.
+  2. ¿Puedo definir una interfaz con métodos? → Usa la interfaz.
+  3. ¿Puedo usar genéricos (Go 1.18+)? → Usa genéricos.
+  4. ¿Ninguna de las anteriores? → Usa any.
+
+-------------------------------------------------------------------------------
+  RESUMEN DEL CAPÍTULO
+-------------------------------------------------------------------------------
+
+  • interface{} (any) es la interfaz vacía: no declara métodos.
+  • Cualquier tipo satisface any automáticamente.
+  • any es útil para JSON, eventos, y datos dinámicos.
+  • El type switch (v.(type)) recupera el tipo concreto.
+  • Los genéricos (Go 1.18+) son una alternativa más segura que any.
+  • any pierde seguridad de tipos en compilación.
+  • Siempre usa comma ok idiom con type assertions.
+  • Documenta qué tipos esperas cuando usas any.
+  • Prefiere interfaces con métodos o genéricos sobre any.
+
+-------------------------------------------------------------------------------
+  EJERCICIOS
+-------------------------------------------------------------------------------
+
+--- Ejercicio 1: Type switch básico ---
+
+Escribe una función Describir(v any) string que use type switch y devuelva:
+  - "entero: N" para int
+  - "flotante: N" para float64
+  - "cadena: TEXTO" para string
+  - "booleano: true/false" para bool
+  - "slice: [e1 e2 ...]" para []any
+  - "desconocido: TIPO" para otros
+
+--- Ejercicio 2: Calculadora con any ---
+
+Crea una función Calcular(op string, a, b any) any que soporte:
+  - "suma", "resta", "multiplica", "divide" para int y float64
+  - "concatena" para string
+  - Si los tipos no coinciden, retorna error como string
+
+--- Ejercicio 3: Validación de tipos ---
+
+Crea una función ValidarCampos(obj any, campos map[string]string) []error
+donde campos es {"nombre": "string", "edad": "int"}.
+Usa reflect o type switch para verificar que obj tenga esos campos.
+Retorna slice de errores con las discrepancias.
+
+--- Ejercicio 4: Caché genérica con any ---
+
+Crea un tipo Cache con campo datos map[string]any.
+Implementa:
+  - Set(clave string, valor any)
+  - Get(clave string) (any, bool)
+  - GetString(clave string) (string, bool)
+  - GetInt(clave string) (int, bool)
+  - Delete(clave string)
+
+--- Ejercicio 5: Flatten de any anidado ---
+
+Crea una función Aplanar(v any) []any que convierta estructuras
+anidadas (slices de slices, mapas anidados) en un slice plano.
+
+--- Ejercicio 6: Convertidor de tipos ---
+
+Crea funciones:
+  - ToString(v any) string
+  - ToInt(v any) (int, error)
+  - ToFloat64(v any) (float64, error)
+  - ToBool(v any) (bool, error)
+Cada una debe manejar los casos razonables (ej: "42" -> 42).
+
+--- Ejercicio 7: Logger genérico con niveles ---
+
+Crea un tipo Logger con método Log(nivel string, v ...any).
+Formatea la salida como "[NIVEL] timestamp: mensaje".
+Los argumentos v... deben imprimirse separados por espacio.
+
+--- Ejercicio 8: Deep Copy con any ---
+
+Crea una función DeepCopy(v any) any que haga copia profunda
+de tipos básicos, slices, mapas y structs (usando type switch).
+
+--- Ejercicio 9: Comparador genérico ---
+
+Crea una función SonIguales(a, b any) bool que compare dos valores
+any. Si son comparables con ==, úsalo. Si no, usa reflect.DeepEqual.
+
+--- Ejercicio 10: Tipo seguro con validación ---
+
+Crea un tipo TipoSeguro struct{ valor any } con métodos:
+  - NewTipoSeguro(v any) *TipoSeguro (verifica que sea int|string|bool)
+  - Obtener() any
+  - EsString() bool
+  - EsInt() bool
+  - ComoString() (string, error)
+  - ComoInt() (int, error)
+
+-------------------------------------------------------------------------------
+  FAQ — PREGUNTAS FRECUENTES
+-------------------------------------------------------------------------------
+
+P: ¿Es lo mismo interface{} que any?
+R: Sí, exactamente lo mismo. any es un alias introducido en Go 1.18.
+
+P: ¿Puedo usar any con operadores como +?
+R: No. any no soporta operadores. Debes hacer type assertion primero.
+
+P: ¿Debo usar any en lugar de genéricos?
+R: No. Los genéricos son más seguros y eficientes. Usa any solo cuando
+   necesites heterogeneidad real (distintos tipos en una misma colección).
+
+P: ¿Cómo itero sobre un slice de any?
+R: Con range, igual que cualquier slice. Luego haces type switch.
+
+P: ¿Por qué fmt.Println funciona con cualquier tipo?
+R: Porque acepta ...any y usa reflect internamente para imprimir.
+
+P: ¿Any causa problemas de rendimiento?
+R: Sí, especialmente si haces muchas type assertions. Los valores pueden
+   escapar al heap (boxing). Mide si es crítico.
+
+P: ¿Puedo usar any en lugar de definir una interfaz?
+R: Puedes, pero no debes. Las interfaces con métodos son más expresivas
+   y seguras.
+
+P: ¿Cómo sé el tipo concreto dentro de any?
+R: Con type switch (v.(type)) o type assertion (v.(Tipo)).
+
+-------------------------------------------------------------------------------
+  DESAFÍO DEL ARQUITECTO
+-------------------------------------------------------------------------------
+
+Sistema de Plantillas Dinámicas:
+
+Construye un motor de plantillas simple que procese texto con
+variables del tipo {{nombre}} reemplazándolas con valores de un
+mapa map[string]any.
+
+  type Plantilla struct {
+      texto string
+  }
+
+  Métodos:
+    - Parse(texto string) *Plantilla
+    - Ejecutar(vars map[string]any) (string, error)
+    - EjecutarConFunciones(vars map[string]any, funcs map[string]any) (string, error)
+
+  Características:
+    1. Soporta variables simples: {{nombre}}
+    2. Soporta acceso anidado: {{usuario.nombre}}
+    3. Soporta condicionales: {{if activo}}...{{end}}
+    4. Soporta bucles: {{range items}}...{{end}}
+    5. Las funciones personalizadas (funcs) son cualquier función
+       que reciba ...any y retorne any.
+    6. Si una variable no existe, retorna error.
+    7. Si un valor es de tipo incorrecto, retorna error descriptivo.
+
+  Ejemplo de uso:
+    tmpl := NewPlantilla()
+    tmpl.Parse("Hola {{nombre}}, tienes {{edad}} años.")
+    result, err := tmpl.Ejecutar(map[string]any{
+        "nombre": "Lucas",
+        "edad":   30,
+    })
+    // "Hola Lucas, tienes 30 años."
+
+  Requisitos:
+    - Usa any extensivamente para manejar valores dinámicos.
+    - Implementa un type switch para formatear según el tipo.
+    - Maneja errores con claridad.
+    - No uses regex (parsea caracter por caracter).
+
+  Extra: Implementa filtros: {{nombre|mayus}}, {{fecha|formato:"02/01/2006"}}.
+
+Este desafío pone a prueba tu dominio de any, type switch y diseño
+de APIs flexibles.
+
+-------------------------------------------------------------------------------
+  CIERRE DEL CAPÍTULO
+-------------------------------------------------------------------------------
+
+Has dominado la interfaz vacía. Ahora sabes que any es una herramienta
+poderosa pero que debe usarse con disciplina.
+
+Recuerda la jerarquía: tipo concreto > interfaz con métodos > genéricos > any.
+Cada nivel hacia abajo sacrifica seguridad por flexibilidad.
+
+En el próximo capítulo profundizaremos en el type assertion, el mecanismo
+que permite extraer el tipo concreto de una interfaz y trabajar con él.
+
+Nos vemos en el capítulo 35: TYPE ASSERTION.
+
+-------------------------------------------------------------------------------
+  PRÓXIMO CAPÍTULO
+-------------------------------------------------------------------------------
+
+  CAPÍTULO 35: TYPE ASSERTION
+    → x.(T), comma ok idiom, type switch, convertir interfaz a
+      tipo concreto, y patrones seguros de extracción de tipos.
+
+===============================================================================
+  FIN DEL CAPÍTULO 34 — INTERFAZ VACÍA (ANY)
+===============================================================================

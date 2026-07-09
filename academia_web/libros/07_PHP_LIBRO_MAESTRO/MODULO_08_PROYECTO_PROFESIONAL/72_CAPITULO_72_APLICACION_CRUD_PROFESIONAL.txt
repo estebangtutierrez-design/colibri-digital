@@ -1,0 +1,994 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 72
+##
+##                APLICACIÓN CRUD PROFESIONAL
+##
+################################################################################
+################################################################################
+
+"CRUD es el ABC del backend. Domínalo y podrás construir cualquier sistema
+de gestión de información."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Saludos, desarrollador backend. Has diseñado la arquitectura; ahora toca
+llenarla de vida con un sistema CRUD profesional. CRUD significa **Create,
+Read, Update, Delete** — las cuatro operaciones fundamentales de cualquier
+aplicación que persista datos.
+
+En el mundo real, casi todo es CRUD: los usuarios se crean, se leen, se
+actualizan y se eliminan. Los productos, las órdenes, los artículos, los
+comentarios... todos siguen este patrón. Un sistema CRUD bien implementado
+es la base de cualquier aplicación empresarial.
+
+En este capítulo construirás un CRUD completo utilizando PDO (PHP Data
+Objects), consultas preparadas, validación de datos, paginación y manejo
+de relaciones entre tablas. No será un CRUD simple; será un CRUD profesional,
+seguro y listo para producción.
+
+Cada línea de código que escribas hoy la usarás en el resto de tu carrera
+como desarrollador PHP.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"El CRUD es al backend lo que las escalas a la música: un patrón fundamental
+que, una vez dominado, te permite crear cualquier sinfonía."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Implementar las cuatro operaciones CRUD con PDO y consultas preparadas.
+✓ Diseñar controladores RESTful que expongan endpoints para cada operación.
+✓ Validar datos de entrada antes de persistirlos en la base de datos.
+✓ Implementar paginación y ordenamiento en consultas de listado.
+✓ Manejar relaciones entre tablas (uno a muchos, muchos a muchos).
+✓ Utilizar transacciones para operaciones que afectan múltiples tablas.
+✓ Escribir un CRUD reutilizable mediante el patrón Repository.
+
+===============================================================================
+1. DISEÑO DE LA BASE DE DATOS
+===============================================================================
+
+Antes de escribir código, diseñemos el esquema de base de datos para nuestro
+sistema CRUD. Gestionaremos productos con categorías y proveedores:
+
+```sql
+-- database/schema.sql
+CREATE DATABASE IF NOT EXISTS php_master_db
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+
+USE php_master_db;
+
+-- Tabla de categorías
+CREATE TABLE categorias (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion TEXT,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Tabla de proveedores
+CREATE TABLE proveedores (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(200) NOT NULL,
+    contacto VARCHAR(100),
+    email VARCHAR(255),
+    telefono VARCHAR(20),
+    direccion TEXT,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Tabla de productos (principal del CRUD)
+CREATE TABLE productos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    codigo VARCHAR(50) NOT NULL UNIQUE,
+    nombre VARCHAR(200) NOT NULL,
+    descripcion TEXT,
+    precio DECIMAL(10, 2) NOT NULL,
+    stock INT NOT NULL DEFAULT 0,
+    categoria_id INT NOT NULL,
+    proveedor_id INT,
+    imagen VARCHAR(255),
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (categoria_id) REFERENCES categorias(id),
+    FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+) ENGINE=InnoDB;
+
+-- Índices para búsquedas rápidas
+CREATE INDEX idx_productos_categoria ON productos(categoria_id);
+CREATE INDEX idx_productos_proveedor ON productos(proveedor_id);
+CREATE INDEX idx_productos_nombre ON productos(nombre);
+CREATE INDEX idx_productos_codigo ON productos(codigo);
+
+-- Insertar datos de ejemplo
+INSERT INTO categorias (nombre, descripcion) VALUES
+('Electrónica', 'Productos electrónicos y dispositivos'),
+('Ropa', 'Prendas de vestir y accesorios'),
+('Hogar', 'Artículos para el hogar'),
+('Deportes', 'Equipo deportivo y accesorios'),
+('Libros', 'Libros y material educativo');
+
+INSERT INTO proveedores (nombre, contacto, email) VALUES
+('Distribuidora Tecno', 'Carlos Ruiz', 'carlos@tecnodist.com'),
+('Moda Express', 'Laura Pérez', 'laura@modaexp.com'),
+('Hogar Total', 'Miguel Ángel', 'miguel@hogartotal.com');
+```
+
+El diseño incluye:
+
+- **Clave primaria autoincremental**: Identificador único para cada registro.
+- **Claves foráneas**: Relaciones entre tablas con integridad referencial.
+- **Índices**: Aceleran las búsquedas por campos específicos.
+- **Timestamps**: Control de creación y modificación de registros.
+- **Campo activo**: Borrado lógico en lugar de borrado físico.
+
+===============================================================================
+2. REPOSITORY: PATRÓN DE ACCESO A DATOS
+===============================================================================
+
+El patrón **Repository** abstrae el acceso a datos, proporcionando una
+interfaz limpia para realizar operaciones CRUD sin exponer los detalles
+de la base de datos.
+
+```php
+<?php
+// src/Repositories/ProductoRepository.php
+declare(strict_types=1);
+
+namespace App\Repositories;
+
+use App\Core\Database;
+use PDO;
+
+class ProductoRepository
+{
+    private PDO $db;
+
+    public function __construct()
+    {
+        $this->db = Database::getInstance()->getConnection();
+    }
+
+    public function findAll(
+        int $page = 1,
+        int $limit = 10,
+        string $search = '',
+        string $orderBy = 'id',
+        string $orderDir = 'DESC'
+    ): array {
+        $offset = ($page - 1) * $limit;
+        $allowedOrders = ['id', 'nombre', 'precio', 'stock', 'created_at'];
+        $orderBy = in_array($orderBy, $allowedOrders) ? $orderBy : 'id';
+        $orderDir = strtoupper($orderDir) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql = "SELECT p.*, c.nombre as categoria_nombre, pr.nombre as proveedor_nombre
+                FROM productos p
+                LEFT JOIN categorias c ON p.categoria_id = c.id
+                LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+                WHERE p.activo = 1";
+
+        $params = [];
+
+        if (!empty($search)) {
+            $sql .= " AND (p.nombre LIKE :search OR p.codigo LIKE :search2)";
+            $params['search'] = "%{$search}%";
+            $params['search2'] = "%{$search}%";
+        }
+
+        $sql .= " ORDER BY p.{$orderBy} {$orderDir} LIMIT :limit OFFSET :offset";
+        $params['limit'] = $limit;
+        $params['offset'] = $offset;
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function countAll(string $search = ''): int
+    {
+        $sql = "SELECT COUNT(*) FROM productos WHERE activo = 1";
+
+        if (!empty($search)) {
+            $sql .= " AND (nombre LIKE :search OR codigo LIKE :search2)";
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                'search' => "%{$search}%",
+                'search2' => "%{$search}%",
+            ]);
+        } else {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute();
+        }
+
+        return (int)$stmt->fetchColumn();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $sql = "SELECT p.*, c.nombre as categoria_nombre, pr.nombre as proveedor_nombre
+                FROM productos p
+                LEFT JOIN categorias c ON p.categoria_id = c.id
+                LEFT JOIN proveedores pr ON p.proveedor_id = pr.id
+                WHERE p.id = :id AND p.activo = 1";
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute(['id' => $id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $result ?: null;
+    }
+
+    public function create(array $data): int
+    {
+        $sql = "INSERT INTO productos (codigo, nombre, descripcion, precio, stock,
+                categoria_id, proveedor_id, imagen)
+                VALUES (:codigo, :nombre, :descripcion, :precio, :stock,
+                :categoria_id, :proveedor_id, :imagen)";
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            'codigo' => $data['codigo'],
+            'nombre' => $data['nombre'],
+            'descripcion' => $data['descripcion'] ?? null,
+            'precio' => $data['precio'],
+            'stock' => $data['stock'] ?? 0,
+            'categoria_id' => $data['categoria_id'],
+            'proveedor_id' => $data['proveedor_id'] ?? null,
+            'imagen' => $data['imagen'] ?? null,
+        ]);
+
+        return (int)$this->db->lastInsertId();
+    }
+
+    public function update(int $id, array $data): bool
+    {
+        $fields = [];
+        $params = ['id' => $id];
+
+        $allowedFields = [
+            'codigo', 'nombre', 'descripcion', 'precio', 'stock',
+            'categoria_id', 'proveedor_id', 'imagen'
+        ];
+
+        foreach ($allowedFields as $field) {
+            if (array_key_exists($field, $data)) {
+                $fields[] = "{$field} = :{$field}";
+                $params[$field] = $data[$field];
+            }
+        }
+
+        if (empty($fields)) {
+            return false;
+        }
+
+        $sql = "UPDATE productos SET " . implode(', ', $fields) . " WHERE id = :id";
+        $stmt = $this->db->prepare($sql);
+
+        return $stmt->execute($params);
+    }
+
+    public function delete(int $id): bool
+    {
+        // Borrado lógico: marcar como inactivo
+        $sql = "UPDATE productos SET activo = 0 WHERE id = :id";
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute(['id' => $id]);
+    }
+
+    public function hardDelete(int $id): bool
+    {
+        // Borrado físico (solo para administradores)
+        $sql = "DELETE FROM productos WHERE id = :id";
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute(['id' => $id]);
+    }
+}
+?>
+```
+
+===============================================================================
+3. CONTROLADOR RESTful
+===============================================================================
+
+El controlador expone los endpoints de la API REST, delegando la lógica de
+negocio al repositorio y devolviendo respuestas JSON estructuradas.
+
+```php
+<?php
+// src/Controllers/ProductoController.php
+declare(strict_types=1);
+
+namespace App\Controllers;
+
+use App\Core\Request;
+use App\Core\Response;
+use App\Repositories\ProductoRepository;
+use App\Helpers\Validator;
+
+class ProductoController
+{
+    private ProductoRepository $productoRepo;
+    private Validator $validator;
+
+    public function __construct()
+    {
+        $this->productoRepo = new ProductoRepository();
+        $this->validator = new Validator();
+    }
+
+    /**
+     * GET /api/productos
+     * Listar productos con paginación y búsqueda
+     */
+    public function index(Request $request): Response
+    {
+        $page = (int)($request->getQuery('page', 1));
+        $limit = (int)($request->getQuery('limit', 10));
+        $search = $request->getQuery('search', '');
+        $orderBy = $request->getQuery('orderBy', 'id');
+        $orderDir = $request->getQuery('orderDir', 'DESC');
+
+        // Validar límite máximo
+        $limit = min($limit, 100);
+
+        $productos = $this->productoRepo->findAll($page, $limit, $search, $orderBy, $orderDir);
+        $total = $this->productoRepo->countAll($search);
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'data' => $productos,
+            'pagination' => [
+                'page' => $page,
+                'limit' => $limit,
+                'total' => $total,
+                'pages' => (int)ceil($total / $limit),
+            ],
+        ]), 200, ['Content-Type' => 'application/json']);
+    }
+
+    /**
+     * GET /api/productos/{id}
+     * Obtener un producto por su ID
+     */
+    public function show(Request $request, array $params): Response
+    {
+        $id = (int)($params['id'] ?? 0);
+
+        if ($id <= 0) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'ID inválido',
+            ]), 400, ['Content-Type' => 'application/json']);
+        }
+
+        $producto = $this->productoRepo->findById($id);
+
+        if (!$producto) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Producto no encontrado',
+            ]), 404, ['Content-Type' => 'application/json']);
+        }
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'data' => $producto,
+        ]), 200, ['Content-Type' => 'application/json']);
+    }
+
+    /**
+     * POST /api/productos
+     * Crear un nuevo producto
+     */
+    public function store(Request $request): Response
+    {
+        $data = $request->getJsonBody();
+
+        // Validar campos requeridos
+        $rules = [
+            'codigo' => 'required|max:50',
+            'nombre' => 'required|max:200',
+            'precio' => 'required|numeric|min:0',
+            'stock' => 'integer|min:0',
+            'categoria_id' => 'required|integer|min:1',
+        ];
+
+        $errors = $this->validator->validate($data, $rules);
+
+        if (!empty($errors)) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Error de validación',
+                'errors' => $errors,
+            ]), 422, ['Content-Type' => 'application/json']);
+        }
+
+        try {
+            $id = $this->productoRepo->create($data);
+            $producto = $this->productoRepo->findById($id);
+
+            return new Response(json_encode([
+                'status' => 'success',
+                'message' => 'Producto creado exitosamente',
+                'data' => $producto,
+            ]), 201, ['Content-Type' => 'application/json']);
+        } catch (\PDOException $e) {
+            if ($e->getCode() == 23000) {
+                return new Response(json_encode([
+                    'status' => 'error',
+                    'message' => 'El código del producto ya existe',
+                ]), 409, ['Content-Type' => 'application/json']);
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * PUT /api/productos/{id}
+     * Actualizar un producto existente
+     */
+    public function update(Request $request, array $params): Response
+    {
+        $id = (int)($params['id'] ?? 0);
+
+        if ($id <= 0) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'ID inválido',
+            ]), 400, ['Content-Type' => 'application/json']);
+        }
+
+        $producto = $this->productoRepo->findById($id);
+        if (!$producto) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Producto no encontrado',
+            ]), 404, ['Content-Type' => 'application/json']);
+        }
+
+        $data = $request->getJsonBody();
+        $allowedFields = ['codigo', 'nombre', 'descripcion', 'precio', 'stock',
+                          'categoria_id', 'proveedor_id', 'imagen'];
+
+        // Filtrar solo campos permitidos
+        $filteredData = array_intersect_key($data, array_flip($allowedFields));
+
+        if (empty($filteredData)) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'No hay campos para actualizar',
+            ]), 400, ['Content-Type' => 'application/json']);
+        }
+
+        $updated = $this->productoRepo->update($id, $filteredData);
+
+        if (!$updated) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Error al actualizar el producto',
+            ]), 500, ['Content-Type' => 'application/json']);
+        }
+
+        $productoActualizado = $this->productoRepo->findById($id);
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'message' => 'Producto actualizado exitosamente',
+            'data' => $productoActualizado,
+        ]), 200, ['Content-Type' => 'application/json']);
+    }
+
+    /**
+     * DELETE /api/productos/{id}
+     * Eliminar (borrado lógico) un producto
+     */
+    public function destroy(Request $request, array $params): Response
+    {
+        $id = (int)($params['id'] ?? 0);
+
+        if ($id <= 0) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'ID inválido',
+            ]), 400, ['Content-Type' => 'application/json']);
+        }
+
+        $producto = $this->productoRepo->findById($id);
+        if (!$producto) {
+            return new Response(json_encode([
+                'status' => 'error',
+                'message' => 'Producto no encontrado',
+            ]), 404, ['Content-Type' => 'application/json']);
+        }
+
+        $this->productoRepo->delete($id);
+
+        return new Response(json_encode([
+            'status' => 'success',
+            'message' => 'Producto eliminado exitosamente',
+        ]), 200, ['Content-Type' => 'application/json']);
+    }
+}
+?>
+```
+
+===============================================================================
+4. VALIDACIÓN DE DATOS
+===============================================================================
+
+La validación es crucial para mantener la integridad de los datos. Nunca
+confíes en la entrada del usuario; valida siempre en el servidor.
+
+```php
+<?php
+// src/Helpers/Validator.php
+declare(strict_types=1);
+
+namespace App\Helpers;
+
+class Validator
+{
+    private array $errors = [];
+
+    public function validate(array $data, array $rules): array
+    {
+        $this->errors = [];
+
+        foreach ($rules as $field => $ruleString) {
+            $ruleList = explode('|', $ruleString);
+            $value = $data[$field] ?? null;
+
+            foreach ($ruleList as $rule) {
+                $params = [];
+                if (str_contains($rule, ':')) {
+                    [$rule, $paramString] = explode(':', $rule, 2);
+                    $params = explode(',', $paramString);
+                }
+
+                $methodName = 'rule' . ucfirst($rule);
+                if (method_exists($this, $methodName)) {
+                    $this->$methodName($field, $value, $params);
+                }
+            }
+        }
+
+        return $this->errors;
+    }
+
+    private function ruleRequired(string $field, mixed $value, array $params): void
+    {
+        if ($value === null || $value === '') {
+            $this->addError($field, "El campo {$field} es obligatorio");
+        }
+    }
+
+    private function ruleMax(string $field, mixed $value, array $params): void
+    {
+        if ($value !== null && is_string($value) && strlen($value) > (int)$params[0]) {
+            $this->addError($field, "El campo {$field} no debe exceder {$params[0]} caracteres");
+        }
+    }
+
+    private function ruleMin(string $field, mixed $value, array $params): void
+    {
+        if ($value !== null && is_numeric($value) && (float)$value < (float)$params[0]) {
+            $this->addError($field, "El campo {$field} debe ser mínimo {$params[0]}");
+        }
+    }
+
+    private function ruleNumeric(string $field, mixed $value, array $params): void
+    {
+        if ($value !== null && $value !== '' && !is_numeric($value)) {
+            $this->addError($field, "El campo {$field} debe ser numérico");
+        }
+    }
+
+    private function ruleInteger(string $field, mixed $value, array $params): void
+    {
+        if ($value !== null && $value !== '' && filter_var($value, FILTER_VALIDATE_INT) === false) {
+            $this->addError($field, "El campo {$field} debe ser un entero");
+        }
+    }
+
+    private function ruleEmail(string $field, mixed $value, array $params): void
+    {
+        if ($value !== null && $value !== '' && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            $this->addError($field, "El campo {$field} debe ser un email válido");
+        }
+    }
+
+    private function addError(string $field, string $message): void
+    {
+        if (!isset($this->errors[$field])) {
+            $this->errors[$field] = [];
+        }
+        $this->errors[$field][] = $message;
+    }
+}
+?>
+```
+
+===============================================================================
+5. TRANSACCIONES Y OPERACIONES COMPLEJAS
+===============================================================================
+
+Cuando una operación afecta múltiples tablas, debemos usar transacciones
+para garantizar la atomicidad: todas las operaciones se completan o ninguna.
+
+```php
+<?php
+// src/Services/OrdenService.php
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Database;
+use App\Repositories\ProductoRepository;
+use PDO;
+
+class OrdenService
+{
+    private PDO $db;
+    private ProductoRepository $productoRepo;
+
+    public function __construct()
+    {
+        $this->db = Database::getInstance()->getConnection();
+        $this->productoRepo = new ProductoRepository();
+    }
+
+    public function crearOrden(array $items, int $usuarioId): array
+    {
+        try {
+            $this->db->beginTransaction();
+
+            // 1. Crear la orden
+            $total = $this->calcularTotal($items);
+            $ordenId = $this->insertarOrden($usuarioId, $total);
+
+            // 2. Insertar detalles de la orden y actualizar stock
+            foreach ($items as $item) {
+                $producto = $this->productoRepo->findById($item['producto_id']);
+
+                if (!$producto) {
+                    throw new \Exception("Producto ID {$item['producto_id']} no encontrado");
+                }
+
+                if ($producto['stock'] < $item['cantidad']) {
+                    throw new \Exception(
+                        "Stock insuficiente para {$producto['nombre']}. " .
+                        "Disponible: {$producto['stock']}, solicitado: {$item['cantidad']}"
+                    );
+                }
+
+                $this->insertarDetalle($ordenId, $item, $producto['precio']);
+                $this->actualizarStock($item['producto_id'], $item['cantidad']);
+            }
+
+            $this->db->commit();
+
+            return [
+                'success' => true,
+                'orden_id' => $ordenId,
+                'total' => $total,
+                'mensaje' => 'Orden creada exitosamente',
+            ];
+
+        } catch (\Exception $e) {
+            $this->db->rollBack();
+            return [
+                'success' => false,
+                'mensaje' => $e->getMessage(),
+            ];
+        }
+    }
+
+    private function calcularTotal(array $items): float
+    {
+        $total = 0;
+        foreach ($items as $item) {
+            $producto = $this->productoRepo->findById($item['producto_id']);
+            if ($producto) {
+                $total += (float)$producto['precio'] * (int)$item['cantidad'];
+            }
+        }
+        return $total;
+    }
+
+    private function insertarOrden(int $usuarioId, float $total): int
+    {
+        $sql = "INSERT INTO ordenes (usuario_id, total, estado)
+                VALUES (:usuario_id, :total, 'pendiente')";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            'usuario_id' => $usuarioId,
+            'total' => $total,
+        ]);
+        return (int)$this->db->lastInsertId();
+    }
+
+    private function insertarDetalle(int $ordenId, array $item, float $precio): void
+    {
+        $sql = "INSERT INTO ordenes_detalles (orden_id, producto_id, cantidad, precio_unitario)
+                VALUES (:orden_id, :producto_id, :cantidad, :precio)";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            'orden_id' => $ordenId,
+            'producto_id' => $item['producto_id'],
+            'cantidad' => $item['cantidad'],
+            'precio' => $precio,
+        ]);
+    }
+
+    private function actualizarStock(int $productoId, int $cantidad): void
+    {
+        $sql = "UPDATE productos SET stock = stock - :cantidad WHERE id = :id AND stock >= :cantidad2";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            'cantidad' => $cantidad,
+            'id' => $productoId,
+            'cantidad2' => $cantidad,
+        ]);
+
+        if ($stmt->rowCount() === 0) {
+            throw new \Exception("Error al actualizar stock del producto {$productoId}");
+        }
+    }
+}
+?>
+```
+
+===============================================================================
+6. PAGINACIÓN PROFESIONAL
+===============================================================================
+
+La paginación es esencial cuando se manejan grandes volúmenes de datos. Una
+implementación profesional incluye metadatos de paginación en la respuesta.
+
+```php
+<?php
+// src/Helpers/Paginator.php
+declare(strict_types=1);
+
+namespace App\Helpers;
+
+class Paginator
+{
+    private int $page;
+    private int $limit;
+    private int $total;
+    private int $pages;
+
+    public function __construct(int $total, int $page = 1, int $limit = 10)
+    {
+        $this->total = $total;
+        $this->page = max(1, $page);
+        $this->limit = max(1, min($limit, 100));
+        $this->pages = (int)ceil($total / $this->limit);
+    }
+
+    public function getOffset(): int
+    {
+        return ($this->page - 1) * $this->limit;
+    }
+
+    public function getLimit(): int
+    {
+        return $this->limit;
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'page' => $this->page,
+            'limit' => $this->limit,
+            'total' => $this->total,
+            'pages' => $this->pages,
+            'has_prev' => $this->page > 1,
+            'has_next' => $this->page < $this->pages,
+            'prev_page' => $this->page > 1 ? $this->page - 1 : null,
+            'next_page' => $this->page < $this->pages ? $this->page + 1 : null,
+        ];
+    }
+}
+?>
+```
+
+===============================================================================
+7. CRUD COMPLETO CON CLIENTE HTTP
+===============================================================================
+
+Probemos nuestro CRUD con peticiones HTTP reales usando cURL:
+
+```bash
+# Listar productos (GET)
+curl -X GET http://localhost:8000/api/productos?page=1&limit=5
+
+# Obtener producto por ID (GET)
+curl -X GET http://localhost:8000/api/productos/1
+
+# Crear producto (POST)
+curl -X POST http://localhost:8000/api/productos \
+  -H "Content-Type: application/json" \
+  -d '{
+    "codigo": "TEC-001",
+    "nombre": "Laptop Pro X",
+    "descripcion": "Laptop de alto rendimiento para desarrollo",
+    "precio": 24999.99,
+    "stock": 10,
+    "categoria_id": 1,
+    "proveedor_id": 1
+  }'
+
+# Actualizar producto (PUT)
+curl -X PUT http://localhost:8000/api/productos/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "precio": 23999.99,
+    "stock": 15
+  }'
+
+# Eliminar producto (DELETE)
+curl -X DELETE http://localhost:8000/api/productos/1
+```
+
+```php
+<?php
+// Ejemplo de uso en PHP con cURL
+declare(strict_types=1);
+
+function consumirAPI(string $method, string $url, ?array $data = null): array
+{
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+        ],
+    ]);
+
+    if ($data !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    }
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return [
+        'status_code' => $httpCode,
+        'body' => json_decode($response, true),
+    ];
+}
+
+// Crear un producto
+$resultado = consumirAPI('POST', 'http://localhost:8000/api/productos', [
+    'codigo' => 'TEC-002',
+    'nombre' => 'Monitor 27 pulgadas 4K',
+    'precio' => 8999.99,
+    'stock' => 20,
+    'categoria_id' => 1,
+]);
+
+echo "Código HTTP: {$resultado['status_code']}\n";
+print_r($resultado['body']);
+?>
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- CRUD (Create, Read, Update, Delete) son las cuatro operaciones
+  fundamentales de cualquier aplicación que persista datos.
+- El patrón Repository abstrae el acceso a datos y centraliza las consultas.
+- Los controladores RESTful exponen endpoints limpios y predecibles.
+- La validación de datos en el servidor es obligatoria, nunca confíes en la
+  entrada del usuario.
+- Las transacciones garantizan la atomicidad en operaciones que afectan
+  múltiples tablas.
+- La paginación debe incluir metadatos (total, páginas, anterior, siguiente).
+- El borrado lógico (campo activo) es preferible al borrado físico en la
+  mayoría de casos.
+- PDO con consultas preparadas protege contra inyección SQL.
+- Las relaciones entre tablas se manejan mediante claves foráneas y JOINs.
+- Las respuestas JSON estandarizadas facilitan la integración con frontends.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa el CRUD completo para la tabla "categorías"
+siguiendo el mismo patrón del repositorio de productos. Incluye validación.
+
+🧩 **Ejercicio 2:** Añade un endpoint `GET /api/productos/buscar` que acepte
+múltiples filtros: por rango de precio, por categoría, por fecha de creación.
+
+🧩 **Ejercicio 3:** Implementa el servicio de ordenes con transacciones.
+Crea las tablas `ordenes` y `ordenes_detalles` en tu base de datos local.
+
+🧩 **Ejercicio 4:** Escribe pruebas unitarias con PHPUnit para el
+ProductoRepository. Prueba crear, leer, actualizar y eliminar productos.
+
+🧩 **Ejercicio 5:** Agrega un sistema de logs que registre cada operación
+CRUD con la fecha, usuario, tipo de operación y detalles del cambio.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Por qué usar PDO en lugar de MySQLi?**
+PDO soporta múltiples bases de datos (MySQL, PostgreSQL, SQLite, etc.),
+mientras que MySQLi solo funciona con MySQL. PDO es más flexible y moderno.
+
+❓ **¿Qué es el borrado lógico?**
+Consiste en marcar un registro como "inactivo" (activo = 0) en lugar de
+eliminarlo físicamente. Permite recuperar datos accidentalmente eliminados
+y mantener la integridad referencial.
+
+❓ **¿Cómo evito la inyección SQL?**
+Usando consultas preparadas (prepared statements) con PDO. Nunca
+concatenes valores directamente en las consultas SQL.
+
+❓ **¿Debo validar en el frontend y backend?**
+Sí. La validación en el frontend mejora la experiencia de usuario. La
+validación en el backend es obligatoria por seguridad.
+
+❓ **¿Qué hago si la base de datos cambia de motor?**
+Si usas PDO y consultas SQL estándar, el cambio es mínimo. Evita
+funciones específicas de cada motor (como DATE_FORMAT de MySQL).
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Optimizador de Datos** — Diseña un sistema de inventario para una
+cadena de 50 tiendas departamentales que procesa 100,000 transacciones
+diarias. El sistema debe manejar: control de stock en tiempo real, alertas
+de inventario bajo, transferencias entre tiendas, ajustes por merma,
+historial de precios por producto, y reportes de rotación de inventario.
+Implementa el diseño de base de datos, los repositorios necesarios, y un
+servicio de sincronización que actualice el stock cada 5 minutos usando
+transacciones. ¿Cómo manejarías la concurrencia cuando dos vendedores
+venden el mismo producto simultáneamente?
+
+===============================================================================
+FIN DEL CAPÍTULO 72
+===============================================================================
+
+"El CRUD es el latido del backend. Cada Create, Read, Update y Delete es un
+latido que mantiene viva tu aplicación."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+73_CAPITULO_73_INTEGRACION_FRONTEND.txt
+===============================================================================

@@ -1,0 +1,689 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO V: MANEJO DE ARCHIVOS
+  CAPÍTULO 45: ESTADOS DE ARCHIVOS
+================================================================================
+
+BIENVENIDA
+----------
+Bienvenido al capítulo sobre estados de archivos. Hasta ahora hemos abierto,
+leído y escrito archivos asumiendo que todo funciona correctamente. Pero en
+el mundo real, los archivos se corrompen, los discos se llenan, los permisos
+fallan. En este capítulo aprenderemos a detectar, interpretar y recuperar
+errores usando el sistema de estados de los flujos de C++.
+
+FRASE
+-----
+"El verdadero arte de la programación no está en escribir código que funciona,
+sino en escribir código que sobrevive cuando todo falla." — Anónimo
+
+OBJETIVOS
+---------
+• Comprender los flags de estado: goodbit, eofbit, failbit, badbit.
+• Usar good(), eof(), fail(), bad() para consultar el estado.
+• Diferenciar entre error recuperable (fail) e irrecuperable (bad).
+• Utilizar clear() para resetear el estado después de un error.
+• Implementar patrones de manejo de errores y recuperación.
+• Combinar verificación de estados con excepciones (exceptions()).
+
+CONTENIDO
+---------
+
+1. LOS CUATRO ESTADOS FUNDAMENTALES
+
+Cada flujo mantiene internamente un conjunto de flags de estado:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ iostate  Flag        Significado                     │
+  │                                                     │
+  │ goodbit  0           Sin errores                     │
+  │ eofbit   1           Fin de archivo alcanzado       │
+  │ failbit  2           Error de formato / operación   │
+  │ badbit   4           Error irreversible              │
+  └─────────────────────────────────────────────────────┘
+
+2. FUNCIONES DE CONSULTA
+
+  - good()  true si todos los flags están limpios.
+  - eof()   true si se alcanzó el final del archivo.
+  - fail()  true si failbit o badbit están activos.
+  - bad()   true si badbit está activo (error grave).
+  - operator bool()  !fail()
+  - operator!()      fail()
+
+3. FAILBIT VS BADBIT
+
+  failbit: error recuperable (formato incorrecto, EOF esperado).
+  badbit:  error irreversible (fallo de hardware, datos corruptos).
+
+4. CLEAR(), RDSTATE(), SETSTATE()
+
+  clear()    resetea todos los flags o establece un estado específico.
+  rdstate()  devuelve el estado como entero (bitmask).
+  setstate() activa un flag sin limpiar los demás.
+
+================================================================================
+CÓDIGO DE EJEMPLO
+================================================================================
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <thread>
+#include <chrono>
+
+using namespace std;
+
+//==============================================================================
+// EJEMPLO 1: CONSULTA DE ESTADOS BÁSICA
+//==============================================================================
+void ejemplo_consulta_estados()
+{
+    cout << "\n--- EJEMPLO 1: Consulta de estados ---\n";
+
+    ifstream archivo("archivo_inexistente.txt");
+
+    cout << "  good(): " << archivo.good() << "\n";
+    cout << "  eof():  " << archivo.eof() << "\n";
+    cout << "  fail(): " << archivo.fail() << "\n";
+    cout << "  bad():  " << archivo.bad() << "\n";
+    cout << "  operator bool(): " << boolalpha << !!archivo << "\n";
+    cout << "  operator!(): " << !archivo << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 2: ESTADOS DURANTE LECTURA NORMAL
+//==============================================================================
+void ejemplo_estados_lectura()
+{
+    cout << "\n--- EJEMPLO 2: Estados durante lectura ---\n";
+
+    ofstream("estados.txt", ios::trunc)
+        << "Primera línea\n"
+        << "Segunda línea\n"
+        << "Tercera línea\n";
+
+    ifstream archivo("estados.txt");
+    string linea;
+
+    auto mostrar = [&](const char* paso)
+    {
+        cout << "  " << paso
+             << "  g:" << archivo.good()
+             << " e:" << archivo.eof()
+             << " f:" << archivo.fail()
+             << " b:" << archivo.bad() << "\n";
+    };
+
+    mostrar("Antes de leer");
+
+    while (getline(archivo, linea))
+        mostrar(("Leída: " + linea).c_str());
+
+    mostrar("Después del bucle");
+
+    if (archivo.eof())
+        cout << "  Terminó por EOF.\n";
+    if (archivo.fail())
+        cout << "  fail() activo (última lectura sin datos).\n";
+}
+
+//==============================================================================
+// EJEMPLO 3: ERROR DE FORMATO (FAILBIT)
+//==============================================================================
+void ejemplo_failbit_formato()
+{
+    cout << "\n--- EJEMPLO 3: Error de formato (failbit) ---\n";
+
+    ofstream("fail.txt", ios::trunc) << "123 abc 456";
+
+    ifstream archivo("fail.txt");
+
+    int a, b, c;
+    archivo >> a;
+    cout << "  Primer entero: " << a << "\n";
+
+    archivo >> b;
+    cout << "  fail() tras 'abc': " << archivo.fail() << "\n";
+
+    archivo >> c;
+    cout << "  Tercer entero (falló): " << c << "\n";
+
+    // Limpiar y saltar
+    archivo.clear();
+    string token;
+    archivo >> token;
+    cout << "  Token saltado: " << token << "\n";
+
+    archivo >> c;
+    cout << "  Tercer entero (tras limpiar): " << c << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 4: ERROR IRRECUPERABLE (BADBIT)
+//==============================================================================
+void ejemplo_badbit()
+{
+    cout << "\n--- EJEMPLO 4: badbit (error irreversible) ---\n";
+
+    fstream archivo("bad_test.txt", ios::out | ios::in | ios::trunc);
+    archivo << "Contenido de prueba\n";
+    archivo.flush();
+
+    archivo.clear();
+    cout << "  Estado inicial good(): " << archivo.good() << "\n";
+
+    // Simular badbit
+    archivo.setstate(ios::badbit);
+    cout << "  Tras setstate(badbit): good()=" << archivo.good()
+         << " fail()=" << archivo.fail() << " bad()=" << archivo.bad() << "\n";
+
+    string linea;
+    if (!getline(archivo, linea))
+        cout << "  getline() falló por badbit.\n";
+
+    archivo.clear();
+    cout << "  Tras clear(): good()=" << archivo.good() << "\n";
+
+    getline(archivo, linea);
+    cout << "  Lectura recuperada: " << linea << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 5: CLEAR() CON PARÁMETROS
+//==============================================================================
+void ejemplo_clear_param()
+{
+    cout << "\n--- EJEMPLO 5: clear(flags) ---\n";
+
+    ifstream archivo("archivo_falso.txt");
+
+    cout << "  rdstate() inicial: " << archivo.rdstate() << "\n";
+
+    archivo.clear(archivo.rdstate() & ~ios::failbit);
+    cout << "  Tras limpiar failbit: " << archivo.rdstate() << "\n";
+
+    archivo.clear(ios::eofbit);
+    cout << "  clear(eofbit): rdstate()=" << archivo.rdstate()
+         << " eof()=" << archivo.eof() << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 6: OPERADOR BOOL Y OPERADOR !
+//==============================================================================
+void ejemplo_operadores()
+{
+    cout << "\n--- EJEMPLO 6: operator bool() y operator!() ---\n";
+
+    ifstream archivo_existe("estados.txt");
+    ifstream archivo_no_existe("no_existe.txt");
+
+    if (archivo_existe)
+        cout << "  'estados.txt' abierto correctamente.\n";
+
+    if (!archivo_no_existe)
+        cout << "  'no_existe.txt' falló al abrir.\n";
+
+    ofstream("nums.txt") << "10 20 30 40 50\n";
+    ifstream nums("nums.txt");
+
+    int valor, suma = 0;
+    while (nums >> valor)
+        suma += valor;
+
+    cout << "  Suma: " << suma << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 7: EXCEPCIONES CON EXCEPTIONS()
+//==============================================================================
+void ejemplo_exceptions()
+{
+    cout << "\n--- EJEMPLO 7: exceptions() ---\n";
+
+    ifstream archivo;
+    archivo.exceptions(ifstream::failbit | ifstream::badbit);
+
+    try
+    {
+        archivo.open("archivo_que_no_existe.txt");
+    }
+    catch (const ifstream::failure& e)
+    {
+        cout << "  Excepción: " << e.what() << "\n";
+    }
+
+    ifstream datos("nums.txt");
+    datos.exceptions(ifstream::failbit | ifstream::badbit);
+
+    try
+    {
+        int x;
+        while (datos >> x)
+            cout << "  Leído: " << x << "\n";
+    }
+    catch (const ifstream::failure& e)
+    {
+        cout << "  EOF alcanzado (excepción esperada por failbit).\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 8: RECUPERACIÓN TRAS ERROR DE FORMATO
+//==============================================================================
+void ejemplo_recuperacion_formato()
+{
+    cout << "\n--- EJEMPLO 8: Recuperación de formato ---\n";
+
+    ofstream("datos_sucios.txt", ios::trunc)
+        << "10 20 30\n"
+        << "40 xxx 50\n"
+        << "60 70 80\n"
+        << "noventa 100\n"
+        << "110 120 130\n";
+
+    ifstream archivo("datos_sucios.txt");
+    if (!archivo) return;
+
+    int suma = 0, cont = 0;
+    string linea;
+
+    while (getline(archivo, linea))
+    {
+        stringstream ss(linea);
+        int valor;
+
+        while (ss >> valor)
+        {
+            suma += valor;
+            cont++;
+        }
+
+        if (ss.fail() && !ss.eof())
+        {
+            ss.clear();
+            string token;
+            ss >> token;
+            cout << "  Token inválido: '" << token << "'\n";
+            while (ss >> valor)
+            {
+                suma += valor;
+                cont++;
+                ss.clear();
+            }
+        }
+    }
+
+    cout << "  Leídos " << cont << " números, suma = " << suma << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 9: PATRÓN DE LECTURA SEGURA CON TEMPLATE
+//==============================================================================
+template<typename T>
+bool leer_seguro(ifstream& archivo, T& valor)
+{
+    archivo >> valor;
+
+    if (archivo.bad()) return false;
+    if (archivo.fail())
+    {
+        if (archivo.eof()) return false;
+        archivo.clear();
+        string token;
+        archivo >> token;
+        return false;
+    }
+    return true;
+}
+
+void ejemplo_lectura_segura_template()
+{
+    cout << "\n--- EJEMPLO 9: Lectura segura template ---\n";
+
+    ofstream("seguro_read.txt", ios::trunc) << "10 20 30 xxx 40 50\n";
+
+    ifstream archivo("seguro_read.txt");
+    int valor, suma = 0;
+
+    while (leer_seguro(archivo, valor))
+    {
+        suma += valor;
+        cout << "  Leído: " << valor << "\n";
+    }
+    cout << "  Suma: " << suma << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 10: VERIFICACIÓN DE ARCHIVO VACÍO
+//==============================================================================
+bool archivo_vacio(const string& nombre)
+{
+    ifstream archivo(nombre);
+    if (!archivo) return false;
+    char c;
+    archivo >> c;
+    return archivo.eof();
+}
+
+void ejemplo_vacio()
+{
+    cout << "\n--- EJEMPLO 10: Archivo vacío ---\n";
+
+    ofstream("vacio.txt", ios::trunc);
+    ofstream("no_vacio.txt", ios::trunc) << "Contenido\n";
+
+    cout << "  vacio.txt: " << (archivo_vacio("vacio.txt") ? "vacío" : "no vacío") << "\n";
+    cout << "  no_vacio.txt: " << (archivo_vacio("no_vacio.txt") ? "vacío" : "no vacío") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 11: RDSTATE() Y SETSTATE()
+//==============================================================================
+void ejemplo_rdstate_setstate()
+{
+    cout << "\n--- EJEMPLO 11: rdstate() y setstate() ---\n";
+
+    ifstream archivo;
+    archivo.open("archivo_que_no_existe.txt");
+
+    int st = archivo.rdstate();
+    cout << "  rdstate(): " << st << "\n";
+    cout << "  Bits: "
+         << ((st & ios::badbit) ? "bad " : "")
+         << ((st & ios::eofbit) ? "eof " : "")
+         << ((st & ios::failbit) ? "fail " : "") << "\n";
+
+    archivo.clear();
+    archivo.setstate(ios::eofbit);
+    archivo.setstate(ios::failbit);
+    cout << "  setstate(eofbit|failbit): eof()=" << archivo.eof()
+         << " fail()=" << archivo.fail() << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 12: VALIDACIÓN COMPLETA DE ARCHIVO
+//==============================================================================
+int validar_archivo(const string& nombre)
+{
+    ifstream archivo(nombre);
+    if (!archivo.is_open()) return -1;
+
+    char c;
+    archivo.get(c);
+
+    if (archivo.bad()) return -2;
+    if (archivo.eof()) return 0;
+    if (archivo.fail()) return -3;
+    return 1;
+}
+
+void ejemplo_validacion()
+{
+    cout << "\n--- EJEMPLO 12: Validación de archivo ---\n";
+
+    cout << "  inexistente: " << validar_archivo("archivo_inexistente.txt") << "\n";
+    cout << "  vacio.txt: " << validar_archivo("vacio.txt") << "\n";
+    cout << "  estados.txt: " << validar_archivo("estados.txt") << "\n";
+}
+
+//==============================================================================
+// EJEMPLO 13: REINTENTO CON BACKOFF EXPONENCIAL
+//==============================================================================
+bool escribir_con_reintento(const string& archivo_nom, const string& datos,
+                            int max_intentos = 3)
+{
+    for (int i = 1; i <= max_intentos; ++i)
+    {
+        ofstream out(archivo_nom);
+        if (!out)
+        {
+            cerr << "  Intento " << i << " fallido.\n";
+            if (i < max_intentos)
+            {
+                int espera = 100 * (1 << (i - 1));
+                this_thread::sleep_for(chrono::milliseconds(espera));
+            }
+            continue;
+        }
+        out << datos;
+        out.close();
+        if (!out.fail()) return true;
+    }
+    return false;
+}
+
+void ejemplo_reintento()
+{
+    cout << "\n--- EJEMPLO 13: Reintento con backoff ---\n";
+
+    if (escribir_con_reintento("reintento.txt", "Datos importantes\n"))
+        cout << "  Escritura exitosa tras reintentos.\n";
+    else
+        cout << "  Escritura fallida tras reintentos.\n";
+}
+
+//==============================================================================
+// EJEMPLO 14: COMBINACIÓN DE EXCEPCIONES Y VERIFICACIÓN MANUAL
+//==============================================================================
+void ejemplo_combinado()
+{
+    cout << "\n--- EJEMPLO 14: Combinación excepciones + verificación ---\n";
+
+    ifstream archivo;
+    archivo.exceptions(ifstream::badbit);
+
+    try
+    {
+        archivo.open("estados.txt");
+        archivo.exceptions(ifstream::goodbit);
+
+        string linea;
+        while (getline(archivo, linea))
+        {
+            if (archivo.fail())
+            {
+                cerr << "  Error recuperable en línea.\n";
+                archivo.clear();
+                continue;
+            }
+            cout << "  " << linea << "\n";
+        }
+
+        if (archivo.eof())
+            cout << "  Lectura completada.\n";
+
+        archivo.close();
+    }
+    catch (const ifstream::failure& e)
+    {
+        cerr << "  Error grave: " << e.what() << "\n";
+    }
+}
+
+//==============================================================================
+// EJEMPLO 15: FLAGS ANIDADOS EN LECTURA COMPLEJA
+//==============================================================================
+void ejemplo_flags_anidados()
+{
+    cout << "\n--- EJEMPLO 15: Flags anidados ---\n";
+
+    ofstream("anidado.txt", ios::trunc)
+        << "abc 10 20 30 xxx 40 50 60 70 80 90 100 fin\n";
+
+    ifstream archivo("anidado.txt");
+    string token;
+
+    // Leer hasta encontrar un número
+    while (archivo >> token)
+    {
+        if (isdigit(token[0]))
+        {
+            // Devolver el token y leer como número
+            archivo.putback(token[0]);
+
+            int valor;
+            int suma_linea = 0;
+            while (archivo >> valor && !archivo.fail())
+            {
+                suma_linea += valor;
+                cout << "  Número: " << valor << "\n";
+            }
+            cout << "  Suma parcial: " << suma_linea << "\n";
+
+            if (archivo.eof()) break;
+            if (archivo.fail())
+            {
+                archivo.clear();
+                archivo >> token;
+                cout << "  Fin de secuencia numérica.\n";
+            }
+            break;
+        }
+        else
+        {
+            cout << "  Token no numérico: " << token << "\n";
+        }
+    }
+    archivo.close();
+}
+
+//==============================================================================
+// MAIN
+//==============================================================================
+int main()
+{
+    cout << "=============================================\n";
+    cout << "  C++ MASTER BOOK  CAPÍTULO 45: ESTADOS\n";
+    cout << "=============================================\n";
+
+    ejemplo_consulta_estados();
+    ejemplo_estados_lectura();
+    ejemplo_failbit_formato();
+    ejemplo_badbit();
+    ejemplo_clear_param();
+    ejemplo_operadores();
+    ejemplo_exceptions();
+    ejemplo_recuperacion_formato();
+    ejemplo_lectura_segura_template();
+    ejemplo_vacio();
+    ejemplo_rdstate_setstate();
+    ejemplo_validacion();
+    ejemplo_reintento();
+    ejemplo_combinado();
+    ejemplo_flags_anidados();
+
+    cout << "\n=============================================\n";
+    cout << "  Fin del capítulo 45.\n";
+    cout << "=============================================\n";
+
+    return 0;
+}
+
+================================================================================
+RESUMEN
+-------
+En este capítulo dominamos el sistema de estados de los flujos en C++: goodbit,
+eofbit, failbit y badbit. Aprendimos a consultar el estado con good(), eof(),
+fail(), bad(), a limpiar errores con clear(), y a configurar excepciones con
+exceptions(). Diferenciamos entre errores recuperables (failbit, como formato
+incorrecto) y errores irreversibles (badbit, como fallos de hardware).
+Implementamos patrones de lectura segura con templates, reintentos con backoff
+exponencial, y combinación de verificación manual con excepciones.
+
+EJERCICIOS
+----------
+1. Crea un programa que intente abrir 5 archivos en secuencia y muestre el
+   estado de cada intento usando good(), fail(), bad().
+
+2. Implementa una función que lea un archivo de enteros y salte aquellos que
+   no sean números, usando clear() para recuperarse del failbit.
+
+3. Escribe un programa que use setstate() para marcar manualmente un flujo
+   como corrupto después de detectar un dato inválido.
+
+4. Crea una función validar_archivo_estricto que retorne un struct con los
+   cuatro estados bool (good, eof, fail, bad) más el rdstate().
+
+5. Implementa un bucle de lectura que use exceptions() para badbit pero
+   maneje failbit manualmente con clear().
+
+6. Escribe un "procesador de archivos tolerante" que intente leer cada línea
+   como entero y, si falla, registre el error en un log y continúe.
+
+7. Crea una función copia_segura que copie un archivo verificando badbit
+   después de cada bloque de escritura, deteniéndose si hay error.
+
+8. Implementa un reintento con backoff para lectura de archivos en red,
+   con un máximo de 5 intentos y espera exponencial (100ms, 200ms, 400ms...).
+
+9. Escribe un programa que demuestre la diferencia práctica entre failbit
+   y badbit: failbit con formato incorrecto y badbit con un archivo truncado
+   durante la lectura (simulado).
+
+10. (Avanzado) Crea un "gestor de transacciones de archivo" que mantenga un
+    log de operaciones, y en caso de error (badbit), pueda revertir las
+    operaciones parciales usando un archivo de respaldo (rollback).
+
+PREGUNTAS FRECUENTES (FAQ)
+--------------------------
+P: Por qué fail() devuelve true cuando solo hay badbit?
+R: Porque fail() es true si failbit O badbit están activos. Es una
+   verificación general de "algo salió mal".
+
+P: Cuándo debo usar exceptions() vs verificación manual?
+R: exceptions() es útil para badbit (errores graves que siempre deben
+   interrumpir). La verificación manual funciona mejor para failbit
+   (errores de formato donde puedes recuperarte).
+
+P: Puedo usar un mismo flujo después de un badbit?
+R: Una vez activado badbit, el flujo no realizará más operaciones hasta
+   que se llame a clear(). Pero si el error fue físico (disco dañado),
+   es probable que la siguiente operación también falle.
+
+P: Qué pasa si no verifico el estado?
+R: Si no verificas, puedes procesar datos incorrectos sin saberlo.
+   Por ejemplo, leer más allá de EOF sin detectarlo puede dar valores
+   repetidos del último dato.
+
+P: Cómo sé si un archivo terminó realmente o hubo un error?
+R: Si fail() es true pero eof() es false, hubo un error de formato.
+   Si fail() y eof() son true, se alcanzó el final del archivo.
+
+P: clear() lanza excepción?
+R: No, clear() no lanza excepciones. Solo resetea los flags de estado.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+Implementa un "Sistema de Archivos Tolerante a Fallos" (FTFS) que:
+  - Use operaciones de archivo con verificación exhaustiva de estados.
+  - Implemente transacciones: begin(), commit(), rollback().
+  - Mantenga un archivo de log de operaciones (redo log).
+  - En caso de badbit, active automáticamente rollback.
+  - Use exceptions() para badbit (errores graves) y verificación manual
+    para failbit (errores recuperables).
+  - Ofrezca una función repair() que intente reconstruir datos corruptos.
+  - En caso de failbit por formato, use clear() y estrategias de
+    recuperación específicas (saltar línea, usar valor por defecto, etc.).
+  - Mantenga estadísticas de errores para diagnóstico.
+
+Este desafío integra todos los conceptos de estados de flujo: detección,
+diagnóstico, recuperación y estrategias de tolerancia a fallos.
+
+CIERRE
+------
+El manejo de estados es lo que separa a un programador amateur de uno
+profesional. Saber exactamente por qué falló una operación y cómo
+recuperarse es esencial para construir software robusto. En el próximo
+capítulo exploraremos stringstream, una poderosa herramienta para trabajar
+con strings como si fueran flujos.
+
+PRÓXIMO CAPÍTULO
+----------------
+Capítulo 46: STRINGSTREAM  istringstream, ostringstream, parseo de strings,
+construcción de strings con formato, y conversiones.
+
+================================================================================
+  FIN DEL CAPÍTULO 45  C++ MASTER BOOK
+================================================================================

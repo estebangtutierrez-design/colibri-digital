@@ -1,0 +1,2542 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║            RUBY MASTER BOOK — MÓDULO V: MÓDULOS Y MIXINS                      ║
+║      CAPÍTULO 48: SEND Y DYNAMIC DISPATCH — LLAMADAS DINÁMICAS A MÉTODOS      ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────────
+  BIENVENIDA
+────────────────────────────────────────────────────────────────────────────────────
+
+Bienvenido al Capítulo 48 del Ruby Master Book. En Ruby, los métodos no son
+solo nombres fijos en el código fuente. Puedes decidir QUÉ método llamar en
+TIEMPO DE EJECUCIÓN, basado en variables, configuración, o input del usuario.
+Esto se llama "dynamic dispatch" o "despacho dinámico", y se realiza mediante
+los métodos `send` y `public_send`.
+
+El dynamic dispatch es fundamental para la metaprogramación en Ruby. Permite
+implementar patrones como Strategy, Command, Template Method, y Visitor de
+forma elegante. También es la base de cómo Rails implementa callbacks,
+validaciones dinámicas, y asociaciones polimórficas.
+
+En este capítulo exploraremos `send`, `public_send`, `respond_to?`,
+`method` (objetos método), y patrones prácticos de dispatch dinámico.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FRASE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+"Send en Ruby no es solo llamar a un método — es decidir en el momento
+  exacto qué mensaje enviar, como un director de orquesta que elige
+  qué instrumento debe sonar a continuación."
+  — Jim Weirich, creador de Rake
+
+────────────────────────────────────────────────────────────────────────────────────
+  OBJETIVOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+  1. Usar `send` para llamar métodos dinámicamente por nombre.
+  2. Usar `public_send` para respetar la visibilidad de métodos.
+  3. Usar `respond_to?` para verificar la existencia de métodos.
+  4. Obtener objetos método con `method` y `public_method`.
+  5. Implementar el patrón Strategy con dynamic dispatch.
+  6. Implementar el patrón Command con dynamic dispatch.
+  7. Usar dynamic dispatch en callbacks y hooks.
+  8. Construir un enrutador dinámico.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESARROLLO DEL CAPÍTULO — SEND Y DYNAMIC DISPATCH
+────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────
+  48.1 — SEND BÁSICO
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 1: `send` básico.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_01_send_basico.rb
+# Llamadas a métodos con send
+
+class Persona
+  def saludar
+    "¡Hola!"
+  end
+
+  def despedirse
+    "¡Adiós!"
+  end
+
+  def presentarse(nombre)
+    "Me llamo #{nombre}"
+  end
+
+  def suma(a, b)
+    a + b
+  end
+
+  private
+
+  def secreto
+    "Este es un secreto"
+  end
+end
+
+p = Persona.new
+
+# Llamada normal
+puts p.saludar
+
+# Llamada dinámica con send
+nombre_metodo = :despedirse
+puts p.send(nombre_metodo)
+
+# Con argumentos
+puts p.send(:presentarse, "Alice")
+puts p.send(:suma, 5, 3)
+
+# Con string también funciona
+puts p.send("saludar")
+
+# send puede llamar métodos privados
+puts p.send(:secreto)
+
+# public_send respeta visibilidad
+begin
+  p.public_send(:secreto)
+rescue => e
+  puts "Error con public_send: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 2: `send` con arrays de métodos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_02_send_array.rb
+# Iterando sobre métodos con send
+
+class Calculadora
+  def suma(a, b)
+    a + b
+  end
+
+  def resta(a, b)
+    a - b
+  end
+
+  def multiplicacion(a, b)
+    a * b
+  end
+
+  def division(a, b)
+    raise "División por cero" if b == 0
+    a / b
+  end
+
+  def potencia(a, b)
+    a ** b
+  end
+
+  def modulo(a, b)
+    a % b
+  end
+
+  def metodos_disponibles
+    [:suma, :resta, :multiplicacion, :division, :potencia, :modulo]
+  end
+end
+
+calc = Calculadora.new
+a, b = 10, 3
+
+puts "Operaciones con #{a} y #{b}:"
+calc.metodos_disponibles.each do |metodo|
+  begin
+    resultado = calc.send(metodo, a, b)
+    puts "  #{metodo}: #{resultado}"
+  rescue => e
+    puts "  #{metodo}: Error - #{e.message}"
+  end
+end
+
+# Elegir operación dinámicamente
+operacion = :potencia
+puts "\nOperación elegida: #{operacion}(#{a}, #{b}) = #{calc.send(operacion, a, b)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 3: `respond_to?` para verificar métodos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_03_respond_to.rb
+# Verificando métodos antes de llamarlos
+
+class Robot
+  def caminar
+    "Caminando..."
+  end
+
+  def hablar
+    "Hablando..."
+  end
+
+  def recargar
+    "Recargando batería..."
+  end
+end
+
+class Perro
+  def ladrar
+    "¡Guau!"
+  end
+
+  def correr
+    "Corriendo..."
+  end
+
+  def comer
+    "Comiendo..."
+  end
+end
+
+def ejecutar_si_responde(objeto, metodo, *args)
+  if objeto.respond_to?(metodo)
+    puts "#{objeto.class} responde a #{metodo}:"
+    puts "  #{objeto.send(metodo, *args)}"
+  else
+    puts "#{objeto.class} NO responde a #{metodo}"
+  end
+end
+
+robot = Robot.new
+perro = Perro.new
+
+ejecutar_si_responde(robot, :caminar)
+ejecutar_si_responde(robot, :ladrar)
+ejecutar_si_responde(perro, :ladrar)
+ejecutar_si_responde(perro, :recargar)
+ejecutar_si_responde(perro, :comer)
+
+# respond_to? con include_private
+puts "\nrespond_to? :secreto (sin private): #{robot.respond_to?(:secreto)}"
+puts "respond_to? :secreto (con private): #{robot.respond_to?(:secreto, true)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 4: Objetos método con `method`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_04_method_object.rb
+# Objetos método: method, public_method, Method objects
+
+class Conversor
+  def celsius_a_fahrenheit(celsius)
+    celsius * 9.0 / 5 + 32
+  end
+
+  def fahrenheit_a_celsius(fahrenheit)
+    (fahrenheit - 32) * 5.0 / 9
+  end
+
+  def km_a_millas(km)
+    km * 0.621371
+  end
+
+  def millas_a_km(millas)
+    millas / 0.621371
+  end
+
+  def kg_a_libras(kg)
+    kg * 2.20462
+  end
+
+  def libras_a_kg(libras)
+    libras / 2.20462
+  end
+end
+
+conv = Conversor.new
+
+# Obtener objeto método
+metodo = conv.method(:celsius_a_fahrenheit)
+puts "Método: #{metodo.name}"
+puts "Arity: #{metodo.arity}"
+puts "Owner: #{metodo.owner}"
+puts "Receiver: #{metodo.receiver}"
+puts "Call: #{metodo.call(25)}"
+
+# Almacenar métodos para usar después
+operaciones = {
+  celsius_a_fahrenheit: conv.method(:celsius_a_fahrenheit),
+  fahrenheit_a_celsius: conv.method(:fahrenheit_a_celsius),
+  km_a_millas: conv.method(:km_a_millas),
+  millas_a_km: conv.method(:millas_a_km),
+  kg_a_libras: conv.method(:kg_a_libras),
+  libras_a_kg: conv.method(:libras_a_kg)
+}
+
+puts "\nOperaciones:"
+operaciones.each do |nombre, m|
+  resultado = case nombre.to_s
+              when /celsius/ then m.call(25)
+              when /fahrenheit/ then m.call(77)
+              when /km/ then m.call(10)
+              when /millas/ then m.call(6.2)
+              when /kg/ then m.call(5)
+              when /libras/ then m.call(11)
+              end
+  puts "  #{nombre}: #{format('%.2f', resultado)}"
+end
+
+# Method objects son callables
+suma = ->(a, b) { a + b }
+metodo_suma = conv.method(:celsius_a_fahrenheit)
+puts "\nLambda vs Method:"
+puts "  Lambda: #{suma.call(3, 4)}"
+puts "  Method: #{metodo_suma.call(25)}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 5: Patrón Strategy con dynamic dispatch.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_05_strategy_dispatch.rb
+# Patrón Strategy usando dynamic dispatch
+
+class EstrategiaPago
+  def pagar_con_tarjeta(monto, datos)
+    puts "Pagando $#{monto} con tarjeta #{datos[:numero][-4..]}"
+    "Transacción #{rand(10000)} aprobada"
+  end
+
+  def pagar_con_paypal(monto, datos)
+    puts "Pagando $#{monto} con PayPal (#{datos[:email]})"
+    "PayPal: Pago recibido"
+  end
+
+  def pagar_con_transferencia(monto, datos)
+    puts "Pagando $#{monto} por transferencia bancaria"
+    "Transferencia #{rand(10000)} iniciada"
+  end
+
+  def pagar_con_cripto(monto, datos)
+    puts "Pagando $#{monto} en #{datos[:moneda]}"
+    "Hash: 0x#{rand(16**40).to_s(16)}"
+  end
+
+  def pagar_con_efectivo(monto, datos)
+    puts "Pagando $#{monto} en efectivo"
+    "Código de pago: #{rand(100000)}"
+  end
+end
+
+class ProcesadorPagos
+  def initialize(estrategia = EstrategiaPago.new)
+    @estrategia = estrategia
+  end
+
+  def procesar_pago(metodo, monto, datos = {})
+    nombre_metodo = "pagar_con_#{metodo}"
+
+    if @estrategia.respond_to?(nombre_metodo)
+      @estrategia.send(nombre_metodo, monto, datos)
+    else
+      raise "Método de pago no soportado: #{metodo}"
+    end
+  end
+
+  def metodos_disponibles
+    @estrategia.methods.grep(/^pagar_con_/).map { |m| m.to_s.sub('pagar_con_', '') }
+  end
+end
+
+procesador = ProcesadorPagos.new
+puts "Métodos disponibles: #{procesador.metodos_disponibles.join(', ')}"
+
+puts "\nProcesando pagos:"
+puts procesador.procesar_pago(:tarjeta, 150.50, numero: "4111111111111111", cvv: "123")
+puts procesador.procesar_pago(:paypal, 200, email: "user@example.com")
+puts procesador.procesar_pago(:cripto, 0.5, moneda: "BTC")
+puts procesador.procesar_pago(:efectivo, 50)
+
+begin
+  procesador.procesar_pago(:cheque, 100)
+rescue => e
+  puts "Error: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 6: Patrón Command con dispatch dinámico.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_06_command_pattern.rb
+# Patrón Command con dispatch dinámico
+
+class ComandosEditor
+  def inicializar(doc)
+    @doc = doc
+    @historial = []
+    @posicion = -1
+  end
+
+  def escribir(texto)
+    @doc[:contenido] = (@doc[:contenido] || "") + texto
+    @historial = @historial[0..@posicion]
+    @historial << { accion: :escribir, texto: texto }
+    @posicion = @historial.length - 1
+  end
+
+  def eliminar_ultimo(n = 1)
+    contenido = @doc[:contenido] || ""
+    texto_eliminado = contenido[-n..] || ""
+    @doc[:contenido] = contenido[0...-n]
+    @historial = @historial[0..@posicion]
+    @historial << { accion: :eliminar_ultimo, texto: texto_eliminado, n: n }
+    @posicion = @historial.length - 1
+  end
+
+  def mayusculas
+    @doc[:contenido] = (@doc[:contenido] || "").upcase
+    @historial = @historial[0..@posicion]
+    @historial << { accion: :mayusculas }
+    @posicion = @historial.length - 1
+  end
+
+  def minusculas
+    @doc[:contenido] = (@doc[:contenido] || "").downcase
+    @historial = @historial[0..@posicion]
+    @historial << { accion: :minusculas }
+    @posicion = @historial.length - 1
+  end
+
+  def capitalizar
+    @doc[:contenido] = (@doc[:contenido] || "").capitalize
+    @historial = @historial[0..@posicion]
+    @historial << { accion: :capitalizar }
+    @posicion = @historial.length - 1
+  end
+
+  def deshacer
+    return if @posicion < 0
+    comando = @historial[@posicion]
+    @posicion -= 1
+    reconstruir_desde_historial
+    comando
+  end
+
+  def rehacer
+    return if @posicion >= @historial.length - 1
+    @posicion += 1
+    reconstruir_desde_historial
+    @historial[@posicion]
+  end
+
+  private
+
+  def reconstruir_desde_historial
+    @doc[:contenido] = ""
+    @historial[0..@posicion].each do |cmd|
+      case cmd[:accion]
+      when :escribir then @doc[:contenido] += cmd[:texto]
+      when :eliminar_ultimo then @doc[:contenido] = @doc[:contenido][0...-cmd[:n]]
+      when :mayusculas then @doc[:contenido] = @doc[:contenido].upcase
+      when :minusculas then @doc[:contenido] = @doc[:contenido].downcase
+      when :capitalizar then @doc[:contenido] = @doc[:contenido].capitalize
+      end
+    end
+  end
+end
+
+class EditorTexto
+  COMANDOS = [:escribir, :eliminar_ultimo, :mayusculas, :minusculas, :capitalizar, :deshacer, :rehacer]
+
+  def initialize
+    @doc = { titulo: "Sin título", contenido: "" }
+    @comandos = ComandosEditor.new(@doc)
+  end
+
+  def ejecutar(comando, *args)
+    if COMANDOS.include?(comando)
+      @comandos.send(comando, *args)
+      mostrar_contenido
+    else
+      puts "Comando desconocido: #{comando}"
+    end
+  end
+
+  def mostrar_contenido
+    puts "Contenido: '#{@doc[:contenido]}'"
+  end
+end
+
+editor = EditorTexto.new
+editor.ejecutar(:escribir, "Hola ")
+editor.ejecutar(:escribir, "Mundo ")
+editor.ejecutar(:escribir, "Ruby!")
+editor.ejecutar(:mayusculas)
+editor.ejecutar(:eliminar_ultimo, 6)
+editor.ejecutar(:deshacer)
+editor.ejecutar(:rehacer)
+editor.ejecutar(:capitalizar)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 7: Callbacks dinámicos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_07_callbacks_dinamicos.rb
+# Callbacks con dynamic dispatch
+
+module ConCallbacks
+  def self.included(base)
+    base.extend(ClassMethods)
+    base.instance_variable_set(:@callbacks, Hash.new { |h, k| h[k] = [] })
+  end
+
+  module ClassMethods
+    def before_save(*metodos)
+      @callbacks[:before_save].concat(metodos)
+    end
+
+    def after_save(*metodos)
+      @callbacks[:after_save].concat(metodos)
+    end
+
+    def before_validate(*metodos)
+      @callbacks[:before_validate].concat(metodos)
+    end
+
+    def after_validate(*metodos)
+      @callbacks[:after_validate].concat(metodos)
+    end
+
+    def before_destroy(*metodos)
+      @callbacks[:before_destroy].concat(metodos)
+    end
+
+    def after_destroy(*metodos)
+      @callbacks[:after_destroy].concat(metodos)
+    end
+
+    def callbacks_para(tipo)
+      @callbacks[tipo]
+    end
+  end
+
+  def ejecutar_callbacks(tipo)
+    self.class.callbacks_para(tipo).each do |cb|
+      send(cb) if respond_to?(cb)
+    end
+  end
+
+  def guardar_con_callbacks
+    ejecutar_callbacks(:before_validate)
+    return false unless validar
+    ejecutar_callbacks(:after_validate)
+    ejecutar_callbacks(:before_save)
+    guardar
+    ejecutar_callbacks(:after_save)
+    true
+  end
+
+  def eliminar_con_callbacks
+    ejecutar_callbacks(:before_destroy)
+    eliminar
+    ejecutar_callbacks(:after_destroy)
+    true
+  end
+end
+
+class Articulo
+  include ConCallbacks
+
+  attr_reader :titulo, :contenido, :estado
+
+  before_validate :normalizar_titulo
+  before_validate :verificar_contenido
+  after_validate :registrar_validacion
+  before_save :asignar_timestamp
+  after_save :notificar_creacion
+
+  def initialize(titulo, contenido)
+    @titulo = titulo
+    @contenido = contenido
+    @estado = :borrador
+    @creado_en = nil
+  end
+
+  def normalizar_titulo
+    @titulo = @titulo.strip.capitalize if @titulo
+    puts "  Callback: Título normalizado"
+  end
+
+  def verificar_contenido
+    if @contenido.nil? || @contenido.empty?
+      puts "  Callback: Contenido vacío"
+    end
+  end
+
+  def registrar_validacion
+    puts "  Callback: Validación registrada"
+  end
+
+  def asignar_timestamp
+    @creado_en = Time.now
+    puts "  Callback: Timestamp asignado"
+  end
+
+  def notificar_creacion
+    puts "  Callback: Notificación enviada"
+  end
+
+  def validar
+    !@titulo.nil? && !@titulo.empty?
+  end
+
+  def guardar
+    @estado = :publicado
+    puts "  Artículo guardado: #{@titulo}"
+  end
+
+  def eliminar
+    @estado = :eliminado
+    puts "  Artículo eliminado"
+  end
+end
+
+art = Articulo.new("  ruby callbacks  ", "Contenido del artículo")
+art.guardar_con_callbacks
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 8: Enrutador dinámico.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_08_enrutador_dinamico.rb
+# Enrutador web con dynamic dispatch
+
+class Controlador
+  def initialize(params = {})
+    @params = params
+  end
+
+  def render(texto)
+    puts "[RENDER] #{texto}"
+  end
+
+  def redirect_to(ruta)
+    puts "[REDIRECT] → #{ruta}"
+  end
+end
+
+class UsuariosController < Controlador
+  def index
+    render "Lista de usuarios"
+  end
+
+  def show
+    render "Usuario ##{@params[:id]}"
+  end
+
+  def new
+    render "Nuevo usuario"
+  end
+
+  def create
+    render "Usuario creado"
+  end
+
+  def edit
+    render "Editando usuario ##{@params[:id]}"
+  end
+
+  def update
+    render "Usuario ##{@params[:id]} actualizado"
+  end
+
+  def destroy
+    render "Usuario ##{@params[:id]} eliminado"
+  end
+end
+
+class ProductosController < Controlador
+  def index
+    render "Lista de productos"
+  end
+
+  def show
+    render "Producto ##{@params[:id]}"
+  end
+
+  def search
+    render "Buscando '#{@params[:q]}'..."
+  end
+end
+
+class Enrutador
+  def initialize
+    @rutas = []
+  end
+
+  def registrar(metodo, path, controlador, accion)
+    @rutas << {
+      metodo: metodo.upcase,
+      patron: path,
+      regex: path_to_regex(path),
+      controlador: controlador,
+      accion: accion
+    }
+  end
+
+  def despachar(metodo, path)
+    @rutas.each do |ruta|
+      match = ruta[:regex].match(path)
+      if ruta[:metodo] == metodo.upcase && match
+        params = extraer_params(ruta[:patron], match)
+        controller = ruta[:controlador].new(params)
+        accion = ruta[:accion]
+
+        if controller.respond_to?(accion)
+          return controller.send(accion)
+        else
+          return "Error: #{controller.class} no implementa #{accion}"
+        end
+      end
+    end
+    "404 No encontrado: #{metodo} #{path}"
+  end
+
+  private
+
+  def path_to_regex(path)
+    regex_str = path.gsub(/:(\w+)/, '(?<\1>[^/]+)')
+    Regexp.new("\\A#{regex_str}\\z")
+  end
+
+  def extraer_params(patron, match)
+    params = {}
+    patron.scan(/:(\w+)/) do |nombre|
+      params[nombre.first.to_sym] = match[nombre.first]
+    end
+    params
+  end
+end
+
+router = Enrutador.new
+router.registrar("GET", "/usuarios", UsuariosController, :index)
+router.registrar("GET", "/usuarios/:id", UsuariosController, :show)
+router.registrar("GET", "/usuarios/nuevo", UsuariosController, :new)
+router.registrar("POST", "/usuarios", UsuariosController, :create)
+router.registrar("GET", "/usuarios/:id/editar", UsuariosController, :edit)
+router.registrar("PUT", "/usuarios/:id", UsuariosController, :update)
+router.registrar("DELETE", "/usuarios/:id", UsuariosController, :destroy)
+router.registrar("GET", "/productos", ProductosController, :index)
+router.registrar("GET", "/productos/:id", ProductosController, :show)
+router.registrar("GET", "/productos/buscar", ProductosController, :search)
+
+puts "=== Despachando rutas ==="
+puts router.despachar("GET", "/usuarios")
+puts router.despachar("GET", "/usuarios/42")
+puts router.despachar("GET", "/usuarios/nuevo")
+puts router.despachar("POST", "/usuarios")
+puts router.despachar("GET", "/usuarios/42/editar")
+puts router.despachar("PUT", "/usuarios/42")
+puts router.despachar("DELETE", "/usuarios/42")
+puts router.despachar("GET", "/productos")
+puts router.despachar("GET", "/productos/99")
+puts router.despachar("GET", "/productos/buscar")
+puts router.despachar("GET", /no/existe)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 9: Dynamic dispatch para menús.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_09_menu_dinamico.rb
+# Menú interactivo con dispatch dinámico
+
+class AplicacionMenu
+  def initialize
+    @ejecutando = true
+    @datos = []
+  end
+
+  def menu_principal
+    loop do
+      puts "\n=== SISTEMA DE GESTIÓN ==="
+      puts "1. Listar elementos"
+      puts "2. Agregar elemento"
+      puts "3. Buscar elemento"
+      puts "4. Eliminar elemento"
+      puts "5. Ordenar elementos"
+      puts "6. Mostrar estadísticas"
+      puts "0. Salir"
+      print "Opción: "
+      opcion = gets.chomp.to_i rescue 0
+
+      case opcion
+      when 1 then listar
+      when 2 then agregar
+      when 3 then buscar
+      when 4 then eliminar
+      when 5 then ordenar
+      when 6 then estadisticas
+      when 0 then @ejecutando = false
+      else puts "Opción inválida"
+      end
+    end
+  end
+
+  def ejecutar_comando(nombre_metodo, *args)
+    if respond_to?(nombre_metodo)
+      send(nombre_metodo, *args)
+    else
+      puts "Comando desconocido: #{nombre_metodo}"
+    end
+  end
+
+  private
+
+  def listar
+    if @datos.empty?
+      puts "No hay elementos."
+    else
+      puts "Elementos:"
+      @datos.each_with_index { |d, i| puts "  #{i + 1}. #{d}" }
+    end
+  end
+
+  def agregar
+    print "Ingrese elemento: "
+    elemento = gets.chomp
+    @datos << elemento
+    puts "'#{elemento}' agregado."
+  end
+
+  def buscar
+    print "Buscar: "
+    query = gets.chomp.downcase
+    resultados = @datos.select { |d| d.downcase.include?(query) }
+    if resultados.empty?
+      puts "No se encontraron resultados."
+    else
+      puts "Resultados: #{resultados.join(', ')}"
+    end
+  end
+
+  def eliminar
+    listar
+    print "Número a eliminar: "
+    idx = gets.chomp.to_i - 1
+    if idx >= 0 && idx < @datos.length
+      eliminado = @datos.delete_at(idx)
+      puts "'#{eliminado}' eliminado."
+    else
+      puts "Índice inválido."
+    end
+  end
+
+  def ordenar
+    @datos.sort!
+    puts "Elementos ordenados."
+    listar
+  end
+
+  def estadisticas
+    puts "Total elementos: #{@datos.length}"
+    if @datos.length > 0
+      puts "Más corto: #{@datos.min_by(&:length)}"
+      puts "Más largo: #{@datos.max_by(&:length)}"
+      puts "Longitud promedio: #{@datos.sum(&:length).to_f / @datos.length}"
+    end
+  end
+end
+
+# Simulación sin interacción real
+app = AplicacionMenu.new
+app.ejecutar_comando(:agregar_elemento = nil)  # Sería mejor con inputs reales
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 10: Dynamic dispatch para cálculos científicos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_10_calculos_cientificos.rb
+# Cálculos científicos con dispatch dinámico
+
+module Formulas
+  def self.area_circulo(radio)
+    Math::PI * radio ** 2
+  end
+
+  def self.volumen_esfera(radio)
+    (4.0 / 3.0) * Math::PI * radio ** 3
+  end
+
+  def self.area_rectangulo(base, altura)
+    base * altura
+  end
+
+  def self.area_triangulo(base, altura)
+    (base * altura) / 2.0
+  end
+
+  def self.hipotenusa(a, b)
+    Math.sqrt(a ** 2 + b ** 2)
+  end
+
+  def self.distancia(x1, y1, x2, y2)
+    Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+  end
+
+  def self.ec_general(a, b, c)
+    disc = b ** 2 - 4 * a * c
+    if disc < 0
+      "Raíces complejas"
+    elsif disc == 0
+      x = -b / (2.0 * a)
+      "Raíz única: x = #{x}"
+    else
+      x1 = (-b + Math.sqrt(disc)) / (2.0 * a)
+      x2 = (-b - Math.sqrt(disc)) / (2.0 * a)
+      "Raíces: x1 = #{x1}, x2 = #{x2}"
+    end
+  end
+
+  def self.interes_compuesto(capital, tasa, periodos)
+    capital * (1 + tasa) ** periodos
+  end
+
+  def self.iva(monto, tasa = 0.16)
+    monto * tasa
+  end
+
+  def self.descuento(monto, porcentaje)
+    monto * (1 - porcentaje)
+  end
+end
+
+class CalculadoraCientifica
+  FORMULAS = Formulas.methods(false).map(&:to_sym)
+
+  def calcular(formula, *args)
+    if Formulas.respond_to?(formula)
+      puts "Calculando #{formula}(#{args.map(&:inspect).join(', ')})..."
+      Formulas.send(formula, *args)
+    else
+      raise "Fórmula desconocida: #{formula}"
+    end
+  end
+
+  def formulas_disponibles
+    FORMULAS
+  end
+
+  def menu_calculos
+    puts "\n=== CALCULADORA CIENTÍFICA ==="
+    puts "Fórmulas disponibles:"
+    FORMULAS.each_with_index { |f, i| puts "  #{i + 1}. #{f}" }
+
+    print "\nSeleccione fórmula (número): "
+    idx = gets.chomp.to_i - 1 rescue -1
+
+    if idx >= 0 && idx < FORMULAS.length
+      formula = FORMULAS[idx]
+      arity = Formulas.method(formula).arity
+
+      args = []
+      puts "Ingrese #{arity} argumento(s):"
+      arity.times do |i|
+        print "  arg#{i + 1}: "
+        args << gets.chomp.to_f
+      end
+
+      resultado = calcular(formula, *args)
+      puts "Resultado: #{resultado}"
+    end
+  end
+end
+
+# Uso directo sin interacción
+calc = CalculadoraCientifica.new
+puts "Fórmulas: #{calc.formulas_disponibles.length} disponibles"
+
+puts "\nPruebas:"
+puts calc.calcular(:area_circulo, 5)
+puts calc.calcular(:volumen_esfera, 5)
+puts calc.calcular(:hipotenusa, 3, 4)
+puts calc.calcular(:distancia, 0, 0, 3, 4)
+puts calc.calcular(:ec_general, 1, -5, 6)
+puts calc.calcular(:interes_compuesto, 1000, 0.05, 10)
+puts calc.calcular(:iva, 1000)
+puts calc.calcular(:descuento, 1000, 0.15)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 11: Dynamic dispatch para tests.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_11_test_dispatch.rb
+# Mini framework de testing con dispatch dinámico
+
+module Testable
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def test(nombre, &bloque)
+      @pruebas ||= []
+      @pruebas << { nombre: nombre, bloque: bloque }
+    end
+
+    def before_setup(&bloque)
+      @setup = bloque
+    end
+
+    def after_teardown(&bloque)
+      @teardown = bloque
+    end
+
+    def pruebas
+      @pruebas || []
+    end
+
+    def ejecutar
+      resultados = { pasados: 0, fallados: 0, errores: 0 }
+
+      pruebas.each do |prueba|
+        instancia = new
+        print "  #{prueba[:nombre]}... "
+
+        begin
+          instancia.instance_eval(&@setup) if @setup
+          instancia.instance_eval(&prueba[:bloque])
+          instancia.instance_eval(&@teardown) if @teardown
+          puts "PASÓ"
+          resultados[:pasados] += 1
+        rescue => e
+          puts "FALLÓ: #{e.message}"
+          resultados[:fallados] += 1
+        end
+      end
+
+      resultados
+    end
+  end
+
+  def assert(condicion, mensaje = "Assertion failed")
+    raise mensaje unless condicion
+  end
+
+  def assert_equal(esperado, actual, mensaje = nil)
+    unless esperado == actual
+      raise mensaje || "Esperado: #{esperado.inspect}, Actual: #{actual.inspect}"
+    end
+  end
+
+  def assert_raises(excepcion = StandardError, &bloque)
+    begin
+      bloque.call
+      raise "Se esperaba #{excepcion} pero no se lanzó ninguna excepción"
+    rescue excepcion
+      # OK
+    end
+  end
+
+  def assert_not_nil(valor, mensaje = "Se esperaba no nil")
+    raise mensaje if valor.nil?
+  end
+
+  def assert_true(valor, mensaje = "Se esperaba true")
+    raise mensaje unless valor == true
+  end
+
+  def assert_false(valor, mensaje = "Se esperaba false")
+    raise mensaje unless valor == false
+  end
+end
+
+class CalculadoraTests
+  include Testable
+
+  before_setup do
+    @calc = CalculadoraPrueba.new
+  end
+
+  def initialize
+    @calc = nil
+  end
+
+  test "suma de dos números" do
+    assert_equal(5, @calc.suma(2, 3))
+  end
+
+  test "resta de dos números" do
+    assert_equal(3, @calc.resta(5, 2))
+  end
+
+  test "multiplicación" do
+    assert_equal(6, @calc.multiplicacion(2, 3))
+  end
+
+  test "división exacta" do
+    assert_equal(2, @calc.division(6, 3))
+  end
+
+  test "división por cero lanza error" do
+    assert_raises(ZeroDivisionError) { @calc.division(1, 0) }
+  end
+
+  test "potencia" do
+    assert_equal(8, @calc.potencia(2, 3))
+  end
+end
+
+class CalculadoraPrueba
+  def suma(a, b)
+    a + b
+  end
+
+  def resta(a, b)
+    a - b
+  end
+
+  def multiplicacion(a, b)
+    a * b
+  end
+
+  def division(a, b)
+    a / b
+  end
+
+  def potencia(a, b)
+    a ** b
+  end
+end
+
+class StringTests
+  include Testable
+
+  test "upcase funciona" do
+    assert_equal("HOLA", "hola".upcase)
+  end
+
+  test "reverse funciona" do
+    assert_equal("aloh", "hola".reverse)
+  end
+
+  test "length funciona" do
+    assert_equal(4, "test".length)
+  end
+
+  test "strip elimina espacios" do
+    assert_equal("test", "  test  ".strip)
+  end
+
+  test "empty? en string vacío" do
+    assert_true("".empty?)
+  end
+
+  test "include? encuentra substring" do
+    assert_true("Hello World".include?("World"))
+  end
+end
+
+puts "=== Tests de Calculadora ==="
+resultados = CalculadoraTests.ejecutar
+puts "\nResumen: #{resultados[:pasados]} pasados, #{resultados[:fallados]} fallados"
+
+puts "\n=== Tests de String ==="
+resultados2 = StringTests.ejecutar
+puts "\nResumen: #{resultados2[:pasados]} pasados, #{resultados2[:fallados]} fallados"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 12: Dynamic dispatch con configuración YAML.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_12_config_dispatch.rb
+# Ejecución de tareas configuradas con dispatch dinámico
+
+class Tarea
+  attr_reader :nombre, :descripcion
+
+  def initialize(nombre)
+    @nombre = nombre
+    @descripcion = "Tarea: #{nombre}"
+  end
+end
+
+class BackupDB < Tarea
+  def ejecutar
+    puts "  Respaldando base de datos..."
+    sleep(0.05)
+    "Base de datos respaldada"
+  end
+end
+
+class LimpiarCache < Tarea
+  def ejecutar
+    puts "  Limpiando caché..."
+    "Caché limpiada"
+  end
+end
+
+class EnviarReporte < Tarea
+  def ejecutar
+    puts "  Enviando reporte por email..."
+    sleep(0.05)
+    "Reporte enviado"
+  end
+end
+
+class SincronizarDatos < Tarea
+  def ejecutar
+    puts "  Sincronizando datos con API externa..."
+    sleep(0.05)
+    "Datos sincronizados"
+  end
+end
+
+class ReindexarBusqueda < Tarea
+  def ejecutar
+    puts "  Reindexando motor de búsqueda..."
+    sleep(0.1)
+    "Índice reconstruido"
+  end
+end
+
+class OrquestadorTareas
+  def initialize
+    @tareas = {
+      backup: BackupDB,
+      limpiar_cache: LimpiarCache,
+      enviar_reporte: EnviarReporte,
+      sincronizar: SincronizarDatos,
+      reindexar: ReindexarBusqueda
+    }
+  end
+
+  def ejecutar_tareas(configuracion)
+    resultados = {}
+
+    configuracion.each do |tarea_nombre, opciones|
+      nombre_metodo = tarea_nombre.to_s
+
+      if @tareas.key?(tarea_nombre)
+        tarea = @tareas[tarea_nombre].new(tarea_nombre)
+        puts "Ejecutando #{tarea_nombre}:"
+        resultados[tarea_nombre] = tarea.ejecutar
+      elsif respond_to?("tarea_#{nombre_metodo}")
+        puts "Ejecutando tarea_#{nombre_metodo}:"
+        resultados[tarea_nombre] = send("tarea_#{nombre_metodo}", opciones)
+      elsif respond_to?(nombre_metodo)
+        puts "Ejecutando #{nombre_metodo}:"
+        resultados[tarea_nombre] = send(nombre_metodo, opciones)
+      else
+        puts "Tarea desconocida: #{tarea_nombre}"
+        resultados[tarea_nombre] = "NO EJECUTADA"
+      end
+    end
+
+    resultados
+  end
+
+  def tarea_enviar_notificacion(opciones = {})
+    puts "  Notificando a #{opciones[:email]}..."
+    "Notificación enviada a #{opciones[:email]}"
+  end
+
+  def tarea_generar_pdf(opciones = {})
+    puts "  Generando PDF: #{opciones[:plantilla]}..."
+    "PDF generado: #{opciones[:plantilla]}"
+  end
+end
+
+config = {
+  backup: { frecuencia: "diaria" },
+  limpiar_cache: {},
+  enviar_reporte: { destinatarios: ["admin@test.com"] },
+  sincronizar: { api: "stripe" },
+  reindexar: {},
+  tarea_enviar_notificacion: { email: "user@test.com", mensaje: "Proceso completado" },
+  tarea_generar_pdf: { plantilla: "reporte_mensual", formato: "A4" }
+}
+
+orquestador = OrquestadorTareas.new
+resultados = orquestador.ejecutar_tareas(config)
+
+puts "\n=== Resultados ==="
+resultados.each { |tarea, resultado| puts "  #{tarea}: #{resultado}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 13: Dynamic dispatch para validaciones.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_13_validacion_dispatch.rb
+# Validaciones con dispatch dinámico
+
+class ValidadorDinamico
+  REGLAS = {
+    presencia: :validar_presencia,
+    longitud: :validar_longitud,
+    formato: :validar_formato,
+    numerico: :validar_numerico,
+    rango: :validar_rango,
+    inclusion: :validar_inclusion,
+    personalizado: :validar_personalizado
+  }
+
+  def initialize(objeto)
+    @objeto = objeto
+    @errores = []
+  end
+
+  def validar(atributo, *reglas)
+    reglas.each do |regla|
+      case regla
+      when Hash
+        regla.each do |tipo, opciones|
+          validador = REGLAS[tipo]
+          if validador && respond_to?(validador)
+            send(validador, atributo, opciones)
+          end
+        end
+      when Symbol
+        if respond_to?(:"validar_#{regla}")
+          send(:"validar_#{regla}", atributo, true)
+        end
+      when Proc
+        regla.call(atributo, @objeto, @errores)
+      end
+    end
+    self
+  end
+
+  def valido?
+    @errores.empty?
+  end
+
+  def errores
+    @errores
+  end
+
+  def reporte_errores
+    @errores.map.with_index { |e, i| "#{i + 1}. #{e}" }.join("\n")
+  end
+
+  private
+
+  def validar_presencia(atributo, _)
+    valor = @objeto.send(atributo) rescue nil
+    if valor.nil? || (valor.respond_to?(:empty?) && valor.empty?)
+      @errores << "#{atributo} no puede estar vacío"
+    end
+  end
+
+  def validar_longitud(atributo, opciones)
+    valor = @objeto.send(atributo) rescue nil
+    return unless valor.respond_to?(:length)
+
+    if opciones.is_a?(Hash)
+      min = opciones[:min] || 0
+      max = opciones[:max] || Float::INFINITY
+    else
+      min = 0
+      max = opciones
+    end
+
+    if valor.length < min
+      @errores << "#{atributo} debe tener al menos #{min} caracteres"
+    elsif valor.length > max
+      @errores << "#{atributo} debe tener máximo #{max} caracteres"
+    end
+  end
+
+  def validar_formato(atributo, regex)
+    valor = @objeto.send(atributo) rescue nil
+    if valor && !valor.match?(regex)
+      @errores << "#{atributo} no tiene el formato correcto"
+    end
+  end
+
+  def validar_numerico(atributo, _)
+    valor = @objeto.send(atributo) rescue nil
+    unless valor.is_a?(Numeric)
+      @errores << "#{atributo} debe ser numérico"
+    end
+  end
+
+  def validar_rango(atributo, rango)
+    valor = @objeto.send(atributo) rescue nil
+    if valor && !rango.include?(valor)
+      @errores << "#{atributo} debe estar en #{rango}"
+    end
+  end
+
+  def validar_inclusion(atributo, opciones)
+    valor = @objeto.send(atributo) rescue nil
+    lista = opciones.is_a?(Array) ? opciones : opciones[:en]
+    if valor && !lista.include?(valor)
+      @errores << "#{atributo} debe ser uno de: #{lista.join(', ')}"
+    end
+  end
+
+  def validar_personalizado(atributo, bloque)
+    bloque.call(atributo, @objeto, @errores)
+  end
+end
+
+class UsuarioValidado
+  attr_accessor :nombre, :email, :edad, :password, :pais
+
+  def initialize(atributos = {})
+    @nombre = atributos[:nombre]
+    @email = atributos[:email]
+    @edad = atributos[:edad]
+    @password = atributos[:password]
+    @pais = atributos[:pais]
+  end
+end
+
+u = UsuarioValidado.new(
+  nombre: "Ana",
+  email: "ana@test.com",
+  edad: 25,
+  password: "Secure1!",
+  pais: "MX"
+)
+
+validador = ValidadorDinamico.new(u)
+validador
+  .validar(:nombre, presencia: true, longitud: { min: 2, max: 50 })
+  .validar(:email, presencia: true, formato: /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+  .validar(:edad, numerico: true, rango: 18..120)
+  .validar(:password, presencia: true, longitud: { min: 8 })
+  .validar(:pais, inclusion: { en: ["MX", "US", "ES", "AR"] })
+
+puts "¿Válido? #{validador.valido?}"
+puts validador.reporte_errores if validador.errores.any?
+
+puts "\n--- Inválido ---"
+u2 = UsuarioValidado.new(nombre: "X", email: "invalido", edad: 15, password: "corto", pais: "XX")
+validador2 = ValidadorDinamico.new(u2)
+validador2
+  .validar(:nombre, presencia: true, longitud: { min: 2, max: 50 })
+  .validar(:email, presencia: true, formato: /\A[\w+\-.]+@[a-z\d\-]+(\.[a-z\d\-]+)*\.[a-z]+\z/i)
+  .validar(:edad, numerico: true, rango: 18..120)
+  .validar(:password, presencia: true, longitud: { min: 8 })
+  .validar(:pais, inclusion: ["MX", "US", "ES", "AR"])
+
+puts "¿Válido? #{validador2.valido?}"
+puts validador2.reporte_errores
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 14: Dynamic dispatch para plugins.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_14_plugins_dispatch.rb
+# Sistema de plugins con dispatch dinámico
+
+module PluginSystem
+  class Plugin
+    attr_reader :nombre, :version, :autor
+
+    def initialize(nombre, version, autor)
+      @nombre = nombre
+      @version = version
+      @autor = autor
+    end
+
+    def ejecutar(contexto, *args)
+      raise NotImplementedError
+    end
+
+    def info
+      "#{@nombre} v#{@version} por #{@autor}"
+    end
+  end
+
+  class PluginRegistry
+    def initialize
+      @plugins = {}
+    end
+
+    def registrar(plugin)
+      @plugins[plugin.nombre] = plugin
+    end
+
+    def obtener(nombre)
+      @plugins[nombre]
+    end
+
+    def plugins
+      @plugins.values
+    end
+
+    def ejecutar_plugin(nombre, contexto, *args)
+      plugin = @plugins[nombre]
+      if plugin
+        plugin.ejecutar(contexto, *args)
+      elsif contexto.respond_to?(nombre)
+        contexto.send(nombre, *args)
+      else
+        raise "Plugin '#{nombre}' no encontrado"
+      end
+    end
+
+    def method_missing(name, *args, &block)
+      nombre = name.to_s
+      if nombre.start_with?('ejecutar_')
+        plugin_name = nombre.sub('ejecutar_', '')
+        ejecutar_plugin(plugin_name, *args)
+      elsif @plugins.key?(name)
+        @plugins[name]
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      nombre = name.to_s
+      nombre.start_with?('ejecutar_') || @plugins.key?(name) || super
+    end
+  end
+end
+
+class PluginMayusculas < PluginSystem::Plugin
+  def initialize
+    super(:mayusculas, "1.0", "Ruby Master")
+  end
+
+  def ejecutar(contexto, texto)
+    texto.upcase
+  end
+end
+
+class PluginInvertir < PluginSystem::Plugin
+  def initialize
+    super(:invertir, "1.0", "Ruby Master")
+  end
+
+  def ejecutar(contexto, texto)
+    texto.reverse
+  end
+end
+
+class PluginContarPalabras < PluginSystem::Plugin
+  def initialize
+    super(:contar_palabras, "2.0", "Ruby Master")
+  end
+
+  def ejecutar(contexto, texto)
+    texto.split.length
+  end
+end
+
+class PluginCesar < PluginSystem::Plugin
+  def initialize
+    super(:cifrado_cesar, "1.5", "Crypto Dev")
+  end
+
+  def ejecutar(contexto, texto, desplazamiento = 3)
+    texto.chars.map do |c|
+      if c.match?(/[a-z]/)
+        ((c.ord - 'a'.ord + desplazamiento) % 26 + 'a'.ord).chr
+      elsif c.match?(/[A-Z]/)
+        ((c.ord - 'A'.ord + desplazamiento) % 26 + 'A'.ord).chr
+      else
+        c
+      end
+    end.join
+  end
+end
+
+class ProcesadorTexto
+  attr_reader :plugins
+
+  def initialize
+    @registry = PluginSystem::PluginRegistry.new
+    @registry.registrar(PluginMayusculas.new)
+    @registry.registrar(PluginInvertir.new)
+    @registry.registrar(PluginContarPalabras.new)
+    @registry.registrar(PluginCesar.new)
+  end
+
+  def procesar(texto, *plugin_names)
+    resultado = texto
+    plugin_names.each do |nombre|
+      resultado = @registry.ejecutar_plugin(nombre, self, resultado)
+    end
+    resultado
+  end
+
+  def method_missing(name, *args, &block)
+    @registry.send(name, *args, &block)
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @registry.respond_to?(name) || super
+  end
+end
+
+texto = "Hola Ruby Masters"
+procesador = ProcesadorTexto.new
+
+puts "Original: #{texto}"
+puts "Mayúsculas: #{procesador.procesar(texto, :mayusculas)}"
+puts "Invertido: #{procesador.procesar(texto, :invertir)}"
+puts "Cifrado César: #{procesador.procesar(texto, :cifrado_cesar, 3)}"
+puts "Mayúsculas + Invertido: #{procesador.procesar(texto, :mayusculas, :invertir)}"
+puts "Contar palabras: #{procesador.procesar(texto, :contar_palabras)}"
+
+puts "\nPlugins disponibles:"
+procesador.plugins.each { |p| puts "  #{p.info}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 15: Dynamic dispatch con `__send__`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_15_send_seguro.rb
+# send seguro, __send__, y patrones de seguridad
+
+class ObjetoSeguro
+  METODOS_PERMITIDOS = [:saludar, :despedirse, :nombre, :edad].freeze
+
+  def initialize(nombre, edad)
+    @nombre = nombre
+    @edad = edad
+  end
+
+  def saludar
+    "¡Hola! Soy #{@nombre}"
+  end
+
+  def despedirse
+    "¡Hasta luego!"
+  end
+
+  def nombre
+    @nombre
+  end
+
+  def edad
+    @edad
+  end
+
+  def metodo_secreto
+    "Esto es secreto"
+  end
+
+  def ejecutar_seguro(metodo, *args)
+    if METODOS_PERMITIDOS.include?(metodo)
+      __send__(metodo, *args)
+    else
+      raise SecurityError, "Método no permitido: #{metodo}"
+    end
+  end
+end
+
+obj = ObjetoSeguro.new("Alice", 30)
+
+puts obj.ejecutar_seguro(:saludar)
+puts obj.ejecutar_seguro(:nombre)
+
+begin
+  obj.ejecutar_seguro(:metodo_secreto)
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+begin
+  obj.ejecutar_seguro(:eval, "system('rm -rf /')")
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+# Lista blanca de métodos
+metodos_permitidos_por_rol = {
+  admin: [:saludar, :despedirse, :nombre, :edad, :metodo_secreto],
+  user: [:saludar, :despedirse, :nombre, :edad],
+  guest: [:saludar]
+}
+
+rol = :user
+metodos = metodos_permitidos_por_rol[rol]
+puts "\nMétodos permitidos para #{rol}: #{metodos.join(', ')}"
+metodos.each { |m| puts "  #{m}: #{obj.__send__(m)}" }
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 16: Dynamic dispatch con `method_defined?`.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_16_method_defined.rb
+# Verificando métodos antes de enviarlos
+
+class ServicioRemoto
+  def initialize
+    @conectado = false
+    @datos_cache = {}
+  end
+
+  def conectar
+    @conectado = true
+    puts "Conectado al servicio remoto"
+  end
+
+  def desconectar
+    @conectado = false
+    puts "Desconectado"
+  end
+
+  def obtener_usuario(id)
+    { id: id, nombre: "Usuario #{id}" }
+  end
+
+  def obtener_producto(id)
+    { id: id, nombre: "Producto #{id}", precio: rand * 100 }
+  end
+
+  def crear_usuario(datos)
+    { id: rand(1000), **datos, creado: true }
+  end
+
+  def actualizar_usuario(id, datos)
+    { id: id, **datos, actualizado: true }
+  end
+
+  def eliminar_usuario(id)
+    { eliminado: true, id: id }
+  end
+
+  def buscar(entidad, query)
+    "Buscando #{entidad} con '#{query}'..."
+  end
+end
+
+class ProxyServicio
+  ACCIONES_PERMITIDAS = {
+    usuario: [:obtener, :crear, :actualizar, :eliminar, :buscar],
+    producto: [:obtener, :buscar],
+    sistema: [:conectar, :desconectar]
+  }
+
+  def initialize
+    @servicio = ServicioRemoto.new
+  end
+
+  def ejecutar(accion, entidad, *args)
+    if ACCIONES_PERMITIDAS[entidad]&.include?(accion)
+      nombre_metodo = case accion
+                      when :obtener then "obtener_#{entidad}"
+                      when :crear then "crear_#{entidad}"
+                      when :actualizar then "actualizar_#{entidad}"
+                      when :eliminar then "eliminar_#{entidad}"
+                      when :buscar then :buscar
+                      else accion
+                      end
+
+      if @servicio.respond_to?(nombre_metodo)
+        if accion == :buscar
+          @servicio.send(nombre_metodo, entidad, *args)
+        else
+          @servicio.send(nombre_metodo, *args)
+        end
+      else
+        raise "Método #{nombre_metodo} no disponible"
+      end
+    else
+      raise "Acción '#{accion}' no permitida para #{entidad}"
+    end
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    # Permitir llamadas como obtener_usuario(1)
+    if @servicio.respond_to?(name)
+      @servicio.send(name, *args, &block)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @servicio.respond_to?(name) || super
+  end
+end
+
+proxy = ProxyServicio.new
+puts proxy.ejecutar(:obtener, :usuario, 1)
+puts proxy.ejecutar(:crear, :usuario, { nombre: "Nuevo", email: "nuevo@test.com" })
+puts proxy.ejecutar(:obtener, :producto, 42)
+puts proxy.ejecutar(:buscar, :producto, "laptop")
+puts proxy.ejecutar(:conectar, :sistema)
+
+begin
+  proxy.ejecutar(:eliminar, :producto, 1)
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+# Llamada directa
+puts "\nLlamada directa:"
+puts proxy.obtener_usuario(99)
+puts proxy.buscar(:usuario, "admin")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 17: Dynamic dispatch para el patrón Visitor.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_17_visitor_dispatch.rb
+# Patrón Visitor con dynamic dispatch
+
+class Elemento
+  attr_reader :nombre, :valor
+
+  def initialize(nombre, valor)
+    @nombre = nombre
+    @valor = valor
+  end
+
+  def aceptar(visitante)
+    metodo = "visitar_#{self.class.name.downcase}"
+    if visitante.respond_to?(metodo)
+      visitante.send(metodo, self)
+    else
+      visitante.visitar_default(self)
+    end
+  end
+end
+
+class Parrafo < Elemento
+  def initialize(texto)
+    super("párrafo", texto)
+  end
+
+  def longitud
+    @valor.length
+  end
+end
+
+class Enlace < Elemento
+  attr_reader :url
+
+  def initialize(texto, url)
+    super("enlace", texto)
+    @url = url
+  end
+end
+
+class Imagen < Elemento
+  attr_reader :ancho, :alto
+
+  def initialize(nombre, ancho, alto)
+    super("imagen", nombre)
+    @ancho = ancho
+    @alto = alto
+  end
+
+  def area
+    @ancho * @alto
+  end
+end
+
+class Lista < Elemento
+  attr_reader :items
+
+  def initialize(items)
+    super("lista", items.join(', '))
+    @items = items
+  end
+end
+
+module Visitante
+  def visitar_parrafo(parrafo)
+    raise NotImplementedError
+  end
+
+  def visitar_enlace(enlace)
+    raise NotImplementedError
+  end
+
+  def visitar_imagen(imagen)
+    raise NotImplementedError
+  end
+
+  def visitar_lista(lista)
+    raise NotImplementedError
+  end
+
+  def visitar_default(elemento)
+    "Visitando: #{elemento.nombre} = #{elemento.valor}"
+  end
+end
+
+class VisitanteHTML
+  include Visitante
+
+  def visitar_parrafo(parrafo)
+    "<p>#{parrafo.valor}</p>"
+  end
+
+  def visitar_enlace(enlace)
+    "<a href=\"#{enlace.url}\">#{enlace.valor}</a>"
+  end
+
+  def visitar_imagen(imagen)
+    "<img src=\"#{imagen.valor}\" width=\"#{imagen.ancho}\" height=\"#{imagen.alto}\" />"
+  end
+
+  def visitar_lista(lista)
+    items = lista.items.map { |i| "  <li>#{i}</li>" }.join("\n")
+    "<ul>\n#{items}\n</ul>"
+  end
+end
+
+class VisitanteMarkdown
+  include Visitante
+
+  def visitar_parrafo(parrafo)
+    "#{parrafo.valor}\n\n"
+  end
+
+  def visitar_enlace(enlace)
+    "[#{enlace.valor}](#{enlace.url})"
+  end
+
+  def visitar_imagen(imagen)
+    "![#{imagen.valor}](#{imagen.valor}.jpg)"
+  end
+
+  def visitar_lista(lista)
+    lista.items.map { |i| "- #{i}" }.join("\n") + "\n"
+  end
+end
+
+class VisitanteEstadisticas
+  include Visitante
+
+  attr_reader :stats
+
+  def initialize
+    @stats = { parrafos: 0, enlaces: 0, imagenes: 0, listas: 0 }
+  end
+
+  def visitar_parrafo(parrafo)
+    @stats[:parrafos] += 1
+    @stats[:total_palabras] = (@stats[:total_palabras] || 0) + parrafo.valor.split.length
+    "Estadística: párrafo ##{@stats[:parrafos]}"
+  end
+
+  def visitar_enlace(enlace)
+    @stats[:enlaces] += 1
+    "Estadística: enlace ##{@stats[:enlaces]}"
+  end
+
+  def visitar_imagen(imagen)
+    @stats[:imagenes] += 1
+    @stats[:area_total] = (@stats[:area_total] || 0) + imagen.area
+    "Estadística: imagen ##{@stats[:imagenes]}"
+  end
+
+  def visitar_lista(lista)
+    @stats[:listas] += 1
+    @stats[:total_items] = (@stats[:total_items] || 0) + lista.items.length
+    "Estadística: lista ##{@stats[:listas]}"
+  end
+end
+
+class Documento
+  def initialize
+    @elementos = []
+  end
+
+  def <<(elemento)
+    @elementos << elemento
+  end
+
+  def procesar(visitante)
+    @elementos.map { |e| e.aceptar(visitante) }.join("\n")
+  end
+end
+
+doc = Documento.new
+doc << Parrafo.new("Bienvenido a mi sitio web.")
+doc << Enlace.new("Visita Ruby Lang", "https://ruby-lang.org")
+doc << Imagen.new("logo", 200, 100)
+doc << Parrafo.new("Ruby es un lenguaje hermoso.")
+doc << Lista.new(["Ruby", "Rails", "Sinatra", "Rack"])
+doc << Enlace.new("Documentación", "https://ruby-doc.org")
+doc << Imagen.new("banner", 800, 300)
+doc << Lista.new(["Módulos", "Mixins", "Metaprogramación"])
+
+puts "=== HTML ==="
+puts doc.procesar(VisitanteHTML.new)
+
+puts "\n=== Markdown ==="
+puts doc.procesar(VisitanteMarkdown.new)
+
+puts "\n=== Estadísticas ==="
+stats = VisitanteEstadisticas.new
+doc.procesar(stats)
+puts stats.stats
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 18: Dynamic dispatch con bloques.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_18_block_dispatch.rb
+# Dispatching con bloques y callbacks
+
+class TransactionManager
+  def initialize
+    @handlers = {}
+  end
+
+  def on(evento, &bloque)
+    @handlers[evento] = bloque
+  end
+
+  def trigger(evento, *args)
+    if @handlers.key?(evento)
+      @handlers[evento].call(*args)
+    elsif respond_to?("on_#{evento}")
+      send("on_#{evento}", *args)
+    else
+      puts "Evento '#{evento}' no manejado"
+    end
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+    if nombre.start_with?('on_')
+      evento = nombre.sub('on_', '')
+      @handlers[evento.to_sym] = block || args.first
+    elsif nombre.start_with?('trigger_')
+      evento = nombre.sub('trigger_', '').to_sym
+      trigger(evento, *args)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('on_') || nombre.start_with?('trigger_') || super
+  end
+end
+
+tm = TransactionManager.new
+
+tm.on(:pago_recibido) do |monto, usuario|
+  puts "Pago de $#{monto} recibido de #{usuario}"
+end
+
+tm.on(:envio_realizado) do |direccion|
+  puts "Envío realizado a: #{direccion}"
+end
+
+tm.on(:error) do |codigo, mensaje|
+  puts "ERROR ##{codigo}: #{mensaje}"
+end
+
+tm.on_notificacion do |usuario, mensaje|
+  puts "[NOTIFICACIÓN] #{usuario}: #{mensaje}"
+end
+
+tm.trigger(:pago_recibido, 150.50, "Alice")
+tm.trigger(:envio_realizado, "Calle Principal 123")
+tm.trigger(:error, 500, "Timeout de conexión")
+tm.trigger(:evento_desconocido)
+tm.trigger_notificacion("admin", "Transacción completada")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 19: Dynamic dispatch para ETL.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_19_etl_dispatch.rb
+# Pipeline ETL con dispatch dinámico
+
+class ETLPipeline
+  attr_reader :nombre
+
+  def initialize(nombre, &bloque)
+    @nombre = nombre
+    @etapas = []
+    instance_eval(&bloque) if bloque
+  end
+
+  def extraer(origen, opciones = {}, &bloque)
+    @etapas << { tipo: :extraer, origen: origen, opciones: opciones, bloque: bloque }
+  end
+
+  def transformar(nombre = nil, &bloque)
+    @etapas << { tipo: :transformar, nombre: nombre, bloque: bloque }
+  end
+
+  def cargar(destino, opciones = {}, &bloque)
+    @etapas << { tipo: :cargar, destino: destino, opciones: opciones, bloque: bloque }
+  end
+
+  def ejecutar
+    puts "Ejecutando pipeline '#{@nombre}'..."
+    datos = nil
+
+    @etapas.each_with_index do |etapa, i|
+      puts "  Etapa #{i + 1}: #{etapa[:tipo]}"
+      case etapa[:tipo]
+      when :extraer
+        datos = ejecutar_extraccion(etapa)
+      when :transformar
+        datos = ejecutar_transformacion(etapa, datos)
+      when :cargar
+        ejecutar_carga(etapa, datos)
+      end
+    end
+
+    puts "Pipeline '#{@nombre}' completado."
+    datos
+  end
+
+  def method_missing(name, *args, &block)
+    nombre = name.to_s
+
+    if nombre.start_with?('extraer_desde_')
+      origen = nombre.sub('extraer_desde_', '').to_sym
+      extraer(origen, *args, &block)
+    elsif nombre.start_with?('transformar_')
+      transformador = nombre.sub('transformar_', '')
+      transformar(transformador, &block)
+    elsif nombre.start_with?('cargar_en_')
+      destino = nombre.sub('cargar_en_', '').to_sym
+      cargar(destino, *args, &block)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    nombre = name.to_s
+    nombre.start_with?('extraer_desde_') || nombre.start_with?('transformar_') ||
+      nombre.start_with?('cargar_en_') || super
+  end
+
+  private
+
+  def ejecutar_extraccion(etapa)
+    puts "    Extrayendo desde #{etapa[:origen]}..."
+    if etapa[:bloque]
+      etapa[:bloque].call
+    else
+      case etapa[:origen]
+      when :csv then "datos_csv"
+      when :api then "datos_api"
+      when :base_de_datos then "datos_db"
+      when :archivo then File.read(etapa[:opciones][:ruta]) rescue "contenido_archivo"
+      else "datos_#{etapa[:origen]}"
+      end
+    end
+  end
+
+  def ejecutar_transformacion(etapa, datos)
+    puts "    Transformando: #{etapa[:nombre] || 'anónimo'}..."
+    if etapa[:bloque]
+      etapa[:bloque].call(datos)
+    else
+      datos.to_s.upcase
+    end
+  end
+
+  def ejecutar_carga(etapa, datos)
+    puts "    Cargando en #{etapa[:destino]}..."
+    if etapa[:bloque]
+      etapa[:bloque].call(datos)
+    else
+      puts "    Datos cargados: #{datos.to_s[0..50]}..."
+    end
+  end
+end
+
+pipeline = ETLPipeline.new("Ventas Diarias") do
+  extraer_desde_api do
+    puts "    Conectando a API de ventas..."
+    sleep(0.02)
+    { ventas: [100, 200, 150], fecha: "2025-03-15" }
+  end
+
+  transformar_normalizar do |datos|
+    puts "    Normalizando datos..."
+    datos[:ventas].map { |v| v * 1.16 }
+  end
+
+  transformar do |datos|
+    puts "    Calculando total..."
+    { total: datos.sum, items: datos.length, fecha: "2025-03-15" }
+  end
+
+  cargar_en_base_de_datos do |datos|
+    puts "    Insertando en tabla 'ventas_diarias'..."
+    puts "    Registro: #{datos}"
+  end
+end
+
+pipeline.ejecutar
+
+puts "\n--- Otro pipeline con dispatch dinámico ---"
+pipeline2 = ETLPipeline.new("Usuarios CSV")
+pipeline2.extraer_desde_archivo(ruta: "usuarios.csv")
+pipeline2.transformar_limpiar
+pipeline2.cargar_en_api(endpoint: "https://api.test.com/usuarios")
+pipeline2.ejecutar
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 20: Dynamic dispatch para REPL.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 48_20_repl.rb
+# REPL (Read-Eval-Print Loop) con dispatch dinámico
+
+class MiniREPL
+  COMANDOS = {
+    ayuda: :mostrar_ayuda,
+    help: :mostrar_ayuda,
+    salir: :salir,
+    exit: :salir,
+    listar: :listar_contexto,
+    ls: :listar_contexto,
+    variables: :mostrar_variables,
+    vars: :mostrar_variables,
+    metodos: :mostrar_metodos,
+    methods: :mostrar_metodos,
+    evaluar: :evaluar_expresion,
+    eval: :evaluar_expresion,
+    cargar: :cargar_archivo,
+    load: :cargar_archivo,
+    limpiar: :limpiar_pantalla,
+    clear: :limpiar_pantalla,
+    historial: :mostrar_historial,
+    history: :mostrar_historial
+  }
+
+  def initialize
+    @contexto = binding
+    @historial = []
+    @ejecutando = true
+    @variables = {}
+  end
+
+  def iniciar
+    puts "MiniREPL v1.0 — Escribe 'ayuda' para comandos disponibles"
+    while @ejecutando
+      print "> "
+      entrada = gets.chomp rescue "salir"
+      procesar(entrada)
+    end
+  end
+
+  def procesar(entrada)
+    return if entrada.strip.empty?
+    @historial << entrada
+
+    partes = entrada.split(/\s+/, 2)
+    comando = partes[0].downcase.to_sym
+    argumento = partes[1]
+
+    manejador = COMANDOS[comando]
+    if manejador
+      send(manejador, argumento)
+    else
+      evaluar_expresion(entrada)
+    end
+  rescue => e
+    puts "Error: #{e.class}: #{e.message}"
+  end
+
+  def mostrar_ayuda(*)
+    puts <<~HELP
+      Comandos disponibles:
+        ayuda, help       — Muestra esta ayuda
+        salir, exit       — Sale del REPL
+        listar, ls        — Lista variables definidas
+        variables, vars   — Muestra variables y valores
+        metodos, methods  — Muestra métodos disponibles
+        evaluar, eval <c> — Evalúa una expresión
+        cargar, load <f>  — Carga un archivo Ruby
+        limpiar, clear    — Limpia la pantalla
+        historial, history — Muestra el historial
+        <expresión>       — Evalúa cualquier expresión Ruby
+    HELP
+  end
+
+  def salir(*)
+    @ejecutando = false
+    puts "¡Hasta luego!"
+  end
+
+  def listar_contexto(*)
+    puts "Variables: #{@variables.keys.join(', ')}" unless @variables.empty?
+    puts "(Usa 'variables' para ver valores)"
+  end
+
+  def mostrar_variables(*)
+    if @variables.empty?
+      puts "No hay variables definidas."
+    else
+      @variables.each { |k, v| puts "  #{k} = #{v.inspect}" }
+    end
+  end
+
+  def mostrar_metodos(*)
+    puts "Métodos de Object: #{Object.methods(false).length}"
+    puts "(Usa 'evaluar Class.instance_methods' para más detalles)"
+  end
+
+  def evaluar_expresion(expresion)
+    return unless expresion
+    resultado = @contexto.eval(expresion)
+    puts "=> #{resultado.inspect}"
+    resultado
+  end
+
+  def cargar_archivo(archivo)
+    if archivo && File.exist?(archivo)
+      load archivo
+      puts "Archivo '#{archivo}' cargado."
+    else
+      puts "Archivo no encontrado: #{archivo}"
+    end
+  end
+
+  def limpiar_pantalla(*)
+    system("clear") || system("cls")
+  end
+
+  def mostrar_historial(*)
+    if @historial.empty?
+      puts "Historial vacío."
+    else
+      @historial.each_with_index { |h, i| puts "  #{i + 1}. #{h}" }
+    end
+  end
+end
+
+# Modo no interactivo (demostración)
+repl = MiniREPL.new
+repl.procesar("x = 42")
+repl.procesar("y = 'Hola Ruby'")
+repl.procesar("variables")
+repl.procesar("x + 10")
+repl.procesar("y.upcase")
+repl.procesar("historial")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+  RESUMEN DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`s`end` y dynamic dispatch son herramientas esenciales de metaprogramación:
+
+  1. `send(:metodo, args)` llama cualquier método por nombre.
+  2. `public_send` respeta la visibilidad (no llama privados).
+  3. `respond_to?` verifica si un objeto responde a un método.
+  4. `method(:metodo)` devuelve un objeto Method reutilizable.
+  5. Dynamic dispatch permite implementar Strategy, Command, Visitor.
+  6. Es la base de callbacks y hooks en frameworks.
+  7. Usa listas blancas de métodos para seguridad.
+  8. `__send__` es la versión segura de `send` (no sobrescribible).
+
+────────────────────────────────────────────────────────────────────────────────────
+  EJERCICIOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+1. Crea un objeto `Traductor` que use `send` para traducir palabras usando
+   un hash de traducciones y métodos dinámicos.
+
+2. Implementa un sistema de notificaciones donde puedas llamar
+   `notificar_por_email`, `notificar_por_sms`, etc. usando send.
+
+3. Crea un proxy que registre todas las llamadas con `send` y registre
+   el tiempo de ejecución.
+
+4. Implementa el patrón Command usando `send` para ejecutar comandos
+   almacenados en una cola.
+
+5. Crea un objeto `Formulario` que valide campos usando `send` para llamar
+   validadores dinámicamente.
+
+6. Implementa un mini framework de pruebas donde cada método que empiece
+   con `test_` se ejecute automáticamente.
+
+7. Crea un enrutador que use `send` para llamar controladores basados
+   en rutas HTTP.
+
+8. Implementa un sistema de plugins donde cada plugin aporte métodos
+   que se ejecutan vía `send`.
+
+9. Crea un REPL simple que use `send` para ejecutar comandos ingresados
+   por el usuario.
+
+10. Implementa un validador de esquemas JSON que use `send` para validar
+    cada campo según su tipo.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FAQ — PREGUNTAS FRECUENTES
+────────────────────────────────────────────────────────────────────────────────────
+
+P: ¿`send` puede llamar métodos privados?
+R: Sí. `send` ignora la visibilidad. Usa `public_send` si quieres respetarla.
+
+P: ¿Es seguro usar `send` con input de usuario?
+R: No directamente. Siempre valida contra una lista blanca de métodos
+   permitidos antes de llamar a `send`.
+
+P: ¿Cuál es la diferencia entre `send` y `method`?
+R: `send` llama al método inmediatamente. `method` devuelve un objeto
+   Method que puedes llamar después con `.call`.
+
+P: ¿`respond_to?` funciona con `method_missing`?
+R: Sí, si implementaste `respond_to_missing?`. Si no, devolverá false.
+
+P: ¿Puedo usar `send` con un bloque?
+R: Sí: `obj.send(:metodo, arg1, arg2) { |x| x * 2 }`.
+
+P: ¿Qué es `__send__`?
+R: Es la forma "segura" de enviar mensajes, porque `send` puede ser
+   sobrescrito por alguna clase, pero `__send__` está en `BasicObject`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESAFÍO DEL ARQUITECTO
+────────────────────────────────────────────────────────────────────────────────────
+
+Construye un "Framework MVC Mini" usando dynamic dispatch como núcleo:
+
+  1. Define una clase base `Controlador` con:
+     - `params` — hash de parámetros
+     - `render(vista, locals)` — renderiza una vista
+     - `redirect_to(ruta)` — redirige
+     - Métodos de filtro: `before_action`, `after_action`
+
+  2. Implementa un `Enrutador` que use `send` para:
+     - Parsear rutas con parámetros dinámicos
+     - Despachar a la acción correcta del controlador
+     - Pasar parámetros de la URL como argumentos
+
+  3. Implementa un `MotorPlantillas` que use `send` para:
+     - Evaluar expresiones Ruby incrustadas en vistas
+     - Pasar variables locales al contexto de la vista
+
+  4. Implementa un `ORM` mínimo que use `send` para:
+     - `find_by_*`, `where_*`, `order_by_*`
+     - Asignación masiva de atributos
+     - Callbacks dinámicos
+
+  5. Crea 3 controladores de ejemplo:
+     - `UsuariosController` — CRUD de usuarios
+     - `ProductosController` — CRUD de productos
+     - `SesionesController` — login/logout
+
+  6. Cada acción debe usar `send` para ejecutar filtros antes/después.
+
+  7. El framework debe ser extensible: nuevos controladores solo necesitan
+     heredar de `Controlador` y definir acciones.
+
+Este desafío integra send, dynamic dispatch, callbacks, y el patrón MVC.
+Es una simplificación de cómo funcionan Rails, Sinatra y otros frameworks
+Ruby por debajo.
+
+────────────────────────────────────────────────────────────────────────────────────
+  CIERRE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`send` y dynamic dispatch son el corazón de la metaprogramación en Ruby. Te
+permiten escribir código que decide en tiempo de ejecución qué métodos llamar,
+basado en configuración, datos, o decisiones del usuario.
+
+Los patrones Strategy, Command, Visitor, y Template Method se implementan
+de forma natural con dynamic dispatch. Y frameworks como Rails los usan
+internamente para callbacks, validaciones, asociaciones y enrutamiento.
+
+Domina `send` y entenderás cómo funciona Ruby por dentro. Úsalo con
+responsabilidad y transformarás la forma en que estructuras tu código.
+
+────────────────────────────────────────────────────────────────────────────────────
+  PREVIEW DEL PRÓXIMO CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+En el Capítulo 49: Define Method, exploraremos cómo crear métodos
+dinámicamente en tiempo de ejecución con `define_method`, `class_eval`,
+e `instance_eval`. Veremos cómo construir DSLs, generar métodos
+programáticamente, y cómo Rails genera métodos de asociaciones y
+validaciones dinámicamente. También cubriremos `define_singleton_method`.
+═══════════════════════════════════════════════════════════════════════════════════

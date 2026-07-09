@@ -1,0 +1,1228 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 60: PROYECTO - CONTENEDOR TEMPLATE CON GESTIÓN EXCEPTION-SAFE
+================================================================================
+
+  "El mejor maestro es un proyecto que integra todo lo aprendido.
+   Este proyecto pondrá a prueba tu dominio de templates, excepciones,
+   RAII, y smart pointers."
+                                                   — Proyecto Final
+
+================================================================================
+
+BIENVENIDA
+----------
+
+¡Has llegado al proyecto final del Módulo VI! Este proyecto integra todos
+los conceptos que hemos aprendido: templates, funciones template, clases
+template, especialización, type traits, excepciones, RAII, smart pointers,
+y manejo seguro de archivos.
+
+El objetivo es construir un "Contenedor Genérico con Persistencia" que
+sea completamente exception-safe. Este contenedor debe soportar cualquier
+tipo de dato, almacenarse en archivo de forma segura, y proporcionar
+garantías strong en todas sus operaciones.
+
+Este proyecto está diseñado para ser complejo y desafiante. No esperes
+completarlo en una sola sesión. Tómate tu tiempo para planificar,
+implementar, probar, y refinar.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "Un proyecto no es solo código que funciona; es código que demuestra
+   que has entendido los principios fundamentales."
+
+OBJETIVOS DEL PROYECTO
+----------------------
+
+  1. Implementar un contenedor template con almacenamiento dinámico.
+  2. Proporcionar strong exception safety guarantee.
+  3. Usar RAII para todos los recursos.
+  4. Implementar serialización segura a archivo.
+  5. Usar smart pointers para gestión de memoria.
+  6. Implementar type traits para restringir operaciones.
+  7. Crear una jerarquía de excepciones personalizada.
+  8. Implementar pruebas unitarias.
+  9. Documentar todas las garantías de seguridad.
+  10. Entregar código limpio y bien estructurado.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+ESPECIFICACIÓN DEL PROYECTO
+---------------------------
+
+Nombre: SafeContainer<T>
+
+Requisitos funcionales:
+  - Contenedor genérico que almacene elementos de tipo T.
+  - Inserción, eliminación, acceso por índice, búsqueda.
+  - Redimensionamiento automático con strong guarantee.
+  - Serialización a archivo binario.
+  - Deserialización desde archivo binario.
+  - Iteradores forward básicos.
+  - Constructor de copia, movimiento, asignación.
+  - Operaciones: push_back, pop_back, insert, erase, clear, size, empty.
+
+Requisitos de seguridad:
+  - Strong guarantee para push_back, insert, erase.
+  - Basic guarantee para todas las operaciones.
+  - Nothrow guarantee para size, empty, begin, end.
+  - RAII para el buffer interno.
+  - Las excepciones no deben causar fugas de memoria.
+
+Requisitos de diseño:
+  - Uso de smart pointers para el buffer interno.
+  - Type traits para validar tipos.
+  - Jerarquía de excepciones personalizada.
+  - Namespace propio.
+  - Archivos separados: .hpp, .cpp, test.cpp.
+
+PLAN DE IMPLEMENTACIÓN
+----------------------
+
+  Fase 1: Diseño de la jerarquía de excepciones.
+  Fase 2: Implementación del buffer RAII.
+  Fase 3: Implementación del contenedor base.
+  Fase 4: Implementación de operaciones mutantes.
+  Fase 5: Implementación de iteradores.
+  Fase 6: Implementación de serialización.
+  Fase 7: Pruebas unitarias.
+  Fase 8: Documentación.
+
+================================================================================
+  CÓDIGO DEL PROYECTO
+================================================================================
+
+```cpp
+//==============================================================================
+// FASE 1: Jerarquía de excepciones (SafeContainerExceptions.hpp)
+//==============================================================================
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+
+namespace safe_container {
+
+// Excepción base del contenedor
+class ContainerException : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+class OutOfRangeException : public ContainerException {
+    size_t index;
+    size_t size;
+public:
+    OutOfRangeException(size_t idx, size_t sz)
+        : ContainerException("Indice " + std::to_string(idx)
+              + " fuera de rango [0, " + std::to_string(sz) + ")"),
+          index(idx), size(sz) {}
+    size_t getIndex() const { return index; }
+    size_t getSize() const { return size; }
+};
+
+class InvalidTypeException : public ContainerException {
+    std::string typeName;
+public:
+    explicit InvalidTypeException(const std::string& t)
+        : ContainerException("Tipo invalido: " + t), typeName(t) {}
+    std::string getTypeName() const { return typeName; }
+};
+
+class SerializationException : public ContainerException {
+    std::string fileName;
+public:
+    SerializationException(const std::string& msg, const std::string& file)
+        : ContainerException(msg + ": " + file), fileName(file) {}
+    std::string getFileName() const { return fileName; }
+};
+
+class EmptyContainerException : public ContainerException {
+public:
+    EmptyContainerException()
+        : ContainerException("Operacion en contenedor vacio") {}
+};
+
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 2: Buffer RAII con strong guarantee
+//==============================================================================
+namespace safe_container {
+
+template <typename T>
+class BufferRAII {
+    T* datos;
+    size_t capacidad;
+
+    void liberar() noexcept {
+        delete[] datos;
+    }
+
+public:
+    BufferRAII() : datos(nullptr), capacidad(0) {}
+
+    explicit BufferRAII(size_t cap)
+        : datos(new T[cap]()), capacidad(cap) {}
+
+    ~BufferRAII() noexcept {
+        liberar();
+    }
+
+    BufferRAII(const BufferRAII& otro)
+        : datos(new T[otro.capacidad]),
+          capacidad(otro.capacidad) {
+        for (size_t i = 0; i < capacidad; ++i) {
+            datos[i] = otro.datos[i];
+        }
+    }
+
+    BufferRAII& operator=(const BufferRAII& otro) {
+        if (this != &otro) {
+            BufferRAII tmp(otro);
+            swap(tmp);
+        }
+        return *this;
+    }
+
+    BufferRAII(BufferRAII&& otro) noexcept
+        : datos(otro.datos), capacidad(otro.capacidad) {
+        otro.datos = nullptr;
+        otro.capacidad = 0;
+    }
+
+    BufferRAII& operator=(BufferRAII&& otro) noexcept {
+        if (this != &otro) {
+            liberar();
+            datos = otro.datos;
+            capacidad = otro.capacidad;
+            otro.datos = nullptr;
+            otro.capacidad = 0;
+        }
+        return *this;
+    }
+
+    void swap(BufferRAII& otro) noexcept {
+        std::swap(datos, otro.datos);
+        std::swap(capacidad, otro.capacidad);
+    }
+
+    T& operator[](size_t i) { return datos[i]; }
+    const T& operator[](size_t i) const { return datos[i]; }
+
+    T* get() { return datos; }
+    const T* get() const { return datos; }
+
+    size_t size() const noexcept { return capacidad; }
+
+    // Strong guarantee: si falla, el buffer no cambia
+    void redimensionar(size_t nuevaCap) {
+        T* nuevos = new T[nuevaCap]();
+        size_t copiar = std::min(capacidad, nuevaCap);
+        for (size_t i = 0; i < copiar; ++i) {
+            nuevos[i] = datos[i];
+        }
+        delete[] datos;
+        datos = nuevos;
+        capacidad = nuevaCap;
+    }
+};
+
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 3: Implementación del contenedor SafeContainer
+//==============================================================================
+namespace safe_container {
+
+template <typename T>
+class SafeContainer {
+    static_assert(std::is_nothrow_destructible_v<T>,
+                  "T debe tener destructor noexcept");
+
+    BufferRAII<T> buffer;
+    size_t longitud;
+
+    static constexpr size_t CAPACIDAD_INICIAL = 8;
+
+    struct NothrowCopy {
+        static constexpr bool value =
+            std::is_nothrow_copy_constructible_v<T>;
+    };
+
+    struct NothrowMove {
+        static constexpr bool value =
+            std::is_nothrow_move_constructible_v<T>;
+    };
+
+public:
+    SafeContainer() : buffer(CAPACIDAD_INICIAL), longitud(0) {}
+
+    explicit SafeContainer(size_t n, const T& valor = T{})
+        : buffer(n), longitud(n) {
+        for (size_t i = 0; i < n; ++i) {
+            buffer[i] = valor;
+        }
+    }
+
+    // Strong guarantee for copy constructor
+    SafeContainer(const SafeContainer& otro)
+        : buffer(otro.buffer), longitud(otro.longitud) {}
+
+    // Nothrow move constructor
+    SafeContainer(SafeContainer&& otro) noexcept
+        : buffer(std::move(otro.buffer)),
+          longitud(otro.longitud) {
+        otro.longitud = 0;
+    }
+
+    SafeContainer& operator=(const SafeContainer& otro) {
+        if (this != &otro) {
+            SafeContainer tmp(otro);
+            swap(tmp);
+        }
+        return *this;
+    }
+
+    SafeContainer& operator=(SafeContainer&& otro) noexcept {
+        if (this != &otro) {
+            buffer = std::move(otro.buffer);
+            longitud = otro.longitud;
+            otro.longitud = 0;
+        }
+        return *this;
+    }
+
+    ~SafeContainer() noexcept = default;
+
+    // Strong guarantee for push_back
+    void push_back(const T& valor) {
+        if (longitud >= buffer.size()) {
+            BufferRAII<T> nuevo(buffer.size() * 2);
+            for (size_t i = 0; i < longitud; ++i) {
+                nuevo[i] = buffer[i];
+            }
+            nuevo[longitud] = valor;
+            buffer.swap(nuevo);
+            ++longitud;
+        } else {
+            buffer[longitud] = valor;
+            ++longitud;
+        }
+    }
+
+    // Strong guarantee for push_back move
+    void push_back(T&& valor) {
+        if (longitud >= buffer.size()) {
+            BufferRAII<T> nuevo(buffer.size() * 2);
+            for (size_t i = 0; i < longitud; ++i) {
+                nuevo[i] = std::move_if_noexcept(buffer[i]);
+            }
+            nuevo[longitud] = std::move(valor);
+            buffer.swap(nuevo);
+            ++longitud;
+        } else {
+            buffer[longitud] = std::move(valor);
+            ++longitud;
+        }
+    }
+
+    // Strong guarantee for insert
+    void insert(size_t pos, const T& valor) {
+        if (pos > longitud) {
+            throw OutOfRangeException(pos, longitud);
+        }
+        if (longitud >= buffer.size()) {
+            BufferRAII<T> nuevo(buffer.size() * 2);
+            for (size_t i = 0; i < pos; ++i) {
+                nuevo[i] = buffer[i];
+            }
+            nuevo[pos] = valor;
+            for (size_t i = pos; i < longitud; ++i) {
+                nuevo[i + 1] = buffer[i];
+            }
+            buffer.swap(nuevo);
+        } else {
+            for (size_t i = longitud; i > pos; --i) {
+                buffer[i] = buffer[i - 1];
+            }
+            buffer[pos] = valor;
+        }
+        ++longitud;
+    }
+
+    // Nothrow guarantee for pop_back
+    void pop_back() noexcept {
+        if (longitud > 0) {
+            --longitud;
+            buffer[longitud] = T{};
+        }
+    }
+
+    // Strong guarantee for erase
+    T erase(size_t pos) {
+        if (pos >= longitud) {
+            throw OutOfRangeException(pos, longitud);
+        }
+        T valor = buffer[pos];
+        for (size_t i = pos + 1; i < longitud; ++i) {
+            buffer[i - 1] = buffer[i];
+        }
+        --longitud;
+        return valor;
+    }
+
+    void clear() noexcept {
+        for (size_t i = 0; i < longitud; ++i) {
+            buffer[i] = T{};
+        }
+        longitud = 0;
+    }
+
+    // Nothrow accessors
+    T& operator[](size_t i) noexcept { return buffer[i]; }
+    const T& operator[](size_t i) const noexcept { return buffer[i]; }
+
+    T& at(size_t i) {
+        if (i >= longitud) throw OutOfRangeException(i, longitud);
+        return buffer[i];
+    }
+
+    const T& at(size_t i) const {
+        if (i >= longitud) throw OutOfRangeException(i, longitud);
+        return buffer[i];
+    }
+
+    T& front() {
+        if (longitud == 0) throw EmptyContainerException();
+        return buffer[0];
+    }
+
+    T& back() {
+        if (longitud == 0) throw EmptyContainerException();
+        return buffer[longitud - 1];
+    }
+
+    size_t size() const noexcept { return longitud; }
+    size_t capacity() const noexcept { return buffer.size(); }
+    bool empty() const noexcept { return longitud == 0; }
+
+    void swap(SafeContainer& otro) noexcept {
+        buffer.swap(otro.buffer);
+        std::swap(longitud, otro.longitud);
+    }
+
+    // Iterators (nothrow)
+    T* begin() noexcept { return buffer.get(); }
+    T* end() noexcept { return buffer.get() + longitud; }
+    const T* begin() const noexcept { return buffer.get(); }
+    const T* end() const noexcept { return buffer.get() + longitud; }
+};
+
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 4: Serialización segura
+//==============================================================================
+namespace safe_container {
+
+template <typename T>
+class SafeContainerSerializer {
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "SafeContainerSerializer requiere tipos trivialmente copiables");
+
+public:
+    static void guardar(const SafeContainer<T>& cont,
+                        const std::string& archivo) {
+        std::string tmp = archivo + ".sct.tmp";
+
+        try {
+            std::ofstream out(tmp, std::ios::binary);
+            out.exceptions(std::ios::failbit | std::ios::badbit);
+
+            size_t size = cont.size();
+            out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+
+            if (size > 0) {
+                out.write(reinterpret_cast<const char*>(cont.begin()),
+                          size * sizeof(T));
+            }
+
+            out.close();
+
+            std::error_code ec;
+            if (!std::filesystem::rename(tmp, archivo, ec)) {
+                throw SerializationException(
+                    "No se pudo renombrar a", archivo);
+            }
+        }
+        catch (const SerializationException&) {
+            throw;
+        }
+        catch (const std::exception& e) {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
+            throw SerializationException(
+                std::string("Error de serializacion: ") + e.what(),
+                archivo);
+        }
+    }
+
+    static SafeContainer<T> cargar(const std::string& archivo) {
+        std::ifstream in(archivo, std::ios::binary);
+        if (!in) {
+            throw SerializationException(
+                "No se pudo abrir", archivo);
+        }
+
+        size_t size;
+        in.read(reinterpret_cast<char*>(&size), sizeof(size));
+        if (!in) {
+            throw SerializationException(
+                "Error al leer tamano de", archivo);
+        }
+
+        SafeContainer<T> cont(size);
+
+        if (size > 0) {
+            in.read(reinterpret_cast<char*>(cont.begin()),
+                    size * sizeof(T));
+            if (!in) {
+                throw SerializationException(
+                    "Error al leer datos de", archivo);
+            }
+        }
+
+        return cont;
+    }
+};
+
+// Serialización con verificación de integridad (checksum simple)
+template <typename T>
+class SafeContainerSerializerV2 {
+public:
+    static void guardar(const SafeContainer<T>& cont,
+                        const std::string& archivo) {
+        std::string tmp = archivo + ".sct2.tmp";
+
+        try {
+            std::ofstream out(tmp, std::ios::binary);
+            out.exceptions(std::ios::failbit | std::ios::badbit);
+
+            const char magia[4] = {'S', 'C', 'T', '2'};
+            out.write(magia, 4);
+
+            size_t size = cont.size();
+            out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+
+            if (size > 0) {
+                out.write(reinterpret_cast<const char*>(cont.begin()),
+                          size * sizeof(T));
+            }
+
+            uint32_t checksum = 0;
+            for (size_t i = 0; i < size; ++i) {
+                const char* bytes = reinterpret_cast<const char*>(&cont[i]);
+                for (size_t j = 0; j < sizeof(T); ++j) {
+                    checksum += static_cast<uint8_t>(bytes[j]);
+                }
+            }
+            out.write(reinterpret_cast<const char*>(&checksum),
+                      sizeof(checksum));
+
+            out.close();
+
+            std::error_code ec;
+            if (!std::filesystem::rename(tmp, archivo, ec)) {
+                throw SerializationException(
+                    "No se pudo renombrar a", archivo);
+            }
+        }
+        catch (...) {
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
+            throw;
+        }
+    }
+
+    static SafeContainer<T> cargar(const std::string& archivo) {
+        std::ifstream in(archivo, std::ios::binary);
+        if (!in) {
+            throw SerializationException(
+                "No se pudo abrir", archivo);
+        }
+
+        char magia[4];
+        in.read(magia, 4);
+        if (std::memcmp(magia, "SCT2", 4) != 0) {
+            throw SerializationException(
+                "Formato invalido (magia incorrecta)", archivo);
+        }
+
+        size_t size;
+        in.read(reinterpret_cast<char*>(&size), sizeof(size));
+
+        SafeContainer<T> cont(size);
+        T* data = cont.begin();
+
+        if (size > 0) {
+            in.read(reinterpret_cast<char*>(data),
+                    size * sizeof(T));
+        }
+
+        uint32_t checksumLeido;
+        in.read(reinterpret_cast<char*>(&checksumLeido),
+                sizeof(checksumLeido));
+
+        uint32_t checksumCalc = 0;
+        for (size_t i = 0; i < size; ++i) {
+            const char* bytes = reinterpret_cast<const char*>(&data[i]);
+            for (size_t j = 0; j < sizeof(T); ++j) {
+                checksumCalc += static_cast<uint8_t>(bytes[j]);
+            }
+        }
+
+        if (checksumCalc != checksumLeido) {
+            throw SerializationException(
+                "Checksum invalido - datos corruptos", archivo);
+        }
+
+        return cont;
+    }
+};
+
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 5: Type traits personalizados para SafeContainer
+//==============================================================================
+namespace safe_container {
+
+// Trait: verificar si T es válido para SafeContainer
+template <typename T>
+struct is_valid_container_type {
+    static constexpr bool value =
+        std::is_nothrow_destructible_v<T> &&
+        (std::is_copy_constructible_v<T> || std::is_move_constructible_v<T>);
+};
+
+// Trait: verificar si T es serializable
+template <typename T>
+struct is_serializable {
+    static constexpr bool value =
+        std::is_trivially_copyable_v<T>;
+};
+
+// Trait: verificar si T es comparable
+template <typename T, typename = void>
+struct is_comparable : std::false_type {};
+
+template <typename T>
+struct is_comparable<T, std::void_t<
+    decltype(std::declval<T>() == std::declval<T>()),
+    decltype(std::declval<T>() < std::declval<T>())
+>> : std::true_type {};
+
+// Ejemplo de uso: SafeContainer con búsqueda (solo si T es comparable)
+template <typename T>
+class SafeContainerConBusqueda : public SafeContainer<T> {
+    static_assert(is_comparable<T>::value,
+                  "SafeContainerConBusqueda requiere tipos comparables");
+
+    using Base = SafeContainer<T>;
+
+public:
+    using Base::Base;
+
+    int buscar(const T& valor) const noexcept {
+        for (size_t i = 0; i < this->size(); ++i) {
+            if ((*this)[i] == valor) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    bool contiene(const T& valor) const noexcept {
+        return buscar(valor) != -1;
+    }
+};
+
+// SafeContainer con ordenación (solo si T es ordenable)
+template <typename T>
+class SafeContainerOrdenable : public SafeContainer<T> {
+    static_assert(is_comparable<T>::value,
+                  "SafeContainerOrdenable requiere tipos comparables");
+
+    using Base = SafeContainer<T>;
+
+public:
+    using Base::Base;
+
+    void ordenar() {
+        // Bubble sort con strong guarantee
+        auto copia = *this;
+        size_t n = copia.size();
+        for (size_t i = 0; i < n - 1; ++i) {
+            for (size_t j = 0; j < n - i - 1; ++j) {
+                if (copia[j] > copia[j + 1]) {
+                    T tmp = std::move(copia[j]);
+                    copia[j] = std::move(copia[j + 1]);
+                    copia[j + 1] = std::move(tmp);
+                }
+            }
+        }
+        Base::swap(copia);
+    }
+};
+
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 6: Pruebas unitarias
+//==============================================================================
+#include <cassert>
+#include <string>
+
+namespace safe_container {
+namespace tests {
+
+void test_construccion() {
+    std::cout << "  test_construccion... ";
+    SafeContainer<int> c;
+    assert(c.empty());
+    assert(c.size() == 0);
+    assert(c.capacity() == 8);
+    std::cout << "OK\n";
+}
+
+void test_push_back() {
+    std::cout << "  test_push_back... ";
+    SafeContainer<int> c;
+    c.push_back(10);
+    c.push_back(20);
+    c.push_back(30);
+    assert(c.size() == 3);
+    assert(c[0] == 10);
+    assert(c[1] == 20);
+    assert(c[2] == 30);
+    std::cout << "OK\n";
+}
+
+void test_push_back_strong_guarantee() {
+    std::cout << "  test_push_back_strong_guarantee... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    c.push_back(3);
+    // Si push_back lanza, el contenedor debe permanecer intacto
+    // (difícil de probar con int, pero verificamos estado)
+    size_t old_size = c.size();
+    int old_val = c[0];
+    // No debería lanzar
+    c.push_back(4);
+    assert(c.size() == old_size + 1);
+    assert(c[0] == old_val);
+    std::cout << "OK\n";
+}
+
+void test_insert() {
+    std::cout << "  test_insert... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(3);
+    c.push_back(4);
+    c.insert(1, 2);
+    assert(c.size() == 4);
+    assert(c[0] == 1);
+    assert(c[1] == 2);
+    assert(c[2] == 3);
+    assert(c[3] == 4);
+    std::cout << "OK\n";
+}
+
+void test_insert_out_of_range() {
+    std::cout << "  test_insert_out_of_range... ";
+    SafeContainer<int> c;
+    try {
+        c.insert(5, 10);
+        assert(false && "No debio llegar aqui");
+    }
+    catch (const OutOfRangeException&) {
+        std::cout << "OK (excepcion esperada)\n";
+    }
+}
+
+void test_erase() {
+    std::cout << "  test_erase... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    c.push_back(3);
+    c.push_back(4);
+    int val = c.erase(1);
+    assert(val == 2);
+    assert(c.size() == 3);
+    assert(c[0] == 1);
+    assert(c[1] == 3);
+    assert(c[2] == 4);
+    std::cout << "OK\n";
+}
+
+void test_pop_back() {
+    std::cout << "  test_pop_back... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    c.push_back(3);
+    c.pop_back();
+    assert(c.size() == 2);
+    assert(c[0] == 1);
+    assert(c[1] == 2);
+    c.pop_back();
+    assert(c.size() == 1);
+    c.pop_back();
+    assert(c.empty());
+    // pop_back en vacío no debe fallar
+    c.pop_back();
+    assert(c.empty());
+    std::cout << "OK\n";
+}
+
+void test_clear() {
+    std::cout << "  test_clear... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    c.push_back(3);
+    c.clear();
+    assert(c.empty());
+    assert(c.size() == 0);
+    std::cout << "OK\n";
+}
+
+void test_at_exception() {
+    std::cout << "  test_at_exception... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    try {
+        c.at(10);
+        assert(false && "No debio llegar aqui");
+    }
+    catch (const OutOfRangeException& e) {
+        assert(e.getIndex() == 10);
+        assert(e.getSize() == 2);
+        std::cout << "OK (excepcion esperada)\n";
+    }
+}
+
+void test_copy() {
+    std::cout << "  test_copy... ";
+    SafeContainer<int> c1;
+    c1.push_back(1);
+    c1.push_back(2);
+    c1.push_back(3);
+
+    SafeContainer<int> c2(c1);
+    assert(c2.size() == 3);
+    assert(c2[0] == 1);
+    assert(c2[1] == 2);
+    assert(c2[2] == 3);
+
+    c2.push_back(4);
+    assert(c1.size() == 3);  // c1 no debe cambiar
+    assert(c2.size() == 4);
+    std::cout << "OK\n";
+}
+
+void test_move() {
+    std::cout << "  test_move... ";
+    SafeContainer<int> c1;
+    c1.push_back(1);
+    c1.push_back(2);
+
+    SafeContainer<int> c2(std::move(c1));
+    assert(c2.size() == 2);
+    assert(c2[0] == 1);
+    assert(c1.empty());
+    std::cout << "OK\n";
+}
+
+void test_iterators() {
+    std::cout << "  test_iterators... ";
+    SafeContainer<int> c;
+    c.push_back(10);
+    c.push_back(20);
+    c.push_back(30);
+
+    int sum = 0;
+    for (const auto& v : c) {
+        sum += v;
+    }
+    assert(sum == 60);
+
+    // Modificar con iterador
+    for (auto& v : c) {
+        v *= 2;
+    }
+    assert(c[0] == 20);
+    assert(c[1] == 40);
+    assert(c[2] == 60);
+    std::cout << "OK\n";
+}
+
+void test_serialization() {
+    std::cout << "  test_serialization... ";
+    SafeContainer<int> c;
+    c.push_back(1);
+    c.push_back(2);
+    c.push_back(3);
+    c.push_back(4);
+    c.push_back(5);
+
+    std::string archivo = "test_safecontainer.dat";
+    SafeContainerSerializer<int>::guardar(c, archivo);
+
+    auto loaded = SafeContainerSerializer<int>::cargar(archivo);
+    assert(loaded.size() == 5);
+    for (int i = 0; i < 5; ++i) {
+        assert(loaded[i] == i + 1);
+    }
+
+    std::filesystem::remove(archivo);
+    std::cout << "OK\n";
+}
+
+void test_serialization_v2() {
+    std::cout << "  test_serialization_v2... ";
+    SafeContainer<double> c;
+    c.push_back(1.1);
+    c.push_back(2.2);
+    c.push_back(3.3);
+
+    std::string archivo = "test_safecontainer_v2.dat";
+    SafeContainerSerializerV2<double>::guardar(c, archivo);
+
+    auto loaded = SafeContainerSerializerV2<double>::cargar(archivo);
+    assert(loaded.size() == 3);
+    assert(std::abs(loaded[0] - 1.1) < 0.001);
+    assert(std::abs(loaded[1] - 2.2) < 0.001);
+    assert(std::abs(loaded[2] - 3.3) < 0.001);
+
+    std::filesystem::remove(archivo);
+    std::cout << "OK\n";
+}
+
+void test_traits() {
+    std::cout << "  test_traits... ";
+    static_assert(is_valid_container_type<int>::value);
+    static_assert(is_valid_container_type<double>::value);
+    static_assert(is_serializable<int>::value);
+    static_assert(!is_serializable<std::string>::value);
+    static_assert(is_comparable<int>::value);
+    std::cout << "OK\n";
+}
+
+void test_ordenacion() {
+    std::cout << "  test_ordenacion... ";
+    SafeContainerOrdenable<int> c;
+    c.push_back(3);
+    c.push_back(1);
+    c.push_back(4);
+    c.push_back(1);
+    c.push_back(5);
+    c.push_back(9);
+
+    c.ordenar();
+    assert(c[0] == 1);
+    assert(c[1] == 1);
+    assert(c[2] == 3);
+    assert(c[3] == 4);
+    assert(c[4] == 5);
+    assert(c[5] == 9);
+    std::cout << "OK\n";
+}
+
+void run_all_tests() {
+    std::cout << "Ejecutando pruebas de SafeContainer...\n\n";
+
+    test_construccion();
+    test_push_back();
+    test_push_back_strong_guarantee();
+    test_insert();
+    test_insert_out_of_range();
+    test_erase();
+    test_pop_back();
+    test_clear();
+    test_at_exception();
+    test_copy();
+    test_move();
+    test_iterators();
+    test_serialization();
+    test_serialization_v2();
+    test_traits();
+    test_ordenacion();
+
+    std::cout << "\nTodas las pruebas pasaron!\n";
+}
+
+} // namespace tests
+} // namespace safe_container
+```
+
+```cpp
+//==============================================================================
+// FASE 7: Programa principal de demostración
+//==============================================================================
+#include <iostream>
+#include <string>
+#include <cassert>
+
+int main() {
+    std::cout << "========================================\n";
+    std::cout << "  SafeContainer - Proyecto Final\n";
+    std::cout << "  Modulo VI: Templates y Excepciones\n";
+    std::cout << "========================================\n\n";
+
+    // Ejecutar todas las pruebas
+    safe_container::tests::run_all_tests();
+
+    std::cout << "\n--- Demostracion de uso ---\n";
+
+    // Uso básico
+    safe_container::SafeContainer<int> numeros;
+    numeros.push_back(10);
+    numeros.push_back(20);
+    numeros.push_back(30);
+    numeros.push_back(40);
+    numeros.push_back(50);
+
+    std::cout << "Numeros: ";
+    for (const auto& n : numeros) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    numeros.insert(2, 25);
+    std::cout << "Despues de insert(2, 25): ";
+    for (const auto& n : numeros) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    numeros.erase(0);
+    std::cout << "Despues de erase(0): ";
+    for (const auto& n : numeros) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    // Manejo de excepciones
+    try {
+        numeros.at(100);
+    }
+    catch (const safe_container::OutOfRangeException& e) {
+        std::cout << "Excepcion capturada: " << e.what() << "\n";
+    }
+
+    // Serialización
+    safe_container::SafeContainer<double> valores;
+    valores.push_back(3.14159);
+    valores.push_back(2.71828);
+    valores.push_back(1.41421);
+
+    std::string archivo = "valores_safe.dat";
+    safe_container::SafeContainerSerializer<double>::guardar(valores, archivo);
+
+    auto cargados = safe_container::SafeContainerSerializer<double>::cargar(archivo);
+    std::cout << "Valores cargados: ";
+    for (const auto& v : cargados) {
+        std::cout << v << " ";
+    }
+    std::cout << "\n";
+
+    std::filesystem::remove(archivo);
+
+    // Ordenación (con SafeContainerOrdenable)
+    safe_container::SafeContainerOrdenable<int> desordenados;
+    desordenados.push_back(9);
+    desordenados.push_back(3);
+    desordenados.push_back(7);
+    desordenados.push_back(1);
+    desordenados.push_back(5);
+
+    std::cout << "Antes de ordenar: ";
+    for (const auto& n : desordenados) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    desordenados.ordenar();
+
+    std::cout << "Despues de ordenar: ";
+    for (const auto& n : desordenados) {
+        std::cout << n << " ";
+    }
+    std::cout << "\n";
+
+    // Búsqueda
+    int pos = desordenados.buscar(5);
+    std::cout << "Posicion del 5: " << pos << "\n";
+    std::cout << "Contiene el 9: " << desordenados.contiene(9) << "\n";
+    std::cout << "Contiene el 10: " << desordenados.contiene(10) << "\n";
+
+    std::cout << "\n========================================\n";
+    std::cout << "  Proyecto completado exitosamente!\n";
+    std::cout << "========================================\n";
+
+    return 0;
+}
+```
+
+RESUMEN DEL PROYECTO
+--------------------
+
+En este proyecto hemos construido:
+
+  1. SafeContainer<T>: contenedor genérico exception-safe con:
+     - Buffer RAII con strong guarantee en redimensionamiento.
+     - push_back, insert, erase con strong guarantee.
+     - pop_back, clear, size, empty con nothrow guarantee.
+     - Iteradores básicos.
+     - Constructor de copia, movimiento, asignación.
+
+  2. Jerarquía de excepciones:
+     - ContainerException (base).
+     - OutOfRangeException con índice y tamaño.
+     - EmptyContainerException.
+     - SerializationException.
+     - InvalidTypeException.
+
+  3. Serialización segura:
+     - SafeContainerSerializer para tipos trivially copyable.
+     - SafeContainerSerializerV2 con checksum de verificación.
+     - Escritura atómica con archivo temporal.
+     - Strong guarantee en serialización.
+
+  4. Type traits personalizados:
+     - is_valid_container_type.
+     - is_serializable.
+     - is_comparable.
+
+  5. Extensiones:
+     - SafeContainerConBusqueda<T> (requiere comparable).
+     - SafeContainerOrdenable<T> (requiere ordenable).
+
+  6. Pruebas unitarias completas.
+
+EJERCICIOS DE EXTENSIÓN
+-----------------------
+
+  EJERCICIO 1: Implementa SafeContainer con soporte para memoria
+  alineada (alignment requirements).
+
+  EJERCICIO 2: Añade un método `reserve(size_t)` que pre-asigne
+  capacidad con strong guarantee.
+
+  EJERCICIO 3: Implementa un `SafeMap<K,V>` similar usando el
+  mismo patrón de diseño.
+
+  EJERCICIO 4: Añade soporte para `emplace_back` (construcción
+  in-place) usando variadic templates.
+
+  EJERCICIO 5: Implementa un `SafeContainerView<T>` que sea una
+  vista no-propietaria de un SafeContainer.
+
+  EJERCICIO 6: Añade un sistema de "observers" que notifiquen
+  cuando el contenedor cambia (signal/slot).
+
+  EJERCICIO 7: Implementa SafeContainer con soporte para memoria
+  compartida (mmap) usando RAII.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿Por qué usar un buffer interno con new[] en lugar de vector?
+  R: Para demostrar el manejo manual con RAII y strong guarantee.
+  En producción usarías std::vector directamente.
+
+  P: ¿Qué es `std::move_if_noexcept`?
+  R: Es una función que mueve si el tipo tiene noexcept move,
+  y copia si no. Útil para strong guarantee en contenedores.
+
+  P: ¿Por qué static_assert para tipo válido?
+  R: Para dar mensajes de error claros en compilación, en lugar
+  de crípticos errores de template.
+
+  P: ¿Cómo sé si mi contenedor es realmente exception-safe?
+  R: Prueba insertando en medio de operaciones que lanzan, verifica
+  que el estado sea consistente, y usa herramientas como sanitizers.
+
+  P: ¿Debo usar siempre strong guarantee?
+  R: Solo cuando es posible y tiene sentido. A veces strong guarantee
+  es demasiado costosa y basic guarantee es suficiente.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Extiende SafeContainer para convertirlo en un "Contenedor
+  Distribuido" que pueda serializarse y transmitirse a través de
+  una red.
+
+  Requisitos adicionales:
+    - Método `toBytes()` que serialice a std::vector<char>.
+    - Constructor estático `fromBytes(vector<char>)`.
+    - Soporte para endianness (little/big endian).
+    - Soporte para compresión (zlib o similar).
+    - Soporte para encriptación básica (XOR o AES).
+    - Método `send(SocketRAII&)` que envíe por red.
+    - Método `receive(SocketRAII&)` que reciba de red.
+    - Manejo de interrupciones de red con excepciones.
+    - Timeout en operaciones de red.
+
+  Pistas:
+    - Separa la serialización en capas: raw → compress → encrypt.
+    - Usa el patrón Decorator para las capas.
+    - Para red, crea un RAII Socket como en el capítulo 57.
+    - Usa std::chrono para timeouts.
+
+CIERRE DEL PROYECTO
+-------------------
+
+Has completado el Módulo VI de C++ Master Book. Este proyecto ha
+integrado todos los conceptos del módulo: templates, excepciones,
+RAII, smart pointers, type traits, y serialización segura.
+
+El SafeContainer que has construido no es solo un ejercicio académico;
+es una demostración de cómo se construye software profesional en C++
+moderno, donde la seguridad frente a excepciones es una preocupación
+central y no un añadido tardío.
+
+Recuerda los principios fundamentales:
+  - Templates para código genérico sin sacrificar rendimiento.
+  - RAII para gestión automática de recursos.
+  - Excepciones para manejo estructurado de errores.
+  - Smart pointers para memoria sin fugas.
+  - Strong guarantee para operaciones críticas.
+
+  "El código que escribes hoy es el legado que dejas al programador
+   del mañana. Hazlo genérico, hazlo seguro, hazlo exception-safe."
+
+================================================================================
+  FIN DEL CAPÍTULO 60 - FIN DEL MÓDULO VI
+================================================================================

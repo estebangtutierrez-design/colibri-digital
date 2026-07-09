@@ -1,0 +1,1631 @@
+================================================================================
+  GO MASTER BOOK — MÓDULO V: CONCURRENCIA
+  CAPÍTULO 47: MUTEX (SYNC.MUTEX)
+================================================================================
+
+══════════════════════════════════════════════════════════════════════════════
+                    BIENVENIDA A MUTEX
+══════════════════════════════════════════════════════════════════════════════
+
+Bienvenido, arquitecto de la exclusión mutua. Hasta ahora has aprendido el
+modelo de Go: "No te comuniques mediante memoria compartida; comparte memoria
+mediante comunicación." Los channels son la herramienta preferida. Pero hay
+situaciones donde proteger una variable compartida con un lock es más simple
+y eficiente.
+
+Ahí entra sync.Mutex. El mutex (mutual exclusion) es el mecanismo clásico
+de sincronización: permite que solo una gorutina acceda a una sección crítica
+del código a la vez.
+
+En este capítulo también exploraremos sync.RWMutex, una versión optimizada
+para escenarios donde las lecturas son mucho más frecuentes que las escrituras.
+Con RWMutex, múltiples gorutinas pueden leer simultáneamente, pero solo una
+puede escribir.
+
+Los mutex son herramientas poderosas pero peligrosas. Mal usados, causan
+deadlocks, condiciones de carrera, y degradación del rendimiento. Como
+arquitecto, debes entender cuándo usarlos, cómo usarlos correctamente, y
+cuándo preferir channels.
+
+══════════════════════════════════════════════════════════════════════════════
+  FRASE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+"Los mutex son la puerta de entrada a la sección crítica. Úsalos con
+cuidado, porque un candillo mal puesto puede paralizar todo un sistema."
+— Go Team
+
+══════════════════════════════════════════════════════════════════════════════
+  OBJETIVOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • Comprender el concepto de sección crítica y condición de carrera.
+  • Usar sync.Mutex para proteger datos compartidos.
+  • Aprender los métodos Lock y Unlock.
+  • Usar defer para garantizar Unlock.
+  • Implementar sync.RWMutex para lecturas concurrentes.
+  • Conocer los métodos RLock y RUnlock.
+  • Identificar y evitar deadlocks con mutex.
+  • Entender cuándo usar Mutex vs channels.
+  • Implementar el patrón de estructura protegida con mutex.
+  • Medir el rendimiento de Mutex vs RWMutex vs channels.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESARROLLO DEL CAPÍTULO — MUTEX
+══════════════════════════════════════════════════════════════════════════════
+
+----------------------------------------------------------------------
+  1. CONDICIÓN DE CARRERA (RACE CONDITION)
+----------------------------------------------------------------------
+
+Una condición de carrera ocurre cuando múltiples gorutinas acceden a datos
+compartidos simultáneamente y al menos una de ellas está escribiendo.
+
+    var contador int
+
+    go func() { contador++ }  // Leer, incrementar, escribir
+    go func() { contador++ }  // Leer, incrementar, escribir
+
+    // Resultado: contador puede ser 1 en lugar de 2
+
+contador++ no es atómico: implica leer, incrementar en registro, escribir.
+Dos gorutinas pueden leer el mismo valor, incrementar cada una, y escribir
+el mismo resultado.
+
+----------------------------------------------------------------------
+  2. SYNC.MUTEX: LOCK/UNLOCK
+----------------------------------------------------------------------
+
+sync.Mutex proporciona exclusión mutua:
+
+    var mu sync.Mutex
+    var contador int
+
+    mu.Lock()
+    contador++  // Sección crítica
+    mu.Unlock()
+
+Solo una gorutina puede mantener el lock a la vez. Las demás se bloquean
+en Lock() hasta que el lock se libere.
+
+----------------------------------------------------------------------
+  3. DEFER UNLOCK
+----------------------------------------------------------------------
+
+Siempre usa defer para liberar el lock, incluso si la sección crítica
+tiene múltiples puntos de retorno o puede panicar:
+
+    mu.Lock()
+    defer mu.Unlock()
+    // sección crítica
+
+Esto garantiza que el lock se libere siempre.
+
+----------------------------------------------------------------------
+  4. SYNC.RWMUTEX: LECTURA/ESCRITURA
+----------------------------------------------------------------------
+
+RWMutex optimiza para el patrón donde las lecturas son frecuentes y las
+escrituras escasas:
+
+  • RLock/RUnlock: Lock compartido para lecturas. Múltiples lectores.
+  • Lock/Unlock: Lock exclusivo para escritura. Bloquea lectores y
+    escritores.
+
+    var rw sync.RWMutex
+    var datos map[string]int
+
+    // Lectura concurrente
+    rw.RLock()
+    v := datos["clave"]
+    rw.RUnlock()
+
+    // Escritura exclusiva
+    rw.Lock()
+    datos["clave"] = 42
+    rw.Unlock()
+
+----------------------------------------------------------------------
+  5. DEADLOCK CON MUTEX
+----------------------------------------------------------------------
+
+Un deadlock con mutex ocurre cuando una gorutina intenta adquirir un lock
+que ya posee (si no es reentrante) o cuando dos gorutinas se esperan
+mutuamente:
+
+    var mu sync.Mutex
+    mu.Lock()
+    mu.Lock()  // Deadlock: la misma gorutina espera su propio lock
+
+Go no tiene mutex reentrantes. Si necesitas reentrada, rediseña o usa
+un contador de recursión manual.
+
+----------------------------------------------------------------------
+  6. MUTEX EN ESTRUCTURAS
+----------------------------------------------------------------------
+
+El patrón más común es incluir el mutex en la estructura que protege:
+
+    type ContadorSeguro struct {
+        mu      sync.Mutex
+        valor   int
+    }
+
+    func (c *ContadorSeguro) Incrementar() {
+        c.mu.Lock()
+        defer c.mu.Unlock()
+        c.valor++
+    }
+
+El mutex se asocia lógicamente con los datos que protege.
+
+----------------------------------------------------------------------
+  7. MUTEX vs CHANNELS
+----------------------------------------------------------------------
+
+  • Canales: Cuando la comunicación es el objetivo principal.
+  • Mutex: Cuando la protección de datos es el objetivo principal.
+  • Canales: Flujo de datos entre gorutinas.
+  • Mutex: Acceso seguro a estado compartido.
+  • Canales: Preferido en Go (filosofía CSP).
+  • Mutex: Más eficiente para operaciones simples.
+
+La regla: usa channels para flujo de datos; usa mutex para proteger estado.
+
+----------------------------------------------------------------------
+  8. RACE DETECTOR
+----------------------------------------------------------------------
+
+Go incluye un detector de condiciones de carrera:
+
+    go run -race main.go
+    go test -race ./...
+
+Siempre prueba con -race en desarrollo. El detector es una herramienta
+invaluable para encontrar bugs de concurrencia.
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  CÓDIGO DEL CAPÍTULO                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+----------------------------------------------------------------------
+  EJEMPLO 1: CONDICIÓN DE CARRERA — SIN MUTEX
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var contador int
+    var wg sync.WaitGroup
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            contador++ // Race condition
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador: %d (debería ser 1000)\n", contador)
+}
+```
+
+Ejecuta con: go run -race main.go para ver las warning del detector.
+
+----------------------------------------------------------------------
+  EJEMPLO 2: MUTEX BÁSICO — CORRECCIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var (
+        mu       sync.Mutex
+        contador int
+        wg       sync.WaitGroup
+    )
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            contador++ // Sección crítica protegida
+            mu.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador: %d (debe ser 1000)\n", contador)
+}
+```
+
+Ejecuta con go run -race y verifica que no hay warning.
+
+----------------------------------------------------------------------
+  EJEMPLO 3: DEFER UNLOCK
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+type ContadorSeguro struct {
+    mu    sync.Mutex
+    valor int
+}
+
+func (c *ContadorSeguro) Incrementar() {
+    c.mu.Lock()
+    defer c.mu.Unlock() // Garantiza liberación incluso si hay panic
+    c.valor++
+}
+
+func (c *ContadorSeguro) Obtener() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.valor
+}
+
+func main() {
+    var c ContadorSeguro
+    var wg sync.WaitGroup
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            c.Incrementar()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Printf("Contador seguro: %d\n", c.Obtener())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 4: RWMUTEX — LECTURAS CONCURRENTES
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Cache struct {
+    mu    sync.RWMutex
+    datos map[string]string
+}
+
+func NewCache() *Cache {
+    return &Cache{datos: make(map[string]string)}
+}
+
+func (c *Cache) Get(clave string) (string, bool) {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    valor, ok := c.datos[clave]
+    return valor, ok
+}
+
+func (c *Cache) Set(clave, valor string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.datos[clave] = valor
+}
+
+func (c *Cache) Stats() (lectores, escritores int) {
+    // No hay API directa, pero podemos ver el estado interno
+    return
+}
+
+func main() {
+    cache := NewCache()
+    var wg sync.WaitGroup
+
+    // Escritura inicial
+    cache.Set("nombre", "Go Master Book")
+
+    // 10 lecturas concurrentes (todas pueden ejecutarse simultáneamente)
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            valor, ok := cache.Get("nombre")
+            fmt.Printf("Lector %d: valor=%s, ok=%t\n", id, valor, ok)
+            time.Sleep(100 * time.Millisecond)
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Todas las lecturas concurrentes completadas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 5: COMPARACIÓN MUTEX vs RWMUTEX
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func testMutex(lecturas, escrituras int) time.Duration {
+    var mu sync.Mutex
+    var valor int
+    var wg sync.WaitGroup
+
+    inicio := time.Now()
+
+    for i := 0; i < lecturas; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            _ = valor
+            mu.Unlock()
+        }()
+    }
+
+    for i := 0; i < escrituras; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            valor++
+            mu.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func testRWMutex(lecturas, escrituras int) time.Duration {
+    var mu sync.RWMutex
+    var valor int
+    var wg sync.WaitGroup
+
+    inicio := time.Now()
+
+    for i := 0; i < lecturas; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.RLock()
+            _ = valor
+            mu.RUnlock()
+        }()
+    }
+
+    for i := 0; i < escrituras; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            valor++
+            mu.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func main() {
+    fmt.Println("Comparación: 1000 lecturas, 10 escrituras")
+    fmt.Printf("Mutex:   %v\n", testMutex(1000, 10))
+    fmt.Printf("RWMutex: %v\n", testRWMutex(1000, 10))
+
+    fmt.Println("\nComparación: 100 lecturas, 100 escrituras")
+    fmt.Printf("Mutex:   %v\n", testMutex(100, 100))
+    fmt.Printf("RWMutex: %v\n", testRWMutex(100, 100))
+}
+```
+
+RWMutex es mejor cuando las lecturas dominan. Con igual proporción, la
+diferencia se reduce.
+
+----------------------------------------------------------------------
+  EJEMPLO 6: DEADLOCK CON MUTEX
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+func main() {
+    var mu sync.Mutex
+
+    mu.Lock()
+
+    // Intento de adquirir el mismo lock (deadlock)
+    go func() {
+        fmt.Println("Gorutina intentando adquirir lock...")
+        mu.Lock() // Esto nunca se desbloqueará
+        fmt.Println("Lock adquirido") // Nunca se imprime
+        mu.Unlock()
+    }()
+
+    time.Sleep(1 * time.Second)
+    fmt.Println("Main nunca libera el lock")
+    // mu.Unlock() // Si descomentamos, la gorutina continúa
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 7: ESTRUCTURA COMPLETA CON MUTEX
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+type CuentaBancaria struct {
+    mu      sync.Mutex
+    titular string
+    saldo   float64
+}
+
+func NuevaCuenta(titular string, saldoInicial float64) *CuentaBancaria {
+    return &CuentaBancaria{
+        titular: titular,
+        saldo:   saldoInicial,
+    }
+}
+
+func (c *CuentaBancaria) Depositar(monto float64) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+
+    if monto <= 0 {
+        return
+    }
+    c.saldo += monto
+    fmt.Printf("Depósito: +%.2f, saldo: %.2f\n", monto, c.saldo)
+}
+
+func (c *CuentaBancaria) Retirar(monto float64) bool {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+
+    if monto <= 0 || monto > c.saldo {
+        return false
+    }
+    c.saldo -= monto
+    fmt.Printf("Retiro: -%.2f, saldo: %.2f\n", monto, c.saldo)
+    return true
+}
+
+func (c *CuentaBancaria) Saldo() float64 {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.saldo
+}
+
+func Transferir(origen, destino *CuentaBancaria, monto float64) bool {
+    // Orden fijo de locks para evitar deadlock
+    if origen > destino { // Comparación de punteros
+        origen.mu.Lock()
+        destino.mu.Lock()
+    } else {
+        destino.mu.Lock()
+        origen.mu.Lock()
+    }
+
+    defer origen.mu.Unlock()
+    defer destino.mu.Unlock()
+
+    if monto <= 0 || origen.saldo < monto {
+        return false
+    }
+
+    origen.saldo -= monto
+    destino.saldo += monto
+    return true
+}
+
+func main() {
+    c1 := NuevaCuenta("Alice", 1000)
+    c2 := NuevaCuenta("Bob", 500)
+
+    var wg sync.WaitGroup
+
+    // Transferencias concurrentes
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            if id%2 == 0 {
+                c1.Depositar(100)
+            } else {
+                c2.Retirar(50)
+            }
+        }(i)
+    }
+
+    // Transferencia entre cuentas
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        if Transferir(c1, c2, 200) {
+            fmt.Println("Transferencia exitosa: 200 de C1 a C2")
+        } else {
+            fmt.Println("Transferencia fallida")
+        }
+    }()
+
+    wg.Wait()
+
+    fmt.Printf("\nSaldo final %s: %.2f\n", c1.titular, c1.Saldo())
+    fmt.Printf("Saldo final %s: %.2f\n", c2.titular, c2.Saldo())
+}
+```
+
+Nótese el orden fijo de locks en Transferir para evitar deadlock.
+
+----------------------------------------------------------------------
+  EJEMPLO 8: MUTEX CON MAPA COMPARTIDO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type DiccionarioSeguro struct {
+    mu    sync.RWMutex
+    datos map[string]int
+}
+
+func NewDiccionario() *DiccionarioSeguro {
+    return &DiccionarioSeguro{datos: make(map[string]int)}
+}
+
+func (d *DiccionarioSeguro) Set(clave string, valor int) {
+    d.mu.Lock()
+    defer d.mu.Unlock()
+    d.datos[clave] = valor
+}
+
+func (d *DiccionarioSeguro) Get(clave string) (int, bool) {
+    d.mu.RLock()
+    defer d.mu.RUnlock()
+    v, ok := d.datos[clave]
+    return v, ok
+}
+
+func (d *DiccionarioSeguro) Delete(clave string) {
+    d.mu.Lock()
+    defer d.mu.Unlock()
+    delete(d.datos, clave)
+}
+
+func (d *DiccionarioSeguro) Len() int {
+    d.mu.RLock()
+    defer d.mu.RUnlock()
+    return len(d.datos)
+}
+
+func main() {
+    dict := NewDiccionario()
+    var wg sync.WaitGroup
+
+    // Escrituras
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            dict.Set(fmt.Sprintf("clave-%d", n), n*100)
+            time.Sleep(10 * time.Millisecond)
+        }(i)
+    }
+
+    // Lecturas concurrentes
+    for i := 0; i < 20; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            v, ok := dict.Get(fmt.Sprintf("clave-%d", n%10))
+            if ok {
+                fmt.Printf("Lectura: clave-%d = %d\n", n%10, v)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Printf("Tamaño del diccionario: %d\n", dict.Len())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 9: MUTEX CON SLICE COMPARTIDO
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type ListaSegura struct {
+    mu    sync.Mutex
+    items []int
+}
+
+func (l *ListaSegura) Append(item int) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    l.items = append(l.items, item)
+}
+
+func (l *ListaSegura) Get(indice int) (int, bool) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    if indice < 0 || indice >= len(l.items) {
+        return 0, false
+    }
+    return l.items[indice], true
+}
+
+func (l *ListaSegura) Len() int {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    return len(l.items)
+}
+
+func (l *ListaSegura) Snapshot() []int {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    snap := make([]int, len(l.items))
+    copy(snap, l.items)
+    return snap
+}
+
+func main() {
+    var lista ListaSegura
+    var wg sync.WaitGroup
+
+    // Múltiples gorutinas añadiendo
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            lista.Append(n)
+            time.Sleep(1 * time.Millisecond)
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Printf("Longitud final: %d\n", lista.Len())
+    fmt.Printf("Snapshot: %v\n", lista.Snapshot())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 10: RWMUTEX — CACHE CON LECTURAS MASIVAS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type CacheRWMutex struct {
+    mu    sync.RWMutex
+    datos map[string]string
+}
+
+func (c *CacheRWMutex) Get(clave string) string {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    return c.datos[clave]
+}
+
+func (c *CacheRWMutex) Set(clave, valor string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.datos[clave] = valor
+    fmt.Printf("  [CACHE] Actualizado: %s = %s\n", clave, valor)
+}
+
+func main() {
+    cache := &CacheRWMutex{datos: make(map[string]string)}
+    var wg sync.WaitGroup
+
+    // Precargamos datos
+    cache.Set("es", "Hola")
+    cache.Set("en", "Hello")
+    cache.Set("fr", "Bonjour")
+
+    // 30 lecturas concurrentes
+    for i := 0; i < 30; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            idiomas := []string{"es", "en", "fr"}
+            idioma := idiomas[id%3]
+            resultado := cache.Get(idioma)
+            fmt.Printf("Lector %d: %s -> %s\n", id, idioma, resultado)
+            time.Sleep(10 * time.Millisecond)
+        }(i)
+    }
+
+    // Escrituras simultáneas
+    for i := 0; i < 3; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            cache.Set(fmt.Sprintf("extra-%d", id), fmt.Sprintf("Valor%d", id))
+            time.Sleep(5 * time.Millisecond)
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Todas las operaciones de caché completadas")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 11: TIP: NO OLVIDES UNLOCK EN TODOS LOS CAMINOS
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "errors"
+    "fmt"
+    "sync"
+)
+
+func ejemploError() error {
+    var mu sync.Mutex
+    mu.Lock()
+
+    // Peligro: si hay un return antes de Unlock
+    if true {
+        return errors.New("error") // Fuga: el lock nunca se libera
+    }
+
+    mu.Unlock()
+    return nil
+}
+
+func ejemploCorrecto() error {
+    var mu sync.Mutex
+    mu.Lock()
+    defer mu.Unlock() // Siempre se libera
+
+    if true {
+        return errors.New("error") // defer ejecuta Unlock
+    }
+
+    return nil
+}
+
+func main() {
+    // Este ejemplo ilustra la importancia del defer
+    fmt.Println("Siempre usa defer para garantizar Unlock")
+    fmt.Println("ejemploCorrecto():", ejemploCorrecto())
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 12: MUTEX CON CONDICIÓN DE CARRERA EN MAPA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+// Versión insegura: acceso a mapa sin protección
+func mapaInseguro() {
+    datos := make(map[int]int)
+    var wg sync.WaitGroup
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            datos[n] = n * 2 // Race: escritura concurrente en mapa
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Longitud mapa inseguro:", len(datos))
+}
+
+// Versión segura: acceso con mutex
+func mapaSeguro() {
+    var (
+        mu    sync.Mutex
+        datos = make(map[int]int)
+        wg    sync.WaitGroup
+    )
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            mu.Lock()
+            datos[n] = n * 2
+            mu.Unlock()
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("Longitud mapa seguro:", len(datos))
+}
+
+func main() {
+    // mapaInseguro() // Descomenta para ver el race (ejecuta con -race)
+    mapaSeguro()
+    fmt.Println("Versión segura completada sin races")
+}
+```
+
+Nota: los mapas en Go NO son seguros para concurrencia. Siempre protégelos.
+
+----------------------------------------------------------------------
+  EJEMPLO 13: TRY-LOCK CON CANAL (ALTERNATIVA A MUTEX)
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type TryLock struct {
+    ch chan struct{}
+}
+
+func NewTryLock() *TryLock {
+    return &TryLock{ch: make(chan struct{}, 1)}
+}
+
+func (l *TryLock) Lock() {
+    l.ch <- struct{}{}
+}
+
+func (l *TryLock) Unlock() {
+    <-l.ch
+}
+
+func (l *TryLock) TryLock() bool {
+    select {
+    case l.ch <- struct{}{}:
+        return true
+    default:
+        return false
+    }
+}
+
+func main() {
+    lock := NewTryLock()
+    var wg sync.WaitGroup
+
+    for i := 0; i < 5; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+
+            if lock.TryLock() {
+                fmt.Printf("Gorutina %d ADQUIRIÓ el lock\n", id)
+                time.Sleep(100 * time.Millisecond)
+                lock.Unlock()
+                fmt.Printf("Gorutina %d LIBERÓ el lock\n", id)
+            } else {
+                fmt.Printf("Gorutina %d NO pudo adquirir el lock\n", id)
+            }
+        }(i)
+    }
+
+    wg.Wait()
+    fmt.Println("TryLock demostrado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 14: READER-WRITER CON PRIORIDAD DE ESCRITURA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type RWPriority struct {
+    mu     sync.Mutex
+    readers int
+    writer  bool
+    cond    *sync.Cond
+}
+
+func NewRWPriority() *RWPriority {
+    return &RWPriority{cond: sync.NewCond(&sync.Mutex{})}
+}
+
+func (rw *RWPriority) BeginRead() {
+    rw.cond.L.Lock()
+    for rw.writer {
+        rw.cond.Wait()
+    }
+    rw.readers++
+    rw.cond.L.Unlock()
+}
+
+func (rw *RWPriority) EndRead() {
+    rw.cond.L.Lock()
+    rw.readers--
+    if rw.readers == 0 {
+        rw.cond.Broadcast()
+    }
+    rw.cond.L.Unlock()
+}
+
+func (rw *RWPriority) BeginWrite() {
+    rw.cond.L.Lock()
+    for rw.writer || rw.readers > 0 {
+        rw.cond.Wait()
+    }
+    rw.writer = true
+    rw.cond.L.Unlock()
+}
+
+func (rw *RWPriority) EndWrite() {
+    rw.cond.L.Lock()
+    rw.writer = false
+    rw.cond.Broadcast()
+    rw.cond.L.Unlock()
+}
+
+func main() {
+    rw := NewRWPriority()
+    var wg sync.WaitGroup
+
+    // Lectores
+    for i := 0; i < 3; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            rw.BeginRead()
+            fmt.Printf("Lector %d leyendo...\n", id)
+            time.Sleep(100 * time.Millisecond)
+            rw.EndRead()
+            fmt.Printf("Lector %d terminó\n", id)
+        }(i)
+    }
+
+    // Escritor
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        time.Sleep(20 * time.Millisecond)
+        rw.BeginWrite()
+        fmt.Println("Escritor escribiendo...")
+        time.Sleep(200 * time.Millisecond)
+        rw.EndWrite()
+        fmt.Println("Escritor terminó")
+    }()
+
+    wg.Wait()
+    fmt.Println("Reader-Writer con prioridad demostrado")
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 15: MUTEX EVITA RACE EN SUMATORIA
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var (
+        mu sync.Mutex
+        total int
+        wg sync.WaitGroup
+    )
+
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            mu.Lock()
+            total += n
+            mu.Unlock()
+        }(i)
+    }
+
+    wg.Wait()
+    // Con 0..999, la suma es 999*1000/2 = 499500
+    fmt.Printf("Total esperado: %d, obtenido: %d\n", 499500, total)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 16: MUTEX ANÓNIMO EN FUNCIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var wg sync.WaitGroup
+    contador := 0
+
+    // Mutex encapsulado en el closure
+    incrementar := func() {
+        var mu sync.Mutex
+        mu.Lock()
+        contador++
+        mu.Unlock()
+    }
+
+    // Esto tiene un bug: cada gorutina tiene su propio mutex
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            incrementar() // No protege realmente
+        }()
+    }
+
+    wg.Wait()
+    fmt.Println("Contador (mal protegido):", contador)
+}
+
+// Versión correcta:
+func correcto() {
+    var (
+        mu sync.Mutex
+        wg sync.WaitGroup
+        contador int
+    )
+
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            contador++
+            mu.Unlock()
+        }()
+    }
+
+    wg.Wait()
+    fmt.Println("Contador (bien protegido):", contador)
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 17: MUTEX Y SLICE — APPEND CON PROTECCIÓN
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type ListaSync struct {
+    mu    sync.Mutex
+    items []interface{}
+}
+
+func (l *ListaSync) Add(item interface{}) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    l.items = append(l.items, item)
+}
+
+func (l *ListaSync) GetAll() []interface{} {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    result := make([]interface{}, len(l.items))
+    copy(result, l.items)
+    return result
+}
+
+func main() {
+    var lista ListaSync
+    var wg sync.WaitGroup
+
+    for i := 0; i < 50; i++ {
+        wg.Add(1)
+        go func(n int) {
+            defer wg.Done()
+            lista.Add(fmt.Sprintf("item-%d", n))
+            time.Sleep(1 * time.Millisecond)
+        }(i)
+    }
+
+    wg.Wait()
+
+    items := lista.GetAll()
+    fmt.Printf("Total items: %d\n", len(items))
+    for _, item := range items[:10] {
+        fmt.Println(" ", item)
+    }
+    if len(items) > 10 {
+        fmt.Printf("  ... y %d más\n", len(items)-10)
+    }
+}
+```
+
+----------------------------------------------------------------------
+  EJEMPLO 18: COMPARACIÓN RENDIMIENTO MUTEX vs ATOMIC
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+func benchmarkMutex(iteraciones int) time.Duration {
+    var (
+        mu  sync.Mutex
+        val int64
+        wg  sync.WaitGroup
+    )
+
+    inicio := time.Now()
+    for i := 0; i < iteraciones; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            val++
+            mu.Unlock()
+        }()
+    }
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func benchmarkAtomic(iteraciones int) time.Duration {
+    var (
+        val int64
+        wg  sync.WaitGroup
+    )
+
+    inicio := time.Now()
+    for i := 0; i < iteraciones; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            atomic.AddInt64(&val, 1)
+        }()
+    }
+    wg.Wait()
+    return time.Since(inicio)
+}
+
+func main() {
+    n := 10000
+    fmt.Printf("Benchmark %d operaciones:\n", n)
+    fmt.Printf("Mutex:  %v\n", benchmarkMutex(n))
+    fmt.Printf("Atomic: %v\n", benchmarkAtomic(n))
+}
+```
+
+Atomic es significativamente más rápido para operaciones simples.
+
+----------------------------------------------------------------------
+  EJEMPLO 19: DETECCIÓN DE RACE CON EL DETECTOR
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func main() {
+    var (
+        mu sync.Mutex
+        contador int
+        wg sync.WaitGroup
+    )
+
+    // Protegido - sin race
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            mu.Lock()
+            contador++
+            mu.Unlock()
+        }()
+    }
+    wg.Wait()
+    fmt.Println("Parte 1 (protegida):", contador)
+
+    // Sin protección - con race (detectable con -race)
+    contador = 0
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            contador++ // Race aquí
+        }()
+    }
+    wg.Wait()
+    fmt.Println("Parte 2 (sin protección):", contador)
+}
+```
+
+Ejecuta: go run -race main.go
+
+El detector marcará la segunda parte como race condition.
+
+----------------------------------------------------------------------
+  EJEMPLO 20: SÍNTESIS — SISTEMA DE NOTIFICACIONES CON MUTEX
+----------------------------------------------------------------------
+
+```go
+package main
+
+import (
+    "fmt"
+    "sync"
+    "time"
+)
+
+type Notificacion struct {
+    Usuario  string
+    Mensaje  string
+    Leida    bool
+}
+
+type SistemaNotificaciones struct {
+    mu     sync.RWMutex
+    notifs map[string][]Notificacion
+}
+
+func NewSistema() *SistemaNotificaciones {
+    return &SistemaNotificaciones{
+        notifs: make(map[string][]Notificacion),
+    }
+}
+
+func (s *SistemaNotificaciones) Enviar(usuario, mensaje string) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    notif := Notificacion{
+        Usuario: usuario,
+        Mensaje: mensaje,
+        Leida:   false,
+    }
+    s.notifs[usuario] = append(s.notifs[usuario], notif)
+    fmt.Printf("[SISTEMA] Nueva notif para %s: %s\n", usuario, mensaje)
+}
+
+func (s *SistemaNotificaciones) Pendientes(usuario string) int {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+
+    count := 0
+    for _, n := range s.notifs[usuario] {
+        if !n.Leida {
+            count++
+        }
+    }
+    return count
+}
+
+func (s *SistemaNotificaciones) MarcarLeidas(usuario string) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    for i := range s.notifs[usuario] {
+        s.notifs[usuario][i].Leida = true
+    }
+    fmt.Printf("[SISTEMA] Notificaciones de %s marcadas como leídas\n", usuario)
+}
+
+func (s *SistemaNotificaciones) Estadisticas() map[string]int {
+    s.mu.RLock()
+    defer s.mu.RUnlock()
+
+    stats := make(map[string]int)
+    for usuario, notifs := range s.notifs {
+        stats[usuario] = len(notifs)
+    }
+    return stats
+}
+
+func main() {
+    sistema := NewSistema()
+    var wg sync.WaitGroup
+
+    // Productores de notificaciones
+    for i := 0; i < 20; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            usuarios := []string{"Alice", "Bob", "Charlie"}
+            usuario := usuarios[id%3]
+            sistema.Enviar(usuario, fmt.Sprintf("Notificación #%d", id))
+            time.Sleep(10 * time.Millisecond)
+        }(i)
+    }
+
+    wg.Wait()
+
+    // Consultas concurrentes
+    for i := 0; i < 10; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            usuarios := []string{"Alice", "Bob", "Charlie"}
+            usuario := usuarios[id%3]
+            pendientes := sistema.Pendientes(usuario)
+            fmt.Printf("[CONSULTA] %s tiene %d notifs pendientes\n",
+                usuario, pendientes)
+        }(i)
+    }
+
+    wg.Wait()
+
+    // Marcar leídas
+    sistema.MarcarLeidas("Alice")
+    sistema.MarcarLeidas("Bob")
+
+    fmt.Printf("\nEstadísticas finales: %v\n", sistema.Estadisticas())
+    fmt.Println("Sistema de notificaciones completado")
+}
+```
+
+══════════════════════════════════════════════════════════════════════════════
+  RESUMEN DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  • sync.Mutex proporciona exclusión mutua con Lock/Unlock.
+  • Usa defer Unlock para garantizar la liberación del lock.
+  • sync.RWMutex permite lecturas concurrentes y escritura exclusiva.
+  • RLock/RUnlock para lecturas; Lock/Unlock para escrituras.
+  • Los mutex no son reentrantes: una gorutina no puede Lock() dos veces.
+  • Los mapas en Go no son seguros para concurrencia; deben protegerse.
+  • El race detector (-race) es esencial para encontrar bugs.
+  • Ordena los locks para evitar deadlocks en múltiples mutex.
+  • RWMutex es óptimo cuando las lecturas dominan a las escrituras.
+  • Para operaciones simples, atomic es más rápido que mutex.
+
+══════════════════════════════════════════════════════════════════════════════
+  EJERCICIOS DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+1. BÁSICO — Crea un contador seguro con Mutex. Increméntalo 1000 veces
+   desde 10 gorutinas concurrentes. Verifica el resultado.
+
+2. INTERMEDIO — Implementa una cola segura para concurrencia usando Mutex.
+   Debe soportar Push, Pop, Len. Pruébala con múltiples gorutinas.
+
+3. AVANZADO — Implementa un RWMutex manual usando sync.Mutex y variables
+   de condición con sync.Cond. Debe soportar múltiples lectores.
+
+4. BÁSICO — Ejecuta el Ejemplo 1 con y sin -race. Observa la diferencia.
+
+5. INTERMEDIO — Crea una estructura CuentaBancaria con Mutex que soporte
+   Depósito, Retiro y Transferencia. Evita deadlocks en transferencias.
+
+6. AVANZADO — Compara el rendimiento de Mutex vs RWMutex en un escenario
+   con 90% lecturas y 10% escrituras usando 100 gorutinas.
+
+7. INTERMEDIO — Implementa un TryLock usando un canal con buffer 1.
+   Debe permitir intentar adquirir el lock sin bloquearse.
+
+8. AVANZADO — Crea un sistema de caché con RWMutex que expire entradas
+   después de un tiempo (TTL). Debe ser seguro para concurrencia.
+
+9. BÁSICO — Demuestra un deadlock con dos mutex y dos gorutinas.
+   Luego corrígelo ordenando los locks.
+
+10. INTERMEDIO — Implementa el patrón "thread-safe singleton" usando
+    sync.Once en lugar de Mutex para inicialización perezosa.
+
+══════════════════════════════════════════════════════════════════════════════
+  FAQ — PREGUNTAS FRECUENTES
+══════════════════════════════════════════════════════════════════════════════
+
+❓ ¿Qué es más rápido, Mutex o channel?
+R: Mutex es generalmente más rápido para proteger acceso a datos. Channels
+tienen más overhead porque implican sincronización y copia de datos.
+
+❓ ¿Puedo copiar un sync.Mutex?
+R: No. sync.Mutex no debe copiarse después de su primer uso. Siempre pasa
+por puntero.
+
+❓ ¿Por qué mi programa se bloquea (deadlock) con Mutex?
+R: Probablemente porque la misma gorutina intenta Lock() dos veces, o
+dos gorutinas se esperan mutuamente con dos mutex diferentes.
+
+❓ ¿Qué es el race detector?
+R: Es una herramienta de Go que detecta accesos concurrentes a datos
+compartidos. Se activa con go run -race o go test -race.
+
+❓ ¿Debo usar Mutex o RWMutex?
+R: RWMutex es mejor si tienes muchas lecturas y pocas escrituras. Para
+cargas balanceadas o con muchas escrituras, Mutex es suficiente.
+
+❓ ¿Puedo usar Mutex en una función sin estructura?
+R: Sí, pero asegúrate de que sea accesible desde todas las gorutinas.
+Un Mutex declarado dentro de una función y usado por gorutinas hijas
+funciona correctamente.
+
+❓ ¿Cómo evito deadlocks con múltiples mutex?
+R: Siempre adquiere los locks en el mismo orden en todas las gorutinas.
+Es la regla de oro para evitar deadlocks.
+
+❓ ¿Qué pasa si olvido Unlock?
+R: El mutex nunca se libera, causando que todas las demás gorutinas se
+bloqueen para siempre. Usa defer para evitarlo.
+
+❓ ¿El Mutex protege contra lecturas concurrentes?
+R: Mutex permite solo una gorutina a la vez, sea lectura o escritura.
+Para permitir múltiples lectores usa RWMutex.
+
+❓ ¿Puedo tener un Mutex global?
+R: Sí, pero es mejor encapsularlo en la estructura que protege. Los mutex
+globales son propensos a errores y difíciles de mantener.
+
+══════════════════════════════════════════════════════════════════════════════
+  DESAFÍO DEL ARQUITECTO
+══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DESAFÍO: SISTEMA DE RESERVAS DE VUELOS                                  │
+│                                                                          │
+│  Diseña un sistema concurrente de reservas de vuelos que use Mutex      │
+│  y RWMutex para proteger la integridad de los datos.                    │
+│                                                                          │
+│  ESPECIFICACIONES:                                                       │
+│  • 10 vuelos, cada uno con capacidad entre 50 y 200 asientos.           │
+│  • 100 clientes intentan reservar asientos concurrentemente.            │
+│  • Cada cliente intenta reservar entre 1 y 3 asientos en un vuelo       │
+│    aleatorio. Si no hay suficientes, la reserva se rechaza.             │
+│  • Los clientes también pueden consultar disponibilidad.                │
+│                                                                          │
+│  COMPONENTES:                                                            │
+│  1. Vuelo: ID, Origen, Destino, Capacidad, AsientosReservados          │
+│     Protegido con Mutex individual.                                     │
+│                                                                          │
+│  2. SistemaReservas: Map de vuelos protegido con RWMutex.              │
+│     - Reservar(vueloID, cantidad) → éxito/fallo                        │
+│     - Consultar(vueloID) → asientos disponibles                        │
+│     - Estadísticas() → resumen global                                   │
+│                                                                          │
+│  3. Clientes: 100 gorutinas que:                                        │
+│     - Consultan disponibilidad de un vuelo aleatorio                   │
+│     - Intentan reservar                                                │
+│     - Reportan éxito o fallo                                           │
+│                                                                          │
+│  4. Reporte final:                                                      │
+│     - Total reservas exitosas y fallidas                               │
+│     - Porcentaje de ocupación por vuelo                                │
+│     - Vuelo más y menos reservado                                      │
+│     - Tiempo total de procesamiento                                    │
+│                                                                          │
+│  REQUISITOS:                                                             │
+│  • Usa RWMutex para el mapa de vuelos.                                 │
+│  • Usa Mutex individual para cada vuelo.                               │
+│  • Implementa el patrón de doble lock: primero el global (lectura),    │
+│    luego el individual del vuelo (escritura).                          │
+│  • Usa WaitGroup para coordinar a los clientes.                        │
+│  • Ejecuta con -race para verificar que no hay condiciones de carrera. │
+│  • Documenta tu diseño y decisión de locks.                            │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Este desafío integra Mutex, RWMutex, WaitGroup y diseño de sistemas
+concurrentes con estado compartido protegido. Es un caso realista de
+un sistema de reservas.
+
+══════════════════════════════════════════════════════════════════════════════
+  CIERRE DEL CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+Has dominado sync.Mutex y sync.RWMutex, las herramientas de exclusión mutua
+en Go. Ahora entiendes cómo proteger secciones críticas, cómo evitar
+condiciones de carrera, y cómo elegir entre Mutex y RWMutex según el patrón
+de acceso.
+
+Recuerda: la filosofía de Go favorece los channels para la comunicación,
+pero los mutex son la herramienta correcta cuando necesitas proteger estado
+compartido. La sabiduría está en saber cuál usar en cada situación.
+
+En el próximo capítulo exploraremos sync/atomic, que ofrece operaciones
+atómicas de bajo nivel para tipos básicos. Las operaciones atómicas son
+aún más ligeras que los mutex para casos simples como contadores y flags.
+
+"Un mutex bien usado es invisible; uno mal usado, paraliza el sistema."
+— Go Master
+
+══════════════════════════════════════════════════════════════════════════════
+  SIGUIENTE CAPÍTULO
+══════════════════════════════════════════════════════════════════════════════
+
+  ➡ CAPÍTULO 48: ATOMIC → Operaciones atómicas sin locks
+
+══════════════════════════════════════════════════════════════════════════════

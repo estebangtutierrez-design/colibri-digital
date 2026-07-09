@@ -1,0 +1,1013 @@
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##
+##                     PHP MASTER BOOK
+##
+##                         MÓDULO VIII
+##
+##                        CAPÍTULO 74
+##
+##                      OPTIMIZACIÓN
+##
+################################################################################
+################################################################################
+
+"El código lento es un enemigo silencioso. No falla, no avisa, solo
+frustra. Optimiza antes de que tus usuarios te abandonen."
+                                   — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido optimizador, bienvenido a uno de los capítulos más valiosos de todo
+el PHP Master Book. Una aplicación puede tener la mejor arquitectura y el
+código más limpio del mundo, pero si tarda 10 segundos en cargar, los
+usuarios se irán.
+
+La optimización no es un lujo; es una necesidad competitiva. Google ha
+demostrado que el 53% de los usuarios abandonan un sitio si tarda más de
+3 segundos en cargar. Cada milisegundo cuenta.
+
+En este capítulo aprenderás técnicas de optimización a todos los niveles:
+desde consultas SQL eficientes y caché con Redis, hasta optimización del
+código PHP, compresión de respuestas y estrategias de precarga. No se trata
+de hacer micro-optimizaciones sin sentido, sino de identificar y resolver
+los cuellos de botella reales.
+
+Recuerda la primera regla de la optimización: MIDE antes de optimizar. Sin
+datos, solo estás adivinando.
+
+===============================================================================
+FRASE MOTIVADORA
+===============================================================================
+
+"La optimización prematura es la raíz de todos los males. Pero la
+optimización informada es la madre de la eficiencia."
+                               — Profesor Búho AI
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+Al finalizar este capítulo serás capaz de:
+
+✓ Identificar cuellos de botella en aplicaciones PHP usando profiling.
+✓ Optimizar consultas SQL con índices, EXPLAIN y joins eficientes.
+✓ Implementar sistemas de caché con Redis y Memcached.
+✓ Utilizar técnicas de caché en PHP: opcache, APCu y caché de consultas.
+✓ Optimizar el frontend con compresión, minificación y lazy loading.
+✓ Configurar servidores web para máximo rendimiento (PHP-FPM, Nginx).
+✓ Implementar estrategias de escalabilidad horizontal y vertical.
+
+===============================================================================
+1. PROFILING Y DIAGNÓSTICO
+===============================================================================
+
+Antes de optimizar, debemos medir. PHP ofrece herramientas de profiling
+que nos permiten identificar exactamente dónde se está yendo el tiempo.
+
+```php
+<?php
+// src/Helpers/Profiler.php - Profiler simple para medir rendimiento
+declare(strict_types=1);
+
+namespace App\Helpers;
+
+class Profiler
+{
+    private static array $marks = [];
+    private static array $queries = [];
+
+    public static function start(string $label = 'init'): void
+    {
+        self::$marks[$label] = [
+            'time' => microtime(true),
+            'memory' => memory_get_usage(),
+        ];
+    }
+
+    public static function stop(string $label): float
+    {
+        if (!isset(self::$marks[$label])) {
+            return 0;
+        }
+
+        $start = self::$marks[$label];
+        $time = microtime(true) - $start['time'];
+        $memory = memory_get_usage() - $start['memory'];
+
+        self::$marks[$label . '_elapsed'] = [
+            'time' => $time,
+            'memory' => $memory,
+        ];
+
+        return $time;
+    }
+
+    public static function addQuery(string $sql, float $time, array $params = []): void
+    {
+        self::$queries[] = [
+            'sql' => $sql,
+            'params' => $params,
+            'time' => $time,
+            'time_ms' => round($time * 1000, 2),
+        ];
+    }
+
+    public static function getReport(): array
+    {
+        $totalTime = 0;
+        $totalMemory = 0;
+
+        $marks = [];
+        foreach (self::$marks as $key => $value) {
+            if (str_ends_with($key, '_elapsed')) {
+                $marks[str_replace('_elapsed', '', $key)] = $value;
+                $totalTime += $value['time'];
+                $totalMemory += $value['memory'];
+            }
+        }
+
+        return [
+            'total_time' => round($totalTime * 1000, 2) . ' ms',
+            'total_memory' => self::formatBytes($totalMemory),
+            'marks' => $marks,
+            'queries' => self::$queries,
+            'query_count' => count(self::$queries),
+            'query_total_time' => round(array_sum(array_column(self::$queries, 'time')) * 1000, 2) . ' ms',
+            'php_version' => PHP_VERSION,
+            'memory_limit' => ini_get('memory_limit'),
+            'max_execution_time' => ini_get('max_execution_time'),
+        ];
+    }
+
+    public static function printReport(): void
+    {
+        if (($_ENV['APP_ENV'] ?? 'production') !== 'development') {
+            return;
+        }
+
+        $report = self::getReport();
+        echo "<!-- PROFILER REPORT -->\n";
+        echo "<!-- Tiempo total: {$report['total_time']} -->\n";
+        echo "<!-- Memoria total: {$report['total_memory']} -->\n";
+        echo "<!-- Consultas: {$report['query_count']} ({$report['query_total_time']}) -->\n";
+
+        foreach ($report['queries'] as $q) {
+            echo "<!-- SQL: {$q['sql']} ({$q['time_ms']}ms) -->\n";
+        }
+    }
+
+    private static function formatBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = 0;
+        while ($bytes >= 1024 && $i < count($units) - 1) {
+            $bytes /= 1024;
+            $i++;
+        }
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+}
+?>
+```
+
+```php
+<?php
+// Uso del Profiler en un controlador
+use App\Helpers\Profiler;
+
+class ProductoController
+{
+    public function index(): void
+    {
+        Profiler::start('controller');
+
+        Profiler::start('database_query');
+        $productos = $this->productoRepo->findAll();
+        Profiler::stop('database_query');
+
+        Profiler::start('json_encode');
+        $response = json_encode($productos);
+        Profiler::stop('json_encode');
+
+        Profiler::stop('controller');
+        Profiler::printReport();
+
+        echo $response;
+    }
+}
+?>
+```
+
+===============================================================================
+2. OPTIMIZACIÓN DE CONSULTAS SQL
+===============================================================================
+
+Las consultas SQL son la causa más común de cuellos de botella. Optimizarlas
+puede reducir los tiempos de respuesta drásticamente.
+
+```sql
+-- 1. Usar EXPLAIN para analizar consultas
+EXPLAIN SELECT p.*, c.nombre as categoria
+FROM productos p
+LEFT JOIN categorias c ON p.categoria_id = c.id
+WHERE p.precio > 1000 AND p.activo = 1
+ORDER BY p.nombre
+LIMIT 20;
+
+/*
+Resultado esperado después de optimizar:
+- type: ref (en lugar de ALL)
+- possible_keys: idx_productos_precio, idx_productos_activo
+- key: idx_productos_precio
+- rows: 50 (en lugar de 10000)
+- Extra: Using where; Using index
+*/
+
+-- 2. Crear índices compuestos para consultas frecuentes
+CREATE INDEX idx_productos_busqueda
+ON productos(activo, precio, nombre);
+
+-- 3. Evitar SELECT * en producción
+-- MAL:
+SELECT * FROM productos WHERE activo = 1;
+
+-- BIEN:
+SELECT id, nombre, precio, stock FROM productos WHERE activo = 1;
+
+-- 4. Usar LIMIT y paginación correctamente
+-- MAL (carga todo):
+$productos = $db->query("SELECT * FROM productos")->fetchAll();
+
+-- BIEN (paginado):
+$productos = $db->prepare(
+    "SELECT * FROM productos LIMIT :limit OFFSET :offset"
+);
+
+-- 5. Evitar funciones en WHERE (no usan índices)
+-- MAL:
+SELECT * FROM productos WHERE DATE(created_at) = '2024-01-01';
+
+-- BIEN:
+SELECT * FROM productos
+WHERE created_at >= '2024-01-01'
+  AND created_at < '2024-01-02';
+
+-- 6. Usar JOIN en lugar de subconsultas cuando sea posible
+-- MAL (subconsulta):
+SELECT p.*,
+    (SELECT nombre FROM categorias WHERE id = p.categoria_id) as categoria
+FROM productos p;
+
+-- BIEN (JOIN):
+SELECT p.*, c.nombre as categoria
+FROM productos p
+LEFT JOIN categorias c ON p.categoria_id = c.id;
+```
+
+```php
+<?php
+// src/Core/Database.php - Añadir logging de consultas lentas
+declare(strict_types=1);
+
+namespace App\Core;
+
+class Database
+{
+    private static ?Database $instance = null;
+    private PDO $pdo;
+    private array $slowQueries = [];
+    private float $slowQueryThreshold = 0.1; // 100ms
+
+    private function __construct() { /* ... */ }
+
+    public function execute(string $sql, array $params = []): \PDOStatement
+    {
+        $start = microtime(true);
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $elapsed = microtime(true) - $start;
+
+        if ($elapsed > $this->slowQueryThreshold) {
+            $this->logSlowQuery($sql, $params, $elapsed);
+        }
+
+        if (class_exists('App\Helpers\Profiler')) {
+            \App\Helpers\Profiler::addQuery($sql, $elapsed, $params);
+        }
+
+        return $stmt;
+    }
+
+    private function logSlowQuery(string $sql, array $params, float $elapsed): void
+    {
+        $logFile = __DIR__ . '/../../storage/logs/slow_queries.log';
+        $message = sprintf(
+            "[%s] %.2fms | %s | Params: %s\n",
+            date('Y-m-d H:i:s'),
+            $elapsed * 1000,
+            $sql,
+            json_encode($params)
+        );
+        file_put_contents($logFile, $message, FILE_APPEND);
+    }
+}
+?>
+```
+
+===============================================================================
+3. CACHÉ CON REDIS
+===============================================================================
+
+Redis es un almacén de datos en memoria que puede reducir drásticamente los
+tiempos de respuesta al evitar consultas repetitivas a la base de datos.
+
+```php
+<?php
+// src/Core/Cache.php - Sistema de caché con Redis
+declare(strict_types=1);
+
+namespace App\Core;
+
+use Redis as RedisClient;
+
+class Cache
+{
+    private static ?Cache $instance = null;
+    private ?RedisClient $redis = null;
+    private bool $enabled = true;
+
+    private function __construct()
+    {
+        $this->enabled = ($_ENV['CACHE_ENABLED'] ?? 'true') === 'true';
+
+        if ($this->enabled) {
+            try {
+                $this->redis = new RedisClient();
+                $this->redis->connect(
+                    $_ENV['REDIS_HOST'] ?? '127.0.0.1',
+                    (int)($_ENV['REDIS_PORT'] ?? 6379),
+                    2.5 // timeout
+                );
+
+                if (!empty($_ENV['REDIS_PASSWORD'])) {
+                    $this->redis->auth($_ENV['REDIS_PASSWORD']);
+                }
+
+                $this->redis->select((int)($_ENV['REDIS_DB'] ?? 0));
+            } catch (\Exception $e) {
+                $this->enabled = false;
+                error_log("Redis no disponible: {$e->getMessage()}");
+            }
+        }
+    }
+
+    public static function getInstance(): self
+    {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    public function get(string $key, mixed $default = null): mixed
+    {
+        if (!$this->enabled) return $default;
+
+        $value = $this->redis->get($this->prefix($key));
+        return $value !== false ? unserialize($value) : $default;
+    }
+
+    public function set(string $key, mixed $value, int $ttl = 3600): bool
+    {
+        if (!$this->enabled) return false;
+
+        $key = $this->prefix($key);
+        return $this->redis->set($key, serialize($value), $ttl);
+    }
+
+    public function remember(string $key, int $ttl, callable $callback): mixed
+    {
+        $cached = $this->get($key);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $value = $callback();
+        $this->set($key, $value, $ttl);
+        return $value;
+    }
+
+    public function delete(string $key): bool
+    {
+        if (!$this->enabled) return false;
+        return $this->redis->del($this->prefix($key)) > 0;
+    }
+
+    public function flush(): bool
+    {
+        if (!$this->enabled) return false;
+        return $this->redis->flushDb();
+    }
+
+    private function prefix(string $key): string
+    {
+        $prefix = $_ENV['CACHE_PREFIX'] ?? 'php_master_';
+        return $prefix . $key;
+    }
+
+    private function __clone() {}
+    public function __wakeup()
+    {
+        throw new \Exception('No se puede deserializar un Singleton');
+    }
+}
+?>
+```
+
+```php
+<?php
+// Uso del sistema de caché en un repositorio
+use App\Core\Cache;
+
+class ProductoRepository
+{
+    public function findById(int $id): ?array
+    {
+        $cache = Cache::getInstance();
+        $cacheKey = "producto_{$id}";
+
+        // Intentar obtener del caché
+        $producto = $cache->get($cacheKey);
+        if ($producto !== null) {
+            return $producto;
+        }
+
+        // Consultar base de datos
+        $producto = $this->executeQuery(
+            "SELECT * FROM productos WHERE id = :id AND activo = 1",
+            ['id' => $id]
+        );
+
+        // Guardar en caché por 1 hora
+        if ($producto) {
+            $cache->set($cacheKey, $producto, 3600);
+        }
+
+        return $producto;
+    }
+
+    public function update(int $id, array $data): bool
+    {
+        $result = parent::update($id, $data);
+
+        // Invalidar caché
+        Cache::getInstance()->delete("producto_{$id}");
+
+        return $result;
+    }
+}
+?>
+```
+
+===============================================================================
+4. OPTIMIZACIÓN DE CÓDIGO PHP
+===============================================================================
+
+El código PHP puede optimizarse siguiendo buenas prácticas y aprovechando
+las características de PHP 8.x.
+
+```php
+<?php
+// 1. Usar OPcache (compilación de código en memoria)
+// En php.ini:
+/*
+opcache.enable=1
+opcache.memory_consumption=256
+opcache.interned_strings_buffer=16
+opcache.max_accelerated_files=10000
+opcache.revalidate_freq=2
+opcache.enable_cli=1
+*/
+
+// 2. Cache de cadenas internas
+// Las cadenas repetidas se almacenan una sola vez en memoria
+$nombre = 'PHP Master'; // Se almacena una vez
+$curso = 'PHP Master';  // Reutiliza la misma cadena
+
+// 3. Usar tipos estrictos
+declare(strict_types=1);
+
+// 4. Evitar funciones dentro de bucles
+// MAL:
+for ($i = 0; $i < count($array); $i++) { ... }
+
+// BIEN:
+$count = count($array);
+for ($i = 0; $i < $count; $i++) { ... }
+
+// 5. Usar array functions en lugar de bucles
+// MAL:
+$result = [];
+foreach ($items as $item) {
+    if ($item['activo']) {
+        $result[] = $item['nombre'];
+    }
+}
+
+// BIEN (más rápido y legible):
+$result = array_column(
+    array_filter($items, fn($i) => $i['activo']),
+    'nombre'
+);
+
+// 6. Usar match en lugar de switch (PHP 8)
+// MAL:
+switch ($status) {
+    case 'active': $color = 'green'; break;
+    case 'inactive': $color = 'gray'; break;
+    case 'pending': $color = 'yellow'; break;
+    default: $color = 'red';
+}
+
+// BIEN:
+$color = match($status) {
+    'active' => 'green',
+    'inactive' => 'gray',
+    'pending' => 'yellow',
+    default => 'red',
+};
+
+// 7. Evitar la creación de objetos en bucles
+// MAL:
+foreach ($items as $item) {
+    $validator = new Validator(); // Creación innecesaria
+    $validator->validate($item);
+}
+
+// BIEN:
+$validator = new Validator();
+foreach ($items as $item) {
+    $validator->validate($item);
+}
+
+// 8. Usar yield para grandes conjuntos de datos
+function generarUsuarios(int $count): Generator
+{
+    for ($i = 0; $i < $count; $i++) {
+        yield [
+            'id' => $i,
+            'nombre' => "Usuario {$i}",
+        ];
+    }
+}
+
+foreach (generarUsuarios(1000000) as $usuario) {
+    // Procesar uno por uno sin cargar todo en memoria
+}
+?>
+```
+
+===============================================================================
+5. COMPRESIÓN Y OPTIMIZACIÓN DE RESPUESTAS
+===============================================================================
+
+La compresión reduce el tamaño de las respuestas HTTP, mejorando los tiempos
+de carga, especialmente en conexiones lentas.
+
+```php
+<?php
+// src/Middleware/CompressionMiddleware.php
+declare(strict_types=1);
+
+namespace App\Middleware;
+
+use App\Core\Request;
+use App\Core\Response;
+
+class CompressionMiddleware
+{
+    private int $minLength = 1024; // Mínimo 1KB para comprimir
+    private int $level = 6; // Nivel de compresión (1-9)
+
+    public function handle(Request $request, callable $next): Response
+    {
+        $response = $next($request);
+
+        // Solo comprimir si el cliente lo acepta y la respuesta es suficientemente grande
+        $acceptsGzip = str_contains(
+            $request->getHeader('Accept-Encoding') ?? '',
+            'gzip'
+        );
+
+        if ($acceptsGzip && strlen($response->getBody()) > $this->minLength) {
+            $compressed = gzencode($response->getBody(), $this->level);
+
+            $response->setHeader('Content-Encoding', 'gzip');
+            $response->setHeader('Vary', 'Accept-Encoding');
+            $response->setBody($compressed);
+        }
+
+        return $response;
+    }
+}
+?>
+```
+
+```apache
+# .htaccess - Compresión Apache con mod_deflate
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml
+    AddOutputFilterByType DEFLATE text/css text/javascript
+    AddOutputFilterByType DEFLATE application/json application/javascript
+    AddOutputFilterByType DEFLATE application/xml application/xhtml+xml
+
+    # Excluir navegadores antiguos
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+
+    # No comprimir imágenes ya comprimidas
+    SetEnvIfNoCase Request_URI \.(?:gif|jpe?g|png)$ no-gzip dont-vary
+</IfModule>
+
+# Cache de archivos estáticos
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType text/javascript "access plus 1 month"
+</IfModule>
+```
+
+===============================================================================
+6. OPTIMIZACIÓN DE PHP-FPM
+===============================================================================
+
+PHP-FPM (FastCGI Process Manager) es la forma recomendada de ejecutar PHP
+en producción. Su configuración impacta directamente en el rendimiento.
+
+```ini
+; /etc/php/8.1/fpm/pool.d/www.conf
+
+; Número de procesos hijos
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+pm.max_requests = 500
+
+; Timeouts
+request_terminate_timeout = 30s
+request_slowlog_timeout = 5s
+slowlog = /var/log/php/fpm-slow.log
+
+; Límites de recursos
+pm.max_requests = 1000
+request_terminate_timeout = 60
+```
+
+```php
+<?php
+// public/index.php - Configuración de rendimiento al inicio
+declare(strict_types=1);
+
+// Configurar zona horaria
+date_default_timezone_set('America/Mexico_City');
+
+// Configurar manejo de errores (no mostrar en producción)
+if (($_ENV['APP_ENV'] ?? 'production') === 'production') {
+    error_reporting(0);
+    ini_set('display_errors', '0');
+} else {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+}
+
+// Configurar límites
+ini_set('memory_limit', '256M');
+ini_set('max_execution_time', '30');
+ini_set('upload_max_filesize', '10M');
+ini_set('post_max_size', '12M');
+
+// Iniciar sesión solo si es necesario
+if (session_status() === PHP_SESSION_NONE && !str_contains($_SERVER['REQUEST_URI'], '/api/')) {
+    session_start();
+}
+
+// Búfer de salida
+ob_start('ob_gzhandler');
+
+// ... resto del front controller
+?>
+```
+
+===============================================================================
+7. ESTRATEGIAS DE CACHÉ AVANZADAS
+===============================================================================
+
+```php
+<?php
+// src/Services/CacheService.php - Estrategias de caché múltiples
+declare(strict_types=1);
+
+namespace App\Services;
+
+class CacheService
+{
+    private const TIERS = ['redis', 'apcu', 'file'];
+
+    public function get(string $key, mixed $default = null): mixed
+    {
+        foreach (self::TIERS as $tier) {
+            $result = $this->getFromTier($tier, $key);
+            if ($result !== null) {
+                // Popular cachés de nivel superior
+                $this->propagateToUpperTiers($tier, $key, $result);
+                return $result;
+            }
+        }
+        return $default;
+    }
+
+    public function set(string $key, mixed $value, int $ttl = 3600): void
+    {
+        // Guardar en todos los niveles
+        $this->redisSet($key, $value, $ttl);
+        $this->apcuSet($key, $value, $ttl);
+        $this->fileSet($key, $value, $ttl);
+    }
+
+    public function invalidate(string $key): void
+    {
+        // Invalidar en todos los niveles
+        foreach (self::TIERS as $tier) {
+            $this->deleteFromTier($tier, $key);
+        }
+    }
+
+    public function invalidateByPattern(string $pattern): void
+    {
+        foreach (self::TIERS as $tier) {
+            $this->deleteByPatternFromTier($tier, $pattern);
+        }
+    }
+
+    private function propagateToUpperTiers(
+        string $currentTier,
+        string $key,
+        mixed $value
+    ): void {
+        $currentIndex = array_search($currentTier, self::TIERS);
+        for ($i = $currentIndex - 1; $i >= 0; $i--) {
+            $this->setInTier(self::TIERS[$i], $key, $value, 3600);
+        }
+    }
+
+    private function getFromTier(string $tier, string $key): mixed
+    {
+        return match ($tier) {
+            'redis' => $this->redisGet($key),
+            'apcu' => $this->apcuGet($key),
+            'file' => $this->fileGet($key),
+            default => null,
+        };
+    }
+
+    private function setInTier(string $tier, string $key, mixed $value, int $ttl): void
+    {
+        match ($tier) {
+            'redis' => $this->redisSet($key, $value, $ttl),
+            'apcu' => $this->apcuSet($key, $value, $ttl),
+            'file' => $this->fileSet($key, $value, $ttl),
+            default => null,
+        };
+    }
+
+    private function redisGet(string $key): mixed
+    {
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379);
+            $value = $redis->get($key);
+            return $value !== false ? unserialize($value) : null;
+        } catch (\Exception) {
+            return null;
+        }
+    }
+
+    private function redisSet(string $key, mixed $value, int $ttl): void
+    {
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379);
+            $redis->setex($key, $ttl, serialize($value));
+        } catch (\Exception) {
+            // Silencioso
+        }
+    }
+
+    private function apcuGet(string $key): mixed
+    {
+        if (!function_exists('apcu_fetch')) return null;
+        $result = apcu_fetch($key, $success);
+        return $success ? $result : null;
+    }
+
+    private function apcuSet(string $key, mixed $value, int $ttl): void
+    {
+        if (!function_exists('apcu_store')) return;
+        apcu_store($key, $value, $ttl);
+    }
+
+    private function fileGet(string $key): mixed
+    {
+        $file = $this->getFilePath($key);
+        if (!file_exists($file)) return null;
+
+        $data = file_get_contents($file);
+        $cached = unserialize($data);
+
+        if (time() > $cached['expires_at']) {
+            unlink($file);
+            return null;
+        }
+
+        return $cached['value'];
+    }
+
+    private function fileSet(string $key, mixed $value, int $ttl): void
+    {
+        $file = $this->getFilePath($key);
+        $dir = dirname($file);
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $data = serialize([
+            'value' => $value,
+            'expires_at' => time() + $ttl,
+            'created_at' => time(),
+        ]);
+
+        file_put_contents($file, $data, LOCK_EX);
+    }
+
+    private function getFilePath(string $key): string
+    {
+        $hash = md5($key);
+        $prefix = substr($hash, 0, 2);
+        return __DIR__ . "/../../storage/cache/{$prefix}/{$hash}.cache";
+    }
+
+    private function deleteFromTier(string $tier, string $key): void
+    {
+        match ($tier) {
+            'redis' => $this->redisDelete($key),
+            'apcu' => $this->apcuDelete($key),
+            'file' => $this->fileDelete($key),
+            default => null,
+        };
+    }
+
+    private function redisDelete(string $key): void
+    {
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379);
+            $redis->del($key);
+        } catch (\Exception) {}
+    }
+
+    private function apcuDelete(string $key): void
+    {
+        if (function_exists('apcu_delete')) {
+            apcu_delete($key);
+        }
+    }
+
+    private function fileDelete(string $key): void
+    {
+        $file = $this->getFilePath($key);
+        if (file_exists($file)) {
+            unlink($file);
+        }
+    }
+
+    private function deleteByPatternFromTier(string $tier, string $pattern): void
+    {
+        // Implementación específica para cada tier
+        // Redis: KEYS + DEL
+        // APCu: apcu_delete con prefijo
+        // File: glob + unlink
+    }
+}
+?>
+```
+
+===============================================================================
+RESUMEN DEL CAPÍTULO
+===============================================================================
+
+- Mide antes de optimizar. Usa profiling para identificar cuellos de botella
+  reales en lugar de optimizar suposiciones.
+- Las consultas SQL lentas son la causa más común de bajo rendimiento. Usa
+  EXPLAIN, índices compuestos y evita funciones en WHERE.
+- Redis proporciona caché en memoria ultrarrápida. Ideal para datos
+  consultados frecuentemente que cambian poco.
+- OPcache compila y almacena scripts PHP en memoria, eliminando la necesidad
+  de compilar en cada petición.
+- La compresión gzip reduce el tamaño de las respuestas HTTP hasta un 70%.
+- PHP-FPM debe configurarse según los recursos del servidor. El modo
+  dinámico (pm = dynamic) se adapta a la carga.
+- Las estrategias de caché multinivel (Redis + APCu + archivo) maximizan la
+  tasa de aciertos y minimizan la latencia.
+- Las funciones de array y match expression de PHP 8 son más rápidas y
+  legibles que los bucles tradicionales.
+
+===============================================================================
+EJERCICIOS DE PRÁCTICA
+===============================================================================
+
+🧩 **Ejercicio 1:** Implementa el Profiler en tu aplicación. Mide el tiempo
+de respuesta de 10 peticiones diferentes y crea un reporte.
+
+🧩 **Ejercicio 2:** Identifica la consulta SQL más lenta de tu aplicación
+usando EXPLAIN. Añade los índices necesarios y mide la mejora.
+
+🧩 **Ejercicio 3:** Instala Redis y configura el sistema de caché. Cachea
+la lista de productos por 5 minutos y verifica la reducción en tiempo de
+respuesta.
+
+🧩 **Ejercicio 4:** Configura OPcache en tu servidor PHP. Mide la mejora
+en tiempo de respuesta antes y después de activarlo.
+
+🧩 **Ejercicio 5:** Implementa un endpoint `/api/rendimiento` que devuelva
+el reporte completo del Profiler, incluyendo consultas lentas, uso de
+memoria y tiempo de ejecución.
+
+===============================================================================
+PREGUNTAS FRECUENTES
+===============================================================================
+
+❓ **¿Cuándo debo usar Redis en lugar de APCu?**
+Redis es un servidor externo, accesible desde múltiples servidores. APCu es
+caché local en memoria compartida. Usa Redis para caché compartida y APCu
+para datos locales de solo lectura.
+
+❓ **¿La optimización prematura es mala?**
+Sí. Primero escribe código limpio y correcto. Luego mide. Finalmente
+optimiza los cuellos de botella identificados. Optimizar sin datos es
+perder el tiempo.
+
+❓ **¿Cuántos índices debería tener una tabla?**
+Los índices necesarios, no más. Cada índice acelera las lecturas pero
+ralentiza las escrituras. Analiza tus consultas más frecuentes y crea
+índices solo para ellas.
+
+❓ **¿Debo usar always en lugar de dynamic en PHP-FPM?**
+Depende. `pm = dynamic` es mejor para la mayoría de casos porque ajusta
+los procesos según la carga. `pm = ondemand` es útil para sitios con poco
+tráfico.
+
+❓ **¿Cómo sé si mi caché está funcionando?**
+Mide el tiempo de respuesta con y sin caché. La tasa de aciertos debe ser
+superior al 80%. Redis proporciona el comando `INFO` para ver estadísticas.
+
+===============================================================================
+DESAFÍO DEL ARQUITECTO
+===============================================================================
+
+🏗️ **Arquitecto de Rendimiento** — Diseña una estrategia de optimización
+para una plataforma de e-learning que recibe 50,000 visitas diarias y
+almacena 10,000 videos educativos. Los principales problemas son: página de
+cursos tarda 8 segundos en cargar, reproductor de video tiene buffering
+constante, y las búsquedas de cursos tardan hasta 15 segundos. Diseña una
+solución completa que incluya: CDN para videos, caché Redis para catálogo
+de cursos, índices MySQL para búsquedas full-text, lazy loading para
+imágenes, precarga inteligente de videos, y optimización de assets.
+Además, propón una arquitectura de microservicios donde el catálogo, el
+reproductor y las búsquedas sean servicios independientes y escalables.
+
+===============================================================================
+FIN DEL CAPÍTULO 74
+===============================================================================
+
+"La optimización no es hacer que el código sea más rápido, sino eliminar lo
+que lo hace lento. A veces la mejor línea de código es la que borras."
+                               — Profesor Búho AI
+
+===============================================================================
+PRÓXIMO CAPÍTULO:
+75_CAPITULO_75_SEGURIDAD_AVANZADA.txt
+===============================================================================

@@ -1,0 +1,1565 @@
+================================================================================
+  C++ MASTER BOOK
+  MÓDULO VI: TEMPLATES Y EXCEPCIONES
+  CAPÍTULO 59: EXCEPCIONES Y ARCHIVOS
+================================================================================
+
+  "Los archivos y las excepciones son como el mar y el barco: las
+   excepciones son las tormentas, y un buen diseño RAII es el casco
+   que mantiene tu barco a flote."
+                                                   — C++ in the Real World
+
+================================================================================
+
+BIENVENIDA
+----------
+
+Bienvenido al capítulo donde convergen dos mundos: el manejo de archivos
+y el manejo de excepciones. Trabajar con archivos implica operaciones que
+pueden fallar de muchas formas: el archivo no existe, el disco está lleno,
+permisos denegados, formato inválido.
+
+Combinado con lo que hemos aprendido sobre RAII y excepciones, podemos
+escribir código de E/S que sea robusto, seguro, y que nunca deje recursos
+sin liberar. Además, exploraremos las garantías de seguridad de excepciones
+(basic, strong, nothrow) y cómo aplicarlas al trabajar con archivos.
+
+FRASE DEL CAPÍTULO
+------------------
+
+  "Un archivo abierto es un recurso. Una excepción no debería ser la
+   razón por la que ese recurso quede abierto para siempre."
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+
+  1. Combinar RAII con archivos para operaciones seguras.
+  2. Manejar excepciones en operaciones de E/S.
+  3. Entender las garantías de seguridad de excepciones.
+  4. Implementar la strong exception safety guarantee.
+  5. Conocer la basic guarantee y la nothrow guarantee.
+  6. Implementar operaciones de archivo atómicas.
+  7. Manejar errores de formato y corrupción.
+  8. Usar archivos temporales con RAII.
+  9. Implementar serialización segura.
+  10. Aplicar patrones de commit/rollback en archivos.
+
+================================================================================
+  INICIO DEL CAPÍTULO
+================================================================================
+
+1. EXCEPCIONES EN OPERACIONES DE ARCHIVOS
+------------------------------------------
+
+Las operaciones de archivo pueden lanzar:
+  - std::ios_base::failure (con excepciones habilitadas)
+  - std::bad_alloc (memoria insuficiente)
+  - std::runtime_error (errores generales)
+
+Para que fstream lance excepciones:
+
+  std::ifstream archivo;
+  archivo.exceptions(std::ios::failbit | std::ios::badbit);
+
+Sin esto, las operaciones fallan silenciosamente y debes verificar
+el estado manualmente.
+
+2. GARANTÍAS DE SEGURIDAD DE EXCEPCIONES
+------------------------------------------
+
+  Basic guarantee: si hay excepción, no hay fugas de recursos y el
+  programa queda en estado válido (aunque no especificado).
+
+  Strong guarantee: si hay excepción, el programa se revierte
+  completamente al estado anterior a la operación.
+
+  Nothrow guarantee: la operación nunca lanza excepciones.
+
+Aplicado a archivos:
+  - Basic: el archivo se cierra siempre.
+  - Strong: si falla la escritura, el archivo queda como estaba.
+  - Nothrow: operaciones que no interactúan con el sistema.
+
+3. ESCRITURA ATÓMICA CON ARCHIVOS TEMPORALES
+----------------------------------------------
+
+Para lograr strong guarantee al escribir un archivo:
+
+  1. Escribir a un archivo temporal.
+  2. Si todo sale bien, renombrar temporal -> definitivo.
+  3. Si falla, eliminar temporal.
+
+  void escribirSeguro(const std::string& archivo, const Datos& d) {
+      std::string tmp = archivo + ".tmp";
+      {
+          std::ofstream out(tmp);
+          if (!out) throw std::runtime_error("No se pudo crear tmp");
+          out << d;
+      }  // out se cierra aquí
+      std::filesystem::rename(tmp, archivo);
+  }
+
+4. ARCHIVOS TEMPORALES RAII
+-----------------------------
+
+  class ArchivoTemporal {
+      std::string nombre;
+      std::ofstream stream;
+  public:
+      ArchivoTemporal() {
+          nombre = std::tmpnam(nullptr);
+          stream.open(nombre);
+          if (!stream) throw std::runtime_error("No se pudo crear tmp");
+      }
+      ~ArchivoTemporal() noexcept {
+          stream.close();
+          std::remove(nombre.c_str());
+      }
+      std::ofstream& get() { return stream; }
+      const std::string& getNombre() const { return nombre; }
+  };
+
+5. LECTURA SEGURA CON VERIFICACIÓN
+------------------------------------
+
+  void leerDatos(const std::string& archivo, Datos& d) {
+      std::ifstream in(archivo);
+      in.exceptions(std::ios::failbit | std::ios::badbit);
+
+      try {
+          in >> d.campo1 >> d.campo2;
+          // Verificar formato
+          if (in.fail() || d.campo1 < 0) {
+              throw std::runtime_error("Formato invalido");
+          }
+      }
+      catch (...) {
+          // Cerrar archivo (RAII lo hace) y propagar
+          throw;
+      }
+  }
+
+6. SERIALIZACIÓN SEGURA
+------------------------
+
+  template <typename T>
+  void serializar(const T& obj, const std::string& archivo) {
+      std::string tmp = archivo + ".tmp";
+      std::ofstream out(tmp, std::ios::binary);
+      if (!out) throw std::runtime_error("No se pudo abrir " + tmp);
+
+      try {
+          out << obj;
+          out.close();
+          std::filesystem::rename(tmp, archivo);
+      }
+      catch (...) {
+          std::filesystem::remove(tmp);
+          throw;
+      }
+  }
+
+7. GESTIÓN DE ERRORES DE ARCHIVO
+----------------------------------
+
+  enum class ErrorArchivo {
+      OK,
+      NO_EXISTE,
+      PERMISO_DENEGADO,
+      DISCO_LLENO,
+      FORMATO_INVALIDO,
+      CORRUPTURA
+  };
+
+  class ExcepcionArchivo : public std::runtime_error {
+      ErrorArchivo codigo;
+  public:
+      ExcepcionArchivo(ErrorArchivo cod, const std::string& msg)
+          : std::runtime_error(msg), codigo(cod) {}
+      ErrorArchivo getCodigo() const { return codigo; }
+  };
+
+8. TRANSACCIONES CON ARCHIVOS
+-------------------------------
+
+  class TransaccionArchivo {
+      std::string archivoOriginal;
+      std::string archivoTemp;
+      bool confirmado = false;
+  public:
+      TransaccionArchivo(const std::string& orig)
+          : archivoOriginal(orig),
+            archivoTemp(orig + ".tmp") {}
+      ~TransaccionArchivo() noexcept {
+          if (!confirmado) {
+              std::filesystem::remove(archivoTemp);
+          }
+      }
+      std::ofstream abrirEscritura() { /* ... */ }
+      void confirmar() { /* rename tmp -> original */ }
+      void cancelar() { /* remove tmp */ }
+  };
+
+9. BUFFERING Y FLUSH SEGURO
+-----------------------------
+
+  class BufferSeguro {
+      std::vector<char> buffer;
+      std::ofstream& archivo;
+  public:
+      void flush() {
+          // strong guarantee: escribir todo o nada
+          auto pos = archivo.tellp();
+          try {
+              archivo.write(buffer.data(), buffer.size());
+              archivo.flush();
+              buffer.clear();
+          }
+          catch (...) {
+              archivo.seekp(pos);
+              throw;
+          }
+      }
+  };
+
+10. MEJORES PRÁCTICAS
+----------------------
+
+  - Habilita excepciones en fstream con .exceptions().
+  - Usa archivos temporales + rename para escritura atómica.
+  - RAII para archivos temporales (eliminar en destructor).
+  - strong guarantee para operaciones de escritura.
+  - noexcpt para operaciones de solo memoria.
+  - Verifica el estado después de cada operación.
+  - No tragues excepciones de archivos sin registrarlas.
+
+================================================================================
+  CÓDIGO DE EJEMPLO
+================================================================================
+
+```cpp
+//==============================================================================
+// EJEMPLO 1: Fstream con excepciones habilitadas
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+
+void leerArchivo(const std::string& nombre) {
+    std::ifstream archivo;
+    archivo.exceptions(std::ios::failbit | std::ios::badbit);
+
+    try {
+        archivo.open(nombre);
+        std::string linea;
+        while (std::getline(archivo, linea)) {
+            std::cout << "  " << linea << "\n";
+        }
+    }
+    catch (const std::ios_base::failure& e) {
+        throw std::runtime_error(
+            "Error al leer '" + nombre + "': " + e.what());
+    }
+}
+
+void escribirArchivo(const std::string& nombre,
+                     const std::string& contenido) {
+    std::ofstream archivo;
+    archivo.exceptions(std::ios::failbit | std::ios::badbit);
+
+    try {
+        archivo.open(nombre);
+        archivo << contenido;
+        archivo.close();
+    }
+    catch (const std::ios_base::failure& e) {
+        throw std::runtime_error(
+            "Error al escribir '" + nombre + "': " + e.what());
+    }
+}
+
+int main() {
+    try {
+        escribirArchivo("test_exceptions.txt",
+                        "Linea 1\nLinea 2\nLinea 3\n");
+        std::cout << "Archivo escrito\n";
+
+        leerArchivo("test_exceptions.txt");
+        std::cout << "Archivo leido\n";
+
+        leerArchivo("no_existe.txt");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::remove("test_exceptions.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 2: Basic, Strong, and Nothrow guarantees
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <vector>
+
+class GestorDatos {
+    std::vector<int> datos;
+    std::string archivo;
+
+public:
+    GestorDatos(const std::string& arch) : archivo(arch) {}
+
+    // Basic guarantee: sin fugas, estado válido
+    void cargar() {
+        std::ifstream in(archivo);
+        in.exceptions(std::ios::badbit);
+        datos.clear();
+
+        int valor;
+        while (in >> valor) {
+            datos.push_back(valor);
+        }
+        // Si hay error, datos puede estar parcialmente lleno
+        // pero es un estado válido (basic guarantee)
+    }
+
+    // Strong guarantee: si falla, el estado no cambia
+    void agregarDato(int valor) {
+        auto copia = datos;  // Backup
+        try {
+            copia.push_back(valor);
+            // Si esto lanza, copia se destruye y datos no cambia
+            datos = std::move(copia);
+        }
+        catch (...) {
+            // datos permanece intacto
+            throw;
+        }
+    }
+
+    // Strong guarantee para guardar
+    void guardar() {
+        std::string tmp = archivo + ".tmp";
+        {
+            std::ofstream out(tmp);
+            out.exceptions(std::ios::failbit | std::ios::badbit);
+
+            for (int v : datos) {
+                out << v << "\n";
+            }
+            out.close();
+        }
+        std::filesystem::rename(tmp, archivo);
+    }
+
+    // Nothrow guarantee
+    size_t size() const noexcept {
+        return datos.size();
+    }
+
+    int get(int i) const noexcept {
+        if (i < static_cast<int>(datos.size()))
+            return datos[i];
+        return 0;
+    }
+};
+
+int main() {
+    GestorDatos gestor("datos.txt");
+
+    gestor.agregarDato(10);
+    gestor.agregarDato(20);
+    gestor.agregarDato(30);
+
+    try {
+        gestor.guardar();
+        std::cout << "Datos guardados (" << gestor.size() << ")\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error al guardar: " << e.what() << "\n";
+    }
+
+    std::filesystem::remove("datos.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 3: Archivo temporal RAII para escritura atómica
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <cstdio>
+
+class ArchivoTemporal {
+    std::string nombre;
+    std::ofstream stream;
+
+public:
+    ArchivoTemporal() {
+        char plantilla[] = "/tmp/temp_XXXXXX";
+        int fd = mkstemp(plantilla);
+        if (fd == -1) {
+            throw std::runtime_error(
+                "No se pudo crear archivo temporal");
+        }
+        nombre = plantilla;
+        close(fd);
+        stream.open(nombre);
+        if (!stream) {
+            std::remove(nombre.c_str());
+            throw std::runtime_error(
+                "No se pudo abrir archivo temporal");
+        }
+    }
+
+    ~ArchivoTemporal() noexcept {
+        stream.close();
+        if (!nombre.empty()) {
+            std::remove(nombre.c_str());
+        }
+    }
+
+    std::ofstream& get() { return stream; }
+    const std::string& getNombre() const { return nombre; }
+
+    // Mover propiedad
+    ArchivoTemporal(ArchivoTemporal&& otro) noexcept
+        : nombre(std::move(otro.nombre)),
+          stream(std::move(otro.stream)) {
+        otro.nombre.clear();
+    }
+
+    ArchivoTemporal(const ArchivoTemporal&) = delete;
+    ArchivoTemporal& operator=(const ArchivoTemporal&) = delete;
+};
+
+template <typename T>
+void escribirAtomico(const std::string& destino,
+                     const T& contenido) {
+    ArchivoTemporal tmp;
+
+    tmp.get() << contenido;
+    tmp.get().close();
+
+    // Si rename falla, tmp se destruye y limpia
+    if (std::rename(tmp.getNombre().c_str(),
+                    destino.c_str()) != 0) {
+        throw std::runtime_error(
+            "No se pudo renombrar a " + destino);
+    }
+
+    // Transferir propiedad del nombre para evitar doble borrado
+    static_cast<void>(const_cast<std::string&>(tmp.getNombre()));
+    // Nota: En producción, usar std::filesystem::rename + excepciones
+}
+
+int main() {
+    try {
+        escribirAtomico("datos_atomicos.txt",
+                        "Contenido escrito atomicamente\n");
+        std::cout << "Archivo escrito atomicamente\n";
+
+        // Verificar
+        std::ifstream in("datos_atomicos.txt");
+        std::string linea;
+        std::getline(in, linea);
+        std::cout << "Leido: " << linea << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::remove("datos_atomicos.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 4: Transacción con archivos (commit/rollback)
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+class TransaccionArchivo {
+    std::string archivoOriginal;
+    std::string archivoTemp;
+    std::ofstream stream;
+    bool confirmada = false;
+
+public:
+    TransaccionArchivo(const std::string& archivo)
+        : archivoOriginal(archivo),
+          archivoTemp(archivo + ".txn.tmp") {
+
+        stream.open(archivoTemp);
+        if (!stream) {
+            throw std::runtime_error(
+                "No se pudo abrir temp: " + archivoTemp);
+        }
+        stream.exceptions(std::ios::failbit | std::ios::badbit);
+        std::cout << "  Transaccion iniciada para: " << archivo << "\n";
+    }
+
+    ~TransaccionArchivo() noexcept {
+        stream.close();
+        if (!confirmada) {
+            std::error_code ec;
+            fs::remove(archivoTemp, ec);
+            std::cout << "  Transaccion revertida (temp eliminado)\n";
+        }
+    }
+
+    std::ofstream& get() { return stream; }
+
+    void confirmar() {
+        stream.close();
+        fs::rename(archivoTemp, archivoOriginal);
+        confirmada = true;
+        std::cout << "  Transaccion confirmada: " << archivoOriginal << "\n";
+    }
+
+    void cancelar() {
+        stream.close();
+        fs::remove(archivoTemp);
+        confirmada = true;  // Evitar doble limpieza en destructor
+        std::cout << "  Transaccion cancelada\n";
+    }
+
+    TransaccionArchivo(const TransaccionArchivo&) = delete;
+    TransaccionArchivo& operator=(const TransaccionArchivo&) = delete;
+
+    TransaccionArchivo(TransaccionArchivo&& otro) noexcept
+        : archivoOriginal(std::move(otro.archivoOriginal)),
+          archivoTemp(std::move(otro.archivoTemp)),
+          stream(std::move(otro.stream)),
+          confirmada(otro.confirmada) {
+        otro.confirmada = true;
+    }
+};
+
+void actualizarConfiguracion(const std::string& archivo) {
+    TransaccionArchivo txn(archivo);
+
+    txn.get() << "[database]\n";
+    txn.get() << "host=localhost\n";
+    txn.get() << "port=5432\n";
+    txn.get() << "user=admin\n";
+
+    // Si algo lanza aquí, la transacción se revierte
+    // Simular error
+    if (archivo.find("fallar") != std::string::npos) {
+        throw std::runtime_error("Error simulado de configuracion");
+    }
+
+    txn.confirmar();
+}
+
+int main() {
+    std::cout << "Caso 1: Transaccion exitosa\n";
+    try {
+        actualizarConfiguracion("config.txt");
+        std::cout << "  Configuracion actualizada\n";
+    }
+    catch (const std::exception& e) {
+        std::cout << "  Error: " << e.what() << "\n";
+    }
+
+    std::cout << "\nCaso 2: Transaccion fallida\n";
+    try {
+        actualizarConfiguracion("config_fallar.txt");
+        std::cout << "  Esto no se ejecuta\n";
+    }
+    catch (const std::exception& e) {
+        std::cout << "  Error: " << e.what() << "\n";
+    }
+
+    // Verificar que no hay archivos temporales
+    std::cout << "\nVerificando limpieza:\n";
+    std::error_code ec;
+    bool existe1 = fs::exists("config.txt", ec);
+    bool existe2 = fs::exists("config_fallar.txt", ec);
+    bool existe3 = fs::exists("config.txt.txn.tmp", ec);
+    std::cout << "  config.txt existe: " << existe1 << "\n";
+    std::cout << "  config_fallar.txt existe: " << existe2 << "\n";
+    std::cout << "  .tmp existe: " << existe3 << "\n";
+
+    fs::remove("config.txt", ec);
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 5: Clase de excepción personalizada para archivos
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <system_error>
+
+enum class ErrorArchivo {
+    OK = 0,
+    NO_ENCONTRADO = 1,
+    PERMISO_DENEGADO = 2,
+    DISCO_LLENO = 3,
+    FORMATO_INVALIDO = 4,
+    CORRUPCION = 5,
+    YA_EXISTE = 6,
+    NO_SE_PUEDE_ABRIR = 7
+};
+
+std::string errorToString(ErrorArchivo e) {
+    switch (e) {
+        case ErrorArchivo::NO_ENCONTRADO: return "Archivo no encontrado";
+        case ErrorArchivo::PERMISO_DENEGADO: return "Permiso denegado";
+        case ErrorArchivo::DISCO_LLENO: return "Disco lleno";
+        case ErrorArchivo::FORMATO_INVALIDO: return "Formato invalido";
+        case ErrorArchivo::CORRUPCION: return "Archivo corrupto";
+        case ErrorArchivo::YA_EXISTE: return "El archivo ya existe";
+        case ErrorArchivo::NO_SE_PUEDE_ABRIR: return "No se puede abrir";
+        default: return "Error desconocido";
+    }
+}
+
+class ExcepcionArchivo : public std::runtime_error {
+    ErrorArchivo codigo;
+    std::string archivo;
+    int errnoValue;
+
+public:
+    ExcepcionArchivo(ErrorArchivo cod, const std::string& arch,
+                     const std::string& detalle = "")
+        : std::runtime_error(errorToString(cod)
+            + ": " + arch
+            + (detalle.empty() ? "" : " (" + detalle + ")")),
+          codigo(cod), archivo(arch), errnoValue(errno) {}
+
+    ErrorArchivo getCodigo() const { return codigo; }
+    const std::string& getArchivo() const { return archivo; }
+    int getErrno() const { return errnoValue; }
+};
+
+class ArchivoSeguro {
+    std::string nombre;
+    std::fstream stream;
+
+public:
+    ArchivoSeguro(const std::string& n,
+                  std::ios::openmode mode = std::ios::in | std::ios::out)
+        : nombre(n) {
+        stream.open(nombre, mode);
+        if (!stream) {
+            if (errno == ENOENT)
+                throw ExcepcionArchivo(ErrorArchivo::NO_ENCONTRADO, nombre);
+            if (errno == EACCES)
+                throw ExcepcionArchivo(ErrorArchivo::PERMISO_DENEGADO, nombre);
+            if (errno == ENOSPC)
+                throw ExcepcionArchivo(ErrorArchivo::DISCO_LLENO, nombre);
+            throw ExcepcionArchivo(ErrorArchivo::NO_SE_PUEDE_ABRIR, nombre,
+                                   strerror(errno));
+        }
+    }
+
+    ~ArchivoSeguro() noexcept { stream.close(); }
+
+    void leerLinea(std::string& linea) {
+        if (!std::getline(stream, linea)) {
+            if (stream.eof()) return;
+            throw ExcepcionArchivo(ErrorArchivo::CORRUPCION, nombre,
+                                   "Error al leer linea");
+        }
+    }
+
+    void escribir(const std::string& datos) {
+        if (!(stream << datos)) {
+            throw ExcepcionArchivo(ErrorArchivo::DISCO_LLENO, nombre,
+                                   "Error al escribir");
+        }
+    }
+};
+
+int main() {
+    try {
+        ArchivoSeguro arc("no_existe.txt", std::ios::in);
+    }
+    catch (const ExcepcionArchivo& e) {
+        std::cout << "Error: " << e.what() << "\n";
+        std::cout << "  Codigo: " << static_cast<int>(e.getCodigo()) << "\n";
+        std::cout << "  Archivo: " << e.getArchivo() << "\n";
+        std::cout << "  errno: " << e.getErrno() << "\n";
+    }
+
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 6: Serialización segura con strong guarantee
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <vector>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+struct Persona {
+    std::string nombre;
+    int edad;
+    double altura;
+
+    friend std::ostream& operator<<(std::ostream& os, const Persona& p) {
+        os << p.nombre << "|" << p.edad << "|" << p.altura;
+        return os;
+    }
+
+    friend std::istream& operator>>(std::istream& is, Persona& p) {
+        std::getline(is, p.nombre, '|');
+        is >> p.edad;
+        is.ignore();
+        is >> p.altura;
+        is.ignore();
+        return is;
+    }
+};
+
+class Serializador {
+public:
+    template <typename T>
+    static void guardar(const std::string& archivo,
+                        const std::vector<T>& datos) {
+        std::string tmp = archivo + ".srz.tmp";
+
+        try {
+            std::ofstream out(tmp, std::ios::binary);
+            out.exceptions(std::ios::failbit | std::ios::badbit);
+
+            size_t count = datos.size();
+            out.write(reinterpret_cast<const char*>(&count),
+                      sizeof(count));
+
+            for (const auto& d : datos) {
+                out << d << "\n";
+            }
+
+            out.close();
+            fs::rename(tmp, archivo);
+        }
+        catch (...) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            throw;
+        }
+    }
+
+    template <typename T>
+    static std::vector<T> cargar(const std::string& archivo) {
+        std::ifstream in(archivo, std::ios::binary);
+        if (!in) {
+            throw std::runtime_error(
+                "No se pudo abrir: " + archivo);
+        }
+
+        size_t count;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+
+        std::vector<T> datos;
+        datos.reserve(count);
+        T item;
+
+        for (size_t i = 0; i < count; ++i) {
+            if (!(in >> item)) {
+                throw std::runtime_error(
+                    "Error de formato en " + archivo
+                    + " elemento " + std::to_string(i));
+            }
+        }
+
+        return datos;
+    }
+};
+
+int main() {
+    std::vector<Persona> personas = {
+        {"Juan", 30, 1.75},
+        {"Maria", 25, 1.65},
+        {"Pedro", 35, 1.80}
+    };
+
+    try {
+        Serializador::guardar("personas.dat", personas);
+        std::cout << "Personas guardadas\n";
+
+        auto cargadas = Serializador::cargar<Persona>("personas.dat");
+        std::cout << "Personas cargadas: " << cargadas.size() << "\n";
+        for (const auto& p : cargadas) {
+            std::cout << "  " << p.nombre << " | " << p.edad
+                      << " | " << p.altura << "\n";
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    fs::remove("personas.dat");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 7: Buffer de escritura con strong guarantee
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <stdexcept>
+#include <cstring>
+
+class BufferEscrituraSeguro {
+    std::ofstream& archivo;
+    std::vector<char> buffer;
+    std::streampos ultimaPosicionValida;
+
+public:
+    BufferEscrituraSeguro(std::ofstream& out)
+        : archivo(out) {
+        ultimaPosicionValida = archivo.tellp();
+    }
+
+    void escribir(const char* datos, size_t tam) {
+        buffer.insert(buffer.end(), datos, datos + tam);
+    }
+
+    void escribir(const std::string& datos) {
+        escribir(datos.c_str(), datos.size());
+    }
+
+    void flush() {
+        if (buffer.empty()) return;
+
+        std::streampos pos = archivo.tellp();
+
+        try {
+            archivo.write(buffer.data(), buffer.size());
+            archivo.flush();
+            ultimaPosicionValida = archivo.tellp();
+            buffer.clear();
+        }
+        catch (...) {
+            // Revertir a la última posición válida
+            archivo.clear();
+            archivo.seekp(ultimaPosicionValida);
+            throw std::runtime_error("Error al escribir buffer");
+        }
+    }
+
+    size_t pendiente() const { return buffer.size(); }
+    void limpiar() { buffer.clear(); }
+};
+
+int main() {
+    std::ofstream archivo("buffer_test.txt",
+                          std::ios::binary);
+    archivo.exceptions(std::ios::failbit | std::ios::badbit);
+
+    if (!archivo) {
+        std::cerr << "No se pudo abrir\n";
+        return 1;
+    }
+
+    BufferEscrituraSeguro buffer(archivo);
+
+    try {
+        buffer.escribir("Parte 1\n");
+        buffer.escribir("Parte 2\n");
+        buffer.escribir("Parte 3\n");
+
+        std::cout << "Pendiente: " << buffer.pendiente() << " bytes\n";
+
+        buffer.flush();
+        std::cout << "Buffer escrito correctamente\n";
+        archivo.close();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    // Verificar
+    std::ifstream in("buffer_test.txt");
+    std::string linea;
+    while (std::getline(in, linea)) {
+        std::cout << "  Leido: " << linea << "\n";
+    }
+
+    std::remove("buffer_test.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 8: Manejo de archivos binarios con excepciones
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <stdexcept>
+#include <cstdint>
+
+class LectorBinario {
+    std::ifstream archivo;
+    size_t bytesLeidos = 0;
+
+public:
+    LectorBinario(const std::string& nombre) {
+        archivo.open(nombre, std::ios::binary);
+        archivo.exceptions(std::ios::failbit | std::ios::badbit);
+        if (!archivo) {
+            throw std::runtime_error(
+                "No se pudo abrir: " + nombre);
+        }
+    }
+
+    template <typename T>
+    T leer() {
+        T valor;
+        archivo.read(reinterpret_cast<char*>(&valor), sizeof(T));
+        if (archivo.gcount() != sizeof(T)) {
+            throw std::runtime_error(
+                "Error de lectura: tamaño incorrecto");
+        }
+        bytesLeidos += sizeof(T);
+        return valor;
+    }
+
+    std::vector<char> leerBloque(size_t tam) {
+        std::vector<char> buffer(tam);
+        archivo.read(buffer.data(), tam);
+        if (archivo.gcount() != static_cast<std::streamsize>(tam)) {
+            throw std::runtime_error(
+                "Error: no se pudieron leer " + std::to_string(tam)
+                + " bytes");
+        }
+        bytesLeidos += tam;
+        return buffer;
+    }
+
+    void saltar(size_t bytes) {
+        archivo.seekg(bytes, std::ios::cur);
+        bytesLeidos += bytes;
+    }
+
+    size_t getBytesLeidos() const { return bytesLeidos; }
+    bool eof() const { return archivo.eof(); }
+};
+
+struct Cabecera {
+    char magia[4];
+    uint32_t version;
+    uint64_t tamanoDatos;
+};
+
+void procesarArchivoBinario(const std::string& nombre) {
+    LectorBinario lector(nombre);
+
+    Cabecera cab = lector.leer<Cabecera>();
+
+    if (std::memcmp(cab.magia, "CMPB", 4) != 0) {
+        throw std::runtime_error(
+            "Formato invalido: magia incorrecta");
+    }
+
+    std::cout << "Version: " << cab.version << "\n";
+    std::cout << "Tamano datos: " << cab.tamanoDatos << "\n";
+
+    auto datos = lector.leerBloque(cab.tamanoDatos);
+    std::cout << "Datos leidos: " << datos.size() << " bytes\n";
+    std::cout << "Total leido: " << lector.getBytesLeidos() << " bytes\n";
+}
+
+int main() {
+    // Crear archivo binario de prueba
+    {
+        std::ofstream out("test_binario.dat", std::ios::binary);
+        Cabecera c;
+        std::memcpy(c.magia, "CMPB", 4);
+        c.version = 1;
+        c.tamanoDatos = 16;
+
+        char datos[] = "DATOS_BINARIOS_123";
+
+        out.write(reinterpret_cast<char*>(&c), sizeof(c));
+        out.write(datos, c.tamanoDatos);
+    }
+
+    try {
+        procesarArchivoBinario("test_binario.dat");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::remove("test_binario.dat");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 9: Archivo de configuración con validación
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <map>
+#include <string>
+#include <sstream>
+#include <stdexcept>
+#include <regex>
+
+class Configuracion {
+    std::map<std::string, std::string> valores;
+    std::string archivo;
+
+    void validarClave(const std::string& clave) {
+        std::regex patron("^[a-zA-Z_][a-zA-Z0-9_]*$");
+        if (!std::regex_match(clave, patron)) {
+            throw std::runtime_error(
+                "Clave invalida: '" + clave + "'");
+        }
+    }
+
+public:
+    void cargar(const std::string& arch) {
+        archivo = arch;
+        valores.clear();
+
+        std::ifstream in(arch);
+        if (!in) {
+            throw std::runtime_error(
+                "No se pudo abrir config: " + arch);
+        }
+
+        std::string linea;
+        int numLinea = 0;
+        while (std::getline(in, linea)) {
+            ++numLinea;
+            if (linea.empty() || linea[0] == '#') continue;
+
+            std::istringstream iss(linea);
+            std::string clave, igual, valor;
+
+            if (!(iss >> clave >> igual)) {
+                throw std::runtime_error(
+                    "Error sintaxis linea " + std::to_string(numLinea)
+                    + ": " + linea);
+            }
+
+            if (igual != "=") {
+                throw std::runtime_error(
+                    "Se esperaba '=' en linea "
+                    + std::to_string(numLinea));
+            }
+
+            std::getline(iss >> std::ws, valor);
+            validarClave(clave);
+            valores[clave] = valor;
+        }
+    }
+
+    void guardar() const {
+        std::string tmp = archivo + ".cfg.tmp";
+        {
+            std::ofstream out(tmp);
+            if (!out) {
+                throw std::runtime_error(
+                    "No se pudo escribir: " + tmp);
+            }
+
+            out << "# Configuracion generada\n";
+            out << "# Fecha: " << __DATE__ << "\n\n";
+
+            for (const auto& [clave, valor] : valores) {
+                out << clave << " = " << valor << "\n";
+            }
+        }
+        std::filesystem::rename(tmp, archivo);
+    }
+
+    void set(const std::string& clave, const std::string& valor) {
+        validarClave(clave);
+        valores[clave] = valor;
+    }
+
+    std::string get(const std::string& clave) const {
+        auto it = valores.find(clave);
+        if (it == valores.end()) {
+            throw std::runtime_error(
+                "Clave no encontrada: " + clave);
+        }
+        return it->second;
+    }
+
+    int getInt(const std::string& clave) const {
+        std::string v = get(clave);
+        try {
+            return std::stoi(v);
+        }
+        catch (...) {
+            throw std::runtime_error(
+                "Valor no es entero: " + clave + "=" + v);
+        }
+    }
+
+    void imprimir() const {
+        for (const auto& [k, v] : valores) {
+            std::cout << "  " << k << " = " << v << "\n";
+        }
+    }
+};
+
+int main() {
+    Configuracion config;
+
+    try {
+        config.set("host", "localhost");
+        config.set("port", "8080");
+        config.set("debug", "true");
+        config.guardar();
+
+        std::cout << "Configuracion guardada\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    try {
+        Configuracion config2;
+        config2.cargar("config.cfg");
+        std::cout << "Configuracion cargada:\n";
+        config2.imprimir();
+        std::cout << "Port: " << config2.getInt("port") << "\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    std::filesystem::remove("config.cfg");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 10: Logging seguro con excepciones
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <mutex>
+#include <chrono>
+#include <ctime>
+
+class LoggerSeguro {
+    std::ofstream archivo;
+    std::mutex mtx;
+
+public:
+    LoggerSeguro(const std::string& nombre) {
+        archivo.open(nombre, std::ios::app);
+        archivo.exceptions(std::ios::failbit | std::ios::badbit);
+        if (!archivo) {
+            throw std::runtime_error(
+                "No se pudo abrir log: " + nombre);
+        }
+    }
+
+    ~LoggerSeguro() noexcept {
+        try {
+            archivo.close();
+        }
+        catch (...) {
+            // No lanzar desde destructor
+        }
+    }
+
+    void log(const std::string& nivel, const std::string& mensaje) {
+        std::lock_guard<std::mutex> lock(mtx);
+
+        auto ahora = std::chrono::system_clock::now();
+        auto tiempo = std::chrono::system_clock::to_time_t(ahora);
+        std::string timestamp = std::ctime(&tiempo);
+        timestamp.pop_back();  // Quitar newline
+
+        try {
+            archivo << "[" << timestamp << "] "
+                    << "[" << nivel << "] "
+                    << mensaje << "\n";
+            archivo.flush();
+        }
+        catch (const std::ios_base::failure& e) {
+            throw std::runtime_error(
+                "Error de escritura en log: " + std::string(e.what()));
+        }
+    }
+
+    void info(const std::string& msg) { log("INFO", msg); }
+    void warn(const std::string& msg) { log("WARN", msg); }
+    void error(const std::string& msg) { log("ERROR", msg); }
+};
+
+
+int main() {
+    try {
+        LoggerSeguro logger("app.log");
+
+        logger.info("Aplicacion iniciada");
+        logger.info("Cargando configuracion...");
+
+        try {
+            throw std::runtime_error("Error de conexion BD");
+        }
+        catch (const std::exception& e) {
+            logger.error(std::string("Error: ") + e.what());
+            logger.warn("Reintentando en 5 segundos...");
+        }
+
+        logger.info("Aplicacion finalizada");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error fatal en logger: " << e.what() << "\n";
+    }
+
+    // Verificar log
+    std::ifstream log("app.log");
+    std::string linea;
+    std::cout << "\n--- Contenido del log ---\n";
+    while (std::getline(log, linea)) {
+        std::cout << linea << "\n";
+    }
+
+    std::remove("app.log");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 11: Copia de archivos con strong guarantee
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+void copiarSeguro(const std::string& origen,
+                  const std::string& destino) {
+    if (!fs::exists(origen)) {
+        throw std::runtime_error(
+            "Origen no existe: " + origen);
+    }
+
+    std::string tmp = destino + ".cpy.tmp";
+
+    try {
+        // Abrir origen
+        std::ifstream src(origen, std::ios::binary);
+        src.exceptions(std::ios::badbit);
+
+        if (!src) {
+            throw std::runtime_error(
+                "No se pudo abrir origen: " + origen);
+        }
+
+        // Abrir temporal
+        std::ofstream dst(tmp, std::ios::binary);
+        dst.exceptions(std::ios::failbit | std::ios::badbit);
+
+        if (!dst) {
+            throw std::runtime_error(
+                "No se pudo crear temporal: " + tmp);
+        }
+
+        // Copiar datos
+        dst << src.rdbuf();
+        dst.close();
+        src.close();
+
+        // Renombrar: operación atómica
+        fs::rename(tmp, destino);
+    }
+    catch (...) {
+        // Limpiar temporal si existe
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        throw;  // Re-lanzar
+    }
+}
+
+void copiarConVerificacion(const std::string& origen,
+                           const std::string& destino) {
+    copiarSeguro(origen, destino);
+
+    // Verificar que la copia es idéntica
+    std::error_code ec;
+    auto tamOrigen = fs::file_size(origen, ec);
+    auto tamDestino = fs::file_size(destino, ec);
+
+    if (tamOrigen != tamDestino) {
+        fs::remove(destino, ec);
+        throw std::runtime_error(
+            "Verificacion fallida: tamaños diferentes");
+    }
+
+    std::cout << "Copia verificada: " << tamOrigen << " bytes\n";
+}
+
+int main() {
+    // Crear archivo de prueba
+    {
+        std::ofstream out("origen.txt");
+        out << "Contenido original del archivo\n";
+        out << "Linea 2\n";
+        out << "Linea 3\n";
+    }
+
+    try {
+        copiarConVerificacion("origen.txt", "destino.txt");
+        std::cout << "Archivo copiado exitosamente\n";
+
+        // Verificar contenido
+        std::ifstream in("destino.txt");
+        std::string linea;
+        while (std::getline(in, linea)) {
+            std::cout << "  " << linea << "\n";
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    fs::remove("origen.txt");
+    fs::remove("destino.txt");
+    return 0;
+}
+```
+
+```cpp
+//==============================================================================
+// EJEMPLO 12: Gestión de múltiples archivos con excepciones
+//==============================================================================
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+class GestorArchivos {
+    std::vector<std::string> abiertos;
+
+    std::ifstream abrirLectura(const std::string& nombre) {
+        std::ifstream in(nombre);
+        if (!in) {
+            throw std::runtime_error(
+                "No se pudo abrir: " + nombre);
+        }
+        abiertos.push_back(nombre);
+        return in;
+    }
+
+public:
+    void procesarArchivos(const std::vector<std::string>& archivos) {
+        // Strong guarantee: si alguno falla, ninguno se procesa
+        std::vector<std::ifstream> streams;
+
+        try {
+            for (const auto& arch : archivos) {
+                streams.push_back(abrirLectura(arch));
+            }
+
+            // Procesar todos
+            for (size_t i = 0; i < archivos.size(); ++i) {
+                std::string linea;
+                std::cout << "--- " << archivos[i] << " ---\n";
+                while (std::getline(streams[i], linea)) {
+                    std::cout << "  " << linea << "\n";
+                }
+            }
+        }
+        catch (...) {
+            // streams se cierran automáticamente (RAII)
+            throw;
+        }
+    }
+
+    size_t count() const { return abiertos.size(); }
+};
+
+int main() {
+    // Crear archivos de prueba
+    for (int i = 1; i <= 3; ++i) {
+        std::ofstream out("archivo_" + std::to_string(i) + ".txt");
+        out << "Contenido del archivo " << i << "\n";
+    }
+
+    GestorArchivos gestor;
+
+    try {
+        gestor.procesarArchivos(
+            {"archivo_1.txt", "archivo_2.txt", "archivo_3.txt"});
+        std::cout << "Todos los archivos procesados\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+    }
+
+    try {
+        // Este falla
+        gestor.procesarArchivos(
+            {"archivo_1.txt", "no_existe.txt", "archivo_3.txt"});
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error esperado: " << e.what() << "\n";
+    }
+
+    for (int i = 1; i <= 3; ++i) {
+        fs::remove("archivo_" + std::to_string(i) + ".txt");
+    }
+
+    return 0;
+}
+```
+
+RESUMEN DEL CAPÍTULO
+--------------------
+
+En este capítulo hemos aprendido:
+
+  1. Combinación de RAII y excepciones para archivos seguros.
+  2. Habilitar excepciones en fstream con .exceptions().
+  3. Garantías de seguridad: basic, strong, nothrow.
+  4. Escritura atómica con archivos temporales.
+  5. Archivos temporales RAII con limpieza automática.
+  6. Transacciones con archivos (commit/rollback).
+  7. Clases de excepción personalizadas para errores de archivo.
+  8. Serialización segura con strong guarantee.
+  9. Buffer de escritura con rollback.
+  10. Logging seguro y gestión de múltiples archivos.
+
+EJERCICIOS PROPUESTOS
+---------------------
+
+  EJERCICIO 1: Implementa un `BackupManager` que cree copias de
+  seguridad con strong guarantee. Si la copia falla, el original
+  debe permanecer intacto.
+
+  EJERCICIO 2: Crea una clase `ArchivoCSV` que lea/escriba archivos
+  CSV con validación de formato y manejo de excepciones.
+
+  EJERCICIO 3: Implementa un `DatabaseDumper` que serialice una base
+  de datos a archivo con atomicidad y verificación.
+
+  EJERCICIO 4: Escribe un `FileLocker` RAII que adquiera un lock
+  exclusivo sobre un archivo y lo libere al salir del ámbito.
+
+  EJERCICIO 5: Implementa un sistema de "archivos de respaldo" que
+  mantenga las últimas N versiones de un archivo, con strong guarantee
+  en cada escritura.
+
+FAQ - PREGUNTAS FRECUENTES
+---------------------------
+
+  P: ¿Debo usar .exceptions() o verificar el estado manualmente?
+  R: Prefiere .exceptions() para código limpio. Verifica manualmente
+  solo cuando necesites lógica específica por tipo de error.
+
+  P: ¿Qué es la strong guarantee?
+  R: Significa que si una operación lanza una excepción, el programa
+  queda exactamente en el mismo estado que antes de la operación. Para
+  archivos, se logra con escritura a temporal + rename.
+
+  P: ¿Puedo mezclar std::filesystem con excepciones?
+  R: Sí. Las funciones de filesystem tienen sobrecargas que lanzan
+  excepciones (sin error_code) y otras que no (con error_code).
+
+  P: ¿Cómo manejo archivos corruptos?
+  R: Usa formatos con magia (firma), checksums, y versiones. Si la
+  validación falla, lanza una excepción específica (ArchivoCorrupto).
+
+  P: ¿Qué hago si no puedo usar std::filesystem?
+  R: Usa std::rename() y std::remove() de <cstdio>. Son funciones C
+  pero funcionan en cualquier plataforma.
+
+DESAFÍO DEL ARQUITECTO
+----------------------
+
+  Implementa un "sistema de archivos versionado" (como Git para
+  archivos individuales) con soporte completo de excepciones.
+
+  Requisitos:
+    - Cada modificación crea una nueva versión del archivo.
+    - Las versiones se almacenan en un directorio .versions/.
+    - Operaciones: commit, checkout, log, diff.
+    - Strong guarantee en commit: si falla, no se crea version.
+    - RAII para todos los recursos (archivos, directorios).
+    - Jerarquía de excepciones: ErrorVersion, ErrorCheckout, etc.
+    - Capacidad de revertir a cualquier versión anterior.
+    - Serialización del historial de versiones.
+
+  Pistas:
+    - Usa archivos temporales para nuevas versiones.
+    - Rename atómico para activar una versión.
+    - Almacena metadatos (timestamp, mensaje, hash) en un archivo
+      de índice.
+    - Calcula hash SHA del contenido para verificar integridad.
+
+CIERRE DEL CAPÍTULO
+-------------------
+
+La combinación de archivos y excepciones es donde la teoría se encuentra
+con la práctica. Hemos visto cómo RAII garantiza que los archivos se
+cierren, cómo las transacciones con temporales garantizan atomicidad,
+y cómo las garantías de seguridad (basic, strong, nothrow) nos permiten
+razonar sobre el comportamiento de nuestro código ante fallos.
+
+Recuerda: un archivo abierto es un recurso valioso. Las excepciones no
+son excusa para dejarlo abierto. Con RAII, siempre se cierra.
+
+En el próximo y último capítulo del módulo, pondremos todo en práctica
+con un proyecto completo que integre templates, excepciones, RAII,
+smart pointers, y archivos.
+
+  "Los archivos son el almacenamiento de tu programa. Las excepciones
+   son el plan de contingencia. Juntos forman la base de datos persistente
+   y robusta."
+
+================================================================================
+  FIN DEL CAPÍTULO 59
+================================================================================

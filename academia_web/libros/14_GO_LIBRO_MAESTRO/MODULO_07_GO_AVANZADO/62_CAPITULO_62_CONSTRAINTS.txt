@@ -1,0 +1,780 @@
+================================================================================
+  MÓDULO VII: GO AVANZADO
+  GO MASTER BOOK
+  CAPÍTULO 62: CONSTRAINTS
+================================================================================
+
+  BIENVENIDA
+  ──────────
+  Bienvenido al Capítulo 62. En el capítulo anterior viste los genéricos
+  y los type parameters. Ahora nos sumergimos en el corazón de los
+  genéricos: los constraints. Un constraint define qué tipos pueden
+  usarse como argumentos de tipo. Diseñar constraints precisos y
+  reutilizables es lo que separa un código genérico mediocre de uno
+  excelente.
+
+  FRASE DEL CAPÍTULO
+  ──────────────────
+  "El diseño de restricciones no es limitación, sino claridad. Al definir
+  lo que un tipo debe cumplir, hacemos explícito el contrato." — Adaptado
+  de Bertrand Meyer (Diseño por Contrato)
+
+  OBJETIVOS DEL CAPÍTULO
+  ──────────────────────
+  1. Comprender la sintaxis de constraint interfaces con union terms.
+  2. Usar el operador `~` para aproximación de tipo subyacente.
+  3. Definir constraints reutilizables para tus bibliotecas.
+  4. Usar la biblioteca golang.org/x/exp/constraints.
+  5. Combinar constraints con métodos y Type Sets.
+  6. Evitar los errores comunes con nil y métodos en constraints.
+
+================================================================================
+  CONTENIDO
+================================================================================
+
+  ── 1. ¿QUÉ ES UN CONSTRAINT? ──
+
+  Un constraint es una interface que especifica qué tipos pueden usarse
+  como argumentos de un type parameter. Es un "contrato" entre el código
+  genérico y los tipos concretos.
+
+  // T debe implementar la interface Stringer
+  func Print[T fmt.Stringer](v T) {
+      fmt.Println(v.String())
+  }
+
+  // T debe ser int o float64
+  func Sum[T int | float64](a, b T) T {
+      return a + b
+  }
+
+  Antes de Go 1.18, las interfaces solo describían métodos. Desde 1.18,
+  las interfaces también pueden describir tipos mediante "union terms"
+  separados por `|`.
+
+  ── 2. SINTAXIS DE CONSTRAINT INTERFACES ──
+
+  type MiConstraint interface {
+      ~int | ~string         // union terms (tipos permitidos)
+      String() string        // métodos requeridos
+  }
+
+  Los elementos de una constraint interface son:
+  ● Union terms: `~int | ~string | ~float64`
+  ● Métodos: `String() string`
+  ● Ambos combinados (intersección lógica)
+
+  Cuando hay tanto union terms como métodos, el tipo debe cumplir AMBOS:
+  debe ser uno de los tipos del union Y debe implementar los métodos.
+
+  ── 3. UNION TERMS ──
+
+  Un union term lista tipos concretos o aproximados (~) separados por `|`:
+
+  type Integer interface {
+      int | int8 | int16 | int32 | int64
+  }
+
+  type Number interface {
+      Integer | Float
+  }
+
+  type Float interface {
+      float32 | float64
+  }
+
+  type Complex interface {
+      complex64 | complex128
+  }
+
+  type Scalar interface {
+      Number | Complex
+  }
+
+  // Uso
+  func Add[T Number](a, b T) T {
+      return a + b
+  }
+
+  func main() {
+      fmt.Println(Add(1, 2))           // 3
+      fmt.Println(Add(1.5, 2.5))       // 4.0
+      // fmt.Println(Add(1+2i, 3+4i))   // ❌ Complex no está en Number
+  }
+
+  ── 4. EL OPERADOR `~` (APROXIMACIÓN) ──
+
+  `~int` significa "cualquier tipo cuyo tipo subyacente sea int".
+  Sin `~`, solo el tipo exacto `int` es aceptado.
+
+  type EnteroExacto interface { int }
+  type EnteroAproximado interface { ~int }
+
+  type Edad int
+
+  func F1[T EnteroExacto](v T) T { return v }       // ❌ Edad no es int
+  func F2[T EnteroAproximado](v T) T { return v }    // ✅ Edad es ~int
+
+  func main() {
+      var e Edad = 25
+      // F1(e)  // ❌ no compila
+      F2(e)     // ✅ compila
+  }
+
+  Regla: usa `~` cuando quieras aceptar tipos definidos por el usuario
+  cuyo subyacente sea el tipo base. No uses `~` cuando solo quieras el
+  tipo exacto.
+
+  ── 5. CONSTRAINTS CON MÉTODOS ──
+
+  type Stringable interface {
+      ~string
+      String() string
+  }
+
+  type Nombre string
+
+  func (n Nombre) String() string {
+      return "Nombre: " + string(n)
+  }
+
+  func Print[T Stringable](v T) {
+      fmt.Println(v.String())
+  }
+
+  func main() {
+      Print(Nombre("Alice")) // Nombre: Alice
+      // Print("hola")       // ❌ string no tiene método String()
+  }
+
+  El constraint exige que el tipo subyacente sea `string` Y que tenga
+  el método `String()`.
+
+  ── 6. CONSTRAINTS ANIDADOS ──
+
+  type Numeric interface {
+      ~int | ~float64
+  }
+
+  type NumericStringer interface {
+      Numeric
+      fmt.Stringer
+  }
+
+  type Punto struct {
+      X, Y float64
+  }
+
+  func (p Punto) String() string {
+      return fmt.Sprintf("(%g, %g)", p.X, p.Y)
+  }
+
+  func Describe[T NumericStringer](v T) {
+      fmt.Printf("Valor: %s\n", v.String())
+  }
+
+  // Punto no implementa Numeric (no es ~int ni ~float64), así que no
+  // puede usarse con Describe.
+
+  ── 7. BIBLIOTECA golang.org/x/exp/constraints ──
+
+  El paquete experimental `golang.org/x/exp/constraints` define
+  constraints comunes:
+
+  import "golang.org/x/exp/constraints"
+
+  type Signed interface {
+      ~int | ~int8 | ~int16 | ~int32 | ~int64
+  }
+
+  type Unsigned interface {
+      ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+  }
+
+  type Integer interface {
+      Signed | Unsigned
+  }
+
+  type Float interface {
+      ~float32 | ~float64
+  }
+
+  type Complex interface {
+      ~complex64 | ~complex128
+  }
+
+  type Ordered interface {
+      Integer | Float | ~string
+  }
+
+  // Ejemplo de uso
+  import "golang.org/x/exp/constraints"
+
+  func Min[T constraints.Ordered](a, b T) T {
+      if a < b {
+          return a
+      }
+      return b
+  }
+
+  func Max[T constraints.Ordered](a, b T) T {
+      if a > b {
+          return a
+      }
+      return b
+  }
+
+  func SortSlice[T constraints.Ordered](s []T) {
+      // Algoritmo simple: bubble sort (solo para demo)
+      for i := 0; i < len(s); i++ {
+          for j := i + 1; j < len(s); j++ {
+              if s[j] < s[i] {
+                  s[i], s[j] = s[j], s[i]
+              }
+          }
+      }
+  }
+
+  func main() {
+      fmt.Println(Min(10, 20))            // 10
+      fmt.Println(Min(3.14, 2.71))        // 2.71
+      fmt.Println(Min("abc", "xyz"))      // abc
+
+      nums := []int{3, 1, 4, 1, 5}
+      SortSlice(nums)
+      fmt.Println(nums) // [1 1 3 4 5]
+  }
+
+  ── 8. CONSTRAINT `comparable` (PREDEFINIDO) ──
+
+  comparable es un constraint predefinido en Go que acepta cualquier tipo
+  que soporte los operadores `==` y `!=`.
+
+  func IndexOf[T comparable](s []T, v T) int {
+      for i, item := range s {
+          if item == v {
+              return i
+          }
+      }
+      return -1
+  }
+
+  func main() {
+      fmt.Println(IndexOf([]string{"a", "b", "c"}, "b"))    // 1
+      fmt.Println(IndexOf([]int{1, 2, 3}, 4))               // -1
+      // fmt.Println(IndexOf([][]int{{1}, {2}}, []int{1}))    // ❌ slice no es comparable
+  }
+
+  Tipos NO comparables: slices, maps, funciones, y structs que contengan
+  estos tipos.
+
+  ── 9. CONSTRAINT `any` ──
+
+  `any` es un alias de `interface{}` y acepta cualquier tipo:
+
+  func PrintAny[T any](v T) {
+      fmt.Printf("Tipo: %T, Valor: %v\n", v, v)
+  }
+
+  func main() {
+      PrintAny(42)           // Tipo: int, Valor: 42
+      PrintAny("hola")       // Tipo: string, Valor: hola
+      PrintAny([]int{1, 2})  // Tipo: []int, Valor: [1 2]
+  }
+
+  Con `any` no puedes usar operadores (+, -, *, /) ni métodos (a menos
+  que hagas type assertion).
+
+  ── 10. TYPE INFERENCE CON CONSTRAINTS ──
+
+  type Number interface {
+      ~int | ~float64
+  }
+
+  func Double[T Number](v T) T {
+      return v + v
+  }
+
+  func main() {
+      // Inferencia simple
+      fmt.Println(Double(5))     // T = int
+      fmt.Println(Double(3.5))   // T = float64
+
+      // Inferencia con tipos definidos por usuario
+      type Velocidad int
+      v := Velocidad(100)
+      fmt.Println(Double(v))     // T = Velocidad (~int)
+  }
+
+  ── 11. CONSTRAINTS CON TYPE INFERENCE AVANZADA ──
+
+  func Convert[T, U ~string](v T) U {
+      return U(v)
+  }
+
+  func main() {
+      type Spanish string
+      type English string
+
+      var hola Spanish = "hola"
+      var hello English = Convert[Spanish, English](hola)
+      fmt.Println(hello) // hola
+  }
+
+  ── 12. INTERSECCIÓN DE CONSTRAINTS ──
+
+  Cuando combinas union terms y métodos, el tipo debe satisfacer ambos:
+
+  type NumberStringer interface {
+      ~int | ~float64
+      String() string
+  }
+
+  type Edad int
+
+  func (e Edad) String() string {
+      return fmt.Sprintf("%d años", e)
+  }
+
+  func Show[T NumberStringer](v T) {
+      fmt.Println(v.String())
+  }
+
+  func main() {
+      Show(Edad(25)) // 25 años
+      // Show(42)      // ❌ int no tiene String()
+  }
+
+  ── 13. CONSTRAINTS Y NIL ──
+
+  Con genéricos, nil requiere cuidado especial:
+
+  func ReturnNil[T any]() *T {
+      return nil
+  }
+
+  func IsZero[T comparable](v T) bool {
+      var zero T
+      return v == zero
+  }
+
+  func main() {
+      p := ReturnNil[int]()
+      fmt.Println(p == nil) // true
+
+      fmt.Println(IsZero(0))     // true
+      fmt.Println(IsZero(""))    // true
+      fmt.Println(IsZero(42))    // false
+  }
+
+  ── 14. CONSTRAINTS CON INTERFACES EMBEBIDAS ──
+
+  type Reader interface {
+      Read(p []byte) (n int, err error)
+  }
+
+  type Writer interface {
+      Write(p []byte) (n int, err error)
+  }
+
+  type ReadWriter interface {
+      Reader
+      Writer
+  }
+
+  // Usando reader/writer genéricos
+  func Copy[T Reader, U Writer](src T, dst U) (int64, error) {
+      return io.Copy(dst, src)
+  }
+
+  // Esto es equivalente a:
+  // func Copy(src io.Reader, dst io.Writer) (int64, error)
+
+  ── 15. PATRÓN: CONSTRAINT CON STRUCT ──
+
+  type Comparable[T any] interface {
+      Equal(other T) bool
+      Less(other T) bool
+  }
+
+  type Persona struct {
+      Nombre string
+      Edad   int
+  }
+
+  func (p Persona) Equal(other Persona) bool {
+      return p.Nombre == other.Nombre && p.Edad == other.Edad
+  }
+
+  func (p Persona) Less(other Persona) bool {
+      return p.Edad < other.Edad
+  }
+
+  func FindMin[T Comparable[T]](items []T) T {
+      min := items[0]
+      for _, item := range items[1:] {
+          if item.Less(min) {
+              min = item
+          }
+      }
+      return min
+  }
+
+  func main() {
+      personas := []Persona{
+          {"Alice", 30},
+          {"Bob", 25},
+          {"Charlie", 35},
+      }
+      min := FindMin(personas)
+      fmt.Println(min) // {Bob 25}
+  }
+
+  ── 16. CONSTRAINTS Y TYPE SWITCH ──
+
+  func DescribeConstraint[T any](v T) string {
+      // No puedes hacer type switch directamente sobre T
+      // Debes convertir a interface{}
+      switch any(v).(type) {
+      case int:
+          return "int"
+      case string:
+          return "string"
+      case bool:
+          return "bool"
+      default:
+          return fmt.Sprintf("otro (%T)", v)
+      }
+  }
+
+  func main() {
+      fmt.Println(DescribeConstraint(42))     // int
+      fmt.Println(DescribeConstraint("hola")) // string
+      fmt.Println(DescribeConstraint(3.14))   // otro (float64)
+  }
+
+  ── 17. EJEMPLO COMPLETO: MATEMÁTICAS GENÉRICAS ──
+
+  package main
+
+  import (
+      "fmt"
+      "golang.org/x/exp/constraints"
+  )
+
+  // Abs para tipos Signed
+  func Abs[T constraints.Signed | constraints.Float](v T) T {
+      if v < 0 {
+          return -v
+      }
+      return v
+  }
+
+  func IsPrime[T constraints.Integer](n T) bool {
+      if n <= 1 {
+          return false
+      }
+      for i := T(2); i*i <= n; i++ {
+          if n%i == 0 {
+              return false
+          }
+      }
+      return true
+  }
+
+  func GCD[T constraints.Integer](a, b T) T {
+      for b != 0 {
+          a, b = b, a%b
+      }
+      return a
+  }
+
+  func LCM[T constraints.Integer](a, b T) T {
+      return a * b / GCD(a, b)
+  }
+
+  func Factorial[T constraints.Integer](n T) T {
+      if n <= 1 {
+          return 1
+      }
+      result := T(1)
+      for i := T(2); i <= n; i++ {
+          result *= i
+      }
+      return result
+  }
+
+  func main() {
+      fmt.Println("Abs(-5):", Abs(-5))
+      fmt.Println("Abs(-3.5):", Abs(-3.5))
+      fmt.Println("IsPrime(17):", IsPrime(17))
+      fmt.Println("GCD(12, 18):", GCD(12, 18))
+      fmt.Println("LCM(6, 8):", LCM(6, 8))
+      fmt.Println("Factorial(5):", Factorial(5))
+  }
+
+  ── 18. CONSTRAINTS Y JSON ──
+
+  type JSONSerializable interface {
+      ~string | ~[]byte
+  }
+
+  func ToJSON[T any](v T) (string, error) {
+      data, err := json.Marshal(v)
+      return string(data), err
+  }
+
+  func FromJSON[T any](data string) (T, error) {
+      var v T
+      err := json.Unmarshal([]byte(data), &v)
+      return v, err
+  }
+
+  func main() {
+      type Persona struct {
+          Nombre string `json:"nombre"`
+          Edad   int    `json:"edad"`
+      }
+
+      p := Persona{Nombre: "Alice", Edad: 30}
+      jsonStr, _ := ToJSON(p)
+      fmt.Println(jsonStr) // {"nombre":"Alice","edad":30}
+
+      var p2 Persona
+      p2, _ = FromJSON[Persona](jsonStr)
+      fmt.Printf("%+v\n", p2)
+  }
+
+  ── 19. LIMITACIONES DE CONSTRAINTS ──
+
+  1. No puedes usar type parameters en métodos de interfaces:
+
+  // ❌ No permitido
+  // type Container[T any] interface {
+  //     Get() T
+  //     Set(T)
+  // }
+
+  // ✅ Permitido: definir la interface con type parameter
+  type Container[T any] interface {
+      Get() T
+      Set(T)
+  }
+
+  2. No puedes sobrecargar operadores:
+
+  // ❌ No puedes definir un constraint que exija el operador +
+  // type Addable interface { +(T) T }
+
+  // Alternativa: definir un método Add
+  type Addable[T any] interface {
+      Add(other T) T
+  }
+
+  3. No puedes usar constraints en closures:
+
+  // ❌ No permitido
+  // fn := func[T any](v T) T { return v }
+
+  4. Los constraints no pueden referenciarse a sí mismos recursivamente
+     (aunque hay excepciones con interfaces de métodos):
+
+  // ❌ No permitido
+  // type Recursive[T Recursive[T]] interface { ... }
+
+  ── 20. PATRÓN: VALIDACIÓN GENÉRICA ──
+
+  type Validator[T any] interface {
+      Validate() error
+  }
+
+  func ValidateAndPrint[T Validator[T]](v T) {
+      if err := v.Validate(); err != nil {
+          fmt.Printf("Error: %v\n", err)
+      } else {
+          fmt.Printf("Válido: %+v\n", v)
+      }
+  }
+
+  type Email struct {
+      Address string
+  }
+
+  func (e Email) Validate() error {
+      if !strings.Contains(e.Address, "@") {
+          return fmt.Errorf("email inválido: %s", e.Address)
+      }
+      return nil
+  }
+
+  func main() {
+      ValidateAndPrint(Email{Address: "test@example.com"}) // Válido
+      ValidateAndPrint(Email{Address: "invalido"})          // Error
+  }
+
+  ── 21. PATRÓN: REPOSITORIO GENÉRICO ──
+
+  type Entity interface {
+      ID() string
+  }
+
+  type Repository[T Entity] interface {
+      Save(entity T) error
+      Find(id string) (T, error)
+      Delete(id string) error
+      FindAll() ([]T, error)
+  }
+
+  type InMemoryRepository[T Entity] struct {
+      data map[string]T
+  }
+
+  func NewInMemoryRepository[T Entity]() *InMemoryRepository[T] {
+      return &InMemoryRepository[T]{data: make(map[string]T)}
+  }
+
+  func (r *InMemoryRepository[T]) Save(entity T) error {
+      r.data[entity.ID()] = entity
+      return nil
+  }
+
+  func (r *InMemoryRepository[T]) Find(id string) (T, error) {
+      entity, ok := r.data[id]
+      if !ok {
+          var zero T
+          return zero, fmt.Errorf("entidad %s no encontrada", id)
+      }
+      return entity, nil
+  }
+
+  func (r *InMemoryRepository[T]) Delete(id string) error {
+      delete(r.data, id)
+      return nil
+  }
+
+  func (r *InMemoryRepository[T]) FindAll() ([]T, error) {
+      result := make([]T, 0, len(r.data))
+      for _, v := range r.data {
+          result = append(result, v)
+      }
+      return result, nil
+  }
+
+  type Usuario struct {
+      Email string
+  }
+
+  func (u Usuario) ID() string { return u.Email }
+
+  func main() {
+      repo := NewInMemoryRepository[Usuario]()
+      repo.Save(Usuario{Email: "alice@example.com"})
+      repo.Save(Usuario{Email: "bob@example.com"})
+
+      users, _ := repo.FindAll()
+      for _, u := range users {
+          fmt.Println(u.Email)
+      }
+  }
+
+  ── 22. BUENAS PRÁCTICAS ──
+
+  1. Prefiere `any` sobre `interface{}` por claridad (son equivalentes).
+  2. Define constraints pequeños y enfocados (principio de segregación).
+  3. Reutiliza constraints de `golang.org/x/exp/constraints` cuando sea
+     posible en lugar de definir los tuyos.
+  4. Documenta cada constraint con su propósito.
+  5. No crees constraints que solo uses una vez a menos que aporten
+     claridad significativa.
+  6. Usa `~` para aceptar tipos derivados del usuario.
+  7. Los nombres de constraints deben ser sustantivos: `Ordered`,
+     `Numeric`, `Stringable`.
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+  ────────────────────
+  ● Los constraints son interfaces que definen qué tipos pueden usarse
+    como argumentos de type parameters.
+  ● Union terms (`|`) listan tipos permitidos; `~` extiende a tipos con
+    el mismo subyacente.
+  ● Los constraints pueden combinar union terms y métodos.
+  ● La biblioteca golang.org/x/exp/constraints proporciona constraints
+    predefinidos (Signed, Unsigned, Integer, Float, Ordered).
+  ● `comparable` es un constraint predefinido para == y !=.
+  ● `any` acepta cualquier tipo pero no permite operaciones.
+
+  EJERCICIOS PROPUESTOS
+  ─────────────────────
+  1. Define un constraint `Hashable[T any]` que requiera un método
+     `Hash() uint64`.
+  2. Implementa `func MergeSort[T constraints.Ordered](s []T) []T`.
+  3. Crea un constraint `Emitter[T any]` con métodos `Subscribe` y
+     `Unsubscribe` para un patrón observer genérico.
+  4. Implementa `func Clamp[T constraints.Ordered](v, min, max T) T`.
+  5. Define un constraint `Numeric` que incluya Integer y Float pero no
+     Complex. Implementa `Sum`, `Avg`, `Product`.
+  6. Crea un constraint `MatrixConstraint[T any]` para matrices NxM
+     genéricas con métodos como `Get(i, j int) T`.
+  7. Implementa un `Heap[T constraints.Ordered]` genérico.
+  8. Crea un constraint `Formatter[T any]` con `Format() string` y
+     `Parse(string) (T, error)`.
+  9. Implementa `func BatchProcess[T, U any](items []T, fn func(T) U,
+     batchSize int) []U`.
+  10. Diseña un sistema de eventos genérico con `Event[T any]` y
+      `EventHandler[T any]` usando constraints.
+
+  PREGUNTAS FRECUENTES (FAQ)
+  ──────────────────────────
+  P: ¿Puedo usar `~` con interfaces?
+  R: No. `~` solo funciona con tipos concretos (int, string, etc.) y
+     tipos definidos por el usuario cuyo subyacente sea concreto.
+
+  P: ¿Un constraint puede tener solo métodos?
+  R: Sí. Un constraint sin union terms es una interface normal de Go,
+     que funciona como constraint sin problemas.
+
+  P: ¿Cuál es la diferencia entre `any` y `interface{}`?
+  R: Ninguna. `any` es un alias introducido en Go 1.18 para claridad.
+
+  P: ¿Puedo usar constraints en variables?
+  R: No directamente. Los constraints solo se usan en type parameters.
+     Pero puedes asignar a `any` o a una interface.
+
+  P: ¿Cómo depuro un error de constraint?
+  R: El compilador de Go da mensajes muy claros: "T does not implement
+     ConstraintName". Revisa que el tipo cumpla todos los términos y
+     métodos.
+
+  DESAFÍO DEL ARQUITECTO
+  ──────────────────────
+  Diseña e implementa un sistema de "genéricos con validación en tiempo
+  de compilación" para una calculadora científica:
+
+  1. Define constraints para:
+     - `Scalar`: números reales
+     - `Vector`: slices de escalares
+     - `Matrix`: slices 2D de escalares
+  2. Implementa operaciones entre estos tipos:
+     - `Add[T Scalar | Vector | Matrix](a, b T) T`
+     - `Multiply[T Scalar | Vector | Matrix](a, b T) T`
+  3. Usa type switches internos para manejar la lógica específica.
+  4. Asegura que las dimensiones sean correctas en tiempo de ejecución.
+  5. El reto: hacer que el compilador valide lo más posible y dejar
+     solo las validaciones dinámicas inevitables en runtime.
+
+  CIERRE DEL CAPÍTULO
+  ───────────────────
+  Has aprendido a diseñar constraints precisos que hacen que tus APIs
+  genéricas sean seguras, expresivas y reutilizables. Este conocimiento
+  es fundamental para escribir bibliotecas Go de calidad profesional.
+  En el próximo capítulo exploraremos Paquetes y Módulos en Go.
+
+  PRÓXIMO CAPÍTULO
+  ────────────────
+  Capítulo 63: PAQUETES Y MÓDULOS → Aprenderás la estructura de
+  paquetes, el archivo go.mod, el path del módulo, y cómo organizar
+  proyectos Go de manera profesional.
+
+================================================================================
+  FIN DEL CAPÍTULO 62
+================================================================================

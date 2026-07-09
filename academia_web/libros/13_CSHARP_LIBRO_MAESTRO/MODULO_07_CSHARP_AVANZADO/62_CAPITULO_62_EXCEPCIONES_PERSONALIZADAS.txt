@@ -1,0 +1,1448 @@
+================================================================================
+  CAPÍTULO 62: EXCEPCIONES PERSONALIZADAS
+  MÓDULO VII — C# AVANZADO
+  "C# MASTER BOOK"
+================================================================================
+
+BIENVENIDA
+----------
+¡Bienvenido al Capítulo 62! En el capítulo anterior aprendimos a manejar
+excepciones. Ahora daremos un paso más allá creando nuestras propias
+excepciones personalizadas. Esto nos permitirá comunicar errores específicos
+del dominio de nuestra aplicación de manera semántica y estructurada.
+
+FRASE DEL DÍA
+-------------
+"El código bien escrito no solo resuelve problemas, sino que también habla
+el lenguaje del negocio." — Robert C. Martin
+
+OBJETIVOS DEL CAPÍTULO
+----------------------
+1. Comprender por qué y cuándo crear excepciones personalizadas.
+2. Aprender la estructura de una clase de excepción personalizada.
+3. Implementar excepciones serializables con [Serializable].
+4. Usar constructores específicos para datos adicionales.
+5. Aplicar patrones de diseño en jerarquías de excepciones.
+6. Integrar excepciones personalizadas con el manejo de errores empresarial.
+
+================================================================================
+  DESARROLLO DEL CONTENIDO
+================================================================================
+
+--- 1. ¿POR QUÉ EXCEPCIONES PERSONALIZADAS? ---
+
+Las excepciones built-in de .NET cubren situaciones generales, pero en
+aplicaciones reales necesitamos excepciones que reflejen el dominio del
+negocio. Beneficios:
+
+- Semántica clara: DomainException, PaymentFailedException
+- Datos contextuales: ID de transacción, nombre de usuario
+- Manejo selectivo: catch (SaldoInsuficienteException)
+- Serialización para跨 procesos (remoting, WCF)
+
+--- 2. ESTRUCTURA BÁSICA ---
+
+Una excepción personalizada debe:
+1. Heredar de Exception (o una subclase apropiada).
+2. Tener al menos los tres constructores estándar.
+3. Opcionalmente, agregar propiedades con datos adicionales.
+4. Marcar con [Serializable] si se necesita serialización.
+
+```csharp
+using System;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class SaldoInsuficienteException : Exception
+{
+    // Constructores estándar
+    public SaldoInsuficienteException() 
+        : base("Saldo insuficiente para realizar la operación.") { }
+    
+    public SaldoInsuficienteException(string message) 
+        : base(message) { }
+    
+    public SaldoInsuficienteException(string message, Exception inner) 
+        : base(message, inner) { }
+    
+    // Constructor para serialización
+    protected SaldoInsuficienteException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context) { }
+}
+```
+
+--- 3. EXCEPCIÓN CON DATOS DEL DOMINIO ---
+
+```csharp
+using System;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class TransaccionException : Exception
+{
+    public string NumeroCuenta { get; }
+    public decimal Monto { get; }
+    public string TipoTransaccion { get; }
+    public DateTime Fecha { get; }
+    
+    public TransaccionException() 
+        : base("Error en la transacción.") { }
+    
+    public TransaccionException(string message) 
+        : base(message) { }
+    
+    public TransaccionException(string message, Exception inner) 
+        : base(message, inner) { }
+    
+    public TransaccionException(
+        string numeroCuenta, decimal monto, string tipo)
+        : this($"Error en transacción {tipo} para cuenta {numeroCuenta} " +
+               $"por monto {monto:C}")
+    {
+        NumeroCuenta = numeroCuenta;
+        Monto = monto;
+        TipoTransaccion = tipo;
+        Fecha = DateTime.Now;
+    }
+    
+    public TransaccionException(
+        string numeroCuenta, decimal monto, string tipo, Exception inner)
+        : this(
+            $"Error en transacción {tipo} para cuenta {numeroCuenta} " +
+            $"por monto {monto:C}", inner)
+    {
+        NumeroCuenta = numeroCuenta;
+        Monto = monto;
+        TipoTransaccion = tipo;
+        Fecha = DateTime.Now;
+    }
+    
+    protected TransaccionException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context) 
+    {
+        NumeroCuenta = info.GetString(nameof(NumeroCuenta));
+        Monto = info.GetDecimal(nameof(Monto));
+        TipoTransaccion = info.GetString(nameof(TipoTransaccion));
+        Fecha = info.GetDateTime(nameof(Fecha));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(NumeroCuenta), NumeroCuenta);
+        info.AddValue(nameof(Monto), Monto);
+        info.AddValue(nameof(TipoTransaccion), TipoTransaccion);
+        info.AddValue(nameof(Fecha), Fecha);
+    }
+    
+    public override string ToString()
+    {
+        return $"{base.ToString()}\n" +
+               $"  Cuenta: {NumeroCuenta}\n" +
+               $"  Monto: {Monto:C}\n" +
+               $"  Tipo: {TipoTransaccion}\n" +
+               $"  Fecha: {Fecha}";
+    }
+}
+```
+
+--- 4. JERARQUÍA DE EXCEPCIONES DE DOMINIO ---
+
+```csharp
+using System;
+using System.Runtime.Serialization;
+
+// Excepción base del dominio bancario
+[Serializable]
+public abstract class DominioException : Exception
+{
+    public string CodigoError { get; }
+    
+    protected DominioException() : base() { }
+    
+    protected DominioException(string message) : base(message) { }
+    
+    protected DominioException(string message, Exception inner) 
+        : base(message, inner) { }
+    
+    protected DominioException(string codigoError, string message) 
+        : base(message)
+    {
+        CodigoError = codigoError;
+    }
+    
+    protected DominioException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        CodigoError = info.GetString(nameof(CodigoError));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(CodigoError), CodigoError);
+    }
+}
+
+// Excepción específica: cuenta no encontrada
+[Serializable]
+public class CuentaNoEncontradaException : DominioException
+{
+    public string NumeroCuenta { get; }
+    
+    public CuentaNoEncontradaException() 
+        : base("CTE-001", "Cuenta no encontrada.") { }
+    
+    public CuentaNoEncontradaException(string numeroCuenta) 
+        : base("CTE-001", $"La cuenta '{numeroCuenta}' no existe.")
+    {
+        NumeroCuenta = numeroCuenta;
+    }
+    
+    public CuentaNoEncontradaException(
+        string numeroCuenta, Exception inner) 
+        : base("CTE-001", 
+            $"La cuenta '{numeroCuenta}' no existe.", inner)
+    {
+        NumeroCuenta = numeroCuenta;
+    }
+    
+    protected CuentaNoEncontradaException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        NumeroCuenta = info.GetString(nameof(NumeroCuenta));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(NumeroCuenta), NumeroCuenta);
+    }
+}
+
+// Excepción específica: saldo insuficiente
+[Serializable]
+public class SaldoInsuficienteException : DominioException
+{
+    public string NumeroCuenta { get; }
+    public decimal SaldoActual { get; }
+    public decimal MontoSolicitado { get; }
+    
+    public SaldoInsuficienteException() 
+        : base("CTE-002", "Saldo insuficiente.") { }
+    
+    public SaldoInsuficienteException(
+        string numeroCuenta, decimal saldo, decimal monto)
+        : base("CTE-002", 
+            $"Saldo insuficiente en cuenta '{numeroCuenta}'. " +
+            $"Saldo: {saldo:C}, Solicitado: {monto:C}")
+    {
+        NumeroCuenta = numeroCuenta;
+        SaldoActual = saldo;
+        MontoSolicitado = monto;
+    }
+    
+    public SaldoInsuficienteException(
+        string numeroCuenta, decimal saldo, decimal monto, Exception inner)
+        : base("CTE-002", 
+            $"Saldo insuficiente en cuenta '{numeroCuenta}'. " +
+            $"Saldo: {saldo:C}, Solicitado: {monto:C}", inner)
+    {
+        NumeroCuenta = numeroCuenta;
+        SaldoActual = saldo;
+        MontoSolicitado = monto;
+    }
+    
+    protected SaldoInsuficienteException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        NumeroCuenta = info.GetString(nameof(NumeroCuenta));
+        SaldoActual = info.GetDecimal(nameof(SaldoActual));
+        MontoSolicitado = info.GetDecimal(nameof(MontoSolicitado));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(NumeroCuenta), NumeroCuenta);
+        info.AddValue(nameof(SaldoActual), SaldoActual);
+        info.AddValue(nameof(MontoSolicitado), MontoSolicitado);
+    }
+}
+
+// Excepción específica: límite de transacción excedido
+[Serializable]
+public class LimiteTransaccionException : DominioException
+{
+    public string TipoLimite { get; }
+    public decimal Limite { get; }
+    public decimal MontoIntentado { get; }
+    
+    public LimiteTransaccionException() 
+        : base("CTE-003", "Límite de transacción excedido.") { }
+    
+    public LimiteTransaccionException(
+        string tipo, decimal limite, decimal monto)
+        : base("CTE-003", 
+            $"Límite de {tipo} excedido. Límite: {limite:C}, " +
+            $"Intentado: {monto:C}")
+    {
+        TipoLimite = tipo;
+        Limite = limite;
+        MontoIntentado = monto;
+    }
+    
+    protected LimiteTransaccionException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        TipoLimite = info.GetString(nameof(TipoLimite));
+        Limite = info.GetDecimal(nameof(Limite));
+        MontoIntentado = info.GetDecimal(nameof(MontoIntentado));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(TipoLimite), TipoLimite);
+        info.AddValue(nameof(Limite), Limite);
+        info.AddValue(nameof(MontoIntentado), MontoIntentado);
+    }
+}
+```
+
+--- 5. USO DE EXCEPCIONES PERSONALIZADAS ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== EXCEPCIONES PERSONALIZADAS EN ACCIÓN ===\n");
+        
+        var banco = new Banco();
+        
+        // Registrar cuentas
+        banco.RegistrarCuenta("12345", 1000m);
+        banco.RegistrarCuenta("67890", 500m);
+        
+        // Probar operaciones
+        ProbarOperacion(banco, "12345", 200m, "deposito");
+        ProbarOperacion(banco, "12345", 1500m, "retiro");
+        ProbarOperacion(banco, "99999", 100m, "retiro");
+        ProbarOperacion(banco, "67890", 600m, "retiro");
+        ProbarOperacion(banco, "67890", 50m, "retiro");
+    }
+    
+    static void ProbarOperacion(Banco banco, string cuenta, decimal monto, string tipo)
+    {
+        try
+        {
+            Console.WriteLine($"\nOperación: {tipo} - Cuenta: {cuenta} - Monto: {monto:C}");
+            
+            if (tipo == "deposito")
+                banco.Depositar(cuenta, monto);
+            else if (tipo == "retiro")
+                banco.Retirar(cuenta, monto);
+            
+            var info = banco.ObtenerCuenta(cuenta);
+            Console.WriteLine($"  Éxito. Saldo actual: {info.Saldo:C}");
+        }
+        catch (CuentaNoEncontradaException ex)
+        {
+            Console.WriteLine($"  ERROR [{ex.CodigoError}]: {ex.Message}");
+        }
+        catch (SaldoInsuficienteException ex)
+        {
+            Console.WriteLine($"  ERROR [{ex.CodigoError}]: {ex.Message}");
+            Console.WriteLine($"    Saldo: {ex.SaldoActual:C}, Solicitado: {ex.MontoSolicitado:C}");
+        }
+        catch (LimiteTransaccionException ex)
+        {
+            Console.WriteLine($"  ERROR [{ex.CodigoError}]: {ex.Message}");
+            Console.WriteLine($"    Límite: {ex.Limite:C}, Intentado: {ex.MontoIntentado:C}");
+        }
+        catch (DominioException ex)
+        {
+            Console.WriteLine($"  ERROR DE DOMINIO [{ex.CodigoError}]: {ex.Message}");
+        }
+    }
+}
+
+public class CuentaInfo
+{
+    public string Numero { get; set; }
+    public decimal Saldo { get; set; }
+}
+
+public class Banco
+{
+    private readonly Dictionary<string, decimal> _cuentas = new();
+    private const decimal LIMITE_RETIRO = 1000m;
+    
+    public void RegistrarCuenta(string numero, decimal saldoInicial)
+    {
+        _cuentas[numero] = saldoInicial;
+        Console.WriteLine($"Cuenta {numero} registrada con saldo {saldoInicial:C}");
+    }
+    
+    public CuentaInfo ObtenerCuenta(string numero)
+    {
+        if (!_cuentas.ContainsKey(numero))
+            throw new CuentaNoEncontradaException(numero);
+        
+        return new CuentaInfo 
+        { 
+            Numero = numero, 
+            Saldo = _cuentas[numero] 
+        };
+    }
+    
+    public void Depositar(string numeroCuenta, decimal monto)
+    {
+        if (!_cuentas.ContainsKey(numeroCuenta))
+            throw new CuentaNoEncontradaException(numeroCuenta);
+        
+        if (monto <= 0)
+            throw new ArgumentException("El monto debe ser positivo.", nameof(monto));
+        
+        _cuentas[numeroCuenta] += monto;
+    }
+    
+    public void Retirar(string numeroCuenta, decimal monto)
+    {
+        if (!_cuentas.ContainsKey(numeroCuenta))
+            throw new CuentaNoEncontradaException(numeroCuenta);
+        
+        if (monto <= 0)
+            throw new ArgumentException("El monto debe ser positivo.", nameof(monto));
+        
+        if (monto > LIMITE_RETIRO)
+            throw new LimiteTransaccionException("retiro diario", LIMITE_RETIRO, monto);
+        
+        if (_cuentas[numeroCuenta] < monto)
+            throw new SaldoInsuficienteException(
+                numeroCuenta, _cuentas[numeroCuenta], monto);
+        
+        _cuentas[numeroCuenta] -= monto;
+    }
+}
+```
+
+--- 6. EXCEPCIÓN CON RECOMENDACIONES ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class ValidacionException : Exception
+{
+    public IReadOnlyList<string> Errores { get; }
+    public string Campo { get; }
+    public string ValorRecibido { get; }
+    
+    public ValidacionException() 
+        : base("Error de validación.") { }
+    
+    public ValidacionException(string message) : base(message) { }
+    
+    public ValidacionException(
+        string campo, string valor, string mensaje)
+        : base(mensaje)
+    {
+        Campo = campo;
+        ValorRecibido = valor;
+        Errores = new List<string> { mensaje };
+    }
+    
+    public ValidacionException(
+        string campo, string valor, List<string> errores)
+        : base($"Error de validación en campo '{campo}': {errores.Count} error(es).")
+    {
+        Campo = campo;
+        ValorRecibido = valor;
+        Errores = errores.AsReadOnly();
+    }
+    
+    protected ValidacionException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        Campo = info.GetString(nameof(Campo));
+        ValorRecibido = info.GetString(nameof(ValorRecibido));
+        Errores = (List<string>)info.GetValue(nameof(Errores), typeof(List<string>));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(Campo), Campo);
+        info.AddValue(nameof(ValorRecibido), ValorRecibido);
+        info.AddValue(nameof(Errores), Errores?.ToList());
+    }
+}
+
+// Uso
+class ValidadorFormulario
+{
+    public static void ValidarUsuario(string nombre, string email, int edad)
+    {
+        var errores = new List<string>();
+        
+        if (string.IsNullOrWhiteSpace(nombre))
+            errores.Add("El nombre es obligatorio.");
+        else if (nombre.Length < 2)
+            errores.Add("El nombre debe tener al menos 2 caracteres.");
+        
+        if (string.IsNullOrWhiteSpace(email))
+            errores.Add("El email es obligatorio.");
+        else if (!email.Contains("@"))
+            errores.Add("El email debe contener @.");
+        
+        if (edad < 18)
+            errores.Add("Debe ser mayor de 18 años.");
+        else if (edad > 120)
+            errores.Add("Edad inválida.");
+        
+        if (errores.Count > 0)
+            throw new ValidacionException("usuario", 
+                $"nombre={nombre}, email={email}, edad={edad}", errores);
+    }
+}
+```
+
+--- 7. EXCEPCIÓN PARA CAPA DE DATOS ---
+
+```csharp
+using System;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class DataAccessException : Exception
+{
+    public string ComandoSQL { get; }
+    public string Conexion { get; }
+    public int TiempoEjecucionMs { get; }
+    
+    public DataAccessException() : base("Error de acceso a datos.") { }
+    
+    public DataAccessException(string message) : base(message) { }
+    
+    public DataAccessException(string message, Exception inner) 
+        : base(message, inner) { }
+    
+    public DataAccessException(
+        string comandoSQL, string conexion, Exception inner)
+        : base($"Error al ejecutar comando SQL. " +
+               $"Comando: {comandoSQL.Substring(0, Math.Min(100, comandoSQL.Length))}...", 
+               inner)
+    {
+        ComandoSQL = comandoSQL;
+        Conexion = conexion;
+    }
+    
+    public DataAccessException(
+        string comandoSQL, string conexion, int tiempoMs, Exception inner)
+        : this(comandoSQL, conexion, inner)
+    {
+        TiempoEjecucionMs = tiempoMs;
+    }
+    
+    protected DataAccessException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        ComandoSQL = info.GetString(nameof(ComandoSQL));
+        Conexion = info.GetString(nameof(Conexion));
+        TiempoEjecucionMs = info.GetInt32(nameof(TiempoEjecucionMs));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(ComandoSQL), ComandoSQL);
+        info.AddValue(nameof(Conexion), Conexion);
+        info.AddValue(nameof(TiempoEjecucionMs), TiempoEjecucionMs);
+    }
+}
+
+// Simulación de capa de datos
+class RepositorioUsuarios
+{
+    private readonly string _connectionString;
+    
+    public RepositorioUsuarios(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+    
+    public void GuardarUsuario(string nombre)
+    {
+        try
+        {
+            // Simulación de fallo en la base de datos
+            throw new InvalidOperationException(
+                "Timeout de conexión. El servidor no responde.");
+        }
+        catch (Exception ex)
+        {
+            throw new DataAccessException(
+                "INSERT INTO Usuarios (Nombre) VALUES (@nombre)",
+                _connectionString,
+                30000,
+                ex);
+        }
+    }
+}
+```
+
+--- 8. CÓDIGO DE ERROR Y CATEGORIZACIÓN ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+
+public enum CategoriaError
+{
+    Validacion,
+    Autorizacion,
+    NoEncontrado,
+    Concurrencia,
+    Infraestructura,
+    Negocio,
+    Desconocido
+}
+
+public enum SeveridadError
+{
+    Baja,
+    Media,
+    Alta,
+    Critica
+}
+
+[Serializable]
+public class ErrorAplicacionException : Exception
+{
+    public string Codigo { get; }
+    public CategoriaError Categoria { get; }
+    public SeveridadError Severidad { get; }
+    public Dictionary<string, object> Metadatos { get; }
+    
+    public ErrorAplicacionException() 
+        : base("Error de aplicación.") { }
+    
+    public ErrorAplicacionException(
+        string codigo, string mensaje, 
+        CategoriaError categoria = CategoriaError.Desconocido,
+        SeveridadError severidad = SeveridadError.Media)
+        : base($"[{codigo}] {mensaje}")
+    {
+        Codigo = codigo;
+        Categoria = categoria;
+        Severidad = severidad;
+        Metadatos = new Dictionary<string, object>();
+    }
+    
+    public ErrorAplicacionException(
+        string codigo, string mensaje, Exception inner,
+        CategoriaError categoria = CategoriaError.Desconocido,
+        SeveridadError severidad = SeveridadError.Media)
+        : base($"[{codigo}] {mensaje}", inner)
+    {
+        Codigo = codigo;
+        Categoria = categoria;
+        Severidad = severidad;
+        Metadatos = new Dictionary<string, object>();
+    }
+    
+    public void AgregarMetadato(string clave, object valor)
+    {
+        Metadatos[clave] = valor;
+    }
+    
+    protected ErrorAplicacionException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        Codigo = info.GetString(nameof(Codigo));
+        Categoria = (CategoriaError)info.GetInt32(nameof(Categoria));
+        Severidad = (SeveridadError)info.GetInt32(nameof(Severidad));
+        Metadatos = (Dictionary<string, object>)info.GetValue(
+            nameof(Metadatos), typeof(Dictionary<string, object>));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(Codigo), Codigo);
+        info.AddValue(nameof(Categoria), (int)Categoria);
+        info.AddValue(nameof(Severidad), (int)Severidad);
+        info.AddValue(nameof(Metadatos), Metadatos);
+    }
+}
+
+class ManejadorCentralErrores
+{
+    public void ManejarError(Exception ex)
+    {
+        if (ex is ErrorAplicacionException appEx)
+        {
+            Console.WriteLine($"  [{appEx.Severidad}] {appEx.Categoria}: {appEx.Message}");
+            if (appEx.Metadatos.Count > 0)
+            {
+                Console.WriteLine("  Metadatos:");
+                foreach (var kvp in appEx.Metadatos)
+                    Console.WriteLine($"    {kvp.Key}: {kvp.Value}");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"  [NO CONTROLADA] {ex.GetType().Name}: {ex.Message}");
+        }
+        
+        if (ex.InnerException != null)
+            ManejarError(ex.InnerException);
+    }
+}
+```
+
+--- 9. PATRÓN RESULT EN LUGAR DE EXCEPCIONES ---
+
+```csharp
+using System;
+
+// Alternativa: Result<T> en vez de excepciones para flujo esperado
+public class Result<T>
+{
+    public bool IsSuccess { get; }
+    public T Value { get; }
+    public string ErrorCode { get; }
+    public string ErrorMessage { get; }
+    
+    protected Result(bool isSuccess, T value, string errorCode, string errorMessage)
+    {
+        IsSuccess = isSuccess;
+        Value = value;
+        ErrorCode = errorCode;
+        ErrorMessage = errorMessage;
+    }
+    
+    public static Result<T> Ok(T value) => 
+        new Result<T>(true, value, null, null);
+    
+    public static Result<T> Fail(string code, string message) => 
+        new Result<T>(false, default, code, message);
+    
+    public void Match(Action<T> onSuccess, Action<string, string> onFailure)
+    {
+        if (IsSuccess)
+            onSuccess(Value);
+        else
+            onFailure(ErrorCode, ErrorMessage);
+    }
+}
+
+class ServicioDividir
+{
+    public Result<decimal> Dividir(decimal a, decimal b)
+    {
+        if (b == 0)
+            return Result<decimal>.Fail("DIV-001", "No se puede dividir por cero.");
+        return Result<decimal>.Ok(a / b);
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        var servicio = new ServicioDividir();
+        
+        servicio.Dividir(10, 2).Match(
+            onSuccess: valor => Console.WriteLine($"Resultado: {valor}"),
+            onFailure: (codigo, msg) => Console.WriteLine($"Error [{codigo}]: {msg}")
+        );
+        
+        servicio.Dividir(10, 0).Match(
+            onSuccess: valor => Console.WriteLine($"Resultado: {valor}"),
+            onFailure: (codigo, msg) => Console.WriteLine($"Error [{codigo}]: {msg}")
+        );
+    }
+}
+```
+
+--- 10. EXCEPCIÓN PARA API HTTP ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class ApiException : Exception
+{
+    public HttpStatusCode StatusCode { get; }
+    public string Endpoint { get; }
+    public Dictionary<string, string> DetallesValidacion { get; }
+    
+    public ApiException() : base("Error en la API.") { }
+    
+    public ApiException(HttpStatusCode statusCode, string endpoint, string mensaje)
+        : base(mensaje)
+    {
+        StatusCode = statusCode;
+        Endpoint = endpoint;
+        DetallesValidacion = new Dictionary<string, string>();
+    }
+    
+    public ApiException(
+        HttpStatusCode statusCode, string endpoint, 
+        Dictionary<string, string> detalles, string mensaje)
+        : base(mensaje)
+    {
+        StatusCode = statusCode;
+        Endpoint = endpoint;
+        DetallesValidacion = detalles;
+    }
+    
+    public void Deconstruct(
+        out HttpStatusCode statusCode, 
+        out string mensaje,
+        out Dictionary<string, string> detalles)
+    {
+        statusCode = StatusCode;
+        mensaje = Message;
+        detalles = DetallesValidacion;
+    }
+    
+    protected ApiException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        StatusCode = (HttpStatusCode)info.GetInt32(nameof(StatusCode));
+        Endpoint = info.GetString(nameof(Endpoint));
+        DetallesValidacion = (Dictionary<string, string>)info.GetValue(
+            nameof(DetallesValidacion), typeof(Dictionary<string, string>));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(StatusCode), (int)StatusCode);
+        info.AddValue(nameof(Endpoint), Endpoint);
+        info.AddValue(nameof(DetallesValidacion), DetallesValidacion);
+    }
+}
+
+class ClienteApi
+{
+    public void LlamarApi(string endpoint)
+    {
+        throw new ApiException(
+            HttpStatusCode.BadRequest,
+            endpoint,
+            new Dictionary<string, string>
+            {
+                ["email"] = "El formato del email no es válido.",
+                ["edad"] = "La edad debe estar entre 18 y 120."
+            },
+            "Error de validación en la solicitud."
+        );
+    }
+}
+```
+
+--- 11. EXCEPCIÓN CON SOPORTE PARA LOCALIZACIÓN ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+
+[Serializable]
+public class LocalizedException : Exception
+{
+    public string CodigoMensaje { get; }
+    public string Idioma { get; }
+    public Dictionary<string, object> Parametros { get; }
+    
+    public LocalizedException(string codigoMensaje)
+        : base(codigoMensaje)
+    {
+        CodigoMensaje = codigoMensaje;
+        Idioma = "es";
+        Parametros = new Dictionary<string, object>();
+    }
+    
+    public LocalizedException(
+        string codigoMensaje, string idioma, 
+        Dictionary<string, object> parametros)
+        : base(codigoMensaje)
+    {
+        CodigoMensaje = codigoMensaje;
+        Idioma = idioma;
+        Parametros = parametros;
+    }
+    
+    public string ObtenerMensajeLocalizado()
+    {
+        // En producción, aquí se consultaría un archivo de recursos
+        var mensajes = new Dictionary<string, string>
+        {
+            ["ERR_USUARIO_NO_ENCONTRADO"] = "El usuario {0} no fue encontrado.",
+            ["ERR_SALDO_INSUFICIENTE"] = "Saldo insuficiente. Requerido: {0:C}, Actual: {1:C}",
+            ["ERR_LIMITE_EXCEDIDO"] = "Límite excedido. Máximo: {0}, Intentado: {1}"
+        };
+        
+        if (mensajes.TryGetValue(CodigoMensaje, out string plantilla))
+        {
+            try
+            {
+                return string.Format(plantilla, Parametros.Values.ToArray());
+            }
+            catch
+            {
+                return plantilla;
+            }
+        }
+        
+        return CodigoMensaje;
+    }
+    
+    protected LocalizedException(
+        SerializationInfo info, StreamingContext context) 
+        : base(info, context)
+    {
+        CodigoMensaje = info.GetString(nameof(CodigoMensaje));
+        Idioma = info.GetString(nameof(Idioma));
+        Parametros = (Dictionary<string, object>)info.GetValue(
+            nameof(Parametros), typeof(Dictionary<string, object>));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(CodigoMensaje), CodigoMensaje);
+        info.AddValue(nameof(Idioma), Idioma);
+        info.AddValue(nameof(Parametros), Parametros);
+    }
+}
+```
+
+--- 12. EXCEPCIÓN Y TRANSACCIONES ---
+
+```csharp
+using System;
+using System.Transactions;
+
+class ProcesadorTransaccional
+{
+    public void ProcesarPago(string cuentaOrigen, string cuentaDestino, decimal monto)
+    {
+        using (var scope = new TransactionScope())
+        {
+            try
+            {
+                Debitar(cuentaOrigen, monto);
+                Acreditar(cuentaDestino, monto);
+                
+                scope.Complete();
+                Console.WriteLine("Transacción completada exitosamente.");
+            }
+            catch (SaldoInsuficienteException)
+            {
+                Console.WriteLine("Transacción revertida por saldo insuficiente.");
+                throw;  // Rollback automático
+            }
+            catch (CuentaNoEncontradaException)
+            {
+                Console.WriteLine("Transacción revertida por cuenta no encontrada.");
+                throw;  // Rollback automático
+            }
+        }
+    }
+    
+    void Debitar(string cuenta, decimal monto)
+    {
+        // Simulación
+        if (monto > 1000)
+            throw new SaldoInsuficienteException(cuenta, 500, monto);
+        Console.WriteLine($"  Debitados {monto:C} de {cuenta}");
+    }
+    
+    void Acreditar(string cuenta, decimal monto)
+    {
+        Console.WriteLine($"  Acreditados {monto:C} a {cuenta}");
+    }
+}
+```
+
+--- 13. CONVERSIÓN DE EXCEPCIONES ---
+
+```csharp
+using System;
+
+class ExceptionConverter
+{
+    public static T Convertir<T>(Exception original) where T : Exception
+    {
+        // Crear nueva excepción del tipo T con la original como InnerException
+        var constructor = typeof(T).GetConstructor(
+            new[] { typeof(string), typeof(Exception) });
+        
+        if (constructor != null)
+        {
+            return (T)constructor.Invoke(
+                new object[] { 
+                    $"Error convertido desde {original.GetType().Name}: {original.Message}", 
+                    original 
+                });
+        }
+        
+        throw new InvalidOperationException(
+            $"El tipo {typeof(T).Name} no tiene constructor (string, Exception).");
+    }
+    
+    static void Main()
+    {
+        try
+        {
+            try
+            {
+                throw new InvalidOperationException("Error de operación inválida.");
+            }
+            catch (Exception ex)
+            {
+                throw ExceptionConverter.Convertir<DataAccessException>(ex);
+            }
+        }
+        catch (DataAccessException ex)
+        {
+            Console.WriteLine($"Convertida: {ex.Message}");
+            Console.WriteLine($"Inner: {ex.InnerException?.Message}");
+        }
+    }
+}
+```
+
+--- 14. GUARDAR Y RESTAURAR EXCEPCIONES ---
+
+```csharp
+using System;
+using System.IO;
+using System.Runtime.Serialization.Formatters.Binary;
+
+class PersistenciaExcepciones
+{
+    public static void GuardarExcepcion(Exception ex, string ruta)
+    {
+        try
+        {
+            var formatter = new BinaryFormatter();
+            using (var stream = File.Create(ruta))
+            {
+                formatter.Serialize(stream, ex);
+            }
+            Console.WriteLine($"Excepción guardada en {ruta}");
+        }
+        catch (Exception serialEx)
+        {
+            Console.WriteLine($"Error al serializar: {serialEx.Message}");
+        }
+    }
+    
+    public static Exception CargarExcepcion(string ruta)
+    {
+        try
+        {
+            var formatter = new BinaryFormatter();
+            using (var stream = File.OpenRead(ruta))
+            {
+                return (Exception)formatter.Deserialize(stream);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar: {ex.Message}");
+            return null;
+        }
+    }
+    
+    static void Main()
+    {
+        var excepcionOriginal = new SaldoInsuficienteException(
+            "12345", 100m, 500m);
+        
+        GuardarExcepcion(excepcionOriginal, "excepcion.bin");
+        
+        var excepcionRestaurada = CargarExcepcion("excepcion.bin");
+        
+        if (excepcionRestaurada is SaldoInsuficienteException siEx)
+        {
+            Console.WriteLine($"\nExcepción restaurada:");
+            Console.WriteLine($"  Cuenta: {siEx.NumeroCuenta}");
+            Console.WriteLine($"  Saldo: {siEx.SaldoActual:C}");
+            Console.WriteLine($"  Monto: {siEx.MontoSolicitado:C}");
+            Console.WriteLine($"  Mensaje: {siEx.Message}");
+        }
+    }
+}
+```
+
+--- 15. BUENAS PRÁCTICAS CON EXCEPCIONES PERSONALIZADAS ---
+
+```csharp
+using System;
+
+class BuenasPracticas
+{
+    // ✅ CORRECTO: Jerarquía de excepciones de dominio
+    // abstract class DomainException : Exception { }
+    // class NotFoundException : DomainException { }
+    // class ValidationException : DomainException { }
+    
+    // ✅ CORRECTO: Excepción inmutable y serializable
+    [Serializable]
+    class ProductoNoDisponibleException : Exception
+    {
+        public int ProductoId { get; }
+        
+        public ProductoNoDisponibleException(int productoId)
+            : base($"El producto #{productoId} no está disponible.")
+        {
+            ProductoId = productoId;
+        }
+        
+        protected ProductoNoDisponibleException(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context)
+            : base(info, context)
+        {
+            ProductoId = info.GetInt32(nameof(ProductoId));
+        }
+        
+        public override void GetObjectData(
+            System.Runtime.Serialization.SerializationInfo info,
+            System.Runtime.Serialization.StreamingContext context)
+        {
+            base.GetObjectData(info, context);
+            info.AddValue(nameof(ProductoId), ProductoId);
+        }
+    }
+    
+    // ❌ MAL: Excepción sin datos útiles
+    class ErrorGenericoException : Exception
+    {
+        // Solo hereda constructores, sin información adicional
+    }
+    
+    // ❌ MAL: Excepción que permite estado inválido
+    class MutableException : Exception
+    {
+        public string Codigo { get; set; }  // Propiedad mutable
+    }
+}
+```
+
+--- 16. SISTEMA COMPLETO DE EXCEPCIONES ---
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+
+// === BASE ===
+[Serializable]
+public abstract class AplicacionException : Exception
+{
+    public string CodigoError { get; }
+    
+    protected AplicacionException(string codigo, string mensaje) 
+        : base($"[{codigo}] {mensaje}")
+    {
+        CodigoError = codigo;
+    }
+    
+    protected AplicacionException(string codigo, string mensaje, Exception inner) 
+        : base($"[{codigo}] {mensaje}", inner)
+    {
+        CodigoError = codigo;
+    }
+    
+    protected AplicacionException(
+        SerializationInfo info, StreamingContext context) : base(info, context)
+    {
+        CodigoError = info.GetString(nameof(CodigoError));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(CodigoError), CodigoError);
+    }
+}
+
+// === DOMINIO: INVENTARIO ===
+[Serializable]
+public class InventarioException : AplicacionException
+{
+    public int ProductoId { get; }
+    
+    public InventarioException(string codigo, int productoId, string mensaje) 
+        : base(codigo, mensaje)
+    {
+        ProductoId = productoId;
+    }
+    
+    public InventarioException(string codigo, int productoId, string mensaje, Exception inner) 
+        : base(codigo, mensaje, inner)
+    {
+        ProductoId = productoId;
+    }
+    
+    protected InventarioException(
+        SerializationInfo info, StreamingContext context) : base(info, context)
+    {
+        ProductoId = info.GetInt32(nameof(ProductoId));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(ProductoId), ProductoId);
+    }
+}
+
+[Serializable]
+public class StockInsuficienteException : InventarioException
+{
+    public int CantidadSolicitada { get; }
+    public int StockActual { get; }
+    
+    public StockInsuficienteException(int productoId, int solicitado, int actual)
+        : base("INV-001", productoId, 
+            $"Stock insuficiente para producto #{productoId}. " +
+            $"Solicitado: {solicitado}, Disponible: {actual}")
+    {
+        CantidadSolicitada = solicitado;
+        StockActual = actual;
+    }
+    
+    protected StockInsuficienteException(
+        SerializationInfo info, StreamingContext context) : base(info, context)
+    {
+        CantidadSolicitada = info.GetInt32(nameof(CantidadSolicitada));
+        StockActual = info.GetInt32(nameof(StockActual));
+    }
+    
+    public override void GetObjectData(
+        SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue(nameof(CantidadSolicitada), CantidadSolicitada);
+        info.AddValue(nameof(StockActual), StockActual);
+    }
+}
+
+[Serializable]
+public class ProductoNoEncontradoException : InventarioException
+{
+    public ProductoNoEncontradoException(int productoId)
+        : base("INV-002", productoId, $"Producto #{productoId} no encontrado.") { }
+    
+    protected ProductoNoEncontradoException(
+        SerializationInfo info, StreamingContext context) : base(info, context) { }
+}
+
+// === DEMO ===
+class Program
+{
+    static void Main()
+    {
+        Console.WriteLine("=== SISTEMA DE EXCEPCIONES EMPRESARIAL ===\n");
+        
+        var inventario = new Dictionary<int, int>
+        {
+            { 1, 10 },
+            { 2, 0 },
+            { 3, 5 }
+        };
+        
+        foreach (var kvp in inventario)
+        {
+            ProbarDespacho(kvp.Key, 8, inventario);
+        }
+    }
+    
+    static void ProbarDespacho(
+        int productoId, int cantidad, Dictionary<int, int> inventario)
+    {
+        try
+        {
+            Despachar(productoId, cantidad, inventario);
+            Console.WriteLine($"  Despacho exitoso: #{productoId} x{cantidad}");
+        }
+        catch (StockInsuficienteException ex)
+        {
+            Console.WriteLine($"  {ex.Message}");
+        }
+        catch (ProductoNoEncontradoException ex)
+        {
+            Console.WriteLine($"  {ex.Message}");
+        }
+        catch (AplicacionException ex)
+        {
+            Console.WriteLine($"  Error de aplicación [{ex.CodigoError}]: {ex.Message}");
+        }
+    }
+    
+    static void Despachar(
+        int productoId, int cantidad, Dictionary<int, int> inventario)
+    {
+        if (!inventario.TryGetValue(productoId, out int stock))
+            throw new ProductoNoEncontradoException(productoId);
+        
+        if (stock < cantidad)
+            throw new StockInsuficienteException(productoId, cantidad, stock);
+        
+        inventario[productoId] -= cantidad;
+    }
+}
+```
+
+================================================================================
+  RESUMEN DEL CAPÍTULO
+================================================================================
+
+1. Las excepciones personalizadas heredan de Exception (o subclase).
+2. Deben incluir los tres constructores estándar y el constructor de
+   serialización.
+3. El atributo [Serializable] es necesario para serialización binaria.
+4. Agregue propiedades con datos de contexto relevantes al dominio.
+5. Implemente GetObjectData/constructor para serialización personalizada.
+6. Use una jerarquía de excepciones para reflejar el dominio del negocio.
+7. Considere el patrón Result<T> como alternativa para flujo esperado.
+
+================================================================================
+  EJERCICIOS PRÁCTICOS
+================================================================================
+
+Ejercicio 1: Cree una excepción personalizada `EmailNoEnviadoException` con
+propiedades: Destinatario, Asunto, ServidorSMTP.
+
+Ejercicio 2: Implemente una jerarquía de excepciones para un sistema de
+reservas de hotel con: ReservaException (base),
+HabitacionNoDisponibleException, FechasInvalidasException,
+HuespedNoEncontradoException.
+
+Ejercicio 3: Agregue serialización completa a todas las excepciones del
+ejercicio 2, probando guardar y cargar desde un archivo binario.
+
+Ejercicio 4: Convierta el sistema de validación del capítulo anterior para
+que use ValidacionException personalizada que acumule múltiples errores.
+
+Ejercicio 5: Implemente un manejador central de errores que distinga entre
+excepciones de dominio, técnicas y no controladas, aplicando diferentes
+políticas para cada categoría.
+
+================================================================================
+  PREGUNTAS FRECUENTES (FAQ)
+================================================================================
+
+P: ¿Debo heredar de Exception o de ApplicationException?
+R: De Exception. Microsoft ya no recomienda ApplicationException. Herede
+directamente de Exception para crear una raíz de su jerarquía.
+
+P: ¿Es obligatorio el constructor de serialización?
+R: Si su aplicación usa remoting, WCF, procesos跨, o guarda excepciones
+en archivos, es obligatorio. En aplicaciones simples puede omitirse, pero
+es buena práctica incluirlo siempre.
+
+P: ¿Cuántas excepciones personalizadas debo crear?
+R: Las justas. Cree una por cada concepto de error significativo en su
+dominio. No cree una excepción por cada método.
+
+P: ¿Puedo tener propiedades mutables en mi excepción?
+R: Técnicamente sí, pero no es recomendable. Las excepciones deben ser
+inmutables (propiedades get-only).
+
+P: ¿Debo documentar XML mis excepciones personalizadas?
+R: Sí, es muy recomendable. Incluya cuándo se lanza, qué propiedades
+contiene, y cómo debe manejarse.
+
+================================================================================
+  DESAFÍO DEL ARQUITECTO
+================================================================================
+
+Diseñe un sistema completo de manejo de errores para una plataforma de
+comercio electrónico con los siguientes requisitos:
+
+1. Jerarquía de excepciones (mínimo 10 clases):
+   - ECommerceException (base abstracta)
+   - Categorías: ClienteException, ProductoException, PagoException,
+     EnvioException, CarritoException
+   - Excepciones específicas dentro de cada categoría
+
+2. Cada excepción debe incluir:
+   - Código de error único (ej: "PAY-001")
+   - Propiedades de contexto relevantes
+   - Serialización completa
+   - Documentación XML
+
+3. Sistema de logging automático:
+   - Un manejador global que capture todas las excepciones
+   - Registre en consola y archivo con timestamp
+   - Clasifique por severidad
+   - Opción de enviar email para severidad crítica
+
+4. Estrategia de reintentos:
+   - Para errores transitorios (tiemout, red), reintentar hasta 3 veces
+   - Para errores de dominio (saldo, stock), no reintentar
+   - Para errores críticos (infraestructura), escalar inmediatamente
+
+5. Integración con Result<T>:
+   - Use Result<T> para errores esperados en lugar de excepciones
+   - Use excepciones solo para errores inesperados o excepcionales
+
+Extensión: Implemente middleware ASP.NET Core que capture estas excepciones
+y devuelva respuestas HTTP apropiadas (400, 404, 500, etc.).
+
+================================================================================
+  CIERRE DEL CAPÍTULO
+================================================================================
+
+Las excepciones personalizadas son una herramienta poderosa para expresar
+errores del dominio de su aplicación. Al diseñar una jerarquía bien
+estructurada, su código se vuelve más expresivo, mantenible y profesional.
+En el próximo capítulo exploraremos los atributos en C#, otro mecanismo
+fundamental para añadir metadatos a nuestro código.
+
+¡Felicidades! Ya domina la creación de excepciones personalizadas.
+
+PRÓXIMO CAPÍTULO: 63 - Attributes
+================================================================================

@@ -1,0 +1,307 @@
+```text
+################################################################################
+################################################################################
+##
+##                    LUCAS EGA ACADEMY
+##                 JAVASCRIPT MASTER BOOK
+##                         MÓDULO VII
+##                        CAPÍTULO 68
+##       MANEJO DE ERRORES EN ASINCRONÍA
+################################################################################
+################################################################################
+
+"El código asíncrono necesita manejo de errores especializado.
+Un error en una promesa no manejado... desaparece en silencio."
+                                  — Profesor Búho AI
+
+===============================================================================
+BIENVENIDA DEL PROFESOR BÚHO
+===============================================================================
+
+Querido estudiante…
+
+En código síncrono, los errores son inmediatos.
+En código asíncrono, un error puede "perderse" si no lo manejas.
+
+Aprenderás:
+- Cómo se propagan los errores en promesas.
+- Diferencia entre errores de red y errores HTTP.
+- Cómo manejar errores globales.
+- Patrones robustos para producción.
+
+===============================================================================
+OBJETIVOS DEL CAPÍTULO
+===============================================================================
+
+✓ Entender la propagación de errores en promesas.
+✓ Manejar errores HTTP vs errores de red.
+✓ Usar try/catch con async/await.
+✓ Implementar reintentos (retry).
+✓ Manejar errores globales no capturados.
+
+===============================================================================
+1. ERRORES NO MANEJADOS
+===============================================================================
+
+```javascript
+// ⚠️ Error no manejado
+Promise.reject("Algo salió mal");
+// (node:1234) UnhandledPromiseRejectionWarning: Algo salió mal
+
+// ✅ Siempre manejar errores:
+Promise.reject("Algo salió mal")
+    .catch(function(error) {
+        console.log("✅ Error manejado:", error);
+    });
+```
+
+===============================================================================
+2. ERROR DE RED VS ERROR HTTP
+===============================================================================
+
+```javascript
+async function peticionRobusta(url) {
+    try {
+        let respuesta = await fetch(url);
+
+        // Error HTTP (404, 500): fetch NO lanza error
+        if (!respuesta.ok) {
+            throw new Error("HTTP " + respuesta.status + " " + respuesta.statusText);
+        }
+
+        return await respuesta.json();
+
+    } catch (error) {
+        // Error de red: fetch SÍ lanza error
+        // Error HTTP: nosotros lanzamos el error arriba
+        console.log("❌ Tipo de error:", error.name);
+        console.log("   Mensaje:", error.message);
+
+        if (error.message.startsWith("HTTP")) {
+            console.log("   🔴 Error del servidor");
+        } else {
+            console.log("   🔵 Error de red (sin conexión?)");
+        }
+
+        return null;
+    }
+}
+
+// peticionRobusta("https://api.ejemplo.com/datos");
+// peticionRobusta("https://jsonplaceholder.typicode.com/users/1");
+```
+
+===============================================================================
+3. PATRÓN RETRY (REINTENTO)
+===============================================================================
+
+```javascript
+async function peticionConReintento(url, maxIntentos = 3) {
+    let ultimoError;
+
+    for (let intento = 1; intento <= maxIntentos; intento++) {
+        try {
+            console.log(`📡 Intento ${intento}/${maxIntentos}...`);
+            let respuesta = await fetch(url);
+
+            if (!respuesta.ok) {
+                throw new Error("HTTP " + respuesta.status);
+            }
+
+            console.log("✅ Éxito en intento " + intento);
+            return await respuesta.json();
+
+        } catch (error) {
+            ultimoError = error;
+            console.log(`❌ Intento ${intento} falló:`, error.message);
+
+            if (intento < maxIntentos) {
+                // Espera exponencial: 1s, 2s, 4s...
+                let espera = 1000 * Math.pow(2, intento - 1);
+                console.log(`⏳ Esperando ${espera}ms antes de reintentar...`);
+                await new Promise(r => setTimeout(r, espera));
+            }
+        }
+    }
+
+    console.log("❌ Todos los intentos fallaron");
+    throw ultimoError;
+}
+
+// peticionConReintento("https://api.ejemplo.com/inestable")
+//     .then(d => console.log("Datos:", d))
+//     .catch(e => console.log("Error final:", e.message));
+```
+
+===============================================================================
+4. ERRORES GLOBALES
+===============================================================================
+
+```javascript
+// Capturar promesas rechazadas no manejadas (navegador)
+window.addEventListener("unhandledrejection", function(evento) {
+    console.log("🚨 Promesa no manejada:", evento.reason);
+    evento.preventDefault();  // Evita que se muestre en consola
+});
+
+// Capturar errores síncronos generales
+window.addEventListener("error", function(evento) {
+    console.log("🚨 Error general:", evento.message);
+    console.log("   Archivo:", evento.filename);
+    console.log("   Línea:", evento.lineno);
+});
+
+// En Node.js
+// process.on("unhandledRejection", (reason) => { ... });
+// process.on("uncaughtException", (error) => { ... });
+```
+
+===============================================================================
+5. PATRÓN ROBUSTO PARA PRODUCCIÓN
+===============================================================================
+
+```javascript
+class APIError extends Error {
+    constructor(status, mensaje, datos = null) {
+        super(mensaje);
+        this.name = "APIError";
+        this.status = status;
+        this.datos = datos;
+        this.timestamp = new Date().toISOString();
+    }
+}
+
+class ClienteAPI {
+    constructor(baseURL, timeout = 5000) {
+        this.baseURL = baseURL;
+        this.timeout = timeout;
+    }
+
+    async request(endpoint, opciones = {}) {
+        try {
+            let controlador = new AbortController();
+            let timeoutId = setTimeout(() => controlador.abort(), this.timeout);
+
+            let respuesta = await fetch(this.baseURL + endpoint, {
+                ...opciones,
+                signal: controlador.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!respuesta.ok) {
+                let cuerpo = await respuesta.text();
+                throw new APIError(
+                    respuesta.status,
+                    `HTTP ${respuesta.status}: ${respuesta.statusText}`,
+                    cuerpo
+                );
+            }
+
+            return await respuesta.json();
+
+        } catch (error) {
+            if (error instanceof APIError) throw error;
+
+            if (error.name === "AbortError") {
+                throw new APIError(0, "Timeout: la petición tardó demasiado");
+            }
+
+            throw new APIError(0, "Error de red: " + error.message);
+        }
+    }
+
+    async get(endpoint) {
+        return this.request(endpoint);
+    }
+
+    async post(endpoint, datos) {
+        return this.request(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(datos)
+        });
+    }
+}
+
+// Uso
+// let api = new ClienteAPI("https://jsonplaceholder.typicode.com");
+// try {
+//     let users = await api.get("/users");
+//     console.log("Usuarios:", users.length);
+// } catch (error) {
+//     console.log("Error:", error.status, error.message);
+// }
+```
+
+===============================================================================
+MINI PROYECTO: GESTOR DE ERRORES VISUAL
+===============================================================================
+
+```javascript
+class ManejadorErrores {
+    static mostrarError(mensaje, tipo = "error", duracion = 5000) {
+        let div = document.createElement("div");
+        div.className = "alerta alerta-" + tipo;
+        div.innerHTML = `
+            <strong>${tipo.toUpperCase()}:</strong> ${mensaje}
+            <button class="cerrar">&times;</button>
+        `;
+
+        div.style.cssText = "padding:12px 20px;margin:10px 0;" +
+            "border-radius:5px;display:flex;justify-content:space-between;" +
+            "align-items:center;animation:slideIn 0.3s;";
+
+        let colores = {
+            error: "#ffebee;color:#c62828;border:1px solid #ef9a9a",
+            warning: "#fff3e0;color:#ef6c00;border:1px solid #ffe0b2",
+            info: "#e3f2fd;color:#1565c0;border:1px solid #90caf9",
+            exito: "#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7"
+        };
+        div.style.cssText += ";background:" + colores[tipo] || colores.error;
+
+        div.querySelector(".cerrar").addEventListener("click", () => div.remove());
+
+        document.body.insertBefore(div, document.body.firstChild);
+
+        if (duracion > 0) {
+            setTimeout(() => {
+                div.style.opacity = "0";
+                setTimeout(() => div.remove(), 300);
+            }, duracion);
+        }
+    }
+
+    static async ejecutarSeguro(promesa, mensajeError = "Error inesperado") {
+        try {
+            return await promesa;
+        } catch (error) {
+            this.mostrarError(mensajeError + ": " + error.message);
+            return null;
+        }
+    }
+}
+
+// ManejadorErrores.mostrarError("No se pudo conectar al servidor", "error");
+```
+
+===============================================================================
+RESUMEN
+===============================================================================
+
+✔ fetch NO lanza error en HTTP 404/500 (hay que verificar ok).
+✔ Errores de red: catch captura.
+✔ Reintentos: espera exponencial para peticiones fallidas.
+✔ Promesas no manejadas: unhandledrejection.
+✔ APIError: clase personalizada con status y mensaje.
+✔ Timeout: AbortController para limitar tiempo de espera.
+
+===============================================================================
+FIN DEL CAPÍTULO 68
+===============================================================================
+
+"Los errores no son fracasos, son oportunidades de mejorar.
+Un buen manejo de errores distingue a un programador experto."
+— Profesor Búho AI
+
+===============================================================================

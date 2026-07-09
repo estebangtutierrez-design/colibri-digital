@@ -1,0 +1,1620 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║            RUBY MASTER BOOK — MÓDULO V: MÓDULOS Y MIXINS                      ║
+║         CAPÍTULO 44: PREPEND — INTERCEPTANDO MÉTODOS DESDE ARRIBA             ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────────
+  BIENVENIDA
+────────────────────────────────────────────────────────────────────────────────────
+
+Bienvenido al Capítulo 44 del Ruby Master Book. Hasta ahora hemos visto `include`
+(inserta el módulo después de la clase en la cadena de ancestros) y `extend`
+(añade métodos singleton). Ahora exploraremos `prepend`, la tercera y más
+sutil directiva de mezcla.
+
+`prepend` inserta el módulo ANTES que la clase en la cadena de ancestros.
+Esto significa que los métodos definidos en el módulo tienen prioridad sobre
+los métodos de la clase. Con `prepend`, el módulo puede "envolver" los métodos
+de la clase, llamando a `super` para invocar la implementación original.
+
+Este mecanismo es ideal para Aspect-Oriented Programming, monkey-patching
+controlado, alias_method_chain, y cualquier patrón donde necesites interceptar
+llamadas a métodos sin modificar la clase original.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FRASE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+"Prepend es como tener un filtro que se sienta encima de tu clase,
+  viendo todo lo que entra y sale, sin que la clase se dé cuenta."
+  — Yehuda Katz, core contributor de Ruby on Rails
+
+────────────────────────────────────────────────────────────────────────────────────
+  OBJETIVOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+  1. Entender la diferencia en la cadena de ancestros entre prepend e include.
+  2. Usar prepend para interceptar y extender métodos de una clase.
+  3. Implementar el patrón alias_method_chain con prepend.
+  4. Aplicar Aspect-Oriented Programming (AOP) con prepend.
+  5. Usar prepend para monkey-patching seguro.
+  6. Combinar prepend con super para envolver métodos existentes.
+  7. Conocer las limitaciones y precauciones de prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESARROLLO DEL CAPÍTULO — PREPEND
+────────────────────────────────────────────────────────────────────────────────────
+
+`prepend` funciona de manera similar a `include`, pero con una diferencia
+crucial en el orden de resolución de métodos:
+
+    class MiClase
+      prepend MiModulo
+    end
+
+    MiClase.ancestors  # => [MiModulo, MiClase, Object, Kernel, BasicObject]
+
+Con `include`, el módulo aparece DESPUÉS de la clase en la cadena.
+Con `prepend`, el módulo aparece ANTES de la clase.
+
+Esto significa que cuando llamas a un método, Ruby busca primero en el módulo
+prependido antes que en la clase. Si el módulo define un método que existe en
+la clase, el módulo lo intercepta. Dentro de ese método, puedes llamar a
+`super` para ejecutar la versión original de la clase.
+
+────────────────────────────────────────────────────────────────────────────────────
+  44.1 — PREPEND BÁSICO
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 1: `prepend` vs `include` — diferencia en ancestros.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_01_prepend_vs_include.rb
+# Comparación directa entre include y prepend
+
+module ModuloA
+  def metodo
+    "ModuloA"
+  end
+end
+
+module ModuloB
+  def metodo
+    "ModuloB (super: #{super})"
+  end
+end
+
+class ConInclude
+  include ModuloA
+
+  def metodo
+    "ConInclude"
+  end
+end
+
+class ConPrepend
+  prepend ModuloA
+
+  def metodo
+    "ConPrepend"
+  end
+end
+
+class ConPrependSuper
+  prepend ModuloB
+
+  def metodo
+    "Original"
+  end
+end
+
+puts "=== Include ==="
+obj_i = ConInclude.new
+puts obj_i.metodo
+puts "Ancestros: #{ConInclude.ancestors}"
+
+puts "\n=== Prepend ==="
+obj_p = ConPrepend.new
+puts obj_p.metodo
+puts "Ancestros: #{ConPrepend.ancestors}"
+
+puts "\n=== Prepend con super ==="
+obj_ps = ConPrependSuper.new
+puts obj_ps.metodo
+puts "Ancestros: #{ConPrependSuper.ancestors}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 2: Interceptando métodos con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_02_interceptar_metodos.rb
+# Usando prepend para interceptar y modificar comportamiento
+
+module ConLog
+  def procesar(datos)
+    puts "[LOG] Iniciando procesamiento de: #{datos.class}"
+    inicio = Time.now
+    resultado = super
+    duracion = Time.now - inicio
+    puts "[LOG] Completado en #{format('%.4f', duracion)}s"
+    resultado
+  end
+
+  def validar(datos)
+    puts "[LOG] Validando datos..."
+    resultado = super
+    puts "[LOG] Validación: #{resultado ? 'EXITOSA' : 'FALLIDA'}"
+    resultado
+  end
+end
+
+class Procesador
+  prepend ConLog
+
+  def procesar(datos)
+    puts "  → Procesando datos internamente..."
+    sleep(0.05)
+    "Resultado: #{datos.upcase}"
+  end
+
+  def validar(datos)
+    !datos.nil? && !datos.empty?
+  end
+end
+
+proc = Procesador.new
+puts proc.procesar("hola mundo")
+puts ""
+puts proc.validar("")
+puts ""
+puts proc.validar("datos válidos")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 3: Medición de rendimiento con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_03_medicion_prepend.rb
+# AOP: Medición automática de tiempo de ejecución
+
+module Medible
+  def self.prepended(base)
+    puts "Medible prependido en #{base}"
+  end
+
+  def method_missing(name, *args, &block)
+    if respond_to?(name)
+      inicio = Time.now
+      resultado = super
+      duracion = Time.now - inicio
+      puts "[TIMER] #{name}: #{format('%.4f', duracion)}s"
+      resultado
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    super
+  end
+end
+
+class Servicio
+  prepend Medible
+
+  def tarea_lenta
+    sleep(0.1)
+    "Lenta completada"
+  end
+
+  def tarea_rapida
+    "Rápida completada"
+  end
+
+  def tarea_muy_lenta
+    sleep(0.2)
+    "Muy lenta completada"
+  end
+end
+
+svc = Servicio.new
+puts svc.tarea_rapida
+puts svc.tarea_lenta
+puts svc.tarea_muy_lenta
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 4: Cache con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_04_cache_prepend.rb
+# Implementación de caché transparente con prepend
+
+module Cacheable
+  def ejecutar(*args)
+    @cache ||= {}
+    clave = args.hash
+    if @cache.key?(clave)
+      puts "[CACHE] Hit para #{args.inspect}"
+      @cache[clave]
+    else
+      puts "[CACHE] Miss para #{args.inspect}"
+      @cache[clave] = super
+    end
+  end
+
+  def cache_clear
+    @cache = {}
+  end
+
+  def cache_stats
+    { size: (@cache || {}).length }
+  end
+end
+
+class Calculadora
+  prepend Cacheable
+
+  def ejecutar(operacion, a, b)
+    case operacion
+    when :suma
+      sleep(0.02)
+      a + b
+    when :multiplicacion
+      sleep(0.03)
+      a * b
+    when :potencia
+      sleep(0.05)
+      a ** b
+    else
+      raise "Operación desconocida"
+    end
+  end
+end
+
+calc = Calculadora.new
+puts "Primera llamada: #{calc.ejecutar(:suma, 3, 4)}"
+puts "Segunda llamada (cacheada): #{calc.ejecutar(:suma, 3, 4)}"
+puts "Tercera llamada (cacheada): #{calc.ejecutar(:suma, 3, 4)}"
+puts "Otra operación: #{calc.ejecutar(:multiplicacion, 5, 6)}"
+puts "Stats: #{calc.cache_stats}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 5: Validación con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_05_validacion_prepend.rb
+# Validación automática antes de ejecutar métodos
+
+module Validable
+  def guardar(*args)
+    unless valido?
+      raise "No se puede guardar: #{errores.join(', ')}"
+    end
+    super
+  end
+
+  def eliminar(*args)
+    unless puede_eliminarse?
+      raise "No se puede eliminar en el estado actual"
+    end
+    super
+  end
+end
+
+class Articulo
+  prepend Validable
+
+  attr_reader :titulo, :contenido, :estado
+
+  def initialize(titulo, contenido)
+    @titulo = titulo
+    @contenido = contenido
+    @estado = :borrador
+    @persistido = false
+  end
+
+  def guardar
+    @persistido = true
+    @estado = :publicado
+    puts "Artículo guardado: #{@titulo}"
+  end
+
+  def eliminar
+    @persistido = false
+    @estado = :eliminado
+    puts "Artículo eliminado: #{@titulo}"
+  end
+
+  def valido?
+    @errores = []
+    @errores << "Título requerido" if @titulo.nil? || @titulo.empty?
+    @errores << "Contenido requerido" if @contenido.nil? || @contenido.empty?
+    @errores.empty?
+  end
+
+  def puede_eliminarse?
+    @persistido == true
+  end
+
+  def errores
+    @errores || []
+  end
+end
+
+a1 = Articulo.new("Ruby Prepend", "Contenido sobre prepend...")
+a1.guardar
+a1.eliminar
+
+puts "---"
+a2 = Articulo.new("", "")
+begin
+  a2.guardar
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+puts "---"
+a3 = Articulo.new("Solo título", nil)
+begin
+  a3.guardar
+rescue => e
+  puts "Error: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 6: alias_method_chain con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_06_alias_method_chain.rb
+# El patrón alias_method_chain moderno con prepend
+
+# La forma antigua (Rails 2.x):
+# class Foo
+#   def bar_with_log
+#     puts "LOG"
+#     bar_without_log
+#   end
+#   alias_method :bar_without_log, :bar
+#   alias_method :bar, :bar_with_log
+# end
+
+# La forma moderna con prepend:
+module Logging
+  def bar
+    puts "[LOG] bar fue llamado"
+    super
+  end
+end
+
+class Foo
+  prepend Logging
+
+  def bar
+    "Ejecutando bar original"
+  end
+
+  def baz(x)
+    x * 2
+  end
+end
+
+foo = Foo.new
+puts foo.bar
+puts foo.baz(5)
+
+# Otro ejemplo más complejo
+module ConTimestamp
+  def save
+    @updated_at = Time.now
+    puts "Timestamp actualizado: #{@updated_at}"
+    super
+  end
+
+  def create
+    @created_at = Time.now
+    @updated_at = @created_at
+    puts "Creado en: #{@created_at}"
+    super
+  end
+end
+
+class Documento
+  prepend ConTimestamp
+
+  attr_reader :created_at, :updated_at
+
+  def initialize(titulo)
+    @titulo = titulo
+  end
+
+  def save
+    puts "Guardando documento: #{@titulo}"
+  end
+
+  def create
+    puts "Creando documento: #{@titulo}"
+    save
+  end
+end
+
+doc = Documento.new("Mi Documento")
+doc.create
+puts "---"
+doc.save
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 7: Prepend con configuración dinámica.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_07_prepend_configurable.rb
+# Prepending condicional basado en configuración
+
+module ConLog
+  def operar(*args)
+    puts "[LOG] operar(#{args.map(&:inspect).join(', ')})"
+    resultado = super
+    puts "[LOG] => #{resultado.inspect}"
+    resultado
+  end
+end
+
+module ConValidacion
+  def operar(*args)
+    raise "ArgumentError: Se requieren argumentos" if args.empty?
+    args.each { |a| raise TypeError, "Argumento no numérico" unless a.is_a?(Numeric) }
+    super
+  end
+end
+
+module ConCache
+  def operar(*args)
+    @cache ||= {}
+    clave = args.hash
+    if @cache.key?(clave)
+      @cache[clave]
+    else
+      @cache[clave] = super
+    end
+  end
+end
+
+class OperadorBase
+  def operar(*args)
+    args.reduce(0, :+)
+  end
+end
+
+class OperadorConfigurable
+  def initialize
+    @modulos = []
+  end
+
+  def agregar_modulo(modulo)
+    @modulos << modulo
+  end
+
+  def construir
+    operador = OperadorBase.new
+    @modulos.reverse_each do |mod|
+      operador.singleton_class.prepend(mod)
+    end
+    operador
+  end
+end
+
+config = OperadorConfigurable.new
+config.agregar_modulo(ConValidacion)
+config.agregar_modulo(ConLog)
+config.agregar_modulo(ConCache)
+
+operador = config.construir
+puts operador.operar(1, 2, 3)
+puts operador.operar(1, 2, 3)
+puts operador.operar(4, 5)
+
+begin
+  operador.operar()
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+begin
+  operador.operar("texto")
+rescue => e
+  puts "Error: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 8: Prepend para agregar retry automático.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_08_retry_prepend.rb
+# Reintentos automáticos con prepend
+
+module ConReintento
+  def ejecutar(*args)
+    max_intentos = @max_reintentos || 3
+    intentos = 0
+
+    begin
+      intentos += 1
+      super
+    rescue => e
+      if intentos < max_intentos
+        puts "[RETRY] Intento #{intentos} falló: #{e.message}. Reintentando..."
+        sleep(0.1 * intentos)
+        retry
+      else
+        puts "[RETRY] Todos los #{max_intentos} intentos fallaron."
+        raise
+      end
+    end
+  end
+
+  def configurar_reintentos(max)
+    @max_reintentos = max
+  end
+end
+
+class ApiCliente
+  prepend ConReintento
+
+  def ejecutar(operacion)
+    puts "  Ejecutando: #{operacion}"
+    if rand < 0.6
+      raise "Error de conexión simulado"
+    end
+    "Resultado de #{operacion}"
+  end
+end
+
+cliente = ApiCliente.new
+cliente.configurar_reintentos(5)
+
+begin
+  resultado = cliente.ejecutar("GET /users")
+  puts "  Éxito: #{resultado}"
+rescue => e
+  puts "  Fallo definitivo: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 9: Transacciones con prepend.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_09_transaccion_prepend.rb
+# Patrón transaccional con prepend
+
+module Transaccional
+  def guardar
+    @transaccion_activa = true
+    puts "[TRANSACCIÓN] Iniciando..."
+    resultado = super
+    puts "[TRANSACCIÓN] Commit exitoso"
+    resultado
+  rescue => e
+    puts "[TRANSACCIÓN] Rollback: #{e.message}"
+    @errores_transaccion ||= []
+    @errores_transaccion << e
+    false
+  ensure
+    @transaccion_activa = false
+  end
+
+  def eliminar
+    @transaccion_activa = true
+    puts "[TRANSACCIÓN] Iniciando eliminación..."
+    resultado = super
+    puts "[TRANSACCIÓN] Eliminación commiteada"
+    resultado
+  rescue => e
+    puts "[TRANSACCIÓN] Rollback en eliminación: #{e.message}"
+    false
+  ensure
+    @transaccion_activa = false
+  end
+end
+
+module Auditable
+  def guardar
+    puts "[AUDITORÍA] Guardando cambio en #{Time.now}"
+    super
+  end
+
+  def eliminar
+    puts "[AUDITORÍA] Eliminando en #{Time.now}"
+    super
+  end
+end
+
+class CuentaBancaria
+  prepend Transaccional
+  prepend Auditable
+
+  attr_reader :titular, :saldo
+
+  def initialize(titular, saldo_inicial = 0)
+    @titular = titular
+    @saldo = saldo_inicial
+  end
+
+  def guardar
+    puts "  Guardando cuenta de #{@titular} con saldo $#{@saldo}"
+    raise "Error simulado al guardar" if @saldo < 0
+    @persistida = true
+    true
+  end
+
+  def eliminar
+    puts "  Eliminando cuenta de #{@titular}"
+    @persistida = false
+    true
+  end
+
+  def depositar(monto)
+    @saldo += monto
+  end
+
+  def retirar(monto)
+    if @saldo >= monto
+      @saldo -= monto
+    else
+      raise "Saldo insuficiente"
+    end
+  end
+end
+
+cuenta = CuentaBancaria.new("Alice", 1000)
+puts cuenta.guardar
+puts ""
+cuenta.depositar(500)
+puts cuenta.guardar
+
+puts "\n---"
+puts "Ancestros: #{CuentaBancaria.ancestors}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 10: Prepend con múltiples módulos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_10_multiples_prepend.rb
+# Múltiples módulos prependidos y orden de ejecución
+
+module ModuloA
+  def ejecutar
+    puts "ModuloA#ejecutar (antes)"
+    resultado = super
+    puts "ModuloA#ejecutar (después)"
+    resultado
+  end
+end
+
+module ModuloB
+  def ejecutar
+    puts "  ModuloB#ejecutar (antes)"
+    resultado = super
+    puts "  ModuloB#ejecutar (después)"
+    resultado
+  end
+end
+
+module ModuloC
+  def ejecutar
+    puts "    ModuloC#ejecutar (antes)"
+    resultado = super
+    puts "    ModuloC#ejecutar (después)"
+    resultado
+  end
+end
+
+class Tarea
+  prepend ModuloA
+  prepend ModuloB
+  prepend ModuloC
+
+  def ejecutar
+    puts "      Tarea#ejecutar (original)"
+    "Hecho"
+  end
+end
+
+t = Tarea.new
+puts t.ejecutar
+puts "\nAncestros: #{Tarea.ancestors}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 11: Prepend dinámico con singleton_class.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_11_prepend_dinamico.rb
+# Prepending dinámico en objetos individuales
+
+module ConMonitoreo
+  def procesar(*args)
+    puts "[MONITOR] Llamada a procesar con #{args.inspect}"
+    inicio = Time.now
+    resultado = super
+    duracion = Time.now - inicio
+    puts "[MONITOR] Completado en #{format('%.4f', duracion)}s → #{resultado.inspect}"
+    resultado
+  end
+
+  def validar(*args)
+    puts "[MONITOR] Validando con #{args.inspect}"
+    super
+  end
+end
+
+class Worker
+  def procesar(tarea)
+    puts "  Trabajando en: #{tarea}"
+    sleep(0.05)
+    "OK: #{tarea}"
+  end
+
+  def validar(tarea)
+    !tarea.nil? && !tarea.empty?
+  end
+end
+
+worker_normal = Worker.new
+worker_monitoreado = Worker.new
+worker_monitoreado.singleton_class.prepend(ConMonitoreo)
+
+puts "=== Worker normal ==="
+puts worker_normal.procesar("tarea-1")
+
+puts "\n=== Worker monitoreado ==="
+puts worker_monitoreado.procesar("tarea-2")
+puts worker_monitoreado.validar("")
+puts worker_monitoreado.validar("válido")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 12: Prepend para normalización de datos.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_12_normalizacion_prepend.rb
+# Normalización automática de datos de entrada
+
+module Normalizable
+  def nombre=(valor)
+    valor = valor.to_s.strip.capitalize if valor.respond_to?(:to_s)
+    super
+  end
+
+  def email=(valor)
+    valor = valor.to_s.strip.downcase if valor.respond_to?(:to_s)
+    super
+  end
+
+  def telefono=(valor)
+    valor = valor.to_s.gsub(/[^0-9+]/, '') if valor.respond_to?(:to_s)
+    super
+  end
+
+  def codigo_postal=(valor)
+    valor = valor.to_s.strip.upcase if valor.respond_to?(:to_s)
+    super
+  end
+end
+
+class Usuario
+  prepend Normalizable
+
+  attr_accessor :nombre, :email, :telefono, :codigo_postal
+
+  def initialize(atributos = {})
+    atributos.each { |k, v| send("#{k}=", v) }
+  end
+end
+
+u = Usuario.new(
+  nombre: "  carlos gARCÍA  ",
+  email: " CARLOS@Example.COM ",
+  telefono: "+1 (555) 123-4567",
+  codigo_postal: "  abc-123 "
+)
+
+puts "Nombre: '#{u.nombre}'"
+puts "Email: '#{u.email}'"
+puts "Teléfono: '#{u.telefono}'"
+puts "CP: '#{u.codigo_postal}'"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 13: Prepend para seguridad (control de acceso).
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_13_seguridad_prepend.rb
+# Control de acceso mediante prepend
+
+module Seguro
+  ACCESO_PERMITIDO = {
+    admin: [:ejecutar, :configurar, :eliminar, :crear, :ver_logs],
+    editor: [:ejecutar, :crear, :ver_logs],
+    viewer: [:ver_logs]
+  }.freeze
+
+  def method_missing(name, *args, &block)
+    if ACCESO_PERMITIDO[@rol]&.include?(name)
+      super
+    else
+      raise SecurityError, "Acceso denegado: #{@rol} no puede ejecutar #{name}"
+    end
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    ACCESO_PERMITIDO[@rol]&.include?(name) || super
+  end
+end
+
+class Sistema
+  prepend Seguro
+
+  def initialize(rol)
+    @rol = rol
+  end
+
+  def ejecutar
+    "Ejecutando operación..."
+  end
+
+  def configurar
+    "Configuración modificada."
+  end
+
+  def eliminar
+    "Elemento eliminado."
+  end
+
+  def crear
+    "Elemento creado."
+  end
+
+  def ver_logs
+    "Mostrando logs..."
+  end
+
+  def metodo_secreto
+    "Método secreto"
+  end
+end
+
+s_admin = Sistema.new(:admin)
+s_editor = Sistema.new(:editor)
+s_viewer = Sistema.new(:viewer)
+
+puts "Admin ejecuta: #{s_admin.ejecutar}"
+puts "Editor crea: #{s_editor.crear}"
+puts "Viewer ver_logs: #{s_viewer.ver_logs}"
+
+begin
+  s_viewer.ejecutar
+rescue => e
+  puts "Error viewer.ejecutar: #{e.message}"
+end
+
+begin
+  s_editor.eliminar
+rescue => e
+  puts "Error editor.eliminar: #{e.message}"
+end
+
+begin
+  s_admin.metodo_secreto
+rescue => e
+  puts "Error admin.metodo_secreto: #{e.message}"
+end
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 14: Prepend para memoización.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_14_memoizacion_prepend.rb
+# Memoización automática con prepend
+
+module Memoizable
+  def self.prepended(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def memoize(*metodos)
+      metodos.each do |metodo|
+        original = instance_method(metodo)
+
+        define_method(metodo) do |*args|
+          @_memo_cache ||= {}
+          clave = "#{metodo}(#{args.map(&:inspect).join(',')})"
+          if @_memo_cache.key?(clave)
+            @_memo_cache[clave]
+          else
+            @_memo_cache[clave] = original.bind(self).call(*args)
+          end
+        end
+      end
+    end
+  end
+
+  def memo_clear
+    @_memo_cache = {}
+  end
+
+  def memo_stats
+    { cache_size: (@_memo_cache || {}).length }
+  end
+end
+
+class Reporte
+  prepend Memoizable
+
+  memoize :calcular_ventas, :calcular_gastos
+
+  def initialize(data)
+    @data = data
+  end
+
+  def calcular_ventas(anio)
+    puts "  Calculando ventas para #{anio}..."
+    sleep(0.1)
+    @data[:ventas][anio] || 0
+  end
+
+  def calcular_gastos(anio)
+    puts "  Calculando gastos para #{anio}..."
+    sleep(0.1)
+    @data[:gastos][anio] || 0
+  end
+
+  def calcular_balance(anio)
+    calcular_ventas(anio) - calcular_gastos(anio)
+  end
+end
+
+data = { ventas: { 2023 => 100000, 2024 => 120000 }, gastos: { 2023 => 80000, 2024 => 90000 } }
+reporte = Reporte.new(data)
+
+puts "Primera llamada:"
+puts "Ventas 2023: #{reporte.calcular_ventas(2023)}"
+puts "\nSegunda llamada (cacheada):"
+puts "Ventas 2023: #{reporte.calcular_ventas(2023)}"
+puts "\nBalance 2024:"
+puts "Balance 2024: #{reporte.calcular_balance(2024)}"
+puts "\nStats: #{reporte.memo_stats}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 15: Prepend con patrón Observer.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_15_observer_prepend.rb
+# Notificaciones automáticas con prepend
+
+module Notificable
+  def saldo=(valor)
+    anterior = @saldo
+    resultado = super
+    notificar_cambio(:saldo, anterior, @saldo) if anterior != @saldo
+    resultado
+  end
+
+  def estado=(valor)
+    anterior = @estado
+    resultado = super
+    notificar_cambio(:estado, anterior, @estado) if anterior != @estado
+    resultado
+  end
+
+  private
+
+  def notificar_cambio(atributo, valor_anterior, valor_nuevo)
+    @observadores ||= []
+    @observadores.each do |obs|
+      obs.call(self, atributo, valor_anterior, valor_nuevo)
+    end
+  end
+end
+
+class Cuenta
+  prepend Notificable
+
+  attr_reader :titular
+  attr_accessor :saldo, :estado
+
+  def initialize(titular, saldo_inicial = 0)
+    @titular = titular
+    @saldo = saldo_inicial
+    @estado = :activa
+    @observadores = []
+  end
+
+  def on_change(&bloque)
+    @observadores ||= []
+    @observadores << bloque
+  end
+end
+
+cuenta = Cuenta.new("Ana")
+cuenta.on_change do |cuenta, attr, antes, despues|
+  puts "[OBSERVER] #{cuenta.titular}: #{attr} cambió de '#{antes}' a '#{despues}'"
+end
+
+cuenta.saldo = 1000
+cuenta.saldo = 1500
+cuenta.estado = :congelada
+cuenta.saldo = 2000
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 16: Prepend para depuración.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_16_debug_prepend.rb
+# Depuración automática con prepend
+
+module Depurable
+  def self.prepended(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def debug_method(*metodos)
+      metodos.each do |metodo|
+        original = instance_method(metodo)
+
+        define_method(metodo) do |*args, &bloque|
+          puts "=" * 60
+          puts "[DEBUG] #{self.class}##{metodo}"
+          puts "[DEBUG] Argumentos: #{args.map(&:inspect).join(', ')}"
+          puts "[DEBUG] Bloque dado: #{bloque ? 'sí' : 'no'}"
+          puts "[DEBUG] Variables de instancia:"
+          instance_variables.each do |iv|
+            puts "         #{iv} = #{instance_variable_get(iv).inspect}"
+          end
+
+          begin
+            resultado = original.bind(self).call(*args, &bloque)
+            puts "[DEBUG] Retorno: #{resultado.inspect}"
+            puts "=" * 60
+            resultado
+          rescue => e
+            puts "[DEBUG] EXCEPCIÓN: #{e.class}: #{e.message}"
+            puts "[DEBUG] Backtrace: #{e.backtrace.first(3).join("\n")}"
+            puts "=" * 60
+            raise
+          end
+        end
+      end
+    end
+  end
+end
+
+class Carrito
+  prepend Depurable
+
+  debug_method :agregar, :total
+
+  def initialize
+    @items = []
+    @descuento = 0
+  end
+
+  def agregar(producto, precio, cantidad = 1)
+    @items << { producto: producto, precio: precio, cantidad: cantidad }
+    "Agregado: #{producto} x#{cantidad}"
+  end
+
+  def total
+    subtotal = @items.sum { |i| i[:precio] * i[:cantidad] }
+    subtotal * (1 - @descuento)
+  end
+
+  def aplicar_descuento(porcentaje)
+    @descuento = porcentaje
+  end
+end
+
+carrito = Carrito.new
+carrito.agregar("Laptop", 1200, 1)
+carrito.agregar("Mouse", 25, 2)
+carrito.aplicar_descuento(0.1)
+puts "Total: $#{carrito.total}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 17: Prepend para rate limiting.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_17_rate_limit.rb
+# Limitación de velocidad con prepend
+
+module RateLimited
+  def ejecutar(*args)
+    ahora = Time.now.to_f
+    @ultima_ejecucion ||= 0.0
+    @min_intervalo ||= 0.5
+
+    if (ahora - @ultima_ejecucion) < @min_intervalo
+      raise "Rate limit excedido. Espere #{@min_intervalo - (ahora - @ultima_ejecucion)}s"
+    end
+
+    @ultima_ejecucion = ahora
+    super
+  end
+
+  def configurar_rate_limit(intervalo)
+    @min_intervalo = intervalo
+  end
+end
+
+class ApiClient
+  prepend RateLimited
+
+  def ejecutar(request)
+    puts "  Ejecutando: #{request}"
+    sleep(0.1)
+    "Respuesta para: #{request}"
+  end
+end
+
+client = ApiClient.new
+client.configurar_rate_limit(0.2)
+
+puts client.ejecutar("GET /users")
+sleep(0.3)
+puts client.ejecutar("GET /posts")
+
+begin
+  puts client.ejecutar("GET /rapido")
+rescue => e
+  puts "Error: #{e.message}"
+end
+
+sleep(0.2)
+puts client.ejecutar("GET /despues-espera")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 18: Prepend con temporizador.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_18_temporizador.rb
+# Ejecución programada con prepend
+
+module Temporizable
+  def ejecutar(*args)
+    @programacion ||= {}
+    metodo_llamado = caller_locations(1, 1)[0].label.to_sym
+
+    if @programacion[metodo_llamado]
+      tiempo = @programacion[metodo_llamado]
+      if Time.now < tiempo
+        espera = tiempo - Time.now
+        puts "[TIMER] Esperando #{format('%.2f', espera)}s antes de #{metodo_llamado}"
+        sleep(espera)
+      end
+    end
+
+    super
+  end
+
+  def programar_en(metodo, tiempo_desde_ahora)
+    @programacion ||= {}
+    @programacion[metodo] = Time.now + tiempo_desde_ahora
+  end
+
+  def programar_a(metodo, tiempo_absoluto)
+    @programacion ||= {}
+    @programacion[metodo] = tiempo_absoluto
+  end
+
+  def cancelar_programacion(metodo = nil)
+    if metodo
+      @programacion&.delete(metodo)
+    else
+      @programacion = {}
+    end
+  end
+end
+
+class Backup
+  prepend Temporizable
+
+  def ejecutar(tipo)
+    puts "  Ejecutando backup tipo: #{tipo}"
+    "Backup #{tipo} completado"
+  end
+end
+
+bkp = Backup.new
+bkp.programar_en(:ejecutar, 0.5)
+
+puts "Inicio: #{Time.now.strftime('%H:%M:%S')}"
+puts bkp.ejecutar(:completo)
+puts "Fin: #{Time.now.strftime('%H:%M:%S')}"
+
+puts "\n--- Sin temporizador ---"
+puts bkp.ejecutar(:incremental)
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 19: Prepend para internacionalización.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_19_i18n_prepend.rb
+# Internacionalización automática con prepend
+
+module I18n
+  def initialize(*args)
+    @_idioma = :es
+    super
+  end
+
+  def mostrar(*args)
+    resultado = super
+    traducir(resultado)
+  end
+
+  def mostrar_error(*args)
+    resultado = super
+    traducir(resultado)
+  end
+
+  def establecer_idioma(idioma)
+    @_idioma = idioma
+  end
+
+  private
+
+  def traducir(texto)
+    return texto unless @_idioma && @_idioma != :es
+    @_traducciones ||= {
+      bienvenido: { en: "Welcome", pt: "Bem-vindo" },
+      error: { en: "Error", pt: "Erro" },
+      exitoso: { en: "Successful", pt: "Bem-sucedido" }
+    }
+    texto
+  end
+end
+
+class Interfaz
+  prepend I18n
+
+  def mostrar(mensaje)
+    "▶ #{mensaje}"
+  end
+
+  def mostrar_error(mensaje)
+    "✖ ERROR: #{mensaje}"
+  end
+end
+
+ui = Interfaz.new
+puts ui.mostrar("Bienvenido al sistema")
+puts ui.mostrar_error("Archivo no encontrado")
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+Ejemplo 20: Prepend avanzado — Aspect-Oriented Programming.
+
+────────────────────────────────────────────────────────────────────────────────────
+
+```ruby
+# archivo: 44_20_aop_prepend.rb
+# Programación Orientada a Aspectos con prepend
+
+# Aspecto: Logging
+module AspectoLogging
+  def method_added(nombre)
+    @_metodos_loggeables ||= []
+    @_metodos_loggeables << nombre unless nombre.to_s.start_with?('_')
+  end
+
+  def self.prepended(base)
+    base.extend(self)
+  end
+
+  def loggear_metodos(*metodos)
+    metodos.each do |metodo|
+      original = instance_method(metodo)
+      define_method(metodo) do |*args, &bloque|
+        puts "[AOP-LOG] >> #{metodo}(#{args.map(&:inspect).join(', ')})"
+        resultado = original.bind(self).call(*args, &bloque)
+        puts "[AOP-LOG] << #{metodo} => #{resultado.inspect}"
+        resultado
+      end
+    end
+  end
+end
+
+# Aspecto: Timing
+module AspectoTiming
+  def self.prepended(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def medir_tiempo(*metodos)
+      metodos.each do |metodo|
+        original = instance_method(metodo)
+        define_method(metodo) do |*args, &bloque|
+          inicio = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          resultado = original.bind(self).call(*args, &bloque)
+          duracion = Process.clock_gettime(Process::CLOCK_MONOTONIC) - inicio
+          puts "[AOP-TIME] #{metodo} tomó #{format('%.4f', duracion)}s"
+          resultado
+        end
+      end
+    end
+  end
+end
+
+# Aspecto: Autorización
+module AspectoAuth
+  def self.prepended(base)
+    base.extend(ClassMethods)
+  end
+
+  module ClassMethods
+    def requiere_autorizacion(*metodos)
+      metodos.each do |metodo|
+        original = instance_method(metodo)
+        define_method(metodo) do |*args, &bloque|
+          unless @usuario && @token_valido
+            raise "Acceso no autorizado"
+          end
+          original.bind(self).call(*args, &bloque)
+        end
+      end
+    end
+  end
+end
+
+class ServicioAOP
+  prepend AspectoLogging
+  prepend AspectoTiming
+  prepend AspectoAuth
+
+  loggear_metodos :procesar, :validar
+  medir_tiempo :procesar
+  requiere_autorizacion :procesar, :configurar
+
+  attr_accessor :usuario, :token_valido
+
+  def initialize
+    @usuario = nil
+    @token_valido = false
+  end
+
+  def procesar(datos)
+    puts "  Procesando datos: #{datos}"
+    sleep(0.05)
+    "Resultado procesado"
+  end
+
+  def validar(datos)
+    !datos.nil? && datos.length > 3
+  end
+
+  def configurar(opciones)
+    puts "  Configurando: #{opciones}"
+  end
+end
+
+svc = ServicioAOP.new
+
+begin
+  svc.procesar("test")
+rescue => e
+  puts "Error esperado: #{e.message}"
+end
+
+svc.usuario = "admin"
+svc.token_valido = true
+puts "\n--- Con autorización ---"
+puts svc.procesar("datos importantes")
+puts "\nValidación: #{svc.validar("abc")}"
+puts "Validación: #{svc.validar("abcdef")}"
+```
+
+────────────────────────────────────────────────────────────────────────────────────
+
+  RESUMEN DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`prepend` es una herramienta poderosa para interceptar y extender métodos:
+
+  1. `prepend` inserta el módulo ANTES que la clase en la cadena de ancestros.
+  2. Los métodos del módulo tienen prioridad sobre los de la clase.
+  3. `super` dentro de un método prependido llama a la implementación original.
+  4. Es la forma moderna de implementar alias_method_chain.
+  5. Permite AOP (Programación Orientada a Aspectos) de forma natural.
+  6. Soporta monkey-patching seguro sin modificar la clase original.
+  7. Múltiples prepends se ejecutan en orden inverso (el último se ejecuta primero).
+  8. Se puede aplicar dinámicamente con `singleton_class.prepend`.
+
+────────────────────────────────────────────────────────────────────────────────────
+  EJERCICIOS DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+1. Implementa un módulo `ConLog` con prepend que registre cada llamada a
+   métodos específicos de una clase.
+
+2. Crea un módulo `ConTiming` que mida y reporte el tiempo de ejecución
+   de métodos marcados como `slow`.
+
+3. Implementa un sistema de validación automática con prepend que verifique
+   condiciones antes de ejecutar métodos `guardar` y `actualizar`.
+
+4. Usa prepend para implementar un caché transparente que cachee resultados
+   de métodos costosos sin modificar la clase original.
+
+5. Crea un módulo `ConReintento` con prepend que reintente automáticamente
+   métodos que fallen hasta N veces.
+
+6. Implementa un módulo `ConNormalizacion` que normalice strings al asignar
+   atributos (trim, capitalize, etc.) usando prepend.
+
+7. Usa prepend para implementar control de acceso basado en roles sobre una
+   clase existente sin modificar su código.
+
+8. Crea un sistema de auditoría donde cada cambio en atributos quede
+   registrado automáticamente mediante prepend.
+
+9. Implementa un módulo `ConEstado` que prevenga la ejecución de métodos
+   si el objeto está en un estado incorrecto.
+
+10. Crea un framework AOP mínimo que permita definir aspectos como módulos
+    y aplicarlos a clases con prepend dinámico.
+
+────────────────────────────────────────────────────────────────────────────────────
+  FAQ — PREGUNTAS FRECUENTES
+────────────────────────────────────────────────────────────────────────────────────
+
+P: ¿Cuándo debo usar prepend en lugar de include?
+R: Usa prepend cuando necesites interceptar métodos existentes de la clase.
+   Usa include cuando quieras añadir nuevos métodos que la clase puede usar.
+
+P: ¿Puedo usar prepend y include con el mismo módulo?
+R: Sí, pero ten en cuenta que prepend y include colocan el módulo en
+   diferentes posiciones de la cadena de ancestros.
+
+P: ¿prepend funciona con métodos heredados?
+R: Sí. prepend también intercepta métodos heredados de superclases.
+
+P: ¿Es seguro usar prepend en clases del sistema?
+R: Puede serlo si se usa con cuidado. prepend es la forma recomendada de
+   hacer monkey-patching en Ruby moderno.
+
+P: ¿Puedo quitar un prepend dinámicamente?
+R: No hay una forma directa de "unprepend". Puedes usar refinements como
+   alternativa o reiniciar el objeto.
+
+P: ¿Cómo afecta prepend al rendimiento?
+R: Mínimamente. Ruby optimiza la resolución de métodos con caché.
+
+────────────────────────────────────────────────────────────────────────────────────
+  DESAFÍO DEL ARQUITECTO
+────────────────────────────────────────────────────────────────────────────────────
+
+Construye un sistema de "Middleware HTTP" completo usando prepend:
+
+  1. Define una clase base `HttpRequest` con métodos:
+     - `procesar(request, response)` — método principal
+     - `headers`, `body`, `status` — acceso a la respuesta
+
+  2. Crea al menos 6 middlewares como módulos con prepend:
+     - `Middleware::Logger` — registra cada request/response
+     - `Middleware::Auth` — verifica tokens JWT
+     - `Middleware::CORS` — añade headers CORS
+     - `Middleware::Compression` — comprime respuestas
+     - `Middleware::RateLimiter` — limita peticiones por IP
+     - `Middleware::Cache` — cachea respuestas GET
+
+  3. Cada middleware debe llamar a `super` y puede modificar el request
+     antes o el response después de la ejecución.
+
+  4. El `Middleware::Router` debe decidir qué middlewares aplicar según
+     la ruta y el método HTTP.
+
+  5. Implementa un sistema de configuración donde cada middleware tenga
+     sus propias opciones (timeout, límites, etc.).
+
+  6. Soporta short-circuit: un middleware puede detener la cadena
+     devolviendo una respuesta sin llamar a `super`.
+
+Este desafío integra prepend, cadenas de responsabilidad, AOP y manejo
+de configuraciones. Es una implementación simplificada de cómo funcionan
+Rack, Faraday, o el middleware de Rails.
+
+────────────────────────────────────────────────────────────────────────────────────
+  CIERRE DEL CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+`prepend` completa el trío de directivas de mezcla en Ruby. Con ella puedes
+interceptar, modificar y extender cualquier método sin tocar la clase original.
+Ya sea para logging, caché, seguridad, medición o AOP, prepend es la
+herramienta elegante para el trabajo.
+
+Domina include, extend y prepend, y tendrás un control total sobre cómo se
+comporta tu código. Cada una tiene su lugar: include para añadir, extend
+para especializar, prepend para interceptar.
+
+────────────────────────────────────────────────────────────────────────────────────
+  PREVIEW DEL PRÓXIMO CAPÍTULO
+────────────────────────────────────────────────────────────────────────────────────
+
+En el Capítulo 45: Namespaces, exploraremos cómo los módulos sirven como
+espacios de nombres para organizar grandes codebases. Veremos el uso del
+operador `::`, el anidamiento de módulos, la resolución de constantes,
+`Module.nesting`, y cómo frameworks como Rails utilizan namespaces para
+mantener el código ordenado y evitar colisiones.
+═══════════════════════════════════════════════════════════════════════════════════
