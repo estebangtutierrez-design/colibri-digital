@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
     nombre TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    token TEXT DEFAULT '',
     division_origen TEXT DEFAULT 'holding',
     suscripcion TEXT DEFAULT 'gratis',
     fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -115,6 +116,17 @@ CREATE TABLE IF NOT EXISTS colecciones (
     portada TEXT DEFAULT '',
     activo INTEGER DEFAULT 1,
     FOREIGN KEY (division_id) REFERENCES divisiones(id)
+);
+
+CREATE TABLE IF NOT EXISTS progreso (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL,
+    curso_id TEXT NOT NULL,
+    capitulo INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+    UNIQUE(usuario_id, curso_id)
 );
 
 -- Admin user created by init_db()

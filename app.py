@@ -27,8 +27,10 @@ def create_app():
     from blueprints.femenino.routes import femenino_bp
     from blueprints.masculino.routes import masculino_bp
     from blueprints.tienda.routes import tienda_bp
+    from blueprints.api.routes import api_bp
 
     app.register_blueprint(holding_bp)
+    app.register_blueprint(api_bp)
     app.register_blueprint(academia_bp, url_prefix='/academia')
     app.register_blueprint(legado_bp, url_prefix='/legado')
     app.register_blueprint(historias_bp, url_prefix='/historias')
@@ -77,6 +79,12 @@ def init_db():
     if not admin:
         conn.execute("INSERT INTO admin_usuarios (email, password_hash, rol) VALUES (?,?,?)",
                      ('admin@colibri.mx', generate_password_hash('admin123'), 'superadmin'))
+    # Add token column if upgrading old DB
+    try:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN token TEXT DEFAULT ''")
+    except:
+        pass
+
     for sfile in ['seed_productos.sql', 'seed_data.sql']:
         spath = os.path.join(BASE, sfile)
         if os.path.exists(spath):
